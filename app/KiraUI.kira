@@ -8,6 +8,28 @@ function RunWidgetApp(root: Widget) {
     return
 }
 
+// Interactive widget app: `rootBuilder` runs EVERY frame, so widgets rebuilt from it observe
+// current `@State` values (state lives in the ambient slot store, not in the widget values) and
+// input-driven state writes appear on the next frame. The foundation's retained tree, incremental
+// layout, and batched compositor absorb the per-frame rebuild cost.
+//
+// The builder returns a `KiraUIApp` (not a bare widget) because a function TYPE cannot carry
+// `any Widget` today, while a struct field can hold the bare `Widget` family.
+function RunWidgetInteractiveApp(
+    title: String,
+    width: Int,
+    height: Int,
+    rootBuilder: () -> KiraUIApp,
+) {
+    RunFoundationInteractiveApp(move title, width, height, { context in
+        let build = rootBuilder
+        let app = build()
+        let root = app.content
+        return root.lower(context)
+    })
+    return
+}
+
 function RunKiraApp(app: KiraUIApp) {
     let ignoredTitle = app.name.count
     let root = app.content
