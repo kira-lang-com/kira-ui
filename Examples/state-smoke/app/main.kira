@@ -1,0 +1,84 @@
+import KiraUI
+
+construct Panel {
+    @Required let body: Int
+}
+
+Panel Demo() {
+    @State var count: Int = 100
+    @State var label: String = "start"
+    let body: Int = 1
+
+    function bump() -> Int {
+        count = count + 1
+        return count
+    }
+
+    function rename(next: String) {
+        label = move next
+        return
+    }
+
+    function read() -> String {
+        return label
+    }
+}
+
+Widget StateLabel() {
+    @State var label: String = "from-state"
+    body {
+        Text(label)
+    }
+}
+
+@Main
+function main() {
+    if is_State_propertyWrapper() {
+        print("state-is-wrapper")
+    }
+    let d = Demo()
+    if d.bump() == 101 {
+        print("first-bump-ok")
+    }
+    // A fresh instance sees the SAME state (identity = declaration, not instance).
+    let d2 = Demo()
+    if d2.bump() == 102 {
+        print("persists-across-instances")
+    }
+    d2.rename("changed")
+    if d.read() == "changed" {
+        print("string-state-persists")
+    }
+    // @State read inside a real Widget `body` builder: the lowered foundation view carries the
+    // CURRENT state value, and a state write shows up on the next lower (the interactive loop's
+    // per-frame rebuild).
+    let context = KiraUIFoundation.FoundationUiContext {}
+    let before = StateLabel().lower(context)
+    if before.content == "from-state" {
+        print("widget-body-reads-state")
+    }
+    __pw_StateLabel_set_label("relowered")
+    let after = StateLabel().lower(context)
+    if after.content == "relowered" {
+        print("widget-body-sees-state-write")
+    }
+}
+
+// Compile-surface check: the interactive runner lowers widgets per frame. Never called here
+// (headless smoke); referencing it keeps the closure/lowering path checked.
+function interactiveRunnerSurface() {
+    RunWidgetInteractiveApp(
+        title: "unused",
+        width: 640,
+        height: 480,
+        rootBuilder: { in
+            return KiraUIApp(
+                name: "unused",
+                content: AppSurface(padding: 12.0) {
+                    Text("hi")
+                }
+            )
+        }
+    )
+    return
+}

@@ -1,0 +1,57 @@
+// `@State` — persistent per-declaration UI state, the first `@PropertyWrapper` client.
+//
+// `@State var count: Int = 0` inside a Widget form reads and writes through this wrapper. The
+// value lives behind an ambient native slot keyed "<Form>.<field>" (see the identity note in
+// PropertyWrapper.kira: one shared value per declaration), allocated once with `nativeState` and
+// recovered by reference afterwards — so state survives the per-frame widget rebuilds of the
+// interactive app loop, which re-runs every widget initializer.
+//
+// `Wrapped` is the wrapper-template placeholder type: the @PropertyWrapper macro monomorphizes
+// this struct per wrapped field, substituting `Wrapped` with the field's declared type and
+// renaming `State` (including the `State { ... }` literal and `nativeRecover<State>` below) to
+// the per-field struct name.
+
+@PropertyWrapper
+struct State {
+    var wrappedValue: Wrapped
+    var key: String = ""
+
+    function get() -> Wrapped {
+        if kiraUiStateSlotHas(self.key) == false {
+            kiraUiStateSlotPut(self.key, nativeUserData(nativeState(State {
+                wrappedValue: self.wrappedValue
+                key: self.key
+            })))
+        }
+        let store = nativeRecover<State>(kiraUiStateSlotGet(self.key))
+        return store.wrappedValue
+    }
+
+    function set(value: Wrapped) {
+        if kiraUiStateSlotHas(self.key) == false {
+            kiraUiStateSlotPut(self.key, nativeUserData(nativeState(State {
+                wrappedValue: self.wrappedValue
+                key: self.key
+            })))
+        }
+        var store = nativeRecover<State>(kiraUiStateSlotGet(self.key))
+        store.wrappedValue = move value
+        return
+    }
+}
+
+// Ambient-slot shims. Monomorphized wrapper code is spliced into the USER's package, where the
+// KiraUIFoundation import is not in scope — but KiraUI is (any package using widgets imports
+// it), so the wrapper reaches the foundation store through these KiraUI-owned names.
+function kiraUiStateSlotHas(key: String) -> Bool {
+    return KiraUIFoundation.uiStateSlotHas(move key)
+}
+
+function kiraUiStateSlotGet(key: String) -> RawPtr {
+    return KiraUIFoundation.uiStateSlotGet(move key)
+}
+
+function kiraUiStateSlotPut(key: String, value: RawPtr) {
+    KiraUIFoundation.uiStateSlotPut(move key, value)
+    return
+}
