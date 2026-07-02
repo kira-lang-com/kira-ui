@@ -15,18 +15,26 @@ function RunWidgetApp(root: Widget) {
 //
 // The builder returns a `KiraUIApp` (not a bare widget) because a function TYPE cannot carry
 // `any Widget` today, while a struct field can hold the bare `Widget` family.
+function kiraUiNoopEngineFrame(frame: borrow KiraUIFoundation.GraphicsFrame) {
+    let ignored = frame.backend
+    return
+}
+
 function RunWidgetInteractiveApp(
     title: String,
     width: Int,
     height: Int,
     rootBuilder: () -> KiraUIApp,
+    // Host hook: runs first every frame, before the UI pass — where a hosting engine ticks
+    // and renders its offscreen viewport texture (shown via TextureViewport).
+    engineFrame: (borrow KiraUIFoundation.GraphicsFrame) -> Void = kiraUiNoopEngineFrame,
 ) {
     RunFoundationInteractiveApp(move title, width, height, { context in
         let build = rootBuilder
         let app = build()
         let root = app.content
         return root.lower(context)
-    })
+    }, move engineFrame)
     return
 }
 
