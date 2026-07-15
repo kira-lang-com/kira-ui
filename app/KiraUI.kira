@@ -1,3 +1,5 @@
+import Foundation
+import KiraGraphics
 import KiraUIFoundation
 
 function RunWidgetApp(root: Widget) {
@@ -15,7 +17,7 @@ function RunWidgetApp(root: Widget) {
 //
 // The builder returns a `KiraUIApp` (not a bare widget) because a function TYPE cannot carry
 // `any Widget` today, while a struct field can hold the bare `Widget` family.
-function kiraUiNoopEngineFrame(frame: borrow KiraUIFoundation.GraphicsFrame) {
+function kiraUiNoopEngineFrame(frame: borrow mut KiraUIFoundation.GraphicsFrame) {
     let ignored = frame.backend
     return
 }
@@ -24,17 +26,21 @@ function RunWidgetInteractiveApp(
     title: String,
     width: Int,
     height: Int,
-    rootBuilder: () -> KiraUIApp,
+    rootBuilder: borrow () -> KiraUIApp,
     // Host hook: runs first every frame, before the UI pass — where a hosting engine ticks
     // and renders its offscreen viewport texture (shown via TextureViewport).
-    engineFrame: (borrow KiraUIFoundation.GraphicsFrame) -> Void = kiraUiNoopEngineFrame,
+    engineFrame: borrow (borrow mut KiraUIFoundation.GraphicsFrame) -> Void = kiraUiNoopEngineFrame,
+    showFpsOverlay: Bool = true,
+    // See RunFoundationInteractiveApp: fixed-structure hosts (editor chrome) pass
+    // false so resize-only frames skip the widget rebuild and reconcile.
+    rebuildOnResize: Bool = true,
 ) {
     RunFoundationInteractiveApp(move title, width, height, { context in
-        let build = rootBuilder
+        let build: borrow () -> KiraUIApp = rootBuilder
         let app = build()
         let root = app.content
         return root.lower(context)
-    }, move engineFrame)
+    }, engineFrame, showFpsOverlay, rebuildOnResize)
     return
 }
 
