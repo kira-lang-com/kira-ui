@@ -1,0 +1,458 @@
+import KiraLayout
+import KiraGraphics
+import Foundation
+import KiraUIFoundation
+// TextField — a focusable, editable single-line text input.
+//
+// The library owns the edit state (codepoint buffer + caret) in a per-key state
+// slot, seeded once from `initial` (String is opaque, so it is decoded to
+// codepoints via KiraUIFoundation.foundationStringToCodepoints). Typing inserts
+// at the caret; Backspace / forward-Delete remove around it; Left/Right/Home/End
+// move it (routed through onKey); a click sets the caret to the nearest character
+// (prefix measurement). The caret is rendered without measurement by splitting
+// the text at the caret and placing a thin bar between the two halves. Enter
+// fires onSubmit with the current text and resets the field so it re-seeds next
+// time it is mounted.
+
+struct KiraUiTextFieldState {
+    var codes: [Int] = []
+    var caret: Int = 0
+    // Selection anchor. anchor == caret means no selection; otherwise the
+    // selection spans [min(anchor,caret), max(anchor,caret)).
+    var anchor: Int = 0
+    var seeded: Bool = false
+}
+
+function textFieldSelMin(anchor: Int, caret: Int) -> Int {
+    if anchor < caret {
+        return anchor
+    }
+    return caret
+}
+
+function textFieldSelMax(anchor: Int, caret: Int) -> Int {
+    if anchor > caret {
+        return anchor
+    }
+    return caret
+}
+
+// Per-field slot key: "kiraui.tf." + decimal(key). Built through the codepoint
+// helper (KiraGraphics is not a direct dep here).
+function textFieldSlotKey(key: Int) -> String {
+    var k = key
+    if k < 0 {
+        k = 0 - k
+    }
+    var digitsRev: [Int] = []
+    if k == 0 {
+        digitsRev.append(48)
+    }
+    while k > 0 {
+        digitsRev.append(48 + (k - (k / 10) * 10))
+        k = k / 10
+    }
+    var codes: [Int] = []
+    var i = digitsRev.count - 1
+    while i >= 0 {
+        codes.append(digitsRev[i])
+        i = i - 1
+    }
+    return "kiraui.tf." + KiraUIFoundation.foundationStringFromCodepoints(codes, 0, codes.count)
+}
+
+function textFieldEnsure(key: Int) {
+    if kiraUiStateSlotHas(textFieldSlotKey(key)) == false {
+        kiraUiStateSlotPut(textFieldSlotKey(key), nativeUserData(nativeState(KiraUiTextFieldState {})))
+    }
+    return
+}
+
+function textFieldSeed(key: Int, initial: borrow String) {
+    textFieldEnsure(key)
+    var st = nativeRecover<KiraUiTextFieldState>(kiraUiStateSlotGet(textFieldSlotKey(key)))
+    if st.seeded == false {
+        st.codes = KiraUIFoundation.foundationStringToCodepoints(initial)
+        st.caret = st.codes.count
+        st.anchor = st.caret
+        st.seeded = true
+    }
+    return
+}
+
+function textFieldText(key: Int) -> String {
+    textFieldEnsure(key)
+    let st = nativeRecover<KiraUiTextFieldState>(kiraUiStateSlotGet(textFieldSlotKey(key)))
+    return KiraUIFoundation.foundationStringFromCodepoints(st.codes, 0, st.codes.count)
+}
+
+function textFieldReset(key: Int) {
+    textFieldEnsure(key)
+    var st = nativeRecover<KiraUiTextFieldState>(kiraUiStateSlotGet(textFieldSlotKey(key)))
+    var empty: [Int] = []
+    st.codes = move empty
+    st.caret = 0
+    st.anchor = 0
+    st.seeded = false
+    return
+}
+
+// Delete the selected range (if any), collapsing the caret to its start.
+function textFieldDeleteSelection(key: Int) {
+    textFieldEnsure(key)
+    var st = nativeRecover<KiraUiTextFieldState>(kiraUiStateSlotGet(textFieldSlotKey(key)))
+    if st.anchor == st.caret {
+        return
+    }
+    let a = textFieldSelMin(st.anchor, st.caret)
+    let b = textFieldSelMax(st.anchor, st.caret)
+    var next: [Int] = []
+    var i = 0
+    while i < st.codes.count {
+        if i < a || i >= b {
+            next.append(st.codes[i])
+        }
+        i = i + 1
+    }
+    st.codes = move next
+    st.caret = a
+    st.anchor = a
+    return
+}
+
+function textFieldSelectAll(key: Int) {
+    textFieldEnsure(key)
+    var st = nativeRecover<KiraUiTextFieldState>(kiraUiStateSlotGet(textFieldSlotKey(key)))
+    st.anchor = 0
+    st.caret = st.codes.count
+    return
+}
+
+function textFieldInsert(key: Int, cp: Int) {
+    if cp < 32 {
+        return
+    }
+    // Typing over a selection replaces it.
+    textFieldDeleteSelection(key)
+    textFieldEnsure(key)
+    var st = nativeRecover<KiraUiTextFieldState>(kiraUiStateSlotGet(textFieldSlotKey(key)))
+    var next: [Int] = []
+    var i = 0
+    while i < st.caret {
+        next.append(st.codes[i])
+        i = i + 1
+    }
+    next.append(cp)
+    while i < st.codes.count {
+        next.append(st.codes[i])
+        i = i + 1
+    }
+    st.codes = move next
+    st.caret = st.caret + 1
+    st.anchor = st.caret
+    return
+}
+
+function textFieldBackspace(key: Int) {
+    textFieldEnsure(key)
+    var st = nativeRecover<KiraUiTextFieldState>(kiraUiStateSlotGet(textFieldSlotKey(key)))
+    // A selection is deleted whole.
+    if st.anchor != st.caret {
+        textFieldDeleteSelection(key)
+        return
+    }
+    if st.caret <= 0 {
+        return
+    }
+    let removeAt = st.caret - 1
+    var next: [Int] = []
+    var i = 0
+    while i < st.codes.count {
+        if i != removeAt {
+            next.append(st.codes[i])
+        }
+        i = i + 1
+    }
+    st.codes = move next
+    st.caret = st.caret - 1
+    st.anchor = st.caret
+    return
+}
+
+function textFieldDeleteForward(key: Int) {
+    textFieldEnsure(key)
+    var st = nativeRecover<KiraUiTextFieldState>(kiraUiStateSlotGet(textFieldSlotKey(key)))
+    if st.anchor != st.caret {
+        textFieldDeleteSelection(key)
+        return
+    }
+    if st.caret >= st.codes.count {
+        return
+    }
+    let removeAt = st.caret
+    var next: [Int] = []
+    var i = 0
+    while i < st.codes.count {
+        if i != removeAt {
+            next.append(st.codes[i])
+        }
+        i = i + 1
+    }
+    st.codes = move next
+    return
+}
+
+function textFieldNav(key: Int, keyCode: Int) {
+    if keyCode == 261 {
+        textFieldDeleteForward(key)
+        return
+    }
+    if keyCode == 300 {
+        textFieldSelectAll(key)
+        return
+    }
+    textFieldEnsure(key)
+    var st = nativeRecover<KiraUiTextFieldState>(kiraUiStateSlotGet(textFieldSlotKey(key)))
+    let hasSel = st.anchor != st.caret
+    if keyCode == 263 {
+        // Left: collapse a selection to its start, else step left.
+        if hasSel {
+            st.caret = textFieldSelMin(st.anchor, st.caret)
+        } else {
+            if st.caret > 0 {
+                st.caret = st.caret - 1
+            }
+        }
+        st.anchor = st.caret
+    }
+    if keyCode == 262 {
+        if hasSel {
+            st.caret = textFieldSelMax(st.anchor, st.caret)
+        } else {
+            if st.caret < st.codes.count {
+                st.caret = st.caret + 1
+            }
+        }
+        st.anchor = st.caret
+    }
+    if keyCode == 268 {
+        st.caret = 0
+        st.anchor = 0
+    }
+    if keyCode == 269 {
+        st.caret = st.codes.count
+        st.anchor = st.caret
+    }
+    return
+}
+
+// Click-to-position: map the press x (relative to the field's text start) to the
+// nearest caret index by measuring codepoint prefixes.
+function textFieldClickCaret(key: Int, size: Float, leftPad: Float) {
+    textFieldEnsure(key)
+    var st = nativeRecover<KiraUiTextFieldState>(kiraUiStateSlotGet(textFieldSlotKey(key)))
+    let relX = kiraUiPointerX() - kiraUiPressBoundsX() - leftPad
+    if relX <= 0.0 {
+        st.caret = 0
+        st.anchor = 0
+        return
+    }
+    let n = st.codes.count
+    var k = 0
+    var prevW = 0.0
+    var placed = false
+    while k <= n && placed == false {
+        let prefix = KiraUIFoundation.foundationStringFromCodepoints(st.codes, 0, k)
+        let w = KiraUIFoundation.foundationTextRunWidth(prefix, size)
+        if w >= relX {
+            if k > 0 && (relX - prevW) < (w - relX) {
+                st.caret = k - 1
+            } else {
+                st.caret = k
+            }
+            placed = true
+        }
+        prevW = w
+        k = k + 1
+    }
+    if placed == false {
+        st.caret = n
+    }
+    // A click positions the caret and clears any selection.
+    st.anchor = st.caret
+    return
+}
+
+// --- Closure builders (capture locals, never widget fields). ---
+
+function textFieldInsertFn(key: Int) -> (Int) -> Void {
+    let k = key
+    let f: (Int) -> Void = { cp in
+        textFieldInsert(k, cp)
+        return
+    }
+    return f
+}
+
+function textFieldBackspaceFn(key: Int) -> () -> Void {
+    let k = key
+    let f: () -> Void = { in
+        textFieldBackspace(k)
+        return
+    }
+    return f
+}
+
+function textFieldNavFn(key: Int) -> (Int) -> Void {
+    let k = key
+    let f: (Int) -> Void = { kc in
+        textFieldNav(k, kc)
+        return
+    }
+    return f
+}
+
+function textFieldPressFn(key: Int, size: Float, leftPad: Float) -> () -> Void {
+    let k = key
+    let sz = size
+    let lp = leftPad
+    let f: () -> Void = { in
+        textFieldClickCaret(k, sz, lp)
+        return
+    }
+    return f
+}
+
+function textFieldGap(width: Float) -> KiraUIFoundation.FoundationView {
+    return KiraUIFoundation.FoundationView {
+        kind: KiraUIFoundation.FoundationViewKind.Surface
+        width: SizeMode.Fixed(width)
+        height: SizeMode.Fixed(1.0)
+        fill: KiraUIFoundation.Color {
+            r: 0.0
+            g: 0.0
+            b: 0.0
+            a: 0.0
+        }
+    }
+}
+
+// Color is non-Copy; the node builders take it by borrow and clone into the view
+// so a caller can reuse one color across several nodes.
+function textFieldColor(c: borrow KiraUIFoundation.Color) -> KiraUIFoundation.Color {
+    return KiraUIFoundation.Color {
+        r: c.r
+        g: c.g
+        b: c.b
+        a: c.a
+    }
+}
+
+function textFieldTextNode(content: String, color: borrow KiraUIFoundation.Color, size: Float) -> KiraUIFoundation.FoundationView {
+    return KiraUIFoundation.FoundationView {
+        kind: KiraUIFoundation.FoundationViewKind.Text
+        content: content
+        color: textFieldColor(color)
+        size: size
+        weight: 400.0
+    }
+}
+
+function textFieldCaretNode(size: Float, color: borrow KiraUIFoundation.Color) -> KiraUIFoundation.FoundationView {
+    return KiraUIFoundation.FoundationView {
+        kind: KiraUIFoundation.FoundationViewKind.Surface
+        width: SizeMode.Fixed(1.5)
+        height: SizeMode.Fixed(size)
+        fill: textFieldColor(color)
+    }
+}
+
+// Selected text: a highlight box (Hug to the text) painted behind the glyphs.
+function textFieldSelBox(content: String, highlight: borrow KiraUIFoundation.Color, textColor: borrow KiraUIFoundation.Color, size: Float) -> KiraUIFoundation.FoundationView {
+    return KiraUIFoundation.FoundationView {
+        kind: KiraUIFoundation.FoundationViewKind.Surface
+        width: KiraUIFoundation.SizeMode.Hug
+        height: KiraUIFoundation.SizeMode.Hug
+        fill: textFieldColor(highlight)
+        radius: 2.0
+        children: [textFieldTextNode(move content, textColor, size)]
+    }
+}
+
+Widget TextField(
+    key: Int,
+    initial: String,
+    placeholder: String,
+    width: Float,
+    height: Float,
+    size: Float,
+    bg: KiraUIFoundation.Color,
+    textColor: KiraUIFoundation.Color,
+    placeholderColor: KiraUIFoundation.Color,
+    caretColor: KiraUIFoundation.Color,
+    selectColor: KiraUIFoundation.Color,
+    onSubmit: () -> Void
+) {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
+        let ignored = context.frameCount
+        textFieldSeed(key, initial)
+        let st = nativeRecover<KiraUiTextFieldState>(kiraUiStateSlotGet(textFieldSlotKey(key)))
+        let n = st.codes.count
+        var caret = st.caret
+        if caret > n {
+            caret = n
+        }
+        var anchor = st.anchor
+        if anchor > n {
+            anchor = n
+        }
+        let leftPad = 6.0
+        var kids: [KiraUIFoundation.FoundationView] = []
+        kids.append(textFieldGap(leftPad))
+        if n == 0 {
+            kids.append(textFieldCaretNode(size, caretColor))
+            kids.append(textFieldTextNode(move placeholder, placeholderColor, size))
+        } else {
+            if anchor != caret {
+                let a = textFieldSelMin(anchor, caret)
+                let b = textFieldSelMax(anchor, caret)
+                let selBefore = KiraUIFoundation.foundationStringFromCodepoints(st.codes, 0, a)
+                let selMid = KiraUIFoundation.foundationStringFromCodepoints(st.codes, a, b)
+                let selAfter = KiraUIFoundation.foundationStringFromCodepoints(st.codes, b, n)
+                kids.append(textFieldTextNode(move selBefore, textColor, size))
+                kids.append(textFieldSelBox(move selMid, selectColor, textColor, size))
+                kids.append(textFieldTextNode(move selAfter, textColor, size))
+            } else {
+                let before = KiraUIFoundation.foundationStringFromCodepoints(st.codes, 0, caret)
+                let after = KiraUIFoundation.foundationStringFromCodepoints(st.codes, caret, n)
+                kids.append(textFieldTextNode(move before, textColor, size))
+                kids.append(textFieldCaretNode(size, caretColor))
+                kids.append(textFieldTextNode(move after, textColor, size))
+            }
+        }
+        let row = KiraUIFoundation.Row(
+            children: move kids,
+            width: KiraUIFoundation.SizeMode.Fill,
+            height: KiraUIFoundation.SizeMode.Fill,
+            spacing: 0.0,
+            padding: KiraUIFoundation.EdgeInsets {},
+            crossAxisAlignment: KiraUIFoundation.CrossAlignment.Center
+        )
+        return KiraUIFoundation.FoundationView {
+            kind: KiraUIFoundation.FoundationViewKind.HitArea
+            key: key
+            width: SizeMode.Fixed(width)
+            height: SizeMode.Fixed(height)
+            focusable: true
+            autofocus: true
+            backgroundFill: bg
+            radius: 4.0
+            onTextCodepoint: textFieldInsertFn(key)
+            onBackspace: textFieldBackspaceFn(key)
+            onSubmit: onSubmit
+            onKey: textFieldNavFn(key)
+            onPress: textFieldPressFn(key, size, leftPad)
+            children: [row]
+        }
+    }
+}
