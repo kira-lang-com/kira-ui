@@ -1,0 +1,257 @@
+import KiraGraphics
+import Foundation
+import KiraLayout
+import KiraUIFoundation
+
+// Interaction primitives: the clickable / flex / surface / gesture-texture
+// building blocks that let dense chrome UIs (editor panels, inspectors, live
+// viewports) be expressed as pure body-DSL widgets instead of hand-lowering
+// FoundationView.HitArea / Surface / Expanded by hand.
+//
+// TAPPABLE gives every button a default hover highlight (subtle white wash) for
+// free, driven by foundationHovered on the button's own key. Auto-key forms draw
+// a stable per-build key from a frame-reset sequence counter (mirrors the pattern
+// an app would otherwise reinvent); keyed forms take an explicit key so a control
+// that carries semantic meaning (a tree row, an asset tile — decoded elsewhere by
+// its key) keeps that exact key.
+
+// --- Auto-key sequence -------------------------------------------------------
+// The retained tree reconciles nodes BY KEY, so two hit areas sharing a key
+// corrupt the reconcile and sibling subtrees silently drop. Widgets lower in a
+// deterministic order every frame, so a sequence counter (reset at the top of
+// each build via kiraUiTapSeqReset) yields stable, collision-free keys. Base
+// 600000 sits above app "sequence" ranges and the 100000-499999 band apps use
+// for semantic edTapKey-style keys, so auto keys never alias a decodable key.
+struct KiraUiTapSeq {
+    var next: Int = 0
+}
+
+function kiraUiTapSeqSlotKey() -> String {
+    return "kiraui.tapseq"
+}
+
+// Reset the auto-key counter. An interactive app root calls this once at the top
+// of every frame's build so each frame gets the same stable key assignment.
+function kiraUiTapSeqReset() {
+    if kiraUiStateSlotHas(kiraUiTapSeqSlotKey()) == false {
+        kiraUiStateSlotPut(kiraUiTapSeqSlotKey(), nativeUserData(nativeState(KiraUiTapSeq {})))
+    }
+    var seq = nativeRecover<KiraUiTapSeq>(kiraUiStateSlotGet(kiraUiTapSeqSlotKey()))
+    seq.next = 0
+    return
+}
+
+// Next auto key in the current build.
+function kiraUiTapSeqKey() -> Int {
+    if kiraUiStateSlotHas(kiraUiTapSeqSlotKey()) == false {
+        kiraUiStateSlotPut(kiraUiTapSeqSlotKey(), nativeUserData(nativeState(KiraUiTapSeq {})))
+    }
+    var seq = nativeRecover<KiraUiTapSeq>(kiraUiStateSlotGet(kiraUiTapSeqSlotKey()))
+    seq.next = seq.next + 1
+    return 600000 + seq.next
+}
+
+// Default hover highlight painted behind a Tappable while the pointer is over it:
+// a subtle white wash (~8% alpha), transparent otherwise. Foundation forces a
+// rebuild when the hovered region changes, so the fill flips as the pointer
+// crosses button boundaries.
+function kiraUiHoverWash() -> KiraUIFoundation.Color {
+    return KiraUIFoundation.Color {
+        r: 1.0
+        g: 1.0
+        b: 1.0
+        a: 0.08
+    }
+}
+
+function kiraUiTapBackground(key: Int) -> KiraUIFoundation.Color {
+    if kiraUiHovered(key) {
+        return kiraUiHoverWash()
+    }
+    return transparentFoundationColor()
+}
+
+// --- Tappable ---------------------------------------------------------------
+
+// Hug-sized clickable with an explicit key. Fires `onPress` on a left click and
+// paints the default hover wash behind itself while hovered.
+Widget TappableKeyed(key: Int, onPress: () -> Void, radius: Float) {
+    @Content let children: [Widget]
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
+        let k = key
+        let press = onPress
+        return KiraUIFoundation.FoundationView {
+            kind: KiraUIFoundation.FoundationViewKind.HitArea
+            key: k
+            width: KiraUIFoundation.SizeMode.Hug
+            height: KiraUIFoundation.SizeMode.Hug
+            backgroundFill: kiraUiTapBackground(k)
+            radius: radius
+            onPress: press
+            children: loweredChildren(context, children)
+        }
+    }
+}
+
+// Hug-sized clickable with an auto-assigned stable per-build key.
+Widget Tappable(onPress: () -> Void, radius: Float) {
+    @Content let children: [Widget]
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
+        let k = kiraUiTapSeqKey()
+        let press = onPress
+        return KiraUIFoundation.FoundationView {
+            kind: KiraUIFoundation.FoundationViewKind.HitArea
+            key: k
+            width: KiraUIFoundation.SizeMode.Hug
+            height: KiraUIFoundation.SizeMode.Hug
+            backgroundFill: kiraUiTapBackground(k)
+            radius: radius
+            onPress: press
+            children: loweredChildren(context, children)
+        }
+    }
+}
+
+// Fill-width clickable with an explicit key (list / tree rows).
+Widget TappableFillKeyed(key: Int, onPress: () -> Void, radius: Float) {
+    @Content let children: [Widget]
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
+        let k = key
+        let press = onPress
+        return KiraUIFoundation.FoundationView {
+            kind: KiraUIFoundation.FoundationViewKind.HitArea
+            key: k
+            width: KiraUIFoundation.SizeMode.Fill
+            height: KiraUIFoundation.SizeMode.Hug
+            backgroundFill: kiraUiTapBackground(k)
+            radius: radius
+            onPress: press
+            children: loweredChildren(context, children)
+        }
+    }
+}
+
+// Fill-width clickable with an auto-assigned stable per-build key.
+Widget TappableFill(onPress: () -> Void, radius: Float) {
+    @Content let children: [Widget]
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
+        let k = kiraUiTapSeqKey()
+        let press = onPress
+        return KiraUIFoundation.FoundationView {
+            kind: KiraUIFoundation.FoundationViewKind.HitArea
+            key: k
+            width: KiraUIFoundation.SizeMode.Fill
+            height: KiraUIFoundation.SizeMode.Hug
+            backgroundFill: kiraUiTapBackground(k)
+            radius: radius
+            onPress: press
+            children: loweredChildren(context, children)
+        }
+    }
+}
+
+// --- Expanded ---------------------------------------------------------------
+
+// Fills leftover main-axis space in a stack (an Expanded node with the given
+// flex weight). Columns/rows mixing fixed and flexing children lay out reliably
+// when the flexing children are built ALL-flex with weights; flex 1 is the plain
+// "take the rest" case.
+Widget Expanded(flex: Int) {
+    @Content let content: Widget
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
+        return KiraUIFoundation.FoundationView {
+            kind: KiraUIFoundation.FoundationViewKind.Expanded
+            width: KiraUIFoundation.SizeMode.Fill
+            height: KiraUIFoundation.SizeMode.Fill
+            flex: flex
+            children: [content.lower(context)]
+        }
+    }
+}
+
+// --- SurfaceBox -------------------------------------------------------------
+
+// A painted Surface container with explicit size, fill, border and corner
+// radius, wrapping its children. The general replacement for raw
+// FoundationView.Surface construction (menu cards, hover layers, badges,
+// transparent spacer gaps). Pass SizeMode.Fixed(...) for a fixed box or
+// SizeMode.Fill to stretch to the parent.
+Widget SurfaceBox(
+    fill: Color,
+    border: Color,
+    borderWidth: Float,
+    radius: Float,
+    width: KiraUIFoundation.SizeMode,
+    height: KiraUIFoundation.SizeMode,
+) {
+    @Content let children: [Widget]
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
+        return KiraUIFoundation.FoundationView {
+            kind: KiraUIFoundation.FoundationViewKind.Surface
+            width: width
+            height: height
+            fill: foundationColor(fill)
+            border: foundationColor(border)
+            borderWidth: borderWidth
+            radius: radius
+            children: loweredChildren(context, children)
+        }
+    }
+}
+
+// --- GestureTextureView -----------------------------------------------------
+
+// An external KiraGraphics texture (an engine viewport render target) wrapped in
+// a gesture hit area: scroll drives `onScroll`, and a held drag past the
+// threshold drives `onDragStart` / `onDragMove` / `onDragEnd` (dx/dy deltas).
+// The texture fills whatever box the layout gives it; the whole region flexes
+// like a Fill leaf. `key` must be nonzero and stable across frames.
+Widget GestureTextureView(
+    key: Int,
+    texture: Int,
+    radius: Float,
+    onScroll: (Float, Float) -> Void,
+    onDragStart: (Float, Float) -> Void,
+    onDragMove: (Float, Float) -> Void,
+    onDragEnd: (Float, Float) -> Void,
+) {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
+        let ignored = context.frameCount
+        let k = key
+        let cornerRadius = radius
+        let scroll = onScroll
+        let dragStart = onDragStart
+        let dragMove = onDragMove
+        let dragEnd = onDragEnd
+        var kids: [KiraUIFoundation.FoundationView] = []
+        kids.append(KiraUIFoundation.FoundationView {
+            kind: KiraUIFoundation.FoundationViewKind.TextureView
+            width: KiraUIFoundation.SizeMode.Fill
+            height: KiraUIFoundation.SizeMode.Fill
+            flex: 1
+            texture: texture
+            textureOpacity: 1.0
+            radius: cornerRadius
+        })
+        return KiraUIFoundation.FoundationView {
+            kind: KiraUIFoundation.FoundationViewKind.HitArea
+            key: k
+            width: KiraUIFoundation.SizeMode.Fill
+            height: KiraUIFoundation.SizeMode.Fill
+            flex: 1
+            onScroll: scroll
+            interaction: KiraUIFoundation.FoundationInteraction {
+                onDragStart: dragStart
+                onDragMove: dragMove
+                onDragEnd: dragEnd
+            }
+            children: move kids
+        }
+    }
+}
