@@ -429,27 +429,29 @@ function identityEffect(effect: borrow KiraUIFoundation.FoundationEffect) -> Kir
     }
 }
 
+// A modifier rebuilds the view it is given, because a struct literal that reads
+// several fields of one view cannot also move an array out of it. These four
+// carry that rebuild where there is nothing to change — `identityChildren` and
+// `identityEffects` say so in their names, and `viewWithFill`, `viewWithColor`
+// and `viewWithFont` reach for the opacity walk at 1.0 for the same reason.
+//
+// The argument is owned, so handing it straight back *is* the rebuild. Doing it
+// element by element made every such modifier cost the whole subtree beneath
+// it, and a stack of them cost it once each: `viewWithOpacity` was the single
+// largest source of copying in a Project Matter frame.
+
 function identityChildren(children: [KiraUIFoundation.FoundationView]) -> [KiraUIFoundation.FoundationView] {
-    var adjusted: [KiraUIFoundation.FoundationView] = []
-    var index = 0
-    while index < children.count {
-        adjusted.append(children[index])
-        index = index + 1
-    }
-    return adjusted
+    return children
 }
 
 function identityEffects(effects: [KiraUIFoundation.FoundationEffect]) -> [KiraUIFoundation.FoundationEffect] {
-    var adjusted: [KiraUIFoundation.FoundationEffect] = []
-    var index = 0
-    while index < effects.count {
-        adjusted.append(identityEffect(effects[index]))
-        index = index + 1
-    }
-    return adjusted
+    return effects
 }
 
 function effectsWithOpacity(effects: [KiraUIFoundation.FoundationEffect], opacity: Float) -> [KiraUIFoundation.FoundationEffect] {
+    if opacity == 1.0 {
+        return effects
+    }
     var adjusted: [KiraUIFoundation.FoundationEffect] = []
     var index = 0
     while index < effects.count {
@@ -460,6 +462,9 @@ function effectsWithOpacity(effects: [KiraUIFoundation.FoundationEffect], opacit
 }
 
 function childrenWithOpacity(children: [KiraUIFoundation.FoundationView], opacity: Float) -> [KiraUIFoundation.FoundationView] {
+    if opacity == 1.0 {
+        return children
+    }
     var adjusted: [KiraUIFoundation.FoundationView] = []
     var index = 0
     while index < children.count {
@@ -469,7 +474,13 @@ function childrenWithOpacity(children: [KiraUIFoundation.FoundationView], opacit
     return adjusted
 }
 
+// Every field this walk touches is scaled by `opacity`, and scaling by one
+// leaves each exactly where it was — so at full opacity the view it would build
+// is the view it was given.
 function viewWithOpacity(view: KiraUIFoundation.FoundationView, opacity: Float) -> KiraUIFoundation.FoundationView {
+    if opacity == 1.0 {
+        return view
+    }
     return KiraUIFoundation.FoundationView {
         kind: view.kind
         key: view.key
