@@ -2,7 +2,7 @@ import Foundation
 import KiraGraphics
 import KiraUIFoundation
 
-function RunWidgetApp(root: Widget) {
+function RunWidgetApp(root: Any Widget) {
     RunKiraApp(KiraUIApp(
         name: "Kira UI",
         content: root
@@ -16,8 +16,8 @@ function RunWidgetApp(root: Widget) {
 // layout, and batched compositor absorb the per-frame rebuild cost.
 //
 // The builder returns a `KiraUIApp` (not a bare widget) because a function TYPE cannot carry
-// `Any Widget` today, while a struct field can hold the bare `Widget` family.
-function kiraUiNoopEngineFrame(frame: borrow mut KiraUIFoundation.GraphicsFrame) {
+// `Any Widget` today; the app struct stores the existential widget value instead.
+function kiraUiNoopEngineFrame(frame: borrow mut KiraGraphics.RenderFrame) {
     let ignored = frame.backend
     return
 }
@@ -29,7 +29,7 @@ function RunWidgetInteractiveApp(
     rootBuilder: borrow () -> KiraUIApp,
     // Host hook: runs first every frame, before the UI pass — where a hosting engine ticks
     // and renders its offscreen viewport texture (shown via TextureViewport).
-    engineFrame: borrow (borrow mut KiraUIFoundation.GraphicsFrame) -> Void = kiraUiNoopEngineFrame,
+    engineFrame: borrow (borrow mut KiraGraphics.RenderFrame) -> Void = kiraUiNoopEngineFrame,
     showFpsOverlay: Bool = true,
     // See RunFoundationInteractiveApp: fixed-structure hosts (editor chrome) pass
     // false so resize-only frames skip the widget rebuild and reconcile.
@@ -39,17 +39,43 @@ function RunWidgetInteractiveApp(
         let build: borrow () -> KiraUIApp = rootBuilder
         let app = build()
         let root = app.content
-        return root.lower(context)
-    }, engineFrame, showFpsOverlay, rebuildOnResize)
+        return root.lower(context, ModifierContext {})
+    },
+        engineFrame: engineFrame,
+        needsRebuild: foundationNoContinuousRebuild,
+        showFpsOverlay: showFpsOverlay,
+        showGraphicsHud: false,
+        rebuildOnResize: rebuildOnResize
+    )
     return
+}
+
+// Text as its Unicode scalars, and back again.
+//
+// An app that edits text (a rename field, an inline label editor) works in
+// codepoints rather than bytes so a caret index means one character. That is
+// the same conversion `TextField` runs, and re-exporting it here is what lets an
+// app do its own editing without naming the foundation package: KiraUI and
+// KiraGraphics are the whole surface an app is meant to see.
+function kiraUiStringToCodepoints(content: borrow String) -> [Int] {
+    return KiraUIFoundation.foundationStringToCodepoints(content)
+}
+
+// The `[start, end)` slice of `codes` as a string. Out-of-range indices
+// contribute nothing, so a caret range never has to be clamped first.
+function kiraUiStringFromCodepoints(codes: borrow [Int], start: Int, end: Int) -> String {
+    return KiraUIFoundation.foundationStringFromCodepoints(codes, start, end)
 }
 
 function RunKiraApp(app: KiraUIApp) {
     let ignoredTitle = app.name.count
     let root = app.content
     let context = KiraUIFoundation.FoundationUiContext {}
-    let view = root.lower(context)
-    RunFoundationApp(move view)
+    // The app content owns its own surface and margins. Adding an implicit
+    // padded shell here leaves the renderer's default dark clear color visible
+    // as a black frame around themed roots.
+    let view = root.lower(context, ModifierContext {})
+    RunFoundationApp(move view, .Windowed, false)
     let ignored = ignoredTitle + 0
     return
 }

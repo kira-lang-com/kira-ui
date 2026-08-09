@@ -1,0 +1,143 @@
+import KiraUI
+import KiraUIFoundation
+
+function checkModifier(label: String, condition: Bool) {
+    if condition {
+        print("PASS: " + label)
+    } else {
+        print("FAIL: " + label)
+    }
+    return
+}
+
+function checkContextPropagation() {
+    let themeDelta = modifierDeltaTheme(DefaultTheme {})
+    let themed = modifierContextApply(ModifierContext {}, move themeDelta)
+    let themedChildren = modifierContextForChildren(themed)
+    checkModifier("theme is inherited", themedChildren.hasTheme)
+
+    let blueDelta = modifierDeltaThemeColor(ThemeColor.Blue)
+    let blue = modifierContextApply(ModifierContext {}, move blueDelta)
+    let greenDelta = modifierDeltaThemeColor(ThemeColor.Green)
+    let green = modifierContextApply(blue, move greenDelta)
+    checkModifier("nearest theme color wins", green.themeColor == ThemeColor.Green)
+    checkModifier(
+        "theme color remains inherited",
+        modifierContextForChildren(green).themeColor == ThemeColor.Green
+    )
+
+    let materialDelta = modifierDeltaMaterial(Material.Frosted)
+    let frosted = modifierContextApply(ModifierContext {}, move materialDelta)
+    checkModifier("material is scoped", frosted.hasMaterial && modifierContextForChildren(frosted).hasMaterial == false)
+
+    let redDelta = modifierDeltaForegroundColor(ThemeColor.Red)
+    let red = modifierContextApply(ModifierContext {}, move redDelta)
+    let redChildren = modifierContextForChildren(red)
+    checkModifier("foreground is scoped", red.hasForegroundColor && redChildren.hasForegroundColor == false)
+
+    let parentFontDelta = modifierDeltaFont(17.0, FontWeight.Regular)
+    let parentFont = modifierContextApply(ModifierContext {}, move parentFontDelta)
+    let childFontContext = modifierContextForChildren(parentFont)
+    let childFontDelta = modifierDeltaFont(31.0, FontWeight.Bold)
+    let childFont = modifierContextApply(childFontContext, move childFontDelta)
+    checkModifier("font cascades", childFontContext.fontSize == 17.0)
+    checkModifier("nearer font wins", childFont.fontSize == 31.0)
+
+    let disabledDelta = modifierDeltaDisabled(true)
+    let disabled = modifierContextApply(ModifierContext {}, move disabledDelta)
+    let enabledDelta = modifierDeltaDisabled(false)
+    let stillDisabled = modifierContextApply(disabled, move enabledDelta)
+    checkModifier("disabled composes environmentally", stillDisabled.disabled)
+
+    let focusedDelta = modifierDeltaFocused(true)
+    let focused = modifierContextApply(ModifierContext {}, move focusedDelta)
+    let focusedChild = modifierContextForChildren(focused)
+    checkModifier("focus is isolated", focused.hasFocused && focusedChild.hasFocused == false)
+    return
+}
+
+function checkLoweringPropagation() {
+    let foundationContext = KiraUIFoundation.FoundationUiContext {}
+    let styled = VStack(spacingValue = 0.0) {
+        Text("Parent font")
+        Text("Child font").font(size = 31.0, weight = FontWeight.Bold)
+    }
+        .font(size = 17.0)
+        .themeColor(.Blue)
+    let styledView = styled.lower(foundationContext, ModifierContext {})
+    checkModifier("theme color reaches text", styledView.children[0].color.b == 1.0)
+    checkModifier("parent font reaches first child", styledView.children[0].size == 17.0)
+    checkModifier("explicit child font wins", styledView.children[1].size == 31.0)
+
+    let scoped = VStack(spacingValue = 0.0) {
+        Text("One")
+        Text("Two")
+    }
+        .foregroundColor(.Red)
+    let scopedView = scoped.lower(foundationContext, ModifierContext {})
+    checkModifier("scoped foreground leaves first child alone", scopedView.children[0].color.g == 0.96)
+    checkModifier("scoped foreground leaves second child alone", scopedView.children[1].color.g == 0.96)
+
+    let nested = VStack(spacingValue = 0.0) {
+        Card(material = Material.Flat) {
+            Text("Green")
+        }
+            .themeColor(.Green)
+        Text("Blue")
+    }
+        .themeColor(.Blue)
+    let nestedView = nested.lower(foundationContext, ModifierContext {})
+    checkModifier("nested theme color overrides parent", nestedView.children[0].children[0].color.g == 0.85)
+    checkModifier("parent theme color remains for sibling", nestedView.children[1].color.b == 1.0)
+
+    let ordered = Text("Order")
+        .themeColor(.Blue)
+        .themeColor(.Green)
+    let orderedView = ordered.lower(foundationContext, ModifierContext {})
+    checkModifier("nearest modifier in a chain wins", orderedView.color.g == 0.67)
+
+    let mixed = Text("Mixed")
+        .padding(4.0)
+        .themeColor(.Cyan)
+        .font(size = 19.0)
+    let mixedView = mixed.lower(foundationContext, ModifierContext {})
+    checkModifier("semantic values cross structural wrappers", mixedView.children[0].color.b == 0.82)
+    checkModifier("mixed chain preserves cascading font", mixedView.children[0].size == 19.0)
+
+    let opacityView = Text("Alpha")
+        .opacity(0.5)
+        .opacity(0.5)
+        .lower(foundationContext, ModifierContext {})
+    checkModifier("opacity composes without a tree walk", opacityView.color.a == 0.25)
+    return
+}
+
+// Button's label is intentionally an implementation detail of the control;
+// this fixture keeps the API expression in the compiler-checked test surface.
+function buttonNoop() {
+    return
+}
+
+function buttonForegroundFixture() -> Any Widget {
+    return Button(label = "Continue", role = .Normal, onPress = buttonNoop)
+        .foregroundColor(.Purple)
+        .focused(true)
+        .disabled(true)
+}
+
+function checkButtonPresentation() {
+    let foundationContext = KiraUIFoundation.FoundationUiContext {}
+    let buttonView = buttonForegroundFixture().lower(foundationContext, ModifierContext {})
+    checkModifier("button consumes scoped foreground locally", buttonView.children[0].color.r == 0.65)
+    checkModifier("button receives disabled environment", buttonView.disabled)
+    checkModifier("button receives isolated focus", buttonView.autofocus)
+    return
+}
+
+@Main
+function main() {
+    checkContextPropagation()
+    checkLoweringPropagation()
+    checkButtonPresentation()
+    return
+}

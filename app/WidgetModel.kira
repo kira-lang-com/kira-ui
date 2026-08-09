@@ -3,6 +3,7 @@ import KiraGraphics
 import Foundation
 import KiraUIFoundation
 
+@Derive(Copy)
 struct Color {
     let r: Float = 0.0
     let g: Float = 0.0
@@ -172,27 +173,39 @@ enum SurfaceShape {
     Squircle
 }
 
+enum ContentMargins {
+    automatic: Float = 0.0
+    fixed: Float
+}
+
 enum FontWeight {
     Regular
     SemiBold
     Bold
 }
 
+enum Distribution {
+    Start
+    Center
+    Stretch
+    Fill
+}
+
 struct KiraUIApp {
     let name: String
-    let content: Widget
+    let content: Any Widget
 }
 
 construct Widget {
-    @Required let body: Widget
+    @Required let body: Any Widget
 
     // Consuming: lowering a widget consumes the node (Rust `self` receiver).
     // Wrapper widgets expand `body` (which consumes self and partial-moves the
     // content channels out); leaf widgets drain their children arrays element
     // by element. The whole tree is single-owner and freed exactly once.
     @Consuming
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
-        return body.lower(context)
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        return body.lower(context, modifiers)
     }
 }
 
@@ -225,6 +238,136 @@ function defaultTextColor() -> KiraUIFoundation.Color {
     }
 }
 
+function themeColorAsColor(color: borrow ThemeColor) -> Color {
+    match color {
+        Default -> return colorWhite();
+        Secondary -> return colorSecondaryText();
+        Muted -> return colorMutedText();
+        Accent -> return colorTaupe();
+        Blue -> return colorBlue();
+        Green -> return colorGreen();
+        Purple -> return colorPurple();
+        Red -> return Color {
+            r: 0.95
+            g: 0.22
+            b: 0.28
+            a: 1.0
+        };
+        Danger -> return Color {
+            r: 0.96
+            g: 0.31
+            b: 0.37
+            a: 1.0
+        };
+        Yellow -> return colorYellow();
+        Cyan -> return colorCyan();
+        White -> return colorWhite();
+    }
+}
+
+function modifierTextColor(modifiers: borrow ModifierContext) -> KiraUIFoundation.Color {
+    if modifiers.hasTextColor {
+        return foundationColor(modifiers.textColor)
+    }
+    if modifiers.hasForegroundColor {
+        return modifierThemeColor(modifiers.foregroundColor, modifiers)
+    }
+    if modifiers.hasThemeColor {
+        return modifierThemeColor(modifiers.themeColor, modifiers)
+    }
+    if modifiers.hasTheme {
+        let tokens = modifiers.theme.tokens()
+        return foundationColor(tokens.foregroundPrimary)
+    }
+    return defaultTextColor()
+}
+
+function modifierThemeColor(
+    color: ThemeColor,
+    modifiers: borrow ModifierContext,
+) -> KiraUIFoundation.Color {
+    if modifiers.hasTheme {
+        let tokens = modifiers.theme.tokens()
+        match color {
+            Default -> return foundationColor(tokens.foregroundPrimary);
+            Secondary -> return foundationColor(tokens.foregroundSecondary);
+            Muted -> return foundationColor(tokens.foregroundDisabled);
+            Accent -> return foundationColor(tokens.accent);
+            Blue -> return foundationColor(tokens.accent);
+            Green -> return foundationColor(tokens.success);
+            Purple -> return foundationColor(themeColorAsColor(color));
+            Red -> return foundationColor(tokens.danger);
+            Danger -> return foundationColor(tokens.danger);
+            Yellow -> return foundationColor(tokens.warning);
+            Cyan -> return foundationColor(themeColorAsColor(color));
+            White -> return foundationColor(tokens.foregroundPrimary);
+        }
+    }
+    return foundationColor(themeColorAsColor(color))
+}
+
+function modifierThemeSurface(
+    surface: borrow ThemeSurface,
+    modifiers: borrow ModifierContext,
+) -> KiraUIFoundation.Color {
+    if modifiers.hasTheme {
+        let tokens = modifiers.theme.tokens()
+        match surface {
+            Canvas -> return foundationColor(tokens.backgroundCanvas);
+            Surface -> return foundationColor(tokens.backgroundSurface);
+            Raised -> return foundationColor(tokens.backgroundRaised);
+            Control -> return foundationColor(tokens.backgroundControl);
+            Overlay -> return foundationColor(tokens.backgroundOverlay);
+        }
+    }
+    return KiraUIFoundation.Color {
+        r: 0.0
+        g: 0.0
+        b: 0.0
+        a: 0.0
+    }
+}
+
+function modifierSurfaceBorder(
+    fallback: KiraUIFoundation.Color,
+    modifiers: borrow ModifierContext,
+) -> KiraUIFoundation.Color {
+    if modifiers.hasThemeBorder && modifiers.hasTheme {
+        let tokens = modifiers.theme.tokens()
+        match modifiers.themeBorder {
+            Subtle -> return modifierColor(foundationColor(tokens.borderSubtle), modifiers);
+            Standard -> return modifierColor(foundationColor(tokens.borderStandard), modifiers);
+            Strong -> return modifierColor(foundationColor(tokens.borderStrong), modifiers);
+            Focus -> return modifierColor(foundationColor(tokens.borderFocus), modifiers);
+        }
+    }
+    return colorWithOpacity(fallback, modifiers.opacity)
+}
+
+function modifierSurfaceFill(
+    fallback: KiraUIFoundation.Color,
+    modifiers: borrow ModifierContext,
+) -> KiraUIFoundation.Color {
+    if modifiers.hasFill {
+        return modifierColor(foundationColor(modifiers.fillColor), modifiers)
+    }
+    if modifiers.hasSurfaceTone {
+        return modifierColor(modifierThemeSurface(modifiers.surfaceTone, modifiers), modifiers)
+    }
+    return colorWithOpacity(fallback, modifiers.opacity)
+}
+
+function modifierThemeBackground(
+    fallback: KiraUIFoundation.Color,
+    modifiers: borrow ModifierContext,
+) -> KiraUIFoundation.Color {
+    if modifiers.hasTheme {
+        let tokens = modifiers.theme.tokens()
+        return modifierColor(foundationColor(tokens.backgroundCanvas), modifiers)
+    }
+    return colorWithOpacity(fallback, modifiers.opacity)
+}
+
 function foundationColor(color: Color) -> KiraUIFoundation.Color {
     return KiraUIFoundation.Color {
         r: color.r
@@ -234,7 +377,7 @@ function foundationColor(color: Color) -> KiraUIFoundation.Color {
     }
 }
 
-function foundationFontWeight(weight: FontWeight) -> Float {
+function foundationFontWeight(weight: borrow FontWeight) -> Float {
     match weight {
         Regular -> return 400.0;
         SemiBold -> return 600.0;
@@ -242,11 +385,11 @@ function foundationFontWeight(weight: FontWeight) -> Float {
     }
 }
 
-function foundationMaterial(material: Material) -> KiraUIFoundation.FoundationMaterial {
+function foundationMaterial(material: borrow Material) -> KiraUIFoundation.FoundationMaterial {
     match material {
         Flat -> return KiraUIFoundation.FoundationMaterial.Flat;
         Frosted -> return KiraUIFoundation.FoundationMaterial.Frosted;
-        LayeredGlass -> return KiraUIFoundation.FoundationMaterial.LayeredGlass;
+        LayeredGlass -> return KiraUIFoundation.FoundationMaterial.LiquidGlass;
     }
 }
 
@@ -266,7 +409,25 @@ function uniformInsets(length: Float) -> KiraUIFoundation.EdgeInsets {
     }
 }
 
-function cardFill(material: Material) -> KiraUIFoundation.Color {
+function contentMarginsInset(margins: ContentMargins) -> Float {
+    match margins {
+        automatic(extra) -> {
+            var inset = extra
+            if inset < 0.0 {
+                inset = 0.0
+            }
+            return inset
+        }
+        fixed(length) -> {
+            if length < 0.0 {
+                return 0.0
+            }
+            return length
+        }
+    }
+}
+
+function cardFill(material: borrow Material) -> KiraUIFoundation.Color {
     match material {
         Flat -> return KiraUIFoundation.Color {
             r: 1.0
@@ -289,7 +450,7 @@ function cardFill(material: Material) -> KiraUIFoundation.Color {
     }
 }
 
-function cardBorder(material: Material) -> KiraUIFoundation.Color {
+function cardBorder(material: borrow Material) -> KiraUIFoundation.Color {
     match material {
         Flat -> return KiraUIFoundation.Color {
             r: 0.91
@@ -312,7 +473,7 @@ function cardBorder(material: Material) -> KiraUIFoundation.Color {
     }
 }
 
-function cardEffects(material: Material) -> [KiraUIFoundation.FoundationEffect] {
+function cardEffects(material: borrow Material) -> [KiraUIFoundation.FoundationEffect] {
     match material {
         Flat -> return [];
         Frosted -> return [];
@@ -333,12 +494,14 @@ function cardEffects(material: Material) -> [KiraUIFoundation.FoundationEffect] 
 
 function loweredChildren(
     context: borrow KiraUIFoundation.FoundationUiContext,
+    modifiers: borrow ModifierContext,
     widgets: [Any Widget],
 ) -> [KiraUIFoundation.FoundationView] {
     var children: [KiraUIFoundation.FoundationView] = []
+    let childModifiers = modifierContextForChildren(modifiers)
     var index = 0
     while index < widgets.count {
-        children.append(widgets[index].lower(context))
+        children.append(widgets[index].lower(context, childModifiers))
         index = index + 1
     }
     return children
@@ -410,35 +573,9 @@ function effectWithOpacity(effect: borrow KiraUIFoundation.FoundationEffect, opa
     }
 }
 
-function identityEffect(effect: borrow KiraUIFoundation.FoundationEffect) -> KiraUIFoundation.FoundationEffect {
-    match effect {
-        BackdropGlow(glow) -> {
-            return KiraUIFoundation.FoundationEffect.BackdropGlow(KiraUIFoundation.Glow {
-                color: glow.color
-                radius: glow.radius
-                intensity: glow.intensity
-            })
-        }
-        LayerGlow(glow) -> {
-            return KiraUIFoundation.FoundationEffect.LayerGlow(KiraUIFoundation.Glow {
-                color: glow.color
-                radius: glow.radius
-                intensity: glow.intensity
-            })
-        }
-    }
-}
-
-// A modifier rebuilds the view it is given, because a struct literal that reads
-// several fields of one view cannot also move an array out of it. These four
-// carry that rebuild where there is nothing to change — `identityChildren` and
-// `identityEffects` say so in their names, and `viewWithFill`, `viewWithColor`
-// and `viewWithFont` reach for the opacity walk at 1.0 for the same reason.
-//
-// The argument is owned, so handing it straight back *is* the rebuild. Doing it
-// element by element made every such modifier cost the whole subtree beneath
-// it, and a stack of them cost it once each: `viewWithOpacity` was the single
-// largest source of copying in a Project Matter frame.
+// Structural modifiers rebuild one FoundationView node to change its layout or
+// surface shape. Their children are transferred unchanged; semantic modifiers
+// are consumed before lowering and never walk a completed descendant tree.
 
 function identityChildren(children: [KiraUIFoundation.FoundationView]) -> [KiraUIFoundation.FoundationView] {
     return children
@@ -448,169 +585,27 @@ function identityEffects(effects: [KiraUIFoundation.FoundationEffect]) -> [KiraU
     return effects
 }
 
-function effectsWithOpacity(effects: [KiraUIFoundation.FoundationEffect], opacity: Float) -> [KiraUIFoundation.FoundationEffect] {
-    if opacity == 1.0 {
+function modifierColor(
+    color: KiraUIFoundation.Color,
+    modifiers: borrow ModifierContext,
+) -> KiraUIFoundation.Color {
+    return colorWithOpacity(color, modifiers.opacity)
+}
+
+function modifierEffects(
+    effects: [KiraUIFoundation.FoundationEffect],
+    modifiers: borrow ModifierContext,
+) -> [KiraUIFoundation.FoundationEffect] {
+    if modifiers.opacity == 1.0 {
         return effects
     }
     var adjusted: [KiraUIFoundation.FoundationEffect] = []
     var index = 0
     while index < effects.count {
-        adjusted.append(effectWithOpacity(effects[index], opacity))
+        adjusted.append(effectWithOpacity(effects[index], modifiers.opacity))
         index = index + 1
     }
     return adjusted
-}
-
-function childrenWithOpacity(children: [KiraUIFoundation.FoundationView], opacity: Float) -> [KiraUIFoundation.FoundationView] {
-    if opacity == 1.0 {
-        return children
-    }
-    var adjusted: [KiraUIFoundation.FoundationView] = []
-    var index = 0
-    while index < children.count {
-        adjusted.append(viewWithOpacity(children[index], opacity))
-        index = index + 1
-    }
-    return adjusted
-}
-
-// Every field this walk touches is scaled by `opacity`, and scaling by one
-// leaves each exactly where it was — so at full opacity the view it would build
-// is the view it was given.
-function viewWithOpacity(view: KiraUIFoundation.FoundationView, opacity: Float) -> KiraUIFoundation.FoundationView {
-    if opacity == 1.0 {
-        return view
-    }
-    return KiraUIFoundation.FoundationView {
-        kind: view.kind
-        key: view.key
-        children: childrenWithOpacity(view.children, opacity)
-        width: view.width
-        height: view.height
-        flex: view.flex
-        gap: view.gap
-        padding: view.padding
-        crossAxisAlignment: view.crossAxisAlignment
-        alignment: view.alignment
-        fill: colorWithOpacity(view.fill, opacity)
-        border: colorWithOpacity(view.border, opacity)
-        borderWidth: view.borderWidth
-        radius: view.radius
-        shape: view.shape
-        material: view.material
-        effects: effectsWithOpacity(view.effects, opacity)
-        clipContent: view.clipContent
-        content: view.content
-        color: colorWithOpacity(view.color, opacity)
-        size: view.size
-        weight: view.weight
-        disabled: view.disabled
-        focusable: view.focusable
-        autofocus: view.autofocus
-        onPress: view.onPress
-        onTextInput: view.onTextInput
-        onTextCodepoint: view.onTextCodepoint
-        onBackspace: view.onBackspace
-        onSubmit: view.onSubmit
-        onKey: view.onKey
-        onScroll: view.onScroll
-        minLength: view.minLength
-        interaction: view.interaction
-        texture: view.texture
-        textureOpacity: view.textureOpacity
-    }
-}
-
-function childrenWithFont(children: [KiraUIFoundation.FoundationView], size: Float, weight: Float) -> [KiraUIFoundation.FoundationView] {
-    var adjusted: [KiraUIFoundation.FoundationView] = []
-    var index = 0
-    while index < children.count {
-        adjusted.append(viewWithFont(children[index], size, weight))
-        index = index + 1
-    }
-    return adjusted
-}
-
-function viewWithFont(view: KiraUIFoundation.FoundationView, size: Float, weight: Float) -> KiraUIFoundation.FoundationView {
-    return KiraUIFoundation.FoundationView {
-        kind: view.kind
-        key: view.key
-        children: childrenWithFont(view.children, size, weight)
-        width: view.width
-        height: view.height
-        flex: view.flex
-        gap: view.gap
-        padding: view.padding
-        crossAxisAlignment: view.crossAxisAlignment
-        alignment: view.alignment
-        fill: view.fill
-        border: view.border
-        borderWidth: view.borderWidth
-        radius: view.radius
-        shape: view.shape
-        material: view.material
-        effects: effectsWithOpacity(view.effects, 1.0)
-        clipContent: view.clipContent
-        content: view.content
-        color: view.color
-        size: size
-        weight: weight
-        disabled: view.disabled
-        focusable: view.focusable
-        autofocus: view.autofocus
-        onPress: view.onPress
-        onTextInput: view.onTextInput
-        onTextCodepoint: view.onTextCodepoint
-        onBackspace: view.onBackspace
-        onSubmit: view.onSubmit
-        onKey: view.onKey
-        onScroll: view.onScroll
-        minLength: view.minLength
-        interaction: view.interaction
-        texture: view.texture
-        textureOpacity: view.textureOpacity
-    }
-}
-
-function viewWithFill(view: KiraUIFoundation.FoundationView, color: KiraUIFoundation.Color) -> KiraUIFoundation.FoundationView {
-    return KiraUIFoundation.FoundationView {
-        kind: view.kind
-        key: view.key
-        children: childrenWithOpacity(view.children, 1.0)
-        width: view.width
-        height: view.height
-        flex: view.flex
-        gap: view.gap
-        padding: view.padding
-        crossAxisAlignment: view.crossAxisAlignment
-        alignment: view.alignment
-        fill: color
-        border: view.border
-        borderWidth: view.borderWidth
-        radius: view.radius
-        shape: view.shape
-        material: view.material
-        effects: effectsWithOpacity(view.effects, 1.0)
-        clipContent: view.clipContent
-        content: view.content
-        color: color
-        size: view.size
-        weight: view.weight
-        disabled: view.disabled
-        focusable: view.focusable
-        autofocus: view.autofocus
-        onPress: view.onPress
-        onTextInput: view.onTextInput
-        onTextCodepoint: view.onTextCodepoint
-        onBackspace: view.onBackspace
-        onSubmit: view.onSubmit
-        onKey: view.onKey
-        onScroll: view.onScroll
-        minLength: view.minLength
-        interaction: view.interaction
-        texture: view.texture
-        textureOpacity: view.textureOpacity
-    }
 }
 
 function viewWithSurfaceRadius(view: KiraUIFoundation.FoundationView, radius: Float) -> KiraUIFoundation.FoundationView {
@@ -636,6 +631,11 @@ function viewWithSurfaceRadius(view: KiraUIFoundation.FoundationView, radius: Fl
         content: view.content
         color: view.color
         size: view.size
+        inkLeft: view.inkLeft
+        inkRight: view.inkRight
+        inkTop: view.inkTop
+        inkBottom: view.inkBottom
+        lineHeight: view.lineHeight
         weight: view.weight
         disabled: view.disabled
         focusable: view.focusable
@@ -677,6 +677,11 @@ function viewWithSurfaceShape(view: KiraUIFoundation.FoundationView, shape: Surf
         content: view.content
         color: view.color
         size: view.size
+        inkLeft: view.inkLeft
+        inkRight: view.inkRight
+        inkTop: view.inkTop
+        inkBottom: view.inkBottom
+        lineHeight: view.lineHeight
         weight: view.weight
         disabled: view.disabled
         focusable: view.focusable
@@ -718,6 +723,11 @@ function viewWithSurfaceBorder(view: KiraUIFoundation.FoundationView, color: Kir
         content: view.content
         color: view.color
         size: view.size
+        inkLeft: view.inkLeft
+        inkRight: view.inkRight
+        inkTop: view.inkTop
+        inkBottom: view.inkBottom
+        lineHeight: view.lineHeight
         weight: view.weight
         disabled: view.disabled
         focusable: view.focusable
@@ -759,6 +769,11 @@ function viewWithWidth(view: KiraUIFoundation.FoundationView, width: KiraUIFound
         content: view.content
         color: view.color
         size: view.size
+        inkLeft: view.inkLeft
+        inkRight: view.inkRight
+        inkTop: view.inkTop
+        inkBottom: view.inkBottom
+        lineHeight: view.lineHeight
         weight: view.weight
         disabled: view.disabled
         focusable: view.focusable
@@ -800,6 +815,11 @@ function viewWithHeight(view: KiraUIFoundation.FoundationView, height: KiraUIFou
         content: view.content
         color: view.color
         size: view.size
+        inkLeft: view.inkLeft
+        inkRight: view.inkRight
+        inkTop: view.inkTop
+        inkBottom: view.inkBottom
+        lineHeight: view.lineHeight
         weight: view.weight
         disabled: view.disabled
         focusable: view.focusable
@@ -841,6 +861,62 @@ function viewWithSurfacePadding(view: KiraUIFoundation.FoundationView, length: F
         content: view.content
         color: view.color
         size: view.size
+        inkLeft: view.inkLeft
+        inkRight: view.inkRight
+        inkTop: view.inkTop
+        inkBottom: view.inkBottom
+        lineHeight: view.lineHeight
+        weight: view.weight
+        disabled: view.disabled
+        focusable: view.focusable
+        autofocus: view.autofocus
+        onPress: view.onPress
+        onTextInput: view.onTextInput
+        onTextCodepoint: view.onTextCodepoint
+        onBackspace: view.onBackspace
+        onSubmit: view.onSubmit
+        onKey: view.onKey
+        onScroll: view.onScroll
+        minLength: view.minLength
+        interaction: view.interaction
+        texture: view.texture
+        textureOpacity: view.textureOpacity
+    }
+}
+
+function viewWithContentMargins(view: KiraUIFoundation.FoundationView, inset: Float) -> KiraUIFoundation.FoundationView {
+    return KiraUIFoundation.FoundationView {
+        kind: view.kind
+        key: view.key
+        children: identityChildren(view.children)
+        width: view.width
+        height: view.height
+        flex: view.flex
+        gap: view.gap
+        padding: KiraUIFoundation.EdgeInsets {
+            top: view.padding.top + inset
+            trailing: view.padding.trailing + inset
+            bottom: view.padding.bottom + inset
+            leading: view.padding.leading + inset
+        }
+        crossAxisAlignment: view.crossAxisAlignment
+        alignment: view.alignment
+        fill: view.fill
+        border: view.border
+        borderWidth: view.borderWidth
+        radius: view.radius
+        shape: view.shape
+        material: view.material
+        effects: identityEffects(view.effects)
+        clipContent: view.clipContent
+        content: view.content
+        color: view.color
+        size: view.size
+        inkLeft: view.inkLeft
+        inkRight: view.inkRight
+        inkTop: view.inkTop
+        inkBottom: view.inkBottom
+        lineHeight: view.lineHeight
         weight: view.weight
         disabled: view.disabled
         focusable: view.focusable
@@ -860,171 +936,496 @@ function viewWithSurfacePadding(view: KiraUIFoundation.FoundationView, length: F
 }
 
 Widget SurfacePaddingLayer(value: Float) {
-    @Content let content: Widget
+    @Content let content: Any Widget
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
-        return viewWithSurfacePadding(content.lower(context), value)
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let childModifiers = modifierContextForChildren(modifiers)
+        return viewWithSurfacePadding(content.lower(context, childModifiers), value)
+    }
+}
+
+Widget ContentMarginsLayer(value: ContentMargins) {
+    @Content let content: Any Widget
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let childModifiers = modifierContextForChildren(modifiers)
+        let view = content.lower(context, childModifiers)
+        let inset = contentMarginsInset(move value)
+        return viewWithContentMargins(move view, inset)
     }
 }
 
 Widget WidthLayer(value: Float) {
-    @Content let content: Widget
+    @Content let content: Any Widget
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
-        return viewWithWidth(content.lower(context), KiraUIFoundation.SizeMode.Fixed(value))
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let childModifiers = modifierContextForChildren(modifiers)
+        return viewWithWidth(content.lower(context, childModifiers), KiraUIFoundation.SizeMode.Fixed(value))
     }
 }
 
 Widget FillHeightLayer() {
-    @Content let content: Widget
+    @Content let content: Any Widget
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
-        return viewWithHeight(content.lower(context), KiraUIFoundation.SizeMode.Fill)
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let childModifiers = modifierContextForChildren(modifiers)
+        return viewWithHeight(content.lower(context, childModifiers), KiraUIFoundation.SizeMode.Fill)
     }
 }
 
 Widget HeightLayer(value: Float) {
-    @Content let content: Widget
+    @Content let content: Any Widget
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
-        return viewWithHeight(content.lower(context), KiraUIFoundation.SizeMode.Fixed(value))
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let childModifiers = modifierContextForChildren(modifiers)
+        return viewWithHeight(content.lower(context, childModifiers), KiraUIFoundation.SizeMode.Fixed(value))
+    }
+}
+
+function typographyImplementation(
+    style: TypographyStyle,
+    modifiers: borrow ModifierContext,
+) -> FontImplementation {
+    if modifiers.hasTheme {
+        return modifiers.theme.typography(style)
+    }
+    let values = defaultStyleTypographyTokens()
+    match style {
+        caption -> return values.caption;
+        body -> return values.body;
+        subheadline -> return values.subheadline;
+        bodyEmphasis -> return values.bodyEmphasis;
+        footnote -> return values.footnote;
+        overline -> return values.overline;
+        label -> return values.label;
+        section -> return values.section;
+        headline -> return values.headline;
+        title1 -> return values.title1;
+        title2 -> return values.title2;
+        title3 -> return values.title3;
+    }
+}
+
+function spacingImplementation(
+    style: Spacing,
+    modifiers: borrow ModifierContext,
+) -> Float {
+    if modifiers.hasTheme {
+        return modifiers.theme.spacing(style)
+    }
+    let values = defaultStyleSpacingTokens()
+    match style {
+        None -> return values.none;
+        ExtraSmall -> return values.extraSmall;
+        Small -> return values.small;
+        Medium -> return values.medium;
+        Large -> return values.large;
+        ExtraLarge -> return values.extraLarge;
+        Section -> return values.section;
     }
 }
 
 Widget Text(content: String) {
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let ignored = context.frameCount
+        var textSize = 16.0
+        var textLineHeight = 0.0
+        var textWeight = 400.0
+        if modifiers.hasFont {
+            textSize = modifiers.fontSize
+            textWeight = foundationFontWeight(modifiers.fontWeight)
+        } else if modifiers.hasTypography {
+            let selected = typographyImplementation(modifiers.typography, modifiers)
+            textSize = selected.size
+            textLineHeight = selected.lineHeight
+            textWeight = foundationFontWeight(selected.weight)
+        } else if modifiers.hasTheme {
+            let tokens = modifiers.theme.tokens()
+            textSize = tokens.bodySize
+            textLineHeight = KiraUIFoundation.foundationTextRunLineHeight(size: textSize)
+            textWeight = foundationFontWeight(tokens.bodyWeight)
+        }
         return KiraUIFoundation.FoundationView {
             kind: KiraUIFoundation.FoundationViewKind.Text
             content: content
-            color: defaultTextColor()
-            size: 16.0
-            weight: 400.0
+            color: modifierColor(modifierTextColor(modifiers), modifiers)
+            size: textSize
+            inkLeft: KiraUIFoundation.foundationTextRunInkLeft(content: content, size: textSize)
+            inkRight: KiraUIFoundation.foundationTextRunInkRight(content: content, size: textSize)
+            inkTop: KiraUIFoundation.foundationTextRunInkTop(content: content, size: textSize)
+            inkBottom: KiraUIFoundation.foundationTextRunInkBottom(content: content, size: textSize)
+            lineHeight: textLineHeight
+            weight: textWeight
+            disabled: modifiers.disabled
         }
     }
 }
 
-Widget AppSurface(padding: Float) {
-    @Content let content: Widget
+enum ButtonRole {
+    Normal
+    Destructive
+}
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
+// Button consumes the scoped foreground on its own presentation surface. Its
+// label is an implementation detail of the control, so it receives the
+// presentation context explicitly rather than inheriting foreground color
+// through the general child traversal.
+Widget Button(
+    label: String,
+    role: ButtonRole = ButtonRole.Normal,
+    onPress: () -> Void,
+) {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let k = kiraUiTapSeqKey()
+        let press = onPress
+        var buttonFill = KiraUIFoundation.Color {
+            r: 0.16
+            g: 0.18
+            b: 0.26
+            a: 1.0
+        }
+        if modifiers.hasTheme {
+            let tokens = modifiers.theme.tokens()
+            buttonFill = foundationColor(tokens.backgroundControl)
+        }
+        if modifiers.hasThemeColor {
+            buttonFill = modifierThemeColor(modifiers.themeColor, modifiers)
+        }
+        if modifiers.hasForegroundColor {
+            buttonFill = modifierThemeColor(modifiers.foregroundColor, modifiers)
+        }
+        match role {
+            Normal -> {}
+            Destructive -> {
+                if modifiers.hasTheme {
+                    let tokens = modifiers.theme.tokens()
+                    buttonFill = foundationColor(tokens.danger)
+                } else {
+                    buttonFill = KiraUIFoundation.Color {
+                        r: 0.82
+                        g: 0.12
+                        b: 0.18
+                        a: 1.0
+                    }
+                }
+            }
+        }
+        return buttonView(context, modifiers, k, move press, move label, move buttonFill)
+    }
+}
+
+function buttonView(
+    context: borrow KiraUIFoundation.FoundationUiContext,
+    modifiers: borrow ModifierContext,
+    key: Int,
+    press: () -> Void,
+    label: String,
+    fill: KiraUIFoundation.Color,
+) -> KiraUIFoundation.FoundationView {
+    var labelModifiers = modifierContextForPresentation(modifiers)
+    let labelDelta = modifierDeltaTextColor(colorWhite())
+    labelModifiers = modifierContextApply(labelModifiers, move labelDelta)
+    let labelView = Text(content: move label).lower(context, labelModifiers)
+    return KiraUIFoundation.FoundationView {
+        kind: KiraUIFoundation.FoundationViewKind.HitArea
+        key: key
+        width: KiraUIFoundation.SizeMode.Hug
+        height: KiraUIFoundation.SizeMode.Hug
+        backgroundFill: modifierSurfaceFill(move fill, modifiers)
+        border: modifierColor(KiraUIFoundation.Color {
+            r: 1.0
+            g: 1.0
+            b: 1.0
+            a: 0.16
+        }, modifiers)
+        borderWidth: 1.0
+        padding: KiraUIFoundation.EdgeInsets {
+            top: 10.0
+            trailing: 15.0
+            bottom: 10.0
+            leading: 15.0
+        }
+        radius: 10.0
+        disabled: modifiers.disabled
+        focusable: true
+        autofocus: modifiers.hasFocused && modifiers.focused
+        onPress: press
+        children: [labelView]
+    }
+}
+
+Widget AppSurface(
+    padding: Spacing = Spacing.None,
+    paddingValue: Float = -1.0,
+) {
+    @Content let content: Any Widget
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let childModifiers = modifierContextForChildren(modifiers)
+        var resolvedPadding = spacingImplementation(padding, modifiers)
+        if paddingValue >= 0.0 {
+            resolvedPadding = paddingValue
+        }
         return Surface(
-            children: [content.lower(context)],
+            children: [content.lower(context, childModifiers)],
             width: KiraUIFoundation.SizeMode.Fill,
             height: KiraUIFoundation.SizeMode.Fill,
             flex: 0,
-            fill: transparentFoundationColor(),
+            fill: modifierThemeBackground(KiraUIFoundation.Color {
+                r: 0.035
+                g: 0.04
+                b: 0.065
+                a: 1.0
+            }, modifiers),
             border: transparentFoundationColor(),
             borderWidth: 0.0,
             radius: 0.0,
             shape: KiraUIFoundation.FoundationShape.RegularRoundedRect,
             material: KiraUIFoundation.FoundationMaterial.Flat,
             effects: [],
-            padding: uniformInsets(padding),
+            padding: uniformInsets(resolvedPadding),
             clipContent: false
         )
     }
 }
 
-Widget VStack(spacing: Float) {
-    @Content let children: [Widget]
+Widget VStack(
+    spacing: Spacing = Spacing.Medium,
+    spacingValue: Float = -1.0,
+) {
+    @Content let children: [Any Widget]
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        var resolvedSpacing = spacingImplementation(spacing, modifiers)
+        if spacingValue >= 0.0 {
+            resolvedSpacing = spacingValue
+        }
         return Column(
-            children: loweredChildren(context, children),
+            children: loweredChildren(context, modifiers, children),
             width: KiraUIFoundation.SizeMode.Fill,
             height: KiraUIFoundation.SizeMode.Hug,
-            spacing: spacing,
+            spacing: resolvedSpacing,
             padding: KiraUIFoundation.EdgeInsets {},
             crossAxisAlignment: KiraUIFoundation.CrossAlignment.Start
         )
     }
 }
 
-Widget HStack(spacing: Float) {
-    @Content let children: [Widget]
+function hStackWidth(distribution: Distribution) -> KiraUIFoundation.SizeMode {
+    match distribution {
+        Fill -> return KiraUIFoundation.SizeMode.Fill;
+        Start -> return KiraUIFoundation.SizeMode.Fill;
+        Center -> return KiraUIFoundation.SizeMode.Fill;
+        Stretch -> return KiraUIFoundation.SizeMode.Fill;
+    }
+}
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
+function hStackHeight(distribution: Distribution) -> KiraUIFoundation.SizeMode {
+    match distribution {
+        Fill -> return KiraUIFoundation.SizeMode.Fill;
+        Start -> return KiraUIFoundation.SizeMode.Hug;
+        Center -> return KiraUIFoundation.SizeMode.Hug;
+        Stretch -> return KiraUIFoundation.SizeMode.Hug;
+    }
+}
+
+function hStackCrossAxisAlignment(distribution: Distribution) -> KiraUIFoundation.CrossAlignment {
+    match distribution {
+        Fill -> return KiraUIFoundation.CrossAlignment.Stretch;
+        Start -> return KiraUIFoundation.CrossAlignment.Start;
+        Center -> return KiraUIFoundation.CrossAlignment.Center;
+        Stretch -> return KiraUIFoundation.CrossAlignment.Stretch;
+    }
+}
+
+Widget HStack(
+    spacing: Spacing = Spacing.Medium,
+    spacingValue: Float = -1.0,
+    distribution: Distribution = Distribution.Center,
+) {
+    @Content let children: [Any Widget]
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        var resolvedSpacing = spacingImplementation(spacing, modifiers)
+        if spacingValue >= 0.0 {
+            resolvedSpacing = spacingValue
+        }
         return Row(
-            children: loweredChildren(context, children),
-            width: KiraUIFoundation.SizeMode.Fill,
-            height: KiraUIFoundation.SizeMode.Hug,
-            spacing: spacing,
+            children: loweredChildren(context, modifiers, children),
+            width: hStackWidth(distribution),
+            height: hStackHeight(distribution),
+            spacing: resolvedSpacing,
             padding: KiraUIFoundation.EdgeInsets {},
-            crossAxisAlignment: KiraUIFoundation.CrossAlignment.Center
+            crossAxisAlignment: hStackCrossAxisAlignment(distribution)
         )
     }
 }
 
-Widget HStackStretch(spacing: Float) {
-    @Content let children: [Widget]
+Widget VStackFill(
+    spacing: Spacing = Spacing.Medium,
+    spacingValue: Float = -1.0,
+) {
+    @Content let children: [Any Widget]
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
-        return Row(
-            children: loweredChildren(context, children),
-            width: KiraUIFoundation.SizeMode.Fill,
-            height: KiraUIFoundation.SizeMode.Hug,
-            spacing: spacing,
-            padding: KiraUIFoundation.EdgeInsets {},
-            crossAxisAlignment: KiraUIFoundation.CrossAlignment.Stretch
-        )
-    }
-}
-
-Widget HStackFill(spacing: Float) {
-    @Content let children: [Widget]
-
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
-        return Row(
-            children: loweredChildren(context, children),
-            width: KiraUIFoundation.SizeMode.Fill,
-            height: KiraUIFoundation.SizeMode.Fill,
-            spacing: spacing,
-            padding: KiraUIFoundation.EdgeInsets {},
-            crossAxisAlignment: KiraUIFoundation.CrossAlignment.Stretch
-        )
-    }
-}
-
-Widget VStackFill(spacing: Float) {
-    @Content let children: [Widget]
-
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        var resolvedSpacing = spacingImplementation(spacing, modifiers)
+        if spacingValue >= 0.0 {
+            resolvedSpacing = spacingValue
+        }
         return Column(
-            children: loweredChildren(context, children),
+            children: loweredChildren(context, modifiers, children),
             width: KiraUIFoundation.SizeMode.Fill,
             height: KiraUIFoundation.SizeMode.Fill,
-            spacing: spacing,
+            spacing: resolvedSpacing,
             padding: KiraUIFoundation.EdgeInsets {},
             crossAxisAlignment: KiraUIFoundation.CrossAlignment.Start
         )
     }
 }
 
-Widget Card(material: Material) {
-    @Content let content: Widget
+Widget Card(
+    title: String = "",
+    material: Material = Material.Frosted,
+) {
+    @Content let children: [Any Widget]
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let childModifiers = modifierContextForChildren(modifiers)
+        var selectedMaterial = material
+        var selectedRadius = 22.0
+        var selectedFill = cardFill(material)
+        var selectedBorder = cardBorder(material)
+        var selectedEffects = cardEffects(material)
+        if modifiers.hasTheme {
+            let tokens = modifiers.theme.tokens()
+            selectedMaterial = tokens.surfaceMaterial
+            selectedRadius = tokens.cardRadius
+            selectedFill = foundationColor(tokens.backgroundSurface)
+            selectedBorder = foundationColor(tokens.borderStandard)
+            selectedEffects = cardEffects(selectedMaterial)
+            if material == Material.Flat {
+                selectedMaterial = Material.Flat
+                selectedFill = foundationColor(tokens.backgroundRaised)
+                selectedBorder = foundationColor(tokens.borderSubtle)
+                selectedEffects = cardEffects(selectedMaterial)
+            }
+        }
+        if modifiers.hasMaterial {
+            selectedMaterial = modifiers.material
+            if modifiers.hasTheme {
+                let tokens = modifiers.theme.tokens()
+                if selectedMaterial == Material.Flat {
+                    selectedFill = foundationColor(tokens.backgroundRaised)
+                    selectedBorder = foundationColor(tokens.borderSubtle)
+                } else {
+                    selectedFill = cardFill(selectedMaterial)
+                    selectedBorder = cardBorder(selectedMaterial)
+                }
+            } else {
+                selectedFill = cardFill(selectedMaterial)
+                selectedBorder = cardBorder(selectedMaterial)
+            }
+            selectedEffects = cardEffects(selectedMaterial)
+        }
+        var cardChildren: [KiraUIFoundation.FoundationView] = []
+        if title.count > 0 {
+            let titleDelta = modifierDeltaTypography(TypographyStyle.headline)
+            let titleModifiers = modifierContextApply(childModifiers, move titleDelta)
+            cardChildren.append(Text(content: move title).lower(context, titleModifiers))
+        }
+        var index = 0
+        while index < children.count {
+            cardChildren.append(children[index].lower(context, childModifiers))
+            index = index + 1
+        }
+        let cardColumn = KiraUIFoundation.Column(
+            children: move cardChildren,
+            width: KiraUIFoundation.SizeMode.Fill,
+            height: KiraUIFoundation.SizeMode.Hug,
+            spacing: spacingImplementation(Spacing.Medium, modifiers),
+            padding: uniformInsets(spacingImplementation(Spacing.Medium, modifiers)),
+            crossAxisAlignment: KiraUIFoundation.CrossAlignment.Start
+        )
         return Surface(
-            children: [content.lower(context)],
+            children: [move cardColumn],
             width: KiraUIFoundation.SizeMode.Fill,
             height: KiraUIFoundation.SizeMode.Hug,
             flex: 0,
-            fill: cardFill(material),
-            border: cardBorder(material),
+            fill: modifierSurfaceFill(move selectedFill, modifiers),
+            border: modifierSurfaceBorder(move selectedBorder, modifiers),
             borderWidth: 1.0,
-            radius: 22.0,
+            radius: selectedRadius,
             shape: KiraUIFoundation.FoundationShape.RegularRoundedRect,
-            material: foundationMaterial(material),
-            effects: cardEffects(material),
+            material: foundationMaterial(selectedMaterial),
+            effects: modifierEffects(move selectedEffects, modifiers),
             padding: KiraUIFoundation.EdgeInsets {},
             clipContent: true
         )
     }
 }
 
+Widget Progress(value: Float) {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        var progress = value
+        if progress < 0.0 {
+            progress = 0.0
+        }
+        if progress > 1.0 {
+            progress = 1.0
+        }
+        let track = Surface(
+            children: [],
+            width: KiraUIFoundation.SizeMode.Fixed(96.0),
+            height: KiraUIFoundation.SizeMode.Fixed(6.0),
+            flex: 0,
+            fill: modifierSurfaceFill(KiraUIFoundation.Color {
+                r: 0.16
+                g: 0.18
+                b: 0.26
+                a: 1.0
+            }, modifiers),
+            border: transparentFoundationColor(),
+            borderWidth: 0.0,
+            radius: 999.0,
+            shape: KiraUIFoundation.FoundationShape.RegularRoundedRect,
+            material: KiraUIFoundation.FoundationMaterial.Flat,
+            effects: [],
+            padding: KiraUIFoundation.EdgeInsets {},
+            clipContent: true
+        )
+        let filled = Surface(
+            children: [],
+            width: KiraUIFoundation.SizeMode.Fixed(96.0 * progress),
+            height: KiraUIFoundation.SizeMode.Fixed(6.0),
+            flex: 0,
+            fill: modifierColor(KiraUIFoundation.Color {
+                r: 0.43
+                g: 0.67
+                b: 1.0
+                a: 1.0
+            }, modifiers),
+            border: transparentFoundationColor(),
+            borderWidth: 0.0,
+            radius: 999.0,
+            shape: KiraUIFoundation.FoundationShape.RegularRoundedRect,
+            material: KiraUIFoundation.FoundationMaterial.Flat,
+            effects: [],
+            padding: KiraUIFoundation.EdgeInsets {},
+            clipContent: true
+        )
+        return KiraUIFoundation.FoundationView {
+            kind: KiraUIFoundation.FoundationViewKind.Frame
+            width: KiraUIFoundation.SizeMode.Fixed(96.0)
+            height: KiraUIFoundation.SizeMode.Fixed(6.0)
+            alignment: KiraUIFoundation.Alignment.Leading
+            padding: KiraUIFoundation.EdgeInsets {}
+            children: [move track, move filled]
+        }
+    }
+}
+
 Widget Spacer() {
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let ignored = context.frameCount
         return KiraUIFoundation.FoundationView {
             kind: KiraUIFoundation.FoundationViewKind.Spacer
@@ -1037,14 +1438,22 @@ Widget Spacer() {
 }
 
 Widget Circle() {
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let ignored = context.frameCount
+        var circleFill = defaultTextColor()
+        if modifiers.hasTheme {
+            let tokens = modifiers.theme.tokens()
+            circleFill = foundationColor(tokens.foregroundPrimary)
+        }
+        if modifiers.hasThemeColor {
+            circleFill = modifierThemeColor(modifiers.themeColor, modifiers)
+        }
         return Surface(
             children: [],
             width: KiraUIFoundation.SizeMode.Fixed(0.0),
             height: KiraUIFoundation.SizeMode.Fixed(0.0),
             flex: 0,
-            fill: defaultTextColor(),
+            fill: modifierSurfaceFill(move circleFill, modifiers),
             border: transparentFoundationColor(),
             borderWidth: 0.0,
             radius: 999.0,
@@ -1058,13 +1467,13 @@ Widget Circle() {
 }
 
 Widget LinearGradient(start: Color, end: Color) {
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let ignored = context.viewport.width
         var strips: [KiraUIFoundation.FoundationView] = []
         var index = 0
         while index < 12 {
             let ratio = intAsFloat(value: index) / 11.0
-            let color = foundationColor(lerpColor(start, end, ratio))
+                let color = modifierSurfaceFill(foundationColor(lerpColor(start, end, ratio)), modifiers)
             let strip = Surface(
                 children: [],
                 width: KiraUIFoundation.SizeMode.Fill,
@@ -1095,14 +1504,14 @@ Widget LinearGradient(start: Color, end: Color) {
 }
 
 Widget SurfaceTint(color: Color) {
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let ignored = context.frameCount
         return Surface(
             children: [],
             width: KiraUIFoundation.SizeMode.Fill,
             height: KiraUIFoundation.SizeMode.Fill,
             flex: 0,
-            fill: foundationColor(color),
+            fill: modifierSurfaceFill(foundationColor(color), modifiers),
             border: transparentFoundationColor(),
             borderWidth: 0.0,
             radius: 0.0,
@@ -1116,11 +1525,12 @@ Widget SurfaceTint(color: Color) {
 }
 
 Widget Padding(length: Float) {
-    @Content let content: Widget
+    @Content let content: Any Widget
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let childModifiers = modifierContextForChildren(modifiers)
         return Frame(
-            content.lower(context),
+            content.lower(context, childModifiers),
             KiraUIFoundation.SizeMode.Fill,
             KiraUIFoundation.SizeMode.Hug,
             0,
@@ -1130,24 +1540,110 @@ Widget Padding(length: Float) {
     }
 }
 
-Widget BackgroundLayer(fill: Widget) {
-    @Content let content: Widget
+// Semantic modifiers contribute a typed delta and then lower the receiving
+// widget with the resolved context. No FoundationView has been built yet, so
+// the value can be consumed by the widget itself and its own child traversal
+// can decide which fields continue downstream.
+Widget ThemeLayer(theme: Any Theme) {
+    @Content let content: Any Widget
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
-        return overlayView(fill.lower(context), content.lower(context))
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let delta = modifierDeltaTheme(move theme)
+        let resolved = modifierContextApply(modifiers, move delta)
+        return content.lower(context, resolved)
+    }
+}
+
+Widget ThemeColorLayer(color: ThemeColor) {
+    @Content let content: Any Widget
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let delta = modifierDeltaThemeColor(color)
+        let resolved = modifierContextApply(modifiers, move delta)
+        return content.lower(context, resolved)
+    }
+}
+
+Widget ThemeSurfaceLayer(surface: ThemeSurface) {
+    @Content let content: Any Widget
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let delta = modifierDeltaThemeSurface(surface)
+        let resolved = modifierContextApply(modifiers, move delta)
+        return content.lower(context, resolved)
+    }
+}
+
+Widget ThemeBorderLayer(border: ThemeBorder) {
+    @Content let content: Any Widget
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let delta = modifierDeltaThemeBorder(border)
+        let resolved = modifierContextApply(modifiers, move delta)
+        return content.lower(context, resolved)
+    }
+}
+
+Widget ForegroundColorLayer(color: ThemeColor) {
+    @Content let content: Any Widget
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let delta = modifierDeltaForegroundColor(color)
+        let resolved = modifierContextApply(modifiers, move delta)
+        return content.lower(context, resolved)
+    }
+}
+
+Widget MaterialLayer(value: Material) {
+    @Content let content: Any Widget
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let delta = modifierDeltaMaterial(value)
+        let resolved = modifierContextApply(modifiers, move delta)
+        return content.lower(context, resolved)
+    }
+}
+
+Widget DisabledLayer(value: Bool) {
+    @Content let content: Any Widget
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let delta = modifierDeltaDisabled(value)
+        let resolved = modifierContextApply(modifiers, move delta)
+        return content.lower(context, resolved)
+    }
+}
+
+Widget FocusedLayer(value: Bool) {
+    @Content let content: Any Widget
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let delta = modifierDeltaFocused(value)
+        let resolved = modifierContextApply(modifiers, move delta)
+        return content.lower(context, resolved)
+    }
+}
+
+Widget BackgroundLayer(fill: Any Widget) {
+    @Content let content: Any Widget
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let childModifiers = modifierContextForChildren(modifiers)
+        return overlayView(fill.lower(context, childModifiers), content.lower(context, childModifiers))
     }
 }
 
 Widget CornerRadiusLayer(radius: Float) {
-    @Content let content: Widget
+    @Content let content: Any Widget
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let childModifiers = modifierContextForChildren(modifiers)
         return Surface(
-            children: [content.lower(context)],
+            children: [content.lower(context, childModifiers)],
             width: KiraUIFoundation.SizeMode.Fill,
             height: KiraUIFoundation.SizeMode.Hug,
             flex: 0,
-            fill: transparentFoundationColor(),
+            fill: modifierSurfaceFill(transparentFoundationColor(), modifiers),
             border: transparentFoundationColor(),
             borderWidth: 0.0,
             radius: radius,
@@ -1161,22 +1657,23 @@ Widget CornerRadiusLayer(radius: Float) {
 }
 
 Widget BlurBehindLayer(radius: Float, saturation: Float) {
-    @Content let content: Widget
+    @Content let content: Any Widget
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let ignored = saturation + intAsFloat(value: context.frameCount)
+        let childModifiers = modifierContextForChildren(modifiers)
         return Surface(
-            children: [content.lower(context)],
+            children: [content.lower(context, childModifiers)],
             width: KiraUIFoundation.SizeMode.Fill,
             height: KiraUIFoundation.SizeMode.Hug,
             flex: 0,
-            fill: transparentFoundationColor(),
+            fill: modifierSurfaceFill(transparentFoundationColor(), modifiers),
             border: transparentFoundationColor(),
             borderWidth: 0.0,
             radius: radius,
             shape: KiraUIFoundation.FoundationShape.RegularRoundedRect,
-            material: KiraUIFoundation.FoundationMaterial.LayeredGlass,
-            effects: [
+            material: KiraUIFoundation.FoundationMaterial.LiquidGlass,
+            effects: modifierEffects([
                 KiraUIFoundation.FoundationEffect.BackdropGlow(KiraUIFoundation.Glow {
                     color: KiraUIFoundation.Color {
                         r: 1.0
@@ -1187,7 +1684,7 @@ Widget BlurBehindLayer(radius: Float, saturation: Float) {
                     radius: radius
                     intensity: 0.08
                 })
-            ],
+            ], modifiers),
             padding: KiraUIFoundation.EdgeInsets {},
             clipContent: false
         )
@@ -1195,22 +1692,23 @@ Widget BlurBehindLayer(radius: Float, saturation: Float) {
 }
 
 Widget GlowLayer(intensity: Float) {
-    @Content let content: Widget
+    @Content let content: Any Widget
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let ignored = context.pointerX
+        let childModifiers = modifierContextForChildren(modifiers)
         return Surface(
-            children: [content.lower(context)],
+            children: [content.lower(context, childModifiers)],
             width: KiraUIFoundation.SizeMode.Fill,
             height: KiraUIFoundation.SizeMode.Hug,
             flex: 0,
-            fill: transparentFoundationColor(),
+            fill: modifierSurfaceFill(transparentFoundationColor(), modifiers),
             border: transparentFoundationColor(),
             borderWidth: 0.0,
             radius: 0.0,
             shape: KiraUIFoundation.FoundationShape.RegularRoundedRect,
             material: KiraUIFoundation.FoundationMaterial.Flat,
-            effects: [
+            effects: modifierEffects([
                 KiraUIFoundation.FoundationEffect.LayerGlow(KiraUIFoundation.Glow {
                     color: KiraUIFoundation.Color {
                         r: 0.31
@@ -1221,7 +1719,7 @@ Widget GlowLayer(intensity: Float) {
                     radius: 24.0
                     intensity: intensity
                 })
-            ],
+            ], modifiers),
             padding: KiraUIFoundation.EdgeInsets {},
             clipContent: false
         )
@@ -1229,27 +1727,42 @@ Widget GlowLayer(intensity: Float) {
 }
 
 Widget FontLayer(size: Float, weight: FontWeight) {
-    @Content let content: Widget
+    @Content let content: Any Widget
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
-        return viewWithFont(content.lower(context), size, foundationFontWeight(weight))
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let delta = modifierDeltaFont(size, weight)
+        let resolved = modifierContextApply(modifiers, move delta)
+        return content.lower(context, resolved)
+    }
+}
+
+Widget TypographyLayer(style: TypographyStyle) {
+    @Content let content: Any Widget
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let delta = modifierDeltaTypography(style)
+        let resolved = modifierContextApply(modifiers, move delta)
+        return content.lower(context, resolved)
     }
 }
 
 Widget OpacityLayer(value: Float) {
-    @Content let content: Widget
+    @Content let content: Any Widget
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
-        return viewWithOpacity(content.lower(context), value)
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let delta = modifierDeltaOpacity(value)
+        let resolved = modifierContextApply(modifiers, move delta)
+        return content.lower(context, resolved)
     }
 }
 
 Widget MinWidthLayer(value: Float) {
-    @Content let content: Widget
+    @Content let content: Any Widget
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let childModifiers = modifierContextForChildren(modifiers)
         return Frame(
-            content.lower(context),
+            content.lower(context, childModifiers),
             KiraUIFoundation.SizeMode.Fixed(value),
             KiraUIFoundation.SizeMode.Hug,
             0,
@@ -1260,11 +1773,12 @@ Widget MinWidthLayer(value: Float) {
 }
 
 Widget SizeLayer(value: Float) {
-    @Content let content: Widget
+    @Content let content: Any Widget
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let childModifiers = modifierContextForChildren(modifiers)
         return Frame(
-            content.lower(context),
+            content.lower(context, childModifiers),
             KiraUIFoundation.SizeMode.Fixed(value),
             KiraUIFoundation.SizeMode.Fixed(value),
             0,
@@ -1275,103 +1789,70 @@ Widget SizeLayer(value: Float) {
 }
 
 Widget FillLayer(color: Color) {
-    @Content let content: Widget
+    @Content let content: Any Widget
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
-        return viewWithFill(content.lower(context), foundationColor(color))
-    }
-}
-
-function viewWithColor(view: KiraUIFoundation.FoundationView, color: borrow KiraUIFoundation.Color) -> KiraUIFoundation.FoundationView {
-    let c = KiraUIFoundation.Color {
-        r: color.r
-        g: color.g
-        b: color.b
-        a: color.a
-    }
-    return KiraUIFoundation.FoundationView {
-        kind: view.kind
-        key: view.key
-        children: childrenWithOpacity(view.children, 1.0)
-        width: view.width
-        height: view.height
-        flex: view.flex
-        gap: view.gap
-        padding: view.padding
-        crossAxisAlignment: view.crossAxisAlignment
-        alignment: view.alignment
-        fill: view.fill
-        border: view.border
-        borderWidth: view.borderWidth
-        radius: view.radius
-        shape: view.shape
-        material: view.material
-        effects: identityEffects(view.effects)
-        clipContent: view.clipContent
-        content: view.content
-        color: move c
-        size: view.size
-        weight: view.weight
-        disabled: view.disabled
-        focusable: view.focusable
-        autofocus: view.autofocus
-        onPress: view.onPress
-        onTextInput: view.onTextInput
-        onTextCodepoint: view.onTextCodepoint
-        onBackspace: view.onBackspace
-        onSubmit: view.onSubmit
-        onKey: view.onKey
-        onScroll: view.onScroll
-        minLength: view.minLength
-        interaction: view.interaction
-        texture: view.texture
-        textureOpacity: view.textureOpacity
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let delta = modifierDeltaFill(move color)
+        let resolved = modifierContextApply(modifiers, move delta)
+        return content.lower(context, resolved)
     }
 }
 
 Widget TextColorLayer(color: Color) {
-    @Content let content: Widget
+    @Content let content: Any Widget
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
-        let fc = foundationColor(move color)
-        return viewWithColor(content.lower(context), fc)
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let delta = modifierDeltaTextColor(move color)
+        let resolved = modifierContextApply(modifiers, move delta)
+        return content.lower(context, resolved)
     }
 }
 
 Widget SurfaceRadiusLayer(value: Float) {
-    @Content let content: Widget
+    @Content let content: Any Widget
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
-        return viewWithSurfaceRadius(content.lower(context), value)
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let childModifiers = modifierContextForChildren(modifiers)
+        return viewWithSurfaceRadius(content.lower(context, childModifiers), value)
     }
 }
 
 Widget SurfaceShapeLayer(shape: SurfaceShape) {
-    @Content let content: Widget
+    @Content let content: Any Widget
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
-        return viewWithSurfaceShape(content.lower(context), shape)
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let childModifiers = modifierContextForChildren(modifiers)
+        return viewWithSurfaceShape(content.lower(context, childModifiers), shape)
     }
 }
 
 Widget SurfaceBorderLayer(color: Color, width: Float) {
-    @Content let content: Widget
+    @Content let content: Any Widget
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let border = foundationColor(move color)
-        return viewWithSurfaceBorder(content.lower(context), move border, width)
+        let childModifiers = modifierContextForChildren(modifiers)
+        return viewWithSurfaceBorder(content.lower(context, childModifiers), move border, width)
     }
 }
 
-Widget Divider(color: Color) {
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
+Widget Divider(color: Color = Color {}) {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let ignored = context.frameCount
+        var dividerColor = foundationColor(color)
+        if modifiers.hasTheme {
+            let tokens = modifiers.theme.tokens()
+            dividerColor = foundationColor(tokens.borderSubtle)
+        }
+        if modifiers.hasThemeBorder {
+            dividerColor = modifierSurfaceBorder(move dividerColor, modifiers)
+        }
         return Surface(
             children: [],
             width: KiraUIFoundation.SizeMode.Fill,
             height: KiraUIFoundation.SizeMode.Fixed(1.0),
             flex: 0,
-            fill: foundationColor(color),
+            fill: modifierSurfaceFill(move dividerColor, modifiers),
             border: transparentFoundationColor(),
             borderWidth: 0.0,
             radius: 0.0,
