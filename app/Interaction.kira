@@ -76,9 +76,9 @@ function kiraUiTapBackground(key: Int) -> KiraUIFoundation.Color {
 // Hug-sized clickable with an explicit key. Fires `onPress` on a left click and
 // paints the default hover wash behind itself while hovered.
 Widget TappableKeyed(key: Int, onPress: () -> Void, radius: Float) {
-    @Content let children: [Widget]
+    @Content let children: [Any Widget]
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let k = key
         let press = onPress
         return KiraUIFoundation.FoundationView {
@@ -86,19 +86,22 @@ Widget TappableKeyed(key: Int, onPress: () -> Void, radius: Float) {
             key: k
             width: KiraUIFoundation.SizeMode.Hug
             height: KiraUIFoundation.SizeMode.Hug
-            backgroundFill: kiraUiTapBackground(k)
+            backgroundFill: modifierColor(kiraUiTapBackground(k), modifiers)
             radius: radius
+            disabled: modifiers.disabled
+            focusable: true
+            autofocus: modifiers.hasFocused && modifiers.focused
             onPress: press
-            children: loweredChildren(context, children)
+            children: loweredChildren(context, modifiers, children)
         }
     }
 }
 
 // Hug-sized clickable with an auto-assigned stable per-build key.
 Widget Tappable(onPress: () -> Void, radius: Float) {
-    @Content let children: [Widget]
+    @Content let children: [Any Widget]
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let k = kiraUiTapSeqKey()
         let press = onPress
         return KiraUIFoundation.FoundationView {
@@ -106,19 +109,22 @@ Widget Tappable(onPress: () -> Void, radius: Float) {
             key: k
             width: KiraUIFoundation.SizeMode.Hug
             height: KiraUIFoundation.SizeMode.Hug
-            backgroundFill: kiraUiTapBackground(k)
+            backgroundFill: modifierColor(kiraUiTapBackground(k), modifiers)
             radius: radius
+            disabled: modifiers.disabled
+            focusable: true
+            autofocus: modifiers.hasFocused && modifiers.focused
             onPress: press
-            children: loweredChildren(context, children)
+            children: loweredChildren(context, modifiers, children)
         }
     }
 }
 
 // Fill-width clickable with an explicit key (list / tree rows).
 Widget TappableFillKeyed(key: Int, onPress: () -> Void, radius: Float) {
-    @Content let children: [Widget]
+    @Content let children: [Any Widget]
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let k = key
         let press = onPress
         return KiraUIFoundation.FoundationView {
@@ -126,19 +132,22 @@ Widget TappableFillKeyed(key: Int, onPress: () -> Void, radius: Float) {
             key: k
             width: KiraUIFoundation.SizeMode.Fill
             height: KiraUIFoundation.SizeMode.Hug
-            backgroundFill: kiraUiTapBackground(k)
+            backgroundFill: modifierColor(kiraUiTapBackground(k), modifiers)
             radius: radius
+            disabled: modifiers.disabled
+            focusable: true
+            autofocus: modifiers.hasFocused && modifiers.focused
             onPress: press
-            children: loweredChildren(context, children)
+            children: loweredChildren(context, modifiers, children)
         }
     }
 }
 
 // Fill-width clickable with an auto-assigned stable per-build key.
 Widget TappableFill(onPress: () -> Void, radius: Float) {
-    @Content let children: [Widget]
+    @Content let children: [Any Widget]
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let k = kiraUiTapSeqKey()
         let press = onPress
         return KiraUIFoundation.FoundationView {
@@ -146,10 +155,47 @@ Widget TappableFill(onPress: () -> Void, radius: Float) {
             key: k
             width: KiraUIFoundation.SizeMode.Fill
             height: KiraUIFoundation.SizeMode.Hug
-            backgroundFill: kiraUiTapBackground(k)
+            backgroundFill: modifierColor(kiraUiTapBackground(k), modifiers)
             radius: radius
+            disabled: modifiers.disabled
+            focusable: true
+            autofocus: modifiers.hasFocused && modifiers.focused
             onPress: press
-            children: loweredChildren(context, children)
+            children: loweredChildren(context, modifiers, children)
+        }
+    }
+}
+
+// --- DismissArea ------------------------------------------------------------
+
+// A window-filling hit region that paints nothing: the backdrop a floating
+// overlay (a context menu, a modal card) puts underneath itself so any click
+// outside dismisses it.
+//
+// The Tappable family cannot serve here. Every one of them paints the hover /
+// press wash `kiraUiTapBackground` returns, and a wash over a Fill/Fill region
+// tints the entire window for as long as the overlay is open. So this is its
+// own leaf: same HitArea node, no `backgroundFill`, and a transparent Fill/Fill
+// Surface child so the region has something to size against.
+Widget DismissArea(key: Int, onPress: () -> Void) {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let ignored = context.frameCount
+        let press = onPress
+        var kids: [KiraUIFoundation.FoundationView] = []
+        kids.append(KiraUIFoundation.FoundationView {
+            kind: KiraUIFoundation.FoundationViewKind.Surface
+            width: KiraUIFoundation.SizeMode.Fill
+            height: KiraUIFoundation.SizeMode.Fill
+            fill: transparentFoundationColor()
+        })
+        return KiraUIFoundation.FoundationView {
+            kind: KiraUIFoundation.FoundationViewKind.HitArea
+            key: key
+            width: KiraUIFoundation.SizeMode.Fill
+            height: KiraUIFoundation.SizeMode.Fill
+            disabled: modifiers.disabled
+            onPress: press
+            children: move kids
         }
     }
 }
@@ -161,15 +207,16 @@ Widget TappableFill(onPress: () -> Void, radius: Float) {
 // when the flexing children are built ALL-flex with weights; flex 1 is the plain
 // "take the rest" case.
 Widget Expanded(flex: Int) {
-    @Content let content: Widget
+    @Content let content: Any Widget
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let childModifiers = modifierContextForChildren(modifiers)
         return KiraUIFoundation.FoundationView {
             kind: KiraUIFoundation.FoundationViewKind.Expanded
             width: KiraUIFoundation.SizeMode.Fill
             height: KiraUIFoundation.SizeMode.Fill
             flex: flex
-            children: [content.lower(context)]
+            children: [content.lower(context, childModifiers)]
         }
     }
 }
@@ -189,18 +236,19 @@ Widget SurfaceBox(
     width: KiraUIFoundation.SizeMode,
     height: KiraUIFoundation.SizeMode,
 ) {
-    @Content let children: [Widget]
+    @Content let children: [Any Widget]
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         return KiraUIFoundation.FoundationView {
             kind: KiraUIFoundation.FoundationViewKind.Surface
             width: width
             height: height
-            fill: foundationColor(fill)
-            border: foundationColor(border)
+            fill: modifierSurfaceFill(foundationColor(fill), modifiers)
+            border: modifierColor(foundationColor(border), modifiers)
             borderWidth: borderWidth
             radius: radius
-            children: loweredChildren(context, children)
+            disabled: modifiers.disabled
+            children: loweredChildren(context, modifiers, children)
         }
     }
 }
@@ -221,7 +269,7 @@ Widget GestureTextureView(
     onDragMove: (Float, Float) -> Void,
     onDragEnd: (Float, Float) -> Void,
 ) {
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let ignored = context.frameCount
         let k = key
         let cornerRadius = radius
@@ -236,7 +284,7 @@ Widget GestureTextureView(
             height: KiraUIFoundation.SizeMode.Fill
             flex: 1
             texture: texture
-            textureOpacity: 1.0
+            textureOpacity: modifiers.opacity
             radius: cornerRadius
         })
         return KiraUIFoundation.FoundationView {
@@ -246,6 +294,7 @@ Widget GestureTextureView(
             height: KiraUIFoundation.SizeMode.Fill
             flex: 1
             onScroll: scroll
+            disabled: modifiers.disabled
             interaction: KiraUIFoundation.FoundationInteraction {
                 onDragStart: dragStart
                 onDragMove: dragMove

@@ -1,0 +1,67 @@
+import Foundation
+import KiraUIFoundation
+
+// Inspecting a lowered widget tree, for a test that has no window.
+//
+// A headless gate wants to ask what a widget tree came out as — does it say
+// "DEFEATED", how many painted surfaces does it have — and lowering is the only
+// way to find out, because a widget's own value carries the intent and not the
+// result. Doing that at the call site meant an app naming
+// `KiraUIFoundation.FoundationView` and its view kinds, which is the one package
+// an app is not supposed to see: KiraUI and KiraGraphics are the whole surface.
+//
+// So the lowered tree is a value KiraUI hands out and answers questions about,
+// and the foundation stays behind it.
+
+struct LoweredWidgetTree {
+    var view: KiraUIFoundation.FoundationView
+}
+
+// Lower `root` the way an app's frame would, with a fresh context and no
+// inherited modifiers.
+function lowerWidgetForTest(root: Any Widget) -> LoweredWidgetTree {
+    let context = KiraUIFoundation.FoundationUiContext {}
+    return LoweredWidgetTree {
+        view: root.lower(context, ModifierContext {})
+    }
+}
+
+function loweredViewContainsText(view: borrow KiraUIFoundation.FoundationView, wanted: borrow String) -> Bool {
+    if view.kind == KiraUIFoundation.FoundationViewKind.Text {
+        if view.content == wanted {
+            return true
+        }
+    }
+    var i = 0
+    while i < view.children.count {
+        if loweredViewContainsText(view.children[i], wanted) {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}
+
+// Whether any text node in the tree reads exactly `wanted`.
+function loweredTreeContainsText(tree: borrow LoweredWidgetTree, wanted: borrow String) -> Bool {
+    return loweredViewContainsText(tree.view, wanted)
+}
+
+function loweredViewSurfaceCount(view: borrow KiraUIFoundation.FoundationView) -> Int {
+    var count = 0
+    if view.kind == KiraUIFoundation.FoundationViewKind.Surface {
+        count = 1
+    }
+    var i = 0
+    while i < view.children.count {
+        count = count + loweredViewSurfaceCount(view.children[i])
+        i = i + 1
+    }
+    return count
+}
+
+// How many painted surfaces the tree holds — what a test counts to say a panel
+// was built rather than skipped.
+function loweredTreeSurfaceCount(tree: borrow LoweredWidgetTree) -> Int {
+    return loweredViewSurfaceCount(tree.view)
+}

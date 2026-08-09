@@ -37,6 +37,8 @@ Built on [Kira UI Foundation](https://github.com/kira-lang-com/ui-foundation) �
 
 [basic-demo](Examples/basic-demo) — a full app built with Kira UI demonstrating cards, frosted glass, custom surfaces, and composable widget trees.
 
+[theme-api-showcase](Examples/theme-api-showcase) — a real construct-backed `Theme` implementation with typed global tokens and widget modifiers.
+
 ## Widgets
 
 - **Text** — styled text with configurable size, weight, and color
@@ -49,6 +51,7 @@ Built on [Kira UI Foundation](https://github.com/kira-lang-com/ui-foundation) �
 - **Circle** — squircle shape primitive
 - **Divider** — horizontal line separator
 - **LinearGradient** — multi-strip gradient between two colors
+- **Button** — focused, disabled control with local label presentation
 
 ## Modifiers
 
@@ -65,6 +68,11 @@ Chain modifiers onto any widget for declarative customization:
 | `.opacity(value)` | Transparency |
 | `.fill(color)` | Surface fill color |
 | `.textColor(color)` | Text color |
+| `.theme(theme)` / `.themeColor(color)` | Inherited theme selection and theme color |
+| `.foregroundColor(color)` | Scoped control foreground |
+| `.material(value)` | Scoped surface material |
+| `.disabled(value)` | Environmental disabled state |
+| `.focused(value)` | Isolated focus request |
 | `.size(value)` / `.width(value)` / `.height(value)` | Fixed dimensions |
 | `.minWidth(value)` | Minimum width |
 | `.fillHeight()` | Expand to fill available height |
@@ -78,6 +86,7 @@ Chain modifiers onto any widget for declarative customization:
 ```text
 app/
 ├── KiraUI.kira        # Entry points (RunWidgetApp, RunKiraApp)
+├── ModifierContext.kira # Typed modifier vocabulary, deltas, and traversal context
 ├── Modifiers.kira     # Widget modifier extensions
 └── WidgetModel.kira   # Core widgets, color system, and lowering logic
 ```

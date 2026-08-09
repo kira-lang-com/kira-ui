@@ -348,34 +348,65 @@ function textFieldColor(c: borrow KiraUIFoundation.Color) -> KiraUIFoundation.Co
     }
 }
 
-function textFieldTextNode(content: String, color: borrow KiraUIFoundation.Color, size: Float) -> KiraUIFoundation.FoundationView {
+function textFieldColorWithOpacity(
+    c: borrow KiraUIFoundation.Color,
+    opacity: Float,
+) -> KiraUIFoundation.Color {
+    return KiraUIFoundation.Color {
+        r: c.r
+        g: c.g
+        b: c.b
+        a: c.a * opacity
+    }
+}
+
+function textFieldTextNode(
+    content: String,
+    color: borrow KiraUIFoundation.Color,
+    size: Float,
+    opacity: Float,
+) -> KiraUIFoundation.FoundationView {
     return KiraUIFoundation.FoundationView {
         kind: KiraUIFoundation.FoundationViewKind.Text
         content: content
-        color: textFieldColor(color)
+        color: textFieldColorWithOpacity(color, opacity)
         size: size
+        inkLeft: KiraUIFoundation.foundationTextRunInkLeft(content: content, size: size)
+        inkRight: KiraUIFoundation.foundationTextRunInkRight(content: content, size: size)
+        inkTop: KiraUIFoundation.foundationTextRunInkTop(content: content, size: size)
+        inkBottom: KiraUIFoundation.foundationTextRunInkBottom(content: content, size: size)
         weight: 400.0
     }
 }
 
-function textFieldCaretNode(size: Float, color: borrow KiraUIFoundation.Color) -> KiraUIFoundation.FoundationView {
+function textFieldCaretNode(
+    size: Float,
+    color: borrow KiraUIFoundation.Color,
+    opacity: Float,
+) -> KiraUIFoundation.FoundationView {
     return KiraUIFoundation.FoundationView {
         kind: KiraUIFoundation.FoundationViewKind.Surface
         width: SizeMode.Fixed(1.5)
         height: SizeMode.Fixed(size)
-        fill: textFieldColor(color)
+        fill: textFieldColorWithOpacity(color, opacity)
     }
 }
 
 // Selected text: a highlight box (Hug to the text) painted behind the glyphs.
-function textFieldSelBox(content: String, highlight: borrow KiraUIFoundation.Color, textColor: borrow KiraUIFoundation.Color, size: Float) -> KiraUIFoundation.FoundationView {
+function textFieldSelBox(
+    content: String,
+    highlight: borrow KiraUIFoundation.Color,
+    textColor: borrow KiraUIFoundation.Color,
+    size: Float,
+    opacity: Float,
+) -> KiraUIFoundation.FoundationView {
     return KiraUIFoundation.FoundationView {
         kind: KiraUIFoundation.FoundationViewKind.Surface
         width: KiraUIFoundation.SizeMode.Hug
         height: KiraUIFoundation.SizeMode.Hug
-        fill: textFieldColor(highlight)
+        fill: textFieldColorWithOpacity(highlight, opacity)
         radius: 2.0
-        children: [textFieldTextNode(move content, textColor, size)]
+        children: [textFieldTextNode(move content, textColor, size, opacity)]
     }
 }
 
@@ -393,7 +424,7 @@ Widget TextField(
     selectColor: KiraUIFoundation.Color,
     onSubmit: () -> Void
 ) {
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let ignored = context.frameCount
         textFieldSeed(key, initial)
         let st = nativeRecover<KiraUiTextFieldState>(kiraUiStateSlotGet(textFieldSlotKey(key)))
@@ -407,11 +438,12 @@ Widget TextField(
             anchor = n
         }
         let leftPad = 6.0
+        let opacity = modifiers.opacity
         var kids: [KiraUIFoundation.FoundationView] = []
         kids.append(textFieldGap(leftPad))
         if n == 0 {
-            kids.append(textFieldCaretNode(size, caretColor))
-            kids.append(textFieldTextNode(move placeholder, placeholderColor, size))
+            kids.append(textFieldCaretNode(size, caretColor, opacity))
+            kids.append(textFieldTextNode(move placeholder, placeholderColor, size, opacity))
         } else {
             if anchor != caret {
                 let a = textFieldSelMin(anchor, caret)
@@ -419,15 +451,15 @@ Widget TextField(
                 let selBefore = KiraUIFoundation.foundationStringFromCodepoints(st.codes, 0, a)
                 let selMid = KiraUIFoundation.foundationStringFromCodepoints(st.codes, a, b)
                 let selAfter = KiraUIFoundation.foundationStringFromCodepoints(st.codes, b, n)
-                kids.append(textFieldTextNode(move selBefore, textColor, size))
-                kids.append(textFieldSelBox(move selMid, selectColor, textColor, size))
-                kids.append(textFieldTextNode(move selAfter, textColor, size))
+                kids.append(textFieldTextNode(move selBefore, textColor, size, opacity))
+                kids.append(textFieldSelBox(move selMid, selectColor, textColor, size, opacity))
+                kids.append(textFieldTextNode(move selAfter, textColor, size, opacity))
             } else {
                 let before = KiraUIFoundation.foundationStringFromCodepoints(st.codes, 0, caret)
                 let after = KiraUIFoundation.foundationStringFromCodepoints(st.codes, caret, n)
-                kids.append(textFieldTextNode(move before, textColor, size))
-                kids.append(textFieldCaretNode(size, caretColor))
-                kids.append(textFieldTextNode(move after, textColor, size))
+                kids.append(textFieldTextNode(move before, textColor, size, opacity))
+                kids.append(textFieldCaretNode(size, caretColor, opacity))
+                kids.append(textFieldTextNode(move after, textColor, size, opacity))
             }
         }
         let row = KiraUIFoundation.Row(
@@ -444,8 +476,9 @@ Widget TextField(
             width: SizeMode.Fixed(width)
             height: SizeMode.Fixed(height)
             focusable: true
-            autofocus: true
-            backgroundFill: bg
+            autofocus: modifiers.hasFocused ? modifiers.focused : true
+            disabled: modifiers.disabled
+            backgroundFill: textFieldColorWithOpacity(bg, opacity)
             radius: 4.0
             onTextCodepoint: textFieldInsertFn(key)
             onBackspace: textFieldBackspaceFn(key)

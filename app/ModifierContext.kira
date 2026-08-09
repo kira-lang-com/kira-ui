@@ -1,0 +1,462 @@
+import Foundation
+
+// The compiler currently has no library-defined annotation hook for a form
+// such as `@Modifier(.Scoped)`. Keep the vocabulary explicit and typed here so
+// the declaration mechanism can migrate to that annotation when the compiler
+// grows it without changing the traversal or widget API.
+enum ModifierInheritance {
+    Inherited
+    Scoped
+    Cascading
+    Environment
+    Isolated
+}
+
+// KiraUI owns one shared token vocabulary. Applications provide concrete
+// construct-backed Theme declarations that fill these tokens; widgets consume
+// the selected implementation through the family requirement below.
+struct ThemeTokens {
+    let foregroundPrimary: Color
+    let foregroundSecondary: Color
+    let foregroundDisabled: Color
+    let backgroundCanvas: Color
+    let backgroundSurface: Color
+    let backgroundRaised: Color
+    let backgroundControl: Color
+    let backgroundOverlay: Color
+    let accent: Color
+    let danger: Color
+    let success: Color
+    let warning: Color
+    let borderSubtle: Color
+    let borderStandard: Color
+    let borderStrong: Color
+    let borderFocus: Color
+    let surfaceMaterial: Material
+    let cardRadius: Float
+    let controlRadius: Float
+    let bodySize: Float
+    let bodyWeight: FontWeight
+    let controlSize: Float
+    let controlWeight: FontWeight
+    let titleSize: Float
+    let titleWeight: FontWeight
+}
+
+function themeAdaptiveColor(color: borrow AdaptiveColor) -> Color {
+    let appearance = environmentValue("KIRA_UI_APPEARANCE")
+    if appearance == "light" {
+        return color.light
+    }
+    return color.dark
+}
+
+function defaultThemeTokens() -> ThemeTokens {
+    return ThemeTokens {
+        foregroundPrimary: Color { r: 0.95, g: 0.96, b: 0.99, a: 1.0 }
+        foregroundSecondary: Color { r: 0.68, g: 0.71, b: 0.78, a: 1.0 }
+        foregroundDisabled: Color { r: 0.58, g: 0.60, b: 0.66, a: 0.58 }
+        backgroundCanvas: Color { r: 0.035, g: 0.04, b: 0.065, a: 1.0 }
+        backgroundSurface: Color { r: 0.08, g: 0.10, b: 0.15, a: 0.92 }
+        backgroundRaised: Color { r: 0.12, g: 0.14, b: 0.20, a: 0.96 }
+        backgroundControl: Color { r: 0.16, g: 0.18, b: 0.26, a: 1.0 }
+        backgroundOverlay: Color { r: 0.10, g: 0.12, b: 0.18, a: 0.88 }
+        accent: Color { r: 0.43, g: 0.67, b: 1.0, a: 1.0 }
+        danger: Color { r: 0.96, g: 0.31, b: 0.37, a: 1.0 }
+        success: Color { r: 0.34, g: 0.85, b: 0.52, a: 1.0 }
+        warning: Color { r: 0.98, g: 0.75, b: 0.25, a: 1.0 }
+        borderSubtle: Color { r: 1.0, g: 1.0, b: 1.0, a: 0.10 }
+        borderStandard: Color { r: 1.0, g: 1.0, b: 1.0, a: 0.18 }
+        borderStrong: Color { r: 1.0, g: 1.0, b: 1.0, a: 0.32 }
+        borderFocus: Color { r: 0.43, g: 0.67, b: 1.0, a: 0.90 }
+        surfaceMaterial: Material.LayeredGlass
+        cardRadius: 18.0
+        controlRadius: 8.0
+        bodySize: 15.0
+        bodyWeight: FontWeight.Regular
+        controlSize: 15.0
+        controlWeight: FontWeight.SemiBold
+        titleSize: 28.0
+        titleWeight: FontWeight.Bold
+    }
+}
+
+construct Theme {
+    @Required let StyleImplementation: Any StyleImplementation
+    @Required let text: Any StyleImplementation
+    @Required let icon: Any StyleImplementation
+    @Required let button: Any StyleImplementation
+    @Required let card: Any StyleImplementation
+    @Required let progress: Any StyleImplementation
+    @Required let textField: Any StyleImplementation
+    @Required let toggle: Any StyleImplementation
+    @Required let slider: Any StyleImplementation
+    @Required let sidebar: Any StyleImplementation
+    @Required let divider: Any StyleImplementation
+
+    function tokens() -> ThemeTokens {
+        let style = StyleImplementation
+        let colors = style.colors
+        let radii = style.cornerRadii
+        let typography = style.typography
+        return ThemeTokens {
+            foregroundPrimary: themeAdaptiveColor(colors.foregroundPrimary)
+            foregroundSecondary: themeAdaptiveColor(colors.foregroundSecondary)
+            foregroundDisabled: themeAdaptiveColor(colors.foregroundDisabled)
+            backgroundCanvas: themeAdaptiveColor(colors.backgroundCanvas)
+            backgroundSurface: themeAdaptiveColor(colors.backgroundSurface)
+            backgroundRaised: themeAdaptiveColor(colors.backgroundRaised)
+            backgroundControl: themeAdaptiveColor(colors.backgroundControl)
+            backgroundOverlay: themeAdaptiveColor(colors.backgroundOverlay)
+            accent: themeAdaptiveColor(colors.accent)
+            danger: themeAdaptiveColor(colors.danger)
+            success: themeAdaptiveColor(colors.success)
+            warning: themeAdaptiveColor(colors.warning)
+            borderSubtle: themeAdaptiveColor(colors.borderSubtle)
+            borderStandard: themeAdaptiveColor(colors.borderStandard)
+            borderStrong: themeAdaptiveColor(colors.borderStrong)
+            borderFocus: themeAdaptiveColor(colors.borderFocus)
+            surfaceMaterial: Material.LayeredGlass
+            cardRadius: radii.large
+            controlRadius: radii.small
+            bodySize: typography.body.size
+            bodyWeight: typography.body.weight
+            controlSize: typography.control.size
+            controlWeight: typography.control.weight
+            titleSize: typography.title.size
+            titleWeight: typography.title.weight
+        }
+    }
+
+    function typography(style: borrow TypographyStyle) -> FontImplementation {
+        let values = StyleImplementation.typography
+        match style {
+            caption -> return values.caption;
+            body -> return values.body;
+            subheadline -> return values.subheadline;
+            bodyEmphasis -> return values.bodyEmphasis;
+            footnote -> return values.footnote;
+            overline -> return values.overline;
+            label -> return values.label;
+            section -> return values.section;
+            headline -> return values.headline;
+            title1 -> return values.title1;
+            title2 -> return values.title2;
+            title3 -> return values.title3;
+        }
+    }
+
+    function spacing(style: borrow Spacing) -> Float {
+        let values = StyleImplementation.spacing
+        match style {
+            None -> return values.none;
+            ExtraSmall -> return values.extraSmall;
+            Small -> return values.small;
+            Medium -> return values.medium;
+            Large -> return values.large;
+            ExtraLarge -> return values.extraLarge;
+            Section -> return values.section;
+        }
+    }
+}
+
+Theme DefaultTheme {
+    let StyleImplementation = DefaultStyle {}
+    let text = DefaultStyle {}
+    let icon = DefaultStyle {}
+    let button = DefaultStyle {}
+    let card = DefaultStyle {}
+    let progress = DefaultStyle {}
+    let textField = DefaultStyle {}
+    let toggle = DefaultStyle {}
+    let slider = DefaultStyle {}
+    let sidebar = DefaultStyle {}
+    let divider = DefaultStyle {}
+}
+
+enum ThemeColor {
+    Default
+    Secondary
+    Muted
+    Accent
+    Blue
+    Green
+    Purple
+    Red
+    Danger
+    Yellow
+    Cyan
+    White
+}
+
+enum ThemeSurface {
+    Canvas
+    Surface
+    Raised
+    Control
+    Overlay
+}
+
+enum ThemeBorder {
+    Subtle
+    Standard
+    Strong
+    Focus
+}
+
+// One modifier call contributes a sparse delta. Presence flags distinguish an
+// omitted value from a value whose scalar representation happens to be a
+// default, without introducing a dynamic property map or a permanently
+// materialized resolved style on each widget.
+struct ModifierDelta {
+    let hasTheme: Bool = false
+    let theme: Any Theme = DefaultTheme {}
+    let hasThemeColor: Bool = false
+    let themeColor: ThemeColor = ThemeColor.Default
+    let hasForegroundColor: Bool = false
+    let foregroundColor: ThemeColor = ThemeColor.Default
+    let hasMaterial: Bool = false
+    let material: Material = Material.Flat
+    let hasFill: Bool = false
+    let fillColor: Color = Color {}
+    let hasSurfaceTone: Bool = false
+    let surfaceTone: ThemeSurface = ThemeSurface.Surface
+    let hasThemeBorder: Bool = false
+    let themeBorder: ThemeBorder = ThemeBorder.Subtle
+    let hasTextColor: Bool = false
+    let textColor: Color = Color {}
+    let hasTypography: Bool = false
+    let typography: TypographyStyle = TypographyStyle.body
+    let hasFont: Bool = false
+    let fontSize: Float = 16.0
+    let fontWeight: FontWeight = FontWeight.Regular
+    // Opacity is a per-modifier visual composition, not a theme token.
+    let hasOpacity: Bool = false
+    let opacity: Float = 1.0
+    let disabled: Bool = false
+    let hasFocused: Bool = false
+    let focused: Bool = false
+}
+
+// The resolved context is traversal-local. It is passed by borrow to every
+// widget and derived once at the point where a widget consumes a delta. Scoped
+// and isolated values are removed by modifierContextForChildren; inherited,
+// cascading, and environmental values remain available to descendants.
+struct ModifierContext {
+    let theme: Any Theme = DefaultTheme {}
+    let hasTheme: Bool = false
+    let themeColor: ThemeColor = ThemeColor.Default
+    let hasThemeColor: Bool = false
+    let foregroundColor: ThemeColor = ThemeColor.Default
+    let hasForegroundColor: Bool = false
+    let material: Material = Material.Flat
+    let hasMaterial: Bool = false
+    let fillColor: Color = Color {}
+    let hasFill: Bool = false
+    let surfaceTone: ThemeSurface = ThemeSurface.Surface
+    let hasSurfaceTone: Bool = false
+    let themeBorder: ThemeBorder = ThemeBorder.Subtle
+    let hasThemeBorder: Bool = false
+    let textColor: Color = Color {}
+    let hasTextColor: Bool = false
+    let typography: TypographyStyle = TypographyStyle.body
+    let hasTypography: Bool = false
+    let fontSize: Float = 16.0
+    let fontWeight: FontWeight = FontWeight.Regular
+    let hasFont: Bool = false
+    let hasOpacity: Bool = false
+    let opacity: Float = 1.0
+    let disabled: Bool = false
+    let focused: Bool = false
+    let hasFocused: Bool = false
+}
+
+function modifierContextApply(
+    context: borrow ModifierContext,
+    delta: ModifierDelta,
+) -> ModifierContext {
+    return ModifierContext {
+        theme: delta.hasTheme ? delta.theme : context.theme
+        hasTheme: delta.hasTheme ? true : context.hasTheme
+        themeColor: delta.hasThemeColor ? delta.themeColor : context.themeColor
+        hasThemeColor: delta.hasThemeColor ? true : context.hasThemeColor
+        foregroundColor: delta.hasForegroundColor ? delta.foregroundColor : context.foregroundColor
+        hasForegroundColor: delta.hasForegroundColor ? true : context.hasForegroundColor
+        material: delta.hasMaterial ? delta.material : context.material
+        hasMaterial: delta.hasMaterial ? true : context.hasMaterial
+        fillColor: delta.hasFill ? delta.fillColor : context.fillColor
+        hasFill: delta.hasFill ? true : context.hasFill
+        surfaceTone: delta.hasSurfaceTone ? delta.surfaceTone : context.surfaceTone
+        hasSurfaceTone: delta.hasSurfaceTone ? true : context.hasSurfaceTone
+        themeBorder: delta.hasThemeBorder ? delta.themeBorder : context.themeBorder
+        hasThemeBorder: delta.hasThemeBorder ? true : context.hasThemeBorder
+        textColor: delta.hasTextColor ? delta.textColor : context.textColor
+        hasTextColor: delta.hasTextColor ? true : context.hasTextColor
+        typography: delta.hasTypography ? delta.typography : context.typography
+        hasTypography: delta.hasTypography ? true : context.hasTypography
+        fontSize: delta.hasFont ? delta.fontSize : context.fontSize
+        fontWeight: delta.hasFont ? delta.fontWeight : context.fontWeight
+        hasFont: delta.hasFont ? true : context.hasFont
+        hasOpacity: delta.hasOpacity ? true : context.hasOpacity
+        opacity: context.opacity * (delta.hasOpacity ? delta.opacity : 1.0)
+        disabled: context.disabled || delta.disabled
+        focused: delta.hasFocused ? delta.focused : context.focused
+        hasFocused: delta.hasFocused ? true : context.hasFocused
+    }
+}
+
+function modifierContextForChildren(context: borrow ModifierContext) -> ModifierContext {
+    return ModifierContext {
+        theme: context.theme
+        hasTheme: context.hasTheme
+        themeColor: context.themeColor
+        hasThemeColor: context.hasThemeColor
+        foregroundColor: ThemeColor.Default
+        hasForegroundColor: false
+        material: Material.Flat
+        hasMaterial: false
+        fillColor: Color {}
+        hasFill: false
+        surfaceTone: ThemeSurface.Surface
+        hasSurfaceTone: false
+        themeBorder: ThemeBorder.Subtle
+        hasThemeBorder: false
+        textColor: Color {}
+        hasTextColor: false
+        typography: context.typography
+        hasTypography: context.hasTypography
+        fontSize: context.fontSize
+        fontWeight: context.fontWeight
+        hasFont: context.hasFont
+        hasOpacity: context.hasOpacity
+        opacity: context.opacity
+        disabled: context.disabled
+        focused: false
+        hasFocused: false
+    }
+}
+
+// A component such as Button renders its label as part of the receiving widget.
+// Its scoped foreground/text color is still available to that local presentation,
+// while material and focus remain isolated from the internal label node.
+function modifierContextForPresentation(context: borrow ModifierContext) -> ModifierContext {
+    return ModifierContext {
+        theme: context.theme
+        hasTheme: context.hasTheme
+        themeColor: context.themeColor
+        hasThemeColor: context.hasThemeColor
+        foregroundColor: context.foregroundColor
+        hasForegroundColor: context.hasForegroundColor
+        material: Material.Flat
+        hasMaterial: false
+        fillColor: context.fillColor
+        hasFill: context.hasFill
+        surfaceTone: ThemeSurface.Surface
+        hasSurfaceTone: false
+        themeBorder: ThemeBorder.Subtle
+        hasThemeBorder: false
+        textColor: context.textColor
+        hasTextColor: context.hasTextColor
+        typography: context.typography
+        hasTypography: context.hasTypography
+        fontSize: context.fontSize
+        fontWeight: context.fontWeight
+        hasFont: context.hasFont
+        hasOpacity: context.hasOpacity
+        opacity: context.opacity
+        disabled: context.disabled
+        focused: false
+        hasFocused: false
+    }
+}
+
+function modifierDeltaTheme(theme: Any Theme) -> ModifierDelta {
+    return ModifierDelta {
+        hasTheme: true
+        theme: move theme
+    }
+}
+
+function modifierDeltaThemeColor(color: ThemeColor) -> ModifierDelta {
+    return ModifierDelta {
+        hasThemeColor: true
+        themeColor: color
+    }
+}
+
+function modifierDeltaForegroundColor(color: ThemeColor) -> ModifierDelta {
+    return ModifierDelta {
+        hasForegroundColor: true
+        foregroundColor: color
+    }
+}
+
+function modifierDeltaMaterial(material: Material) -> ModifierDelta {
+    return ModifierDelta {
+        hasMaterial: true
+        material: material
+    }
+}
+
+function modifierDeltaFill(color: Color) -> ModifierDelta {
+    return ModifierDelta {
+        hasFill: true
+        fillColor: move color
+    }
+}
+
+function modifierDeltaThemeSurface(surface: ThemeSurface) -> ModifierDelta {
+    return ModifierDelta {
+        hasSurfaceTone: true
+        surfaceTone: surface
+    }
+}
+
+function modifierDeltaThemeBorder(border: ThemeBorder) -> ModifierDelta {
+    return ModifierDelta {
+        hasThemeBorder: true
+        themeBorder: border
+    }
+}
+
+function modifierDeltaTextColor(color: Color) -> ModifierDelta {
+    return ModifierDelta {
+        hasTextColor: true
+        textColor: move color
+    }
+}
+
+function modifierDeltaTypography(style: TypographyStyle) -> ModifierDelta {
+    return ModifierDelta {
+        hasTypography: true
+        typography: style
+    }
+}
+
+function modifierDeltaFont(size: Float, weight: FontWeight) -> ModifierDelta {
+    return ModifierDelta {
+        hasFont: true
+        fontSize: size
+        fontWeight: weight
+    }
+}
+
+function modifierDeltaOpacity(value: Float) -> ModifierDelta {
+    return ModifierDelta {
+        hasOpacity: true
+        opacity: value
+    }
+}
+
+function modifierDeltaDisabled(value: Bool) -> ModifierDelta {
+    return ModifierDelta {
+        disabled: value
+    }
+}
+
+function modifierDeltaFocused(value: Bool) -> ModifierDelta {
+    return ModifierDelta {
+        hasFocused: true
+        focused: value
+    }
+}
