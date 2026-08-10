@@ -228,6 +228,76 @@ Widget Expanded(flex: Int) {
 // FoundationView.Surface construction (menu cards, hover layers, badges,
 // transparent spacer gaps). Pass SizeMode.Fixed(...) for a fixed box or
 // SizeMode.Fill to stretch to the parent.
+function surfaceBoxGlassFrost() -> KiraUIFoundation.FoundationFrost {
+    // The editor shell sits over a pale blue canvas and a dark live viewport.
+    // High keeps the named Foundation wash while leaving enough of either
+    // backdrop visible to read as glass instead of a white rounded slab.
+    return KiraUIFoundation.FoundationFrost.High
+}
+
+function surfaceBoxGlassScheme() -> KiraUIFoundation.FoundationScheme {
+    if environmentValue("KIRA_UI_APPEARANCE") == "dark" {
+        return KiraUIFoundation.FoundationScheme.Dark
+    }
+    return KiraUIFoundation.FoundationScheme.Light
+}
+
+function surfaceBoxGlassStack() -> KiraUIFoundation.FoundationTintStack {
+    return KiraUIFoundation.foundationFrostStack(surfaceBoxGlassFrost(), surfaceBoxGlassScheme())
+}
+
+function surfaceBoxGlassMaterial(material: borrow Material) -> KiraUIFoundation.FoundationGlassMaterial {
+    match material {
+        LayeredGlass -> {
+            // SurfaceBox is the widget-level bridge into the Foundation material
+            // API. Carry the platform stack here instead of relying on
+            // FoundationView's zeroed glass defaults, otherwise a LiquidGlass
+            // modifier only changes the enum and the renderer loses the upper
+            // wash layer that makes the surface read as glass.
+            let stack = surfaceBoxGlassStack()
+            let base = KiraUIFoundation.FoundationGlassMaterial {
+                edgeStrokeStrength: 0.16
+                edgeStrokeDarken: 0.72
+                edgeStrokePeak: 1.4
+                edgeStrokeFade: 7.0
+                sheenStrength: 0.06
+                innerRimStrength: 0.10
+            }
+            return KiraUIFoundation.foundationGlassMaterialWithTint(
+                base,
+                stack
+            )
+        }
+        Flat -> return KiraUIFoundation.FoundationGlassMaterial {}
+        Frosted -> return KiraUIFoundation.FoundationGlassMaterial {}
+    }
+}
+
+function surfaceBoxFill(
+    fill: Color,
+    material: borrow Material,
+    modifiers: borrow ModifierContext,
+) -> KiraUIFoundation.Color {
+    // A Liquid Glass surface owns its wash. Passing the editor token fill
+    // through here used to turn the material's lower layer into a 62% opaque
+    // white rectangle, hiding the captured backdrop. Use the named Foundation
+    // stack instead; an explicit `.fill(...)` remains an intentional override.
+    if modifiers.hasFill == false && material == Material.LayeredGlass {
+        return KiraUIFoundation.foundationTintFill(surfaceBoxGlassStack())
+    }
+    return modifierSurfaceFill(foundationColor(move fill), modifiers)
+}
+
+function surfaceBoxBlur(material: borrow Material) -> Float {
+    match material {
+        // High's Foundation dial is 0.15: enough to soften the scene while
+        // retaining the editor's grid and mesh detail beneath the chrome.
+        LayeredGlass -> return 0.15;
+        Flat -> return 1.0;
+        Frosted -> return 1.0;
+    }
+}
+
 Widget SurfaceBox(
     fill: Color,
     border: Color,
@@ -240,18 +310,29 @@ Widget SurfaceBox(
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         var selectedMaterial = KiraUIFoundation.FoundationMaterial.Flat
+        var semanticMaterial = Material.Flat
         if modifiers.hasMaterial {
+            semanticMaterial = modifiers.material
             selectedMaterial = foundationMaterial(modifiers.material)
         }
+        let selectedFill = surfaceBoxFill(move fill, semanticMaterial, modifiers)
+        let selectedBorder = modifierSurfaceBorder(foundationColor(border), modifiers)
         return KiraUIFoundation.FoundationView {
             kind: KiraUIFoundation.FoundationViewKind.Surface
             width: width
             height: height
-            fill: modifierSurfaceFill(foundationColor(fill), modifiers)
-            border: modifierColor(foundationColor(border), modifiers)
+            fill: selectedFill
+            border: selectedBorder
             borderWidth: borderWidth
             radius: radius
+            shape: KiraUIFoundation.FoundationShape.RegularRoundedRect
             material: selectedMaterial
+            effects: []
+            padding: KiraUIFoundation.EdgeInsets {}
+            clipContent: true
+            blur: surfaceBoxBlur(semanticMaterial)
+            edgeRefraction: 1.0
+            glassMaterial: surfaceBoxGlassMaterial(semanticMaterial)
             disabled: modifiers.disabled
             children: loweredChildren(context, modifiers, children)
         }
