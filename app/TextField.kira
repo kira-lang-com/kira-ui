@@ -410,22 +410,78 @@ function textFieldSelBox(
     }
 }
 
+// The glyph size an editable field draws at: the same resolution order Text
+// uses, so `.typography(...)` on a field means what it means anywhere else.
+function textFieldTextSize(modifiers: borrow ModifierContext) -> Float {
+    if modifiers.hasFont {
+        return modifiers.fontSize
+    }
+    if modifiers.hasTypography {
+        return typographyImplementation(modifiers.typography, modifiers).size
+    }
+    if modifiers.hasTheme {
+        return modifiers.theme.tokens().bodySize
+    }
+    return 16.0
+}
+
+function textFieldPlaceholderColor(modifiers: borrow ModifierContext) -> KiraUIFoundation.Color {
+    if modifiers.hasTheme {
+        return modifierColor(foundationColor(modifiers.theme.tokens().foregroundDisabled), modifiers)
+    }
+    return modifierColor(foundationColor(colorMutedText()), modifiers)
+}
+
+// The selection band is the accent at reading strength — opaque accent would
+// bury the glyphs it is drawn behind.
+function textFieldSelectionColor(modifiers: borrow ModifierContext) -> KiraUIFoundation.Color {
+    if modifiers.hasTheme {
+        let accent = modifiers.theme.tokens().accent
+        return modifierColor(foundationColor(colorWithAlpha(accent, 0.35)), modifiers)
+    }
+    return modifierColor(foundationColor(colorWithAlpha(colorBlue(), 0.35)), modifiers)
+}
+
+function textFieldRadius(modifiers: borrow ModifierContext) -> Float {
+    if modifiers.hasTheme {
+        return modifiers.theme.tokens().controlRadius
+    }
+    return 4.0
+}
+
+// An editable field resolves its own presentation from the theme, exactly like
+// Button and Card. Requiring five explicit colors at every call site meant a
+// field could never follow a theme change, and made the surrounding code carry a
+// resolved palette purely to feed this constructor.
+//
+// Overrides remain available through the ordinary modifiers: `.themeSurface(...)`
+// or `.fill(...)` for the field's background, `.themeColor(...)` /
+// `.textColor(...)` for the ink, `.typography(...)` / `.font(...)` for the size.
 Widget TextField(
     key: Int,
     initial: String,
     placeholder: String,
     width: Float,
     height: Float,
-    size: Float,
-    bg: KiraUIFoundation.Color,
-    textColor: KiraUIFoundation.Color,
-    placeholderColor: KiraUIFoundation.Color,
-    caretColor: KiraUIFoundation.Color,
-    selectColor: KiraUIFoundation.Color,
     onSubmit: () -> Void
 ) {
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let ignored = context.frameCount
+        let size = textFieldTextSize(modifiers)
+        let textColor = modifierTextColor(modifiers)
+        let caretColor = modifierTextColor(modifiers)
+        let placeholderColor = textFieldPlaceholderColor(modifiers)
+        let selectColor = textFieldSelectionColor(modifiers)
+        var bg = KiraUIFoundation.Color {
+            r: 0.16
+            g: 0.18
+            b: 0.26
+            a: 1.0
+        }
+        if modifiers.hasTheme {
+            bg = foundationColor(modifiers.theme.tokens().backgroundControl)
+        }
+        bg = modifierSurfaceFill(move bg, modifiers)
         textFieldSeed(key, initial)
         let st = nativeRecover<KiraUiTextFieldState>(kiraUiStateSlotGet(textFieldSlotKey(key)))
         let n = st.codes.count
@@ -479,7 +535,7 @@ Widget TextField(
             autofocus: modifiers.hasFocused ? modifiers.focused : true
             disabled: modifiers.disabled
             backgroundFill: textFieldColorWithOpacity(bg, opacity)
-            radius: 4.0
+            radius: textFieldRadius(modifiers)
             onTextCodepoint: textFieldInsertFn(key)
             onBackspace: textFieldBackspaceFn(key)
             onSubmit: onSubmit
