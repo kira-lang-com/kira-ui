@@ -43,12 +43,26 @@ struct ThemeTokens {
     let titleWeight: FontWeight
 }
 
-function themeAdaptiveColor(color: borrow AdaptiveColor) -> Color {
-    let appearance = environmentValue("KIRA_UI_APPEARANCE")
-    if appearance == "light" {
-        return color.light
+// One appearance decision for the whole library: the host environment overrides,
+// otherwise the style's own declaration stands. Every adaptive lookup — token
+// colors, glass schemes, component roles — resolves through this, so a style
+// never disagrees with the material drawn behind it.
+function resolvedAppearance(declared: Appearance) -> Appearance {
+    let requested = environmentValue("KIRA_UI_APPEARANCE")
+    if requested == "light" {
+        return Appearance.Light
     }
-    return color.dark
+    if requested == "dark" {
+        return Appearance.Dark
+    }
+    return declared
+}
+
+function themeAdaptiveColor(color: borrow AdaptiveColor, appearance: borrow Appearance) -> Color {
+    match appearance {
+        Light -> return color.light;
+        Dark -> return color.dark;
+    }
 }
 
 function defaultThemeTokens() -> ThemeTokens {
@@ -94,28 +108,33 @@ construct Theme {
     @Required let sidebar: Any StyleImplementation
     @Required let divider: Any StyleImplementation
 
+    function appearance() -> Appearance {
+        return resolvedAppearance(StyleImplementation.appearance)
+    }
+
     function tokens() -> ThemeTokens {
         let style = StyleImplementation
         let colors = style.colors
         let radii = style.cornerRadii
         let typography = style.typography
+        let appearance = resolvedAppearance(style.appearance)
         return ThemeTokens {
-            foregroundPrimary: themeAdaptiveColor(colors.foregroundPrimary)
-            foregroundSecondary: themeAdaptiveColor(colors.foregroundSecondary)
-            foregroundDisabled: themeAdaptiveColor(colors.foregroundDisabled)
-            backgroundCanvas: themeAdaptiveColor(colors.backgroundCanvas)
-            backgroundSurface: themeAdaptiveColor(colors.backgroundSurface)
-            backgroundRaised: themeAdaptiveColor(colors.backgroundRaised)
-            backgroundControl: themeAdaptiveColor(colors.backgroundControl)
-            backgroundOverlay: themeAdaptiveColor(colors.backgroundOverlay)
-            accent: themeAdaptiveColor(colors.accent)
-            danger: themeAdaptiveColor(colors.danger)
-            success: themeAdaptiveColor(colors.success)
-            warning: themeAdaptiveColor(colors.warning)
-            borderSubtle: themeAdaptiveColor(colors.borderSubtle)
-            borderStandard: themeAdaptiveColor(colors.borderStandard)
-            borderStrong: themeAdaptiveColor(colors.borderStrong)
-            borderFocus: themeAdaptiveColor(colors.borderFocus)
+            foregroundPrimary: themeAdaptiveColor(colors.foregroundPrimary, appearance)
+            foregroundSecondary: themeAdaptiveColor(colors.foregroundSecondary, appearance)
+            foregroundDisabled: themeAdaptiveColor(colors.foregroundDisabled, appearance)
+            backgroundCanvas: themeAdaptiveColor(colors.backgroundCanvas, appearance)
+            backgroundSurface: themeAdaptiveColor(colors.backgroundSurface, appearance)
+            backgroundRaised: themeAdaptiveColor(colors.backgroundRaised, appearance)
+            backgroundControl: themeAdaptiveColor(colors.backgroundControl, appearance)
+            backgroundOverlay: themeAdaptiveColor(colors.backgroundOverlay, appearance)
+            accent: themeAdaptiveColor(colors.accent, appearance)
+            danger: themeAdaptiveColor(colors.danger, appearance)
+            success: themeAdaptiveColor(colors.success, appearance)
+            warning: themeAdaptiveColor(colors.warning, appearance)
+            borderSubtle: themeAdaptiveColor(colors.borderSubtle, appearance)
+            borderStandard: themeAdaptiveColor(colors.borderStandard, appearance)
+            borderStrong: themeAdaptiveColor(colors.borderStrong, appearance)
+            borderFocus: themeAdaptiveColor(colors.borderFocus, appearance)
             surfaceMaterial: Material.LayeredGlass
             cardRadius: radii.large
             controlRadius: radii.small
@@ -133,6 +152,7 @@ construct Theme {
         match style {
             caption -> return values.caption;
             body -> return values.body;
+            control -> return values.control;
             subheadline -> return values.subheadline;
             bodyEmphasis -> return values.bodyEmphasis;
             footnote -> return values.footnote;
@@ -140,6 +160,7 @@ construct Theme {
             label -> return values.label;
             section -> return values.section;
             headline -> return values.headline;
+            title -> return values.title;
             title1 -> return values.title1;
             title2 -> return values.title2;
             title3 -> return values.title3;

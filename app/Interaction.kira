@@ -233,21 +233,31 @@ function surfaceBoxGlassFrost() -> KiraUIFoundation.FoundationFrost {
     return KiraUIFoundation.FoundationFrost.Medium
 }
 
-function surfaceBoxGlassScheme() -> KiraUIFoundation.FoundationScheme {
-    if environmentValue("KIRA_UI_APPEARANCE") == "dark" {
-        return KiraUIFoundation.FoundationScheme.Dark
+// The glass scheme follows the SAME appearance the theme's color tokens resolve
+// through. Sniffing the environment here independently is how a light token set
+// used to end up washed over a dark glass stack.
+function surfaceBoxGlassScheme(modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationScheme {
+    var appearance = resolvedAppearance(Appearance.Dark)
+    if modifiers.hasTheme {
+        appearance = modifiers.theme.appearance()
     }
-    return KiraUIFoundation.FoundationScheme.Light
+    match appearance {
+        Light -> return KiraUIFoundation.FoundationScheme.Light;
+        Dark -> return KiraUIFoundation.FoundationScheme.Dark;
+    }
 }
 
-function surfaceBoxGlassStack() -> KiraUIFoundation.FoundationTintStack {
-    return KiraUIFoundation.foundationFrostStack(surfaceBoxGlassFrost(), surfaceBoxGlassScheme())
+function surfaceBoxGlassStack(modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationTintStack {
+    return KiraUIFoundation.foundationFrostStack(surfaceBoxGlassFrost(), surfaceBoxGlassScheme(modifiers))
 }
 
-function surfaceBoxGlassMaterial(material: borrow Material) -> KiraUIFoundation.FoundationGlassMaterial {
+function surfaceBoxGlassMaterial(
+    material: borrow Material,
+    modifiers: borrow ModifierContext,
+) -> KiraUIFoundation.FoundationGlassMaterial {
     match material {
         LayeredGlass -> {
-            let stack = surfaceBoxGlassStack()
+            let stack = surfaceBoxGlassStack(modifiers)
             let base = KiraUIFoundation.FoundationGlassMaterial {}
             return KiraUIFoundation.foundationGlassMaterialWithTint(
                 base,
@@ -269,7 +279,7 @@ function surfaceBoxFill(
     // white rectangle, hiding the captured backdrop. Use the named Foundation
     // stack instead; an explicit `.fill(...)` remains an intentional override.
     if modifiers.hasFill == false && material == Material.LayeredGlass {
-        return KiraUIFoundation.foundationTintFill(surfaceBoxGlassStack())
+        return KiraUIFoundation.foundationTintFill(surfaceBoxGlassStack(modifiers))
     }
     return modifierSurfaceFill(foundationColor(move fill), modifiers)
 }
@@ -319,7 +329,7 @@ Widget SurfaceBox(
             clipContent: true
             blur: surfaceBoxBlur(semanticMaterial)
             edgeRefraction: 1.0
-            glassMaterial: surfaceBoxGlassMaterial(semanticMaterial)
+            glassMaterial: surfaceBoxGlassMaterial(semanticMaterial, modifiers)
             disabled: modifiers.disabled
             children: loweredChildren(context, modifiers, children)
         }
