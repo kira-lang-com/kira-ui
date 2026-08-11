@@ -1,0 +1,190 @@
+import KiraGraphics
+import Foundation
+import KiraLayout
+import KiraUIFoundation
+
+// Painted containers.
+//
+// `Panel` is the one applications should reach for: a themed box that takes its
+// fill, border, material, radius and padding from the theme, and its size from
+// the ordinary sizing modifiers. `SurfaceBox` underneath it is the low-level
+// escape hatch for the rare case that needs to name explicit colors.
+
+// --- Glass -------------------------------------------------------------------
+
+function surfaceGlassFrost() -> KiraUIFoundation.FoundationFrost {
+    // Use the authored Medium Liquid Glass intensity for every glass container.
+    return KiraUIFoundation.FoundationFrost.Medium
+}
+
+// The glass scheme follows the SAME appearance the theme's color tokens resolve
+// through. Sniffing the environment here independently is how a light token set
+// used to end up washed over a dark glass stack.
+function surfaceGlassScheme(modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationScheme {
+    var appearance = resolvedAppearance(Appearance.Dark)
+    if modifiers.hasTheme {
+        appearance = modifiers.theme.appearance()
+    }
+    match appearance {
+        Light -> return KiraUIFoundation.FoundationScheme.Light;
+        Dark -> return KiraUIFoundation.FoundationScheme.Dark;
+    }
+}
+
+function surfaceGlassStack(modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationTintStack {
+    return KiraUIFoundation.foundationFrostStack(surfaceGlassFrost(), surfaceGlassScheme(modifiers))
+}
+
+function surfaceGlassMaterial(
+    material: borrow Material,
+    modifiers: borrow ModifierContext,
+) -> KiraUIFoundation.FoundationGlassMaterial {
+    match material {
+        LayeredGlass -> {
+            let stack = surfaceGlassStack(modifiers)
+            let base = KiraUIFoundation.FoundationGlassMaterial {}
+            return KiraUIFoundation.foundationGlassMaterialWithTint(
+                base,
+                stack
+            )
+        }
+        Flat -> return KiraUIFoundation.FoundationGlassMaterial {}
+        Frosted -> return KiraUIFoundation.FoundationGlassMaterial {}
+    }
+}
+
+function surfaceGlassFill(
+    fill: Color,
+    material: borrow Material,
+    modifiers: borrow ModifierContext,
+) -> KiraUIFoundation.Color {
+    // A Liquid Glass surface owns its wash. Passing a token fill through here
+    // used to turn the material's lower layer into an opaque rectangle, hiding
+    // the captured backdrop. Use the named Foundation stack instead; an explicit
+    // `.fill(...)` remains an intentional override.
+    if modifiers.hasFill == false && material == Material.LayeredGlass {
+        return KiraUIFoundation.foundationTintFill(surfaceGlassStack(modifiers))
+    }
+    return modifierSurfaceFill(foundationColor(move fill), modifiers)
+}
+
+function surfaceGlassBlur(material: borrow Material) -> Float {
+    match material {
+        LayeredGlass -> return KiraUIFoundation.foundationFrostBlur(surfaceGlassFrost());
+        Flat -> return 1.0;
+        Frosted -> return 1.0;
+    }
+}
+
+// --- Panel -------------------------------------------------------------------
+
+// A themed container. Everything it paints is a token:
+//
+//   Panel(radius = .Small, padding = .Medium) { … }
+//       .themeSurface(.Surface)
+//       .themeBorder(.Subtle)
+//       .material(.LayeredGlass)
+//
+// It fills the space its parent gives it; `.width(...)`, `.height(...)` and
+// `.fillHeight()` override that the same way they do for any other widget. An
+// application that wants a panel does NOT need to state five explicit colors and
+// two SizeModes to get one.
+Widget Panel(
+    radius: CornerRadius = CornerRadius.Medium,
+    padding: Spacing = Spacing.None,
+) {
+    @Content let content: Any Widget
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let childModifiers = modifierContextForChildren(modifiers)
+        var selectedMaterial = KiraUIFoundation.FoundationMaterial.Flat
+        var semanticMaterial = Material.Flat
+        if modifiers.hasMaterial {
+            semanticMaterial = modifiers.material
+            selectedMaterial = foundationMaterial(modifiers.material)
+        }
+        var fallbackFill = transparentFoundationColor()
+        if modifiers.hasTheme {
+            fallbackFill = foundationColor(modifiers.theme.tokens().backgroundSurface)
+        }
+        let selectedFill = modifierSurfaceFill(move fallbackFill, modifiers)
+        var selectedBorder = modifierSurfaceBorder(transparentFoundationColor(), modifiers)
+        var borderWidth = 1.0
+        if modifiers.hasThemeBorder == false {
+            borderWidth = 0.0
+        }
+        // Liquid Glass draws its own edge; a token border on top of it reads as
+        // a hairline seam around the material.
+        if semanticMaterial == Material.LayeredGlass {
+            selectedBorder = transparentFoundationColor()
+        }
+        return KiraUIFoundation.FoundationView {
+            kind: KiraUIFoundation.FoundationViewKind.Surface
+            width: KiraUIFoundation.SizeMode.Fill
+            height: KiraUIFoundation.SizeMode.Fill
+            fill: surfaceGlassFill(Color {}, semanticMaterial, modifiers)
+            border: selectedBorder
+            borderWidth: borderWidth
+            radius: cornerRadiusImplementation(radius, modifiers)
+            shape: KiraUIFoundation.FoundationShape.RegularRoundedRect
+            material: selectedMaterial
+            effects: []
+            padding: uniformInsets(spacingImplementation(padding, modifiers))
+            clipContent: true
+            blur: surfaceGlassBlur(semanticMaterial)
+            edgeRefraction: 1.0
+            glassMaterial: surfaceGlassMaterial(semanticMaterial, modifiers)
+            disabled: modifiers.disabled
+            children: [content.lower(context, childModifiers)]
+        }
+    }
+}
+
+// --- SurfaceBox --------------------------------------------------------------
+
+// A painted Surface container with explicit size, fill, border and corner
+// radius. Prefer `Panel`; this remains for the cases that genuinely need to name
+// a color the theme does not have a role for.
+Widget SurfaceBox(
+    fill: Color,
+    border: Color,
+    borderWidth: Float,
+    radius: Float,
+    width: KiraUIFoundation.SizeMode,
+    height: KiraUIFoundation.SizeMode,
+) {
+    @Content let children: [Any Widget]
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        var selectedMaterial = KiraUIFoundation.FoundationMaterial.Flat
+        var semanticMaterial = Material.Flat
+        if modifiers.hasMaterial {
+            semanticMaterial = modifiers.material
+            selectedMaterial = foundationMaterial(modifiers.material)
+        }
+        let selectedFill = surfaceGlassFill(move fill, semanticMaterial, modifiers)
+        var selectedBorder = modifierSurfaceBorder(foundationColor(border), modifiers)
+        if semanticMaterial == Material.LayeredGlass {
+            selectedBorder = transparentFoundationColor()
+        }
+        return KiraUIFoundation.FoundationView {
+            kind: KiraUIFoundation.FoundationViewKind.Surface
+            width: width
+            height: height
+            fill: selectedFill
+            border: selectedBorder
+            borderWidth: borderWidth
+            radius: radius
+            shape: KiraUIFoundation.FoundationShape.RegularRoundedRect
+            material: selectedMaterial
+            effects: []
+            padding: KiraUIFoundation.EdgeInsets {}
+            clipContent: true
+            blur: surfaceGlassBlur(semanticMaterial)
+            edgeRefraction: 1.0
+            glassMaterial: surfaceGlassMaterial(semanticMaterial, modifiers)
+            disabled: modifiers.disabled
+            children: loweredChildren(context, modifiers, children)
+        }
+    }
+}
