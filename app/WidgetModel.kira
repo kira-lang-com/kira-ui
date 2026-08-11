@@ -1640,6 +1640,40 @@ Widget Padding(length: Float) {
     }
 }
 
+// Padding along one axis at a time, in spacing tokens.
+//
+// Uniform padding was the only kind on offer, so the extremely common "inset the
+// row's contents from the panel edge, but do not add height" case had no way to
+// say itself, and every such row opened and closed with a FixedGap standing in
+// for the padding it actually wanted. A leading gap is not a gap — it is the
+// container's inset, and a reader cannot tell the two apart once they are both
+// spelled FixedGap.
+Widget Inset(
+    horizontal: Spacing = Spacing.None,
+    vertical: Spacing = Spacing.None,
+) {
+    @Content let content: Any Widget
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let childModifiers = modifierContextForChildren(modifiers)
+        let side = spacingImplementation(horizontal, modifiers)
+        let ends = spacingImplementation(vertical, modifiers)
+        return Frame(
+            content.lower(context, childModifiers),
+            KiraUIFoundation.SizeMode.Fill,
+            KiraUIFoundation.SizeMode.Hug,
+            0,
+            KiraUIFoundation.Alignment.TopLeading,
+            KiraUIFoundation.EdgeInsets {
+                top: ends
+                trailing: side
+                bottom: ends
+                leading: side
+            }
+        )
+    }
+}
+
 // Semantic modifiers contribute a typed delta and then lower the receiving
 // widget with the resolved context. No FoundationView has been built yet, so
 // the value can be consumed by the widget itself and its own child traversal
