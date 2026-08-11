@@ -213,10 +213,18 @@ Widget Icon(
         if name.count > 0 {
             resolvedSvg = iconSvg(name)
         }
+        // `.foregroundColor(...)` names this icon's own ink. It is the scoped
+        // modifier rather than `.themeColor(...)` on purpose: theme color
+        // cascades to descendants, so honoring it here would repaint every icon
+        // inside a tinted subtree.
+        var resolvedColor = modifierColor(foundationColor(color), modifiers)
+        if modifiers.hasForegroundColor {
+            resolvedColor = modifierColor(modifierThemeColor(modifiers.foregroundColor, modifiers), modifiers)
+        }
         return KiraUIFoundation.FoundationView {
             kind: KiraUIFoundation.FoundationViewKind.Icon
             content: move resolvedSvg
-            color: modifierColor(foundationColor(color), modifiers)
+            color: move resolvedColor
             size: size
         }
     }

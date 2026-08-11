@@ -276,6 +276,7 @@ function themeColorAsColor(color: borrow ThemeColor) -> Color {
         Default -> return colorWhite();
         Secondary -> return colorSecondaryText();
         Muted -> return colorMutedText();
+        Inverse -> return colorDarkText();
         Accent -> return colorTaupe();
         Blue -> return colorBlue();
         Green -> return colorGreen();
@@ -325,6 +326,7 @@ function modifierThemeColor(
             Default -> return foundationColor(tokens.foregroundPrimary);
             Secondary -> return foundationColor(tokens.foregroundSecondary);
             Muted -> return foundationColor(tokens.foregroundDisabled);
+            Inverse -> return foundationColor(tokens.foregroundInverse);
             Accent -> return foundationColor(tokens.accent);
             Blue -> return foundationColor(tokens.accent);
             Green -> return foundationColor(tokens.success);
@@ -346,19 +348,21 @@ function modifierThemeSurface(
     if modifiers.hasTheme {
         let tokens = modifiers.theme.tokens()
         match surface {
+            Clear -> return transparentFoundationColor();
             Canvas -> return foundationColor(tokens.backgroundCanvas);
             Surface -> return foundationColor(tokens.backgroundSurface);
             Raised -> return foundationColor(tokens.backgroundRaised);
             Control -> return foundationColor(tokens.backgroundControl);
             Overlay -> return foundationColor(tokens.backgroundOverlay);
+            Accent -> return foundationColor(tokens.accent);
+            // A selection band reads as the accent behind the row's own ink, so
+            // it is the accent held well below reading strength; the hover wash
+            // is the foreground at a whisper.
+            Selected -> return foundationColor(colorWithAlpha(tokens.accent, 0.22));
+            Hovered -> return foundationColor(colorWithAlpha(tokens.foregroundPrimary, 0.08));
         }
     }
-    return KiraUIFoundation.Color {
-        r: 0.0
-        g: 0.0
-        b: 0.0
-        a: 0.0
-    }
+    return transparentFoundationColor()
 }
 
 function modifierSurfaceBorder(
@@ -1196,8 +1200,14 @@ function buttonView(
     label: String,
     fill: KiraUIFoundation.Color,
 ) -> KiraUIFoundation.FoundationView {
+    // A filled button's label is the inverse ink, not white — white on a light
+    // theme's control fill is unreadable every time.
     var labelModifiers = modifierContextForPresentation(modifiers)
-    let labelDelta = modifierDeltaTextColor(colorWhite())
+    var labelColor = colorWhite()
+    if modifiers.hasTheme {
+        labelColor = modifiers.theme.tokens().foregroundInverse
+    }
+    let labelDelta = modifierDeltaTextColor(move labelColor)
     labelModifiers = modifierContextApply(labelModifiers, move labelDelta)
     let labelView = Text(content: move label).lower(context, labelModifiers)
     return KiraUIFoundation.FoundationView {
@@ -1574,6 +1584,22 @@ Widget LinearGradient(start: Color, end: Color) {
             padding: KiraUIFoundation.EdgeInsets {},
             crossAxisAlignment: KiraUIFoundation.CrossAlignment.Stretch
         )
+    }
+}
+
+// A fill-sized wash in a surface role — the band behind a list row, the pill
+// under a tab. The themed counterpart to SurfaceTint, which can only be handed a
+// color someone else already resolved.
+Widget ThemeTint(surface: ThemeSurface, radius: CornerRadius = CornerRadius.None) {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let ignored = context.frameCount
+        return KiraUIFoundation.FoundationView {
+            kind: KiraUIFoundation.FoundationViewKind.Surface
+            width: KiraUIFoundation.SizeMode.Fill
+            height: KiraUIFoundation.SizeMode.Fill
+            fill: modifierColor(modifierThemeSurface(surface, modifiers), modifiers)
+            radius: cornerRadiusImplementation(radius, modifiers)
+        }
     }
 }
 
