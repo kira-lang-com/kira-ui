@@ -229,10 +229,9 @@ Widget Expanded(flex: Int) {
 // transparent spacer gaps). Pass SizeMode.Fixed(...) for a fixed box or
 // SizeMode.Fill to stretch to the parent.
 function surfaceBoxGlassFrost() -> KiraUIFoundation.FoundationFrost {
-    // The editor shell sits over a pale blue canvas and a dark live viewport.
-    // High keeps the named Foundation wash while leaving enough of either
-    // backdrop visible to read as glass instead of a white rounded slab.
-    return KiraUIFoundation.FoundationFrost.High
+    // Keep SurfaceBox's bridge on the same authored material as the UIF Liquid
+    // Glass demo: XHigh frost, Step blur, and the Foundation defaults below.
+    return KiraUIFoundation.FoundationFrost.XHigh
 }
 
 function surfaceBoxGlassScheme() -> KiraUIFoundation.FoundationScheme {
@@ -249,20 +248,8 @@ function surfaceBoxGlassStack() -> KiraUIFoundation.FoundationTintStack {
 function surfaceBoxGlassMaterial(material: borrow Material) -> KiraUIFoundation.FoundationGlassMaterial {
     match material {
         LayeredGlass -> {
-            // SurfaceBox is the widget-level bridge into the Foundation material
-            // API. Carry the platform stack here instead of relying on
-            // FoundationView's zeroed glass defaults, otherwise a LiquidGlass
-            // modifier only changes the enum and the renderer loses the upper
-            // wash layer that makes the surface read as glass.
             let stack = surfaceBoxGlassStack()
-            let base = KiraUIFoundation.FoundationGlassMaterial {
-                edgeStrokeStrength: 0.16
-                edgeStrokeDarken: 0.72
-                edgeStrokePeak: 1.4
-                edgeStrokeFade: 7.0
-                sheenStrength: 0.06
-                innerRimStrength: 0.10
-            }
+            let base = KiraUIFoundation.FoundationGlassMaterial {}
             return KiraUIFoundation.foundationGlassMaterialWithTint(
                 base,
                 stack
@@ -290,9 +277,7 @@ function surfaceBoxFill(
 
 function surfaceBoxBlur(material: borrow Material) -> Float {
     match material {
-        // High's Foundation dial is 0.15: enough to soften the scene while
-        // retaining the editor's grid and mesh detail beneath the chrome.
-        LayeredGlass -> return 0.15;
+        LayeredGlass -> return KiraUIFoundation.foundationFrostBlur(surfaceBoxGlassFrost());
         Flat -> return 1.0;
         Frosted -> return 1.0;
     }
@@ -316,7 +301,10 @@ Widget SurfaceBox(
             selectedMaterial = foundationMaterial(modifiers.material)
         }
         let selectedFill = surfaceBoxFill(move fill, semanticMaterial, modifiers)
-        let selectedBorder = modifierSurfaceBorder(foundationColor(border), modifiers)
+        var selectedBorder = modifierSurfaceBorder(foundationColor(border), modifiers)
+        if semanticMaterial == Material.LayeredGlass {
+            selectedBorder = transparentFoundationColor()
+        }
         return KiraUIFoundation.FoundationView {
             kind: KiraUIFoundation.FoundationViewKind.Surface
             width: width
