@@ -223,6 +223,47 @@ Widget Expanded(flex: Int) {
 
 // Painted containers (Panel, SurfaceBox) live in Surfaces.kira.
 
+// --- DragRegion --------------------------------------------------------------
+
+// A hit region that reports drags, wrapping whatever it is given.
+//
+// Dragging was previously reachable only through GestureTextureView — that is,
+// only if the thing being dragged happened to be an engine texture. Every other
+// draggable affordance an application needs (a splitter between two panes, a
+// panel tab being torn to a new dock, a slider thumb) has the same shape and no
+// texture, so it had nowhere to go.
+//
+// `key` must be nonzero and stable across frames. Drag callbacks carry
+// CUMULATIVE deltas from the press point, not per-move increments.
+Widget DragRegion(
+    key: Int,
+    onDragStart: (Float, Float) -> Void,
+    onDragMove: (Float, Float) -> Void,
+    onDragEnd: (Float, Float) -> Void,
+) {
+    @Content let children: [Any Widget]
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let k = key
+        let dragStart = onDragStart
+        let dragMove = onDragMove
+        let dragEnd = onDragEnd
+        return KiraUIFoundation.FoundationView {
+            kind: KiraUIFoundation.FoundationViewKind.HitArea
+            key: k
+            width: KiraUIFoundation.SizeMode.Hug
+            height: KiraUIFoundation.SizeMode.Hug
+            disabled: modifiers.disabled
+            interaction: KiraUIFoundation.FoundationInteraction {
+                onDragStart: dragStart
+                onDragMove: dragMove
+                onDragEnd: dragEnd
+            }
+            children: loweredChildren(context, modifiers, children)
+        }
+    }
+}
+
 // --- GestureTextureView -----------------------------------------------------
 
 // An external KiraGraphics texture (an engine viewport render target) wrapped in
