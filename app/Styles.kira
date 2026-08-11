@@ -2,6 +2,16 @@
 // typed: an application fills the tokens once, and component style values are
 // construct-backed updates of the same implementation.
 
+// The presentation a style's tokens are authored around. A style declares the
+// branch it wants by default; the host environment overrides it with
+// KIRA_UI_APPEARANCE=light|dark. Without this the only way an application could
+// pick a default was to re-encode the choice inside every single adaptive token,
+// which is exactly the duplication the token vocabulary exists to remove.
+enum Appearance {
+    Light
+    Dark
+}
+
 struct AdaptiveColor {
     let light: Color
     let dark: Color
@@ -54,9 +64,14 @@ struct FontImplementation {
     let tracking: Float
 }
 
+// Every entry here must be reachable from `.typography(...)`. `control` and
+// `title` are required tokens on the style, so leaving them out of this enum
+// left applications with no way to ask for the font their own theme declared —
+// which is how explicit `.font(size:weight:)` calls creep back in.
 enum TypographyStyle {
     caption
     body
+    control
     subheadline
     bodyEmphasis
     footnote
@@ -64,6 +79,7 @@ enum TypographyStyle {
     label
     section
     headline
+    title
     title1
     title2
     title3
@@ -355,6 +371,9 @@ construct StyleImplementation {
     @Required let typography: StyleTypographyTokens
     @Required let borders: StyleBorderTokens
     @Required let materials: StyleMaterialTokens
+    // Which branch of every AdaptiveColor this style presents when the host has
+    // no appearance preference.
+    let appearance: Appearance = Appearance.Dark
     // The grouped token is the canonical source; this flattened member is the
     // component-override surface used by `liquidGlass.material: ...`.
     let liquidGlass: LiquidGlassMaterialImplementation = LiquidGlassMaterialImplementation {
