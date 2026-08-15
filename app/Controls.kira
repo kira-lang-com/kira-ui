@@ -1,0 +1,189 @@
+import KiraGraphics
+import Foundation
+import KiraLayout
+import KiraUIFoundation
+
+// Value controls: Toggle and Slider.
+//
+// Both are theme-driven the way Button is: interiors come from the fill
+// tokens, the active side comes from the accent tint, and the cascading
+// `.foregroundColor(...)` retints the active side exactly as it retints a
+// Progress bar. State lives with the caller — the control renders `isOn` /
+// `value` and reports interaction; the interactive runner's per-frame rebuild
+// shows the write on the next frame.
+
+function kiraUiNoopFloat(value: Float) {
+    let ignored = value + 0.0
+    return
+}
+
+function toggleKnobColor() -> KiraUIFoundation.Color {
+    // The knob is white in both schemes, like a platform switch; it reads
+    // against both the accent track and the control-fill track.
+    return KiraUIFoundation.Color {
+        r: 1.0
+        g: 1.0
+        b: 1.0
+        a: 1.0
+    }
+}
+
+function controlClamp01(value: Float) -> Float {
+    if value < 0.0 {
+        return 0.0
+    }
+    if value > 1.0 {
+        return 1.0
+    }
+    return value
+}
+
+// The active-side colour: the cascading `.tint(...)` when one is set, the theme's
+// accent otherwise. Shared by Toggle's on-track and Slider's filled segment.
+//
+// It reads the TINT and not the foreground on purpose. A row that dims its label
+// while its property is switched off states that with a foreground, and the
+// switch that turns the property back on has to stay accented while it does —
+// the two are different decisions and were the same value for as long as this
+// read `foregroundColor`.
+function controlActiveColor(modifiers: borrow ModifierContext) -> KiraUIFoundation.Color {
+    if modifiers.hasTint {
+        return modifierPrimaryColor(modifiers.tint, modifiers)
+    }
+    return foundationColor(modifierTokens(modifiers).tint.accent)
+}
+
+// A switch: a capsule track with a white knob at the off (leading) or on
+// (trailing) edge, at the size class's own track size. The caller owns the
+// state and `.onClick(...)` flips it.
+Widget Toggle(isOn: Bool) {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let ignored = context.frameCount
+        let metrics = resolvedControlMetrics(modifiers)
+        var trackFill = foundationColor(modifierTokens(modifiers).fill.control)
+        if isOn {
+            trackFill = controlActiveColor(modifiers)
+        }
+        var knobSide = KiraUIFoundation.Alignment.Leading
+        if isOn {
+            knobSide = KiraUIFoundation.Alignment.Trailing
+        }
+        let knobSize = metrics.toggleHeight - metrics.toggleInset * 2.0
+        let knob = KiraUIFoundation.FoundationView {
+            kind: KiraUIFoundation.FoundationViewKind.Surface
+            width: KiraUIFoundation.SizeMode.Fixed(knobSize)
+            height: KiraUIFoundation.SizeMode.Fixed(knobSize)
+            fill: modifierColor(toggleKnobColor(), modifiers)
+            radius: 999.0
+        }
+        let seat = KiraUIFoundation.FoundationView {
+            kind: KiraUIFoundation.FoundationViewKind.Frame
+            width: KiraUIFoundation.SizeMode.Fill
+            height: KiraUIFoundation.SizeMode.Fill
+            alignment: knobSide
+            padding: uniformInsets(metrics.toggleInset)
+            children: [move knob]
+        }
+        return KiraUIFoundation.FoundationView {
+            kind: KiraUIFoundation.FoundationViewKind.Surface
+            width: KiraUIFoundation.SizeMode.Fixed(metrics.toggleWidth)
+            height: KiraUIFoundation.SizeMode.Fixed(metrics.toggleHeight)
+            fill: modifierColor(move trackFill, modifiers)
+            radius: 999.0
+            clipContent: true
+            disabled: modifiers.disabled
+            children: [move seat]
+        }
+    }
+}
+
+function sliderDragFn(value: Float, width: Float, onChange: (Float) -> Void) -> (Float, Float) -> Void {
+    let base = value
+    let w = width
+    let change = onChange
+    let f: (Float, Float) -> Void = { dx, dy in
+        let ignored = dy + 0.0
+        change(controlClamp01(base + dx / w))
+        return
+    }
+    return f
+}
+
+// A horizontal slider over 0...1: a capsule track, the filled segment up to
+// `value`, and a knob the pointer drags. `onChange` receives the clamped next
+// value during a drag; the caller stores it and the next frame renders it.
+Widget Slider(
+    value: Float,
+    width: Float = 160.0,
+    onChange: (Float) -> Void = kiraUiNoopFloat,
+) {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let k = kiraUiTapSeqKey()
+        let position = controlClamp01(value)
+        let tokens = modifierTokens(modifiers)
+        let drag = sliderDragFn(position, width, onChange)
+        let track = KiraUIFoundation.FoundationView {
+            kind: KiraUIFoundation.FoundationViewKind.Surface
+            width: KiraUIFoundation.SizeMode.Fixed(width)
+            height: KiraUIFoundation.SizeMode.Fixed(4.0)
+            fill: modifierSurfaceFill(foundationColor(tokens.fill.control), modifiers)
+            radius: 999.0
+        }
+        let active = KiraUIFoundation.FoundationView {
+            kind: KiraUIFoundation.FoundationViewKind.Surface
+            width: KiraUIFoundation.SizeMode.Fixed(width * position)
+            height: KiraUIFoundation.SizeMode.Fixed(4.0)
+            fill: modifierColor(controlActiveColor(modifiers), modifiers)
+            radius: 999.0
+        }
+        let knob = KiraUIFoundation.FoundationView {
+            kind: KiraUIFoundation.FoundationViewKind.Surface
+            width: KiraUIFoundation.SizeMode.Fixed(18.0)
+            height: KiraUIFoundation.SizeMode.Fixed(18.0)
+            fill: modifierColor(toggleKnobColor(), modifiers)
+            radius: 999.0
+        }
+        var knobInset = position * (width - 18.0)
+        if knobInset < 0.0 {
+            knobInset = 0.0
+        }
+        let activeSeat = KiraUIFoundation.FoundationView {
+            kind: KiraUIFoundation.FoundationViewKind.Frame
+            width: KiraUIFoundation.SizeMode.Fill
+            height: KiraUIFoundation.SizeMode.Fill
+            alignment: KiraUIFoundation.Alignment.Leading
+            padding: KiraUIFoundation.EdgeInsets {}
+            children: [move active]
+        }
+        let knobSeat = KiraUIFoundation.FoundationView {
+            kind: KiraUIFoundation.FoundationViewKind.Frame
+            width: KiraUIFoundation.SizeMode.Fill
+            height: KiraUIFoundation.SizeMode.Fill
+            alignment: KiraUIFoundation.Alignment.Leading
+            padding: KiraUIFoundation.EdgeInsets {
+                leading: knobInset
+            }
+            children: [move knob]
+        }
+        let layers = KiraUIFoundation.FoundationView {
+            kind: KiraUIFoundation.FoundationViewKind.Frame
+            width: KiraUIFoundation.SizeMode.Fixed(width)
+            height: KiraUIFoundation.SizeMode.Fixed(24.0)
+            alignment: KiraUIFoundation.Alignment.Center
+            padding: KiraUIFoundation.EdgeInsets {}
+            children: [move track, move activeSeat, move knobSeat]
+        }
+        return KiraUIFoundation.FoundationView {
+            kind: KiraUIFoundation.FoundationViewKind.HitArea
+            key: k
+            width: KiraUIFoundation.SizeMode.Hug
+            height: KiraUIFoundation.SizeMode.Hug
+            focusable: true
+            disabled: modifiers.disabled
+            interaction: KiraUIFoundation.FoundationInteraction {
+                onDragMove: drag
+            }
+            children: [move layers]
+        }
+    }
+}

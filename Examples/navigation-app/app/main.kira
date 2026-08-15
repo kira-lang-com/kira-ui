@@ -1,0 +1,383 @@
+import KiraUI
+
+// A real layered navigation app:
+//
+//   NavigationSplitView
+//       NavigationStack
+//           WorkspaceHome
+//             -> ProjectsPage
+//               -> ProjectOverviewPage
+//                 -> ProjectFilesPage
+//
+// The split view owns the responsive sidebar/detail presentation. The nested
+// stack owns the value-driven detail layers. On a narrow viewport the split
+// view collapses to the same stack without changing the path.
+
+// Typed navigation values. These are route types, not numeric IDs.
+NavigationValue ProjectsRoute {
+    navigationType { return "ProjectsRoute" }
+}
+
+NavigationValue ActivityRoute {
+    navigationType { return "ActivityRoute" }
+}
+
+NavigationValue SettingsRoute {
+    navigationType { return "SettingsRoute" }
+}
+
+NavigationValue ProjectOverviewRoute {
+    navigationType { return "ProjectOverviewRoute" }
+}
+
+NavigationValue ProjectFilesRoute {
+    navigationType { return "ProjectFilesRoute" }
+}
+
+NavigationValue ProjectFileDetailRoute {
+    navigationType { return "ProjectFileDetailRoute" }
+}
+
+NavigationValue ActivityDetailRoute {
+    navigationType { return "ActivityDetailRoute" }
+}
+
+NavigationValue AccountRoute {
+    navigationType { return "AccountRoute" }
+}
+
+@Main
+function main() {
+    RunWidgetInteractiveApp(
+        title = "KiraUI Layered Navigation",
+        width = 1280,
+        height = 820,
+        rootBuilder = { in
+            return KiraUIApp(
+                name: "KiraUI Layered Navigation",
+                content: LayeredNavigationApp()
+            )
+        }
+    )
+    return
+}
+
+Widget LayeredNavigationApp() {
+    // This is the single source of truth for both the split presentation and
+    // the compact stack presentation. Links never receive a router object.
+    @State var navigationPath: NavigationPath = NavigationPath {}
+
+    body {
+        NavigationSplitView(
+            sidebar = WorkspaceSidebar(),
+            detail = WorkspaceDetail(path = navigationPath),
+            path = navigationPath
+        )
+    }
+}
+
+Widget WorkspaceSidebar() {
+    body {
+        AppSurface {
+            VStack(spacing = Spacing.Small) {
+                Text("Kira Workspace")
+                    .font(size = 22.0, weight = FontWeight.Bold)
+
+                Text("The same path drives desktop split view and phone stack navigation.")
+                    .font(size = 13.0)
+                    .opacity(0.62)
+
+                NavigationRow(
+                    title = "Projects",
+                    detail = "Three layered destinations",
+                    route = ProjectsRoute()
+                )
+
+                NavigationRow(
+                    title = "Activity",
+                    detail = "A second destination branch",
+                    route = ActivityRoute()
+                )
+
+                NavigationRow(
+                    title = "Settings",
+                    detail = "A nested account screen",
+                    route = SettingsRoute()
+                )
+            }
+            .surfacePadding(20.0)
+        }
+    }
+}
+
+Widget NavigationRow(title: String, detail: String, route: Any NavigationValue) {
+    body {
+        NavigationLink(value = move route) {
+            Card(material = Material.Frosted) {
+                VStack(spacing = Spacing.ExtraSmall) {
+                    Text(title)
+                        .font(size = 16.0, weight = FontWeight.SemiBold)
+
+                    Text(detail)
+                        .font(size = 12.0)
+                        .opacity(0.62)
+                }
+                .surfacePadding(12.0)
+            }
+        }
+    }
+}
+
+Widget WorkspaceDetail(path: NavigationPath) {
+    body {
+        NavigationStack(path = path) {
+            WorkspaceHome(path = path)
+        }
+        // Each mapping is a layer in the same value-driven stack. The route
+        // values can be appended in sequence for a deep link such as
+        // [ProjectsRoute(), ProjectOverviewRoute(), ProjectFilesRoute(),
+        //  ProjectFileDetailRoute()].
+        .navigationDestination(
+            forType = ProjectsRoute(),
+            destination = ProjectsPage(path = path)
+        )
+        .navigationDestination(
+            forType = ActivityRoute(),
+            destination = ActivityPage(path = path)
+        )
+        .navigationDestination(
+            forType = SettingsRoute(),
+            destination = SettingsPage(path = path)
+        )
+        .navigationDestination(
+            forType = ProjectOverviewRoute(),
+            destination = ProjectOverviewPage(path = path)
+        )
+        .navigationDestination(
+            forType = ProjectFilesRoute(),
+            destination = ProjectFilesPage(path = path)
+        )
+        .navigationDestination(
+            forType = ProjectFileDetailRoute(),
+            destination = ProjectFileDetailPage(path = path)
+        )
+        .navigationDestination(
+            forType = ActivityDetailRoute(),
+            destination = ActivityDetailPage(path = path)
+        )
+        .navigationDestination(
+            forType = AccountRoute(),
+            destination = AccountPage(path = path)
+        )
+    }
+}
+
+Widget WorkspaceHome(path: NavigationPath) {
+    body {
+        AppSurface {
+            VStack(spacing = Spacing.Medium) {
+                Text("Workspace")
+                    .font(size = 30.0, weight = FontWeight.Bold)
+
+                Text("Choose a branch from the sidebar or start a layered flow here.")
+                    .font(size = 15.0)
+                    .opacity(0.64)
+
+                HStack(spacing = Spacing.Small) {
+                    NavigationRow(
+                        title = "Open Projects",
+                        detail = "Projects → overview → files",
+                        route = ProjectsRoute()
+                    )
+
+                    NavigationRow(
+                        title = "Open Activity",
+                        detail = "Activity → event detail",
+                        route = ActivityRoute()
+                    )
+                }
+                .fillHeight()
+            }
+            .surfacePadding(28.0)
+        }
+    }
+}
+
+Widget ProjectsPage(path: NavigationPath) {
+    body {
+        LayerPage(
+            title = "Projects",
+            subtitle = "The first level of the project flow."
+        ) {
+            VStack(spacing = Spacing.Small) {
+                NavigationLink(value = ProjectOverviewRoute()) {
+                    LayerRow(
+                        title = "KiraUI",
+                        detail = "Open the project overview"
+                    )
+                }
+
+                NavigationLink(value = ProjectFilesRoute()) {
+                    LayerRow(
+                        title = "Design system",
+                        detail = "Jump directly to project files"
+                    )
+                }
+            }
+        }
+    }
+}
+
+Widget ProjectOverviewPage(path: NavigationPath) {
+    body {
+        LayerPage(
+            title = "KiraUI Overview",
+            subtitle = "A second level nested below Projects."
+        ) {
+            VStack(spacing = Spacing.Small) {
+                Text("This destination is selected by the last value in NavigationPath.")
+                    .font(size = 14.0)
+                    .opacity(0.68)
+
+                NavigationLink(value = ProjectFilesRoute()) {
+                    LayerRow(
+                        title = "Browse files",
+                        detail = "Continue to the third level"
+                    )
+                }
+            }
+        }
+    }
+}
+
+Widget ProjectFilesPage(path: NavigationPath) {
+    body {
+        LayerPage(
+            title = "Project Files",
+            subtitle = "A third level that can continue into a file."
+        ) {
+            VStack(spacing = Spacing.Small) {
+                NavigationLink(value = ProjectFileDetailRoute()) {
+                    LayerRow(
+                        title = "app/Navigation.kira",
+                        detail = "Open file detail"
+                    )
+                }
+
+                NavigationLink(value = ProjectOverviewRoute()) {
+                    LayerRow(
+                        title = "Back to overview",
+                        detail = "Push a value to revisit a layer"
+                    )
+                }
+            }
+        }
+    }
+}
+
+Widget ProjectFileDetailPage(path: NavigationPath) {
+    body {
+        LayerPage(
+            title = "Navigation.kira",
+            subtitle = "The deepest screen in this example."
+        ) {
+            Text("On a phone this is a pushed screen with Back. On a PC or TV it remains in the detail column.")
+                .font(size = 14.0)
+                .opacity(0.68)
+        }
+    }
+}
+
+Widget ActivityPage(path: NavigationPath) {
+    body {
+        LayerPage(
+            title = "Activity",
+            subtitle = "A separate branch sharing the same path."
+        ) {
+            NavigationLink(value = ActivityDetailRoute()) {
+                LayerRow(
+                    title = "Navigation API review",
+                    detail = "Open activity detail"
+                )
+            }
+        }
+    }
+}
+
+Widget ActivityDetailPage(path: NavigationPath) {
+    body {
+        LayerPage(
+            title = "Navigation API review",
+            subtitle = "A detail leaf under Activity."
+        ) {
+            Text("The branch is selected by the same NavigationPath as Projects and Settings.")
+                .font(size = 14.0)
+                .opacity(0.68)
+        }
+    }
+}
+
+Widget SettingsPage(path: NavigationPath) {
+    body {
+        LayerPage(
+            title = "Settings",
+            subtitle = "A third root branch with its own child."
+        ) {
+            NavigationLink(value = AccountRoute()) {
+                LayerRow(
+                    title = "Account",
+                    detail = "Open account settings"
+                )
+            }
+        }
+    }
+}
+
+Widget AccountPage(path: NavigationPath) {
+    body {
+        LayerPage(
+            title = "Account",
+            subtitle = "A nested Settings destination."
+        ) {
+            Text("All links remain value-based. No destination page owns a router.")
+                .font(size = 14.0)
+                .opacity(0.68)
+        }
+    }
+}
+
+Widget LayerPage(title: String, subtitle: String) {
+    @Content let content: Any Widget
+
+    body {
+        AppSurface {
+            VStack(spacing = Spacing.Medium) {
+                Text(title)
+                    .font(size = 28.0, weight = FontWeight.Bold)
+
+                Text(subtitle)
+                    .font(size = 14.0)
+                    .opacity(0.64)
+
+                content
+            }
+            .surfacePadding(28.0)
+        }
+    }
+}
+
+Widget LayerRow(title: String, detail: String) {
+    body {
+        Card(material = Material.Frosted) {
+            VStack(spacing = Spacing.ExtraSmall) {
+                Text(title)
+                    .font(size = 16.0, weight = FontWeight.SemiBold)
+
+                Text(detail)
+                    .font(size = 13.0)
+                    .opacity(0.62)
+            }
+            .surfacePadding(14.0)
+        }
+    }
+}

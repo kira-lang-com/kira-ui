@@ -2,12 +2,22 @@ import KiraGraphics
 import KiraLayout
 import Foundation
 import KiraUIFoundation
-// Generic layout/shape primitives — the low-level vocabulary dense chrome UIs
-// (tool panels, inspectors, tab strips) are built from. All of these are
-// app-agnostic: fixed gaps, fixed-size fills/strokes, hug-sized groups, and an
-// alignment-aware overlay stack.
 
-// Where a child sits inside a ZStack's bounds.
+// The layout and shape primitives everything else is built from: the three
+// stacks, a fixed gap, a rectangle, and the two ways a vector reaches the
+// screen.
+//
+// There is ONE stack per axis. A hug-sized row and a fill-sized row are the same
+// widget under two sizing modifiers, and a leading-aligned column and a centred
+// one are the same widget under two alignments — so a vocabulary carrying
+// `HGroup` beside `HStack`, and `VGroupLeading` beside `VGroup`, is a vocabulary
+// asking every reader to learn which of four names means the row they wanted.
+//
+//     HStack(spacing = .Small) { … }                 a row across its parent
+//     HStack(spacing = .Small) { … }.hugWidth()      a row around its content
+//     VStack(alignment = .Center) { … }.fillHeight() a column down the panel
+
+// Where a child sits inside an overlay stack's bounds.
 enum StackAlignment {
     TopLeading
     Top
@@ -18,6 +28,22 @@ enum StackAlignment {
     BottomLeading
     Bottom
     BottomTrailing
+}
+
+// Where a row's children sit on the row's cross axis.
+enum VerticalAlignment {
+    Top
+    Center
+    Bottom
+    Stretch
+}
+
+// Where a column's children sit on the column's cross axis.
+enum HorizontalAlignment {
+    Leading
+    Center
+    Trailing
+    Stretch
 }
 
 function foundationAlignment(alignment: StackAlignment) -> KiraUIFoundation.Alignment {
@@ -34,11 +60,29 @@ function foundationAlignment(alignment: StackAlignment) -> KiraUIFoundation.Alig
     }
 }
 
+function foundationVerticalAlignment(alignment: VerticalAlignment) -> KiraUIFoundation.CrossAlignment {
+    match alignment {
+        Top -> return KiraUIFoundation.CrossAlignment.Start;
+        Center -> return KiraUIFoundation.CrossAlignment.Center;
+        Bottom -> return KiraUIFoundation.CrossAlignment.End;
+        Stretch -> return KiraUIFoundation.CrossAlignment.Stretch;
+    }
+}
+
+function foundationHorizontalAlignment(alignment: HorizontalAlignment) -> KiraUIFoundation.CrossAlignment {
+    match alignment {
+        Leading -> return KiraUIFoundation.CrossAlignment.Start;
+        Center -> return KiraUIFoundation.CrossAlignment.Center;
+        Trailing -> return KiraUIFoundation.CrossAlignment.End;
+        Stretch -> return KiraUIFoundation.CrossAlignment.Stretch;
+    }
+}
+
 // --- Dynamic content helpers ---
 // The `For(x in xs) { ... }` builder sugar appends into a widget's `[Widget]`
 // content, but its iterator must be a real array. `indices(n)` gives the loop a
-// `[Int]` to walk when it needs the position (selection state, tap keys) beside
-// the item: `For(i in indices(count)) { Row(i, items[i]) }`.
+// `[Int]` to walk when it needs the position (selection state, row identity)
+// beside the item: `For(i in indices(count)) { Row(i, items[i]) }`.
 function indices(count: Int) -> [Int] {
     var out: [Int] = []
     var i = 0
@@ -50,14 +94,112 @@ function indices(count: Int) -> [Int] {
 }
 
 // Adopts an already-built low-level FoundationView into the Widget family, so an
-// existing hand-lowered helper (tile/row/segment builder) drops straight into a
-// `For(...)` content block without rewriting its body: `FoundationRaw(view = …)`.
+// existing hand-lowered helper drops straight into a `For(...)` content block
+// without rewriting its body: `FoundationRaw(view = …)`.
 Widget FoundationRaw(view: KiraUIFoundation.FoundationView) {
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let ignored = context.frameCount
         return view
     }
 }
+
+// Nothing, with a place in the tree — SwiftUI's `EmptyView`. It is what a widget
+// argument defaults to when the caller supplies no view: a section without a
+// footer draws no footer, rather than the container having to carry a flag for
+// each optional slot.
+Widget EmptyView() {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let ignored = context.frameCount
+        return KiraUIFoundation.FoundationView {
+            kind: KiraUIFoundation.FoundationViewKind.Surface
+            width: KiraUIFoundation.SizeMode.Fixed(0.0)
+            height: KiraUIFoundation.SizeMode.Fixed(0.0)
+            fill: transparentFoundationColor()
+        }
+    }
+}
+
+// --- Stacks ------------------------------------------------------------------
+
+// The gap between a stack's children: the theme's step, unless the caller
+// carries a length of its own.
+//
+// A step is what a stack should normally ask for, and `spacingLength` is not a
+// way back to writing 13.0 at a call site. It is for the gap the LAYOUT
+// computes rather than the theme owns — a grid's gutter, derived from its tile
+// size and the width it was given, which no token can name because it changes
+// with the window. A negative length means "no length; use the step".
+function stackSpacing(
+    spacing: Spacing,
+    length: Float,
+    modifiers: borrow ModifierContext,
+) -> Float {
+    if length >= 0.0 {
+        return length
+    }
+    return spacingImplementation(move spacing, modifiers)
+}
+
+// A row across its parent's width. `.hugWidth()` makes it a group around its
+// content instead.
+Widget HStack(
+    spacing: Spacing = Spacing.None,
+    alignment: VerticalAlignment = VerticalAlignment.Center,
+    spacingLength: Float = -1.0,
+) {
+    @Content let children: [Any Widget]
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        return KiraUIFoundation.Row(
+            children: loweredChildren(context, modifiers, children),
+            width: KiraUIFoundation.SizeMode.Fill,
+            height: KiraUIFoundation.SizeMode.Hug,
+            spacing: stackSpacing(spacing, spacingLength, modifiers),
+            padding: KiraUIFoundation.EdgeInsets {},
+            crossAxisAlignment: foundationVerticalAlignment(alignment)
+        )
+    }
+}
+
+// A column down its parent's width. `.fillHeight()` makes it claim the whole
+// height; `.hugWidth()` makes it a group around its content.
+Widget VStack(
+    spacing: Spacing = Spacing.None,
+    alignment: HorizontalAlignment = HorizontalAlignment.Leading,
+    spacingLength: Float = -1.0,
+) {
+    @Content let children: [Any Widget]
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        return KiraUIFoundation.Column(
+            children: loweredChildren(context, modifiers, children),
+            width: KiraUIFoundation.SizeMode.Fill,
+            height: KiraUIFoundation.SizeMode.Hug,
+            spacing: stackSpacing(spacing, spacingLength, modifiers),
+            padding: KiraUIFoundation.EdgeInsets {},
+            crossAxisAlignment: foundationHorizontalAlignment(alignment)
+        )
+    }
+}
+
+// An overlay stack: children draw in declaration order (first at the bottom),
+// each placed by `alignment` within the stack's bounds.
+Widget ZStack(alignment: StackAlignment = StackAlignment.Center) {
+    @Content let children: [Any Widget]
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        return KiraUIFoundation.FoundationView {
+            kind: KiraUIFoundation.FoundationViewKind.Frame
+            width: KiraUIFoundation.SizeMode.Fill
+            height: KiraUIFoundation.SizeMode.Fill
+            alignment: foundationAlignment(alignment)
+            padding: KiraUIFoundation.EdgeInsets {}
+            children: loweredChildren(context, modifiers, children)
+        }
+    }
+}
+
+// --- Shapes ------------------------------------------------------------------
 
 // A fixed-size, paint-free box: deterministic spacing inside stacks, where the
 // flexing Spacer would absorb leftover space instead.
@@ -73,9 +215,16 @@ Widget FixedGap(width: Float, height: Float) {
     }
 }
 
-// A fixed-size filled rounded rectangle — the atom for underlines, swatches,
-// dots-and-strokes icon work, and divider ticks.
-Widget Rectangle(width: Float, height: Float, fill: Color, radius: Float) {
+// A fixed-size rounded rectangle: filled, stroked, or both. The atom for
+// underlines, swatches, ticks and hairline rules.
+Widget Rectangle(
+    width: Float,
+    height: Float,
+    radius: Float = 0.0,
+    fill: Color = Color { a: 0.0 },
+    stroke: Color = Color { a: 0.0 },
+    strokeWidth: Float = 0.0,
+) {
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let ignored = context.frameCount
         return KiraUIFoundation.FoundationView {
@@ -83,20 +232,6 @@ Widget Rectangle(width: Float, height: Float, fill: Color, radius: Float) {
             width: KiraUIFoundation.SizeMode.Fixed(width)
             height: KiraUIFoundation.SizeMode.Fixed(height)
             fill: modifierSurfaceFill(foundationColor(fill), modifiers)
-            radius: radius
-        }
-    }
-}
-
-// A fixed-size border-only rounded rectangle (transparent interior).
-Widget RectangleStroke(width: Float, height: Float, stroke: Color, strokeWidth: Float, radius: Float) {
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
-        let ignored = context.frameCount
-        return KiraUIFoundation.FoundationView {
-            kind: KiraUIFoundation.FoundationViewKind.Surface
-            width: KiraUIFoundation.SizeMode.Fixed(width)
-            height: KiraUIFoundation.SizeMode.Fixed(height)
-            fill: transparentFoundationColor()
             border: modifierColor(foundationColor(stroke), modifiers)
             borderWidth: strokeWidth
             radius: radius
@@ -104,140 +239,70 @@ Widget RectangleStroke(width: Float, height: Float, stroke: Color, strokeWidth: 
     }
 }
 
-// A hug-sized horizontal group: unlike HStack (which fills its parent's width),
-// HGroup is exactly as wide as its children — pills, badges, icon clusters.
-Widget HGroup(spacing: Spacing = Spacing.None, spacingValue: Float = -1.0) {
-    @Content let children: [Any Widget]
+// --- Vectors -----------------------------------------------------------------
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
-        var resolvedSpacing = spacingImplementation(spacing, modifiers)
-        if spacingValue >= 0.0 {
-            resolvedSpacing = spacingValue
-        }
-        return KiraUIFoundation.Row(
-            children: loweredChildren(context, modifiers, children),
-            width: KiraUIFoundation.SizeMode.Hug,
-            height: KiraUIFoundation.SizeMode.Hug,
-            spacing: resolvedSpacing,
-            padding: KiraUIFoundation.EdgeInsets {},
-            crossAxisAlignment: KiraUIFoundation.CrossAlignment.Center
-        )
-    }
-}
-
-// A hug-sized vertical group (VStack fills width; VGroup hugs).
-Widget VGroup(spacing: Spacing = Spacing.None, spacingValue: Float = -1.0) {
-    @Content let children: [Any Widget]
-
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
-        var resolvedSpacing = spacingImplementation(spacing, modifiers)
-        if spacingValue >= 0.0 {
-            resolvedSpacing = spacingValue
-        }
-        return KiraUIFoundation.Column(
-            children: loweredChildren(context, modifiers, children),
-            width: KiraUIFoundation.SizeMode.Hug,
-            height: KiraUIFoundation.SizeMode.Hug,
-            spacing: resolvedSpacing,
-            padding: KiraUIFoundation.EdgeInsets {},
-            crossAxisAlignment: KiraUIFoundation.CrossAlignment.Center
-        )
-    }
-}
-
-// A hug-sized vertical group with leading (left) cross alignment — label pairs
-// like a title over a subtitle, hugging their widest line.
-Widget VGroupLeading(spacing: Spacing = Spacing.None, spacingValue: Float = -1.0) {
-    @Content let children: [Any Widget]
-
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
-        var resolvedSpacing = spacingImplementation(spacing, modifiers)
-        if spacingValue >= 0.0 {
-            resolvedSpacing = spacingValue
-        }
-        return KiraUIFoundation.Column(
-            children: loweredChildren(context, modifiers, children),
-            width: KiraUIFoundation.SizeMode.Hug,
-            height: KiraUIFoundation.SizeMode.Hug,
-            spacing: resolvedSpacing,
-            padding: KiraUIFoundation.EdgeInsets {},
-            crossAxisAlignment: KiraUIFoundation.CrossAlignment.Start
-        )
-    }
-}
-
-// Overlay stack: children draw in declaration order (first at the bottom), each
-// placed by `alignment` within the stack's bounds. The stack itself fills the
-// space its parent gives it.
-Widget ZStack(alignment: StackAlignment) {
-    @Content let children: [Any Widget]
-
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
-        return KiraUIFoundation.FoundationView {
-            kind: KiraUIFoundation.FoundationViewKind.Frame
-            width: KiraUIFoundation.SizeMode.Fill
-            height: KiraUIFoundation.SizeMode.Fill
-            alignment: foundationAlignment(alignment)
-            padding: KiraUIFoundation.EdgeInsets {}
-            children: loweredChildren(context, modifiers, children)
-        }
-    }
-}
-
-// A hug-sized overlay stack: exactly as large as its biggest child — icon
-// composition (a pupil centered in an eye outline) without claiming the row.
-Widget ZGroup(alignment: StackAlignment) {
-    @Content let children: [Any Widget]
-
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
-        return KiraUIFoundation.FoundationView {
-            kind: KiraUIFoundation.FoundationViewKind.Frame
-            width: KiraUIFoundation.SizeMode.Hug
-            height: KiraUIFoundation.SizeMode.Hug
-            alignment: foundationAlignment(alignment)
-            padding: KiraUIFoundation.EdgeInsets {}
-            children: loweredChildren(context, modifiers, children)
-        }
-    }
-}
-
-function iconSvg(name: String) -> String {
-    if name == "server" {
-        return "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"3\" y=\"4\" width=\"18\" height=\"6\" rx=\"1\"/><rect x=\"3\" y=\"14\" width=\"18\" height=\"6\" rx=\"1\"/><line x1=\"7\" y1=\"7\" x2=\"7\" y2=\"7\"/><line x1=\"7\" y1=\"17\" x2=\"7\" y2=\"17\"/></svg>"
-    }
-    return ""
-}
-
-// A vector icon: `svg` is SVG text (subset — kira-ui-foundation NativeLibs/Icon:
-// paths incl. arcs, circle/rect/line/polyline/polygon, fill + stroke), rasterized
-// once per (icon, physical size) into the compositor's glyph atlas and drawn as a
-// `size`-square quad tinted `color`. Named icons are the ergonomic surface; the
-// raw SVG inputs remain available for the existing low-level API.
-Widget Icon(
-    name: String = "",
-    svg: String = "",
-    size: Float = 18.0,
-    color: Color = colorWhite(),
-) {
+// A symbol from the library, drawn at the size the region around it implies and
+// inked by the cascading foreground:
+//
+//     Icon(.sidebar).onClick(toggleSidebar)
+//
+// Nothing about how large or what colour is stated here. `.imageScale(...)`
+// names the glyph's size RELATIVE to the size class in effect, and
+// `.foregroundColor(...)` names its ink exactly as it does a run of text's.
+Widget Icon(symbol: Symbol) {
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let ignored = context.frameCount
-        var resolvedSvg = svg
-        if name.count > 0 {
-            resolvedSvg = iconSvg(name)
+        return iconView(
+            symbolImplementation(symbol, modifiers),
+            iconScaleSize(modifiers.imageScale, modifiers),
+            modifiers
+        )
+    }
+}
+
+// Vector artwork the application owns rather than the theme: the document on the
+// canvas, the thumbnail of it in a list.
+//
+// It is sized like a glyph by default, so a swatch in a row follows the size
+// class around it. `points` overrides that with a length, and is the one place a
+// size is a NUMBER rather than a token — because the number is the document's
+// and not the theme's. An icon being authored at 1024 points is the whole
+// subject of the window.
+//
+// `svg` is SVG text (the subset the foundation's rasterizer reads: paths
+// including arcs, circle / rect / line / polyline / polygon, fill and stroke).
+Widget Artwork(svg: String, scale: IconScale = IconScale.Medium, points: Float = -1.0) {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let ignored = context.frameCount
+        var size = iconScaleSize(scale, modifiers)
+        if points >= 0.0 {
+            size = points
         }
-        // `.foregroundColor(...)` names this icon's own ink. It is the scoped
-        // modifier rather than `.themeColor(...)` on purpose: theme color
-        // cascades to descendants, so honoring it here would repaint every icon
-        // inside a tinted subtree.
-        var resolvedColor = modifierColor(foundationColor(color), modifiers)
-        if modifiers.hasForegroundColor {
-            resolvedColor = modifierColor(modifierThemeColor(modifiers.foregroundColor, modifiers), modifiers)
-        }
-        return KiraUIFoundation.FoundationView {
-            kind: KiraUIFoundation.FoundationViewKind.Icon
-            content: move resolvedSvg
-            color: move resolvedColor
-            size: size
-        }
+        return iconView(svg, size, modifiers)
+    }
+}
+
+function iconView(
+    svg: String,
+    size: Float,
+    modifiers: borrow ModifierContext,
+) -> KiraUIFoundation.FoundationView {
+    var ink = modifierColor(foundationColor(modifierTokens(modifiers).foreground.primary), modifiers)
+    if modifiers.hasForegroundColor {
+        ink = modifierColor(modifierPrimaryColor(modifiers.foregroundColor, modifiers), modifiers)
+    }
+    // A glyph is ink, so it answers the same explicit override a run of text
+    // does. `.foregroundColor(...)` names a role and is what application code
+    // should reach for; `.textColor(...)` is the escape hatch for artwork whose
+    // colour is the document's rather than the theme's — a gizmo's axis, a
+    // swatch — and an icon that ignored it had no way to be one of those.
+    if modifiers.hasTextColor {
+        ink = modifierColor(foundationColor(modifiers.textColor), modifiers)
+    }
+    return KiraUIFoundation.FoundationView {
+        kind: KiraUIFoundation.FoundationViewKind.Icon
+        content: move svg
+        color: move ink
+        size: size
     }
 }

@@ -71,96 +71,141 @@ function kiraUiTapBackground(key: Int) -> KiraUIFoundation.Color {
     return transparentFoundationColor()
 }
 
-// --- Tappable ---------------------------------------------------------------
+// --- Actions -----------------------------------------------------------------
 
-// Hug-sized clickable with an explicit key. Fires `onPress` on a left click and
-// paints the default hover wash behind itself while hovered.
-Widget TappableKeyed(key: Int, onPress: () -> Void, radius: Float) {
-    @Content let children: [Any Widget]
+// What a widget DOES is a modifier on it, not a widget wrapped around it:
+//
+//     Icon(.sidebar).onClick(toggleSidebar)
+//     ValueField(text = "50", unit = "%").onScrub(scrubBlur)
+//
+// A button is not a kind of view — it is a view that can be pressed — and a
+// vocabulary with a separate widget per pressable thing grows one more every
+// time something new becomes pressable. The hit region takes the SIZE of what it
+// wraps, so the same modifier serves a glyph that hugs and a list row that fills.
+//
+// The key is minted from the build sequence, so nothing at the call site carries
+// one and two controls cannot collide over it.
+Widget ClickLayer(action: () -> Void) {
+    @Content let content: Any Widget
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let k = kiraUiTapSeqKey()
+        let press = action
+        let view = content.lower(context, modifiers)
+        let width = view.width
+        let height = view.height
+        return KiraUIFoundation.FoundationView {
+            kind: KiraUIFoundation.FoundationViewKind.HitArea
+            key: k
+            width: width
+            height: height
+            backgroundFill: modifierColor(kiraUiTapBackground(k), modifiers)
+            radius: cornerRadiusImplementation(CornerRadius.Small, modifiers)
+            disabled: modifiers.disabled
+            focusable: true
+            autofocus: modifiers.hasFocused && modifiers.focused
+            onPress: press
+            children: [move view]
+        }
+    }
+}
+
+// A widget whose value is changed by dragging across it: the numeric field a
+// pro tool scrubs, the pad an aim is set on. The callback carries the CUMULATIVE
+// offset from the press point.
+Widget ScrubLayer(action: (Float, Float) -> Void) {
+    @Content let content: Any Widget
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let k = kiraUiTapSeqKey()
+        let view = content.lower(context, modifiers)
+        let width = view.width
+        let height = view.height
+        return KiraUIFoundation.FoundationView {
+            kind: KiraUIFoundation.FoundationViewKind.HitArea
+            key: k
+            width: width
+            height: height
+            disabled: modifiers.disabled
+            interaction: KiraUIFoundation.FoundationInteraction {
+                onDragMove: action
+            }
+            children: [move view]
+        }
+    }
+}
+
+// The same press region under an application's OWN key.
+//
+// `.onClick(...)` mints the key from the build sequence, which is right for a
+// button that is only ever itself. A control whose identity means something to
+// the application — a tree row, an asset tile, a dock tab, all decoded elsewhere
+// FROM the key — needs to state that key, and a minted one takes the decode
+// away. `radius` is here for the same reason: the hover wash follows the shape
+// the control is drawn with, and a tile's corner is not a row's.
+Widget ClickRegion(
+    key: Int,
+    onPress: () -> Void,
+    radius: CornerRadius = CornerRadius.Small,
+) {
+    @Content let content: Any Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let k = key
         let press = onPress
+        let view = content.lower(context, modifiers)
+        let width = view.width
+        let height = view.height
+        return KiraUIFoundation.FoundationView {
+            kind: KiraUIFoundation.FoundationViewKind.HitArea
+            key: k
+            width: width
+            height: height
+            backgroundFill: modifierColor(kiraUiTapBackground(k), modifiers)
+            radius: cornerRadiusImplementation(radius, modifiers)
+            disabled: modifiers.disabled
+            focusable: true
+            autofocus: modifiers.hasFocused && modifiers.focused
+            onPress: press
+            children: [move view]
+        }
+    }
+}
+
+// --- DragRegion --------------------------------------------------------------
+
+// Dragging was previously reachable only through GestureTextureView — that is,
+// only if the thing being dragged happened to be an engine texture. Every other
+// draggable affordance an application needs (a splitter between two panes, a
+// panel tab being torn to a new dock, a slider thumb) has the same shape and no
+// texture, so it had nowhere to go.
+//
+// `key` must be nonzero and stable across frames. Drag callbacks carry
+// CUMULATIVE deltas from the press point, not per-move increments.
+Widget DragRegion(
+    key: Int,
+    onDragStart: (Float, Float) -> Void,
+    onDragMove: (Float, Float) -> Void,
+    onDragEnd: (Float, Float) -> Void,
+) {
+    @Content let children: [Any Widget]
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let k = key
+        let dragStart = onDragStart
+        let dragMove = onDragMove
+        let dragEnd = onDragEnd
         return KiraUIFoundation.FoundationView {
             kind: KiraUIFoundation.FoundationViewKind.HitArea
             key: k
             width: KiraUIFoundation.SizeMode.Hug
             height: KiraUIFoundation.SizeMode.Hug
-            backgroundFill: modifierColor(kiraUiTapBackground(k), modifiers)
-            radius: radius
             disabled: modifiers.disabled
-            focusable: true
-            autofocus: modifiers.hasFocused && modifiers.focused
-            onPress: press
-            children: loweredChildren(context, modifiers, children)
-        }
-    }
-}
-
-// Hug-sized clickable with an auto-assigned stable per-build key.
-Widget Tappable(onPress: () -> Void, radius: Float) {
-    @Content let children: [Any Widget]
-
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
-        let k = kiraUiTapSeqKey()
-        let press = onPress
-        return KiraUIFoundation.FoundationView {
-            kind: KiraUIFoundation.FoundationViewKind.HitArea
-            key: k
-            width: KiraUIFoundation.SizeMode.Hug
-            height: KiraUIFoundation.SizeMode.Hug
-            backgroundFill: modifierColor(kiraUiTapBackground(k), modifiers)
-            radius: radius
-            disabled: modifiers.disabled
-            focusable: true
-            autofocus: modifiers.hasFocused && modifiers.focused
-            onPress: press
-            children: loweredChildren(context, modifiers, children)
-        }
-    }
-}
-
-// Fill-width clickable with an explicit key (list / tree rows).
-Widget TappableFillKeyed(key: Int, onPress: () -> Void, radius: Float) {
-    @Content let children: [Any Widget]
-
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
-        let k = key
-        let press = onPress
-        return KiraUIFoundation.FoundationView {
-            kind: KiraUIFoundation.FoundationViewKind.HitArea
-            key: k
-            width: KiraUIFoundation.SizeMode.Fill
-            height: KiraUIFoundation.SizeMode.Hug
-            backgroundFill: modifierColor(kiraUiTapBackground(k), modifiers)
-            radius: radius
-            disabled: modifiers.disabled
-            focusable: true
-            autofocus: modifiers.hasFocused && modifiers.focused
-            onPress: press
-            children: loweredChildren(context, modifiers, children)
-        }
-    }
-}
-
-// Fill-width clickable with an auto-assigned stable per-build key.
-Widget TappableFill(onPress: () -> Void, radius: Float) {
-    @Content let children: [Any Widget]
-
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
-        let k = kiraUiTapSeqKey()
-        let press = onPress
-        return KiraUIFoundation.FoundationView {
-            kind: KiraUIFoundation.FoundationViewKind.HitArea
-            key: k
-            width: KiraUIFoundation.SizeMode.Fill
-            height: KiraUIFoundation.SizeMode.Hug
-            backgroundFill: modifierColor(kiraUiTapBackground(k), modifiers)
-            radius: radius
-            disabled: modifiers.disabled
-            focusable: true
-            autofocus: modifiers.hasFocused && modifiers.focused
-            onPress: press
+            interaction: KiraUIFoundation.FoundationInteraction {
+                onDragStart: dragStart
+                onDragMove: dragMove
+                onDragEnd: dragEnd
+            }
             children: loweredChildren(context, modifiers, children)
         }
     }
@@ -172,11 +217,11 @@ Widget TappableFill(onPress: () -> Void, radius: Float) {
 // overlay (a context menu, a modal card) puts underneath itself so any click
 // outside dismisses it.
 //
-// The Tappable family cannot serve here. Every one of them paints the hover /
-// press wash `kiraUiTapBackground` returns, and a wash over a Fill/Fill region
-// tints the entire window for as long as the overlay is open. So this is its
-// own leaf: same HitArea node, no `backgroundFill`, and a transparent Fill/Fill
-// Surface child so the region has something to size against.
+// `.onClick(...)` cannot serve here. It paints the hover wash
+// `kiraUiTapBackground` returns, and a wash over a Fill/Fill region tints the
+// entire window for as long as the overlay is open. So this is its own leaf:
+// same HitArea node, no `backgroundFill`, and a transparent Fill/Fill Surface
+// child so the region has something to size against.
 Widget DismissArea(key: Int, onPress: () -> Void) {
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let ignored = context.frameCount
@@ -221,48 +266,7 @@ Widget Expanded(flex: Int) {
     }
 }
 
-// Painted containers (Panel, SurfaceBox) live in Surfaces.kira.
-
-// --- DragRegion --------------------------------------------------------------
-
-// A hit region that reports drags, wrapping whatever it is given.
-//
-// Dragging was previously reachable only through GestureTextureView — that is,
-// only if the thing being dragged happened to be an engine texture. Every other
-// draggable affordance an application needs (a splitter between two panes, a
-// panel tab being torn to a new dock, a slider thumb) has the same shape and no
-// texture, so it had nowhere to go.
-//
-// `key` must be nonzero and stable across frames. Drag callbacks carry
-// CUMULATIVE deltas from the press point, not per-move increments.
-Widget DragRegion(
-    key: Int,
-    onDragStart: (Float, Float) -> Void,
-    onDragMove: (Float, Float) -> Void,
-    onDragEnd: (Float, Float) -> Void,
-) {
-    @Content let children: [Any Widget]
-
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
-        let k = key
-        let dragStart = onDragStart
-        let dragMove = onDragMove
-        let dragEnd = onDragEnd
-        return KiraUIFoundation.FoundationView {
-            kind: KiraUIFoundation.FoundationViewKind.HitArea
-            key: k
-            width: KiraUIFoundation.SizeMode.Hug
-            height: KiraUIFoundation.SizeMode.Hug
-            disabled: modifiers.disabled
-            interaction: KiraUIFoundation.FoundationInteraction {
-                onDragStart: dragStart
-                onDragMove: dragMove
-                onDragEnd: dragEnd
-            }
-            children: loweredChildren(context, modifiers, children)
-        }
-    }
-}
+// Painted containers (Panel) live in Surfaces.kira.
 
 // --- GestureTextureView -----------------------------------------------------
 

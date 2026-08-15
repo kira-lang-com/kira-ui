@@ -1,0 +1,673 @@
+import Foundation
+import KiraGraphics
+import KiraLayout
+import KiraUIFoundation
+
+// KiraUI navigation follows SwiftUI's value-driven model:
+//
+//   NavigationPath       heterogeneous navigation values
+//   NavigationStack      one-column push navigation
+//   NavigationLink        appends a typed value
+//   navigationDestination maps a value type to a destination
+//   NavigationSplitView   leading navigation plus detail, collapsing when narrow
+//
+// Navigation values are declarations backed by NavigationValue. Applications
+// define typed values such as `NavigationValue ProjectsRoute { ... }`; the
+// route value itself is stored in the path.
+
+// --- Responsive policy ------------------------------------------------------
+
+enum NavigationDevice {
+    Automatic
+    Phone
+    Tablet
+    PC
+    TV
+}
+
+enum NavigationWidthClass {
+    Compact
+    Regular
+    Expanded
+}
+
+enum NavigationPresentation {
+    Stack
+    Split
+}
+
+struct NavigationMetrics {
+    let device: NavigationDevice
+    let widthClass: NavigationWidthClass
+    let presentation: NavigationPresentation
+    let primaryWidth: Float
+    let targetSize: Float
+    let toolbarHeight: Float
+    let toolbarInset: Float
+}
+
+function navigationWidthClass(width: Float) -> NavigationWidthClass {
+    if width < 600.0 {
+        return NavigationWidthClass.Compact
+    }
+    if width < 960.0 {
+        return NavigationWidthClass.Regular
+    }
+    return NavigationWidthClass.Expanded
+}
+
+function navigationDeviceOverride() -> NavigationDevice {
+    let requested = environmentValue("KIRA_UI_DEVICE")
+    if requested == "phone" {
+        return NavigationDevice.Phone
+    }
+    if requested == "tablet" {
+        return NavigationDevice.Tablet
+    }
+    if requested == "pc" || requested == "desktop" {
+        return NavigationDevice.PC
+    }
+    if requested == "tv" || requested == "television" {
+        return NavigationDevice.TV
+    }
+    return NavigationDevice.Automatic
+}
+
+function resolvedNavigationDevice(width: Float) -> NavigationDevice {
+    let requestedDevice = navigationDeviceOverride()
+    if requestedDevice != NavigationDevice.Automatic {
+        return requestedDevice
+    }
+    if width < 600.0 {
+        return NavigationDevice.Phone
+    }
+    if width < 960.0 {
+        return NavigationDevice.Tablet
+    }
+    return NavigationDevice.PC
+}
+
+function navigationAdaptivePresentation(width: Float) -> NavigationPresentation {
+    let device = resolvedNavigationDevice(width)
+    let widthClass = navigationWidthClass(width)
+    match device {
+        Phone -> return NavigationPresentation.Stack;
+        Tablet -> {
+            if widthClass == NavigationWidthClass.Compact {
+                return NavigationPresentation.Stack
+            }
+            return NavigationPresentation.Split
+        }
+        PC -> {
+            if widthClass == NavigationWidthClass.Compact {
+                return NavigationPresentation.Stack
+            }
+            return NavigationPresentation.Split
+        }
+        TV -> return NavigationPresentation.Split;
+        Automatic -> return NavigationPresentation.Stack;
+    }
+}
+
+function navigationMetrics(width: Float) -> NavigationMetrics {
+    let device = resolvedNavigationDevice(width)
+    let widthClass = navigationWidthClass(width)
+    var primaryWidth = 280.0
+    var targetSize = 44.0
+    var toolbarHeight = 48.0
+    var toolbarInset = 12.0
+    if widthClass == NavigationWidthClass.Expanded {
+        primaryWidth = 320.0
+    }
+    if device == NavigationDevice.Phone {
+        targetSize = 44.0
+        toolbarHeight = 52.0
+        toolbarInset = 16.0
+    }
+    if device == NavigationDevice.Tablet {
+        targetSize = 48.0
+        toolbarHeight = 52.0
+        toolbarInset = 16.0
+    }
+    if device == NavigationDevice.PC {
+        targetSize = 40.0
+        toolbarHeight = 48.0
+    }
+    if device == NavigationDevice.TV {
+        primaryWidth = 320.0
+        targetSize = 64.0
+        toolbarHeight = 64.0
+        toolbarInset = 24.0
+    }
+    return NavigationMetrics {
+        device: device
+        widthClass: widthClass
+        presentation: navigationAdaptivePresentation(width)
+        primaryWidth: primaryWidth
+        targetSize: targetSize
+        toolbarHeight: toolbarHeight
+        toolbarInset: toolbarInset
+    }
+}
+
+// --- Typed navigation values and path --------------------------------------
+
+// Every application route declaration is backed by this family. The family
+// value is the type-erased element stored by NavigationPath, just as Apple's
+// NavigationPath can hold heterogeneous Hashable values.
+construct NavigationValue {
+    @Required function navigationType() -> String
+}
+
+struct KiraUiNavigationPathState {
+    var values: [Any NavigationValue] = []
+}
+
+// NavigationPath is an empty value-shaped handle over the app navigation state.
+// The state slot is fixed because one active app navigation path is the
+// default, while the values themselves remain typed NavigationValue family
+// members. Keeping the handle empty also lets a view pass it through several
+// NavigationStack and NavigationSplitView layers without ownership friction.
+struct NavigationPath {
+    function values() -> [Any NavigationValue] {
+        return kiraUiNavigationValues()
+    }
+
+    function isEmpty() -> Bool {
+        return self.values().count == 0
+    }
+
+    function lastMatches(value: borrow Any NavigationValue) -> Bool {
+        let current = self.values()
+        if current.count == 0 {
+            return false
+        }
+        return current[current.count - 1].navigationType() == value.navigationType()
+    }
+
+    function append(value: Any NavigationValue) {
+        kiraUiNavigationPush(move value)
+        return
+    }
+
+    function removeLast() {
+        kiraUiNavigationPop()
+        return
+    }
+
+    function removeAll() {
+        kiraUiNavigationClear()
+        return
+    }
+}
+
+function kiraUiNavigationSlotKey() -> String {
+    return "kiraui.navigation.path"
+}
+
+function kiraUiNavigationEnsure() {
+    if kiraUiStateSlotHas(kiraUiNavigationSlotKey()) == false {
+        kiraUiStateSlotPut(
+            kiraUiNavigationSlotKey(),
+            nativeUserData(nativeState(KiraUiNavigationPathState {}))
+        )
+    }
+    return
+}
+
+function kiraUiNavigationValues() -> [Any NavigationValue] {
+    kiraUiNavigationEnsure()
+    let state = nativeRecover<KiraUiNavigationPathState>(
+        kiraUiStateSlotGet(kiraUiNavigationSlotKey())
+    )
+    return state.values
+}
+
+function kiraUiNavigationSetValues(values: [Any NavigationValue]) {
+    kiraUiNavigationEnsure()
+    var state = nativeRecover<KiraUiNavigationPathState>(
+        kiraUiStateSlotGet(kiraUiNavigationSlotKey())
+    )
+    state.values = move values
+    return
+}
+
+function kiraUiNavigationPush(value: Any NavigationValue) {
+    let current = kiraUiNavigationValues()
+    var next: [Any NavigationValue] = []
+    var index = 0
+    while index < current.count {
+        next.append(move current[index])
+        index = index + 1
+    }
+    next.append(move value)
+    kiraUiNavigationSetValues(move next)
+    return
+}
+
+function kiraUiNavigationPop() {
+    let current = kiraUiNavigationValues()
+    if current.count == 0 {
+        return
+    }
+    var next: [Any NavigationValue] = []
+    var index = 0
+    while index < current.count - 1 {
+        next.append(move current[index])
+        index = index + 1
+    }
+    kiraUiNavigationSetValues(move next)
+    return
+}
+
+function kiraUiNavigationClear() {
+    var empty: [Any NavigationValue] = []
+    kiraUiNavigationSetValues(move empty)
+    return
+}
+
+function navigationPath() -> NavigationPath {
+    return NavigationPath {}
+}
+
+// --- Ambient container environment -----------------------------------------
+
+struct KiraUiNavigationEnvironment {
+    var split: Bool = false
+}
+
+function kiraUiNavigationEnvironmentKey() -> String {
+    return "kiraui.navigation.environment"
+}
+
+function kiraUiNavigationEnvironment() -> KiraUiNavigationEnvironment {
+    if kiraUiStateSlotHas(kiraUiNavigationEnvironmentKey()) == false {
+        kiraUiStateSlotPut(
+            kiraUiNavigationEnvironmentKey(),
+            nativeUserData(nativeState(KiraUiNavigationEnvironment {}))
+        )
+    }
+    return nativeRecover<KiraUiNavigationEnvironment>(
+        kiraUiStateSlotGet(kiraUiNavigationEnvironmentKey())
+    )
+}
+
+function kiraUiNavigationEnter(split: Bool) -> KiraUiNavigationEnvironment {
+    let previous = kiraUiNavigationEnvironment()
+    var current = nativeRecover<KiraUiNavigationEnvironment>(
+        kiraUiStateSlotGet(kiraUiNavigationEnvironmentKey())
+    )
+    current.split = split
+    return previous
+}
+
+function kiraUiNavigationLeave(previous: borrow KiraUiNavigationEnvironment) {
+    var current = nativeRecover<KiraUiNavigationEnvironment>(
+        kiraUiStateSlotGet(kiraUiNavigationEnvironmentKey())
+    )
+    current.split = previous.split
+    return
+}
+
+// --- Links and destinations -------------------------------------------------
+
+function navigationPushAction(value: Any NavigationValue) -> () -> Void {
+    // A mutable capture lets the typed family value survive in the action. The
+    // value itself is the route; there is no numeric route discriminator.
+    var targetValue = move value
+    let action: () -> Void = { in
+        let path = NavigationPath {}
+        path.append(value: copy targetValue)
+        return
+    }
+    return action
+}
+
+function navigationPopAction() -> () -> Void {
+    let action: () -> Void = { in
+        let path = NavigationPath {}
+        path.removeLast()
+        return
+    }
+    return action
+}
+
+// Value-based link, matching SwiftUI's NavigationLink(value:label:). The
+// nearest stack or split view supplies the path through ambient environment.
+Widget NavigationLink(value: Any NavigationValue) {
+    @Content let label: Any Widget
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let metrics = navigationMetrics(context.viewport.width)
+        let target = label.height(metrics.targetSize)
+        return target.onClick(navigationPushAction(move value)).lower(context, modifiers)
+    }
+}
+
+Widget NavigationBackButton() {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        return Button(
+            label: "Back",
+            onPress: navigationPopAction()
+        ).lower(context, modifiers)
+    }
+}
+
+Widget NavigationBar(title: String = "") {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let path = NavigationPath {}
+        let metrics = navigationMetrics(context.viewport.width)
+        let items = HStack(spacing: Spacing.Small, alignment: VerticalAlignment.Center) {
+            if path.isEmpty() == false {
+                NavigationBackButton()
+            }
+            if title.count > 0 {
+                Text(content: title)
+                    .typography(.headline)
+            }
+            Spacer()
+        }
+        let bar = Panel(radius: CornerRadius.None) {
+            FoundationRaw(view = Frame(
+                items.lower(context, modifiers),
+                KiraUIFoundation.SizeMode.Fill,
+                KiraUIFoundation.SizeMode.Fill,
+                0,
+                KiraUIFoundation.Alignment.Center,
+                KiraUIFoundation.EdgeInsets {
+                    leading: metrics.toolbarInset
+                    trailing: metrics.toolbarInset
+                }
+            ))
+        }
+            .backgroundStyle(.Surface)
+            .height(metrics.toolbarHeight)
+        return bar.lower(context, modifiers)
+    }
+}
+
+function navigationCanvas(modifiers: borrow ModifierContext) -> KiraUIFoundation.Color {
+    return foundationColor(modifierTokens(modifiers).background.canvas)
+}
+
+function navigationSurface(modifiers: borrow ModifierContext) -> KiraUIFoundation.Color {
+    return foundationColor(modifierTokens(modifiers).background.surface)
+}
+
+function navigationFill(
+    view: KiraUIFoundation.FoundationView,
+    fill: KiraUIFoundation.Color,
+) -> KiraUIFoundation.FoundationView {
+    let stretched = Frame(
+        move view,
+        KiraUIFoundation.SizeMode.Fill,
+        KiraUIFoundation.SizeMode.Fill,
+        0,
+        KiraUIFoundation.Alignment.TopLeading,
+        KiraUIFoundation.EdgeInsets {}
+    )
+    return KiraUIFoundation.FoundationView {
+        kind: KiraUIFoundation.FoundationViewKind.Surface
+        width: KiraUIFoundation.SizeMode.Fill
+        height: KiraUIFoundation.SizeMode.Fill
+        fill: move fill
+        children: [move stretched]
+        clipContent: true
+    }
+}
+
+function navigationPane(
+    view: KiraUIFoundation.FoundationView,
+    width: KiraUIFoundation.SizeMode,
+    fill: KiraUIFoundation.Color,
+) -> KiraUIFoundation.FoundationView {
+    let stretched = Frame(
+        move view,
+        KiraUIFoundation.SizeMode.Fill,
+        KiraUIFoundation.SizeMode.Fill,
+        0,
+        KiraUIFoundation.Alignment.TopLeading,
+        KiraUIFoundation.EdgeInsets {}
+    )
+    return KiraUIFoundation.FoundationView {
+        kind: KiraUIFoundation.FoundationViewKind.Surface
+        width: move width
+        height: KiraUIFoundation.SizeMode.Fill
+        fill: move fill
+        children: [move stretched]
+        clipContent: true
+    }
+}
+
+function navigationPage(
+    context: borrow KiraUIFoundation.FoundationUiContext,
+    modifiers: borrow ModifierContext,
+    title: borrow String,
+    view: KiraUIFoundation.FoundationView,
+) -> KiraUIFoundation.FoundationView {
+    let path = NavigationPath {}
+    var page = move view
+    if title.count > 0 || path.isEmpty() == false {
+        let bar = NavigationBar(title: title).lower(context, modifiers)
+        page = KiraUIFoundation.Column(
+            children: [
+                move bar,
+                Frame(
+                    move page,
+                    KiraUIFoundation.SizeMode.Fill,
+                    KiraUIFoundation.SizeMode.Fill,
+                    1,
+                    KiraUIFoundation.Alignment.TopLeading,
+                    KiraUIFoundation.EdgeInsets {}
+                )
+            ],
+            width: KiraUIFoundation.SizeMode.Fill,
+            height: KiraUIFoundation.SizeMode.Fill,
+            spacing: 0.0,
+            padding: KiraUIFoundation.EdgeInsets {},
+            crossAxisAlignment: KiraUIFoundation.CrossAlignment.Stretch
+        )
+    }
+    return navigationFill(move page, navigationCanvas(modifiers))
+}
+
+// Associates a typed value family with a destination. Kira currently has no
+// type-metatype expression, so `forType` receives a value of the route type as
+// its type witness. Matching is by the route declaration's family type, not by
+// a caller-assigned numeric discriminator.
+Widget NavigationDestinationLayer(forType: Any NavigationValue, destination: Any Widget) {
+    @Content let content: Any Widget
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let environment = kiraUiNavigationEnvironment()
+        let path = NavigationPath {}
+        let active = path.lastMatches(value: forType)
+
+        if active && environment.split == false {
+            let detail = destination.lower(context, modifiers)
+            return navigationPage(context, modifiers, "", move detail)
+        }
+
+        let root = content.lower(context, modifiers)
+        if active == false || environment.split == false {
+            return root
+        }
+
+        let metrics = navigationMetrics(context.viewport.width)
+        let detail = destination.lower(context, modifiers)
+        let primary = navigationPane(move root, KiraUIFoundation.SizeMode.Fixed(metrics.primaryWidth), navigationSurface(modifiers))
+        let detailPage = navigationPage(context, modifiers, "", move detail)
+        let detailPane = navigationPane(move detailPage, KiraUIFoundation.SizeMode.Fill, navigationCanvas(modifiers))
+        return KiraUIFoundation.Row(
+            children: [move primary, move detailPane],
+            width: KiraUIFoundation.SizeMode.Fill,
+            height: KiraUIFoundation.SizeMode.Fill,
+            spacing: 0.0,
+            padding: KiraUIFoundation.EdgeInsets {},
+            crossAxisAlignment: KiraUIFoundation.CrossAlignment.Stretch
+        )
+    }
+}
+
+extend Widget {
+    // The type witness is the Kira spelling of SwiftUI's `for: Route.self`.
+    // It keeps the public navigation model typed without numeric route IDs.
+    function navigationDestination(forType: Any NavigationValue, destination: Any Widget) -> Any Widget {
+        return NavigationDestinationLayer(forType: move forType, destination: destination) {
+            self
+        }
+    }
+}
+
+// --- Containers -------------------------------------------------------------
+
+// One-column push navigation. The root view is never put in the path and
+// cannot be popped, matching NavigationStack.
+Widget NavigationStack(path: NavigationPath = NavigationPath {}) {
+    @Content let root: Any Widget
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let previous = kiraUiNavigationEnter(false)
+        let view = root.lower(context, modifiers)
+        kiraUiNavigationLeave(previous)
+        return navigationFill(move view, navigationCanvas(modifiers))
+    }
+}
+
+// Which of a split view's columns are up, matching SwiftUI's
+// NavigationSplitViewVisibility. `Automatic` is the platform's own answer, which
+// on a window wide enough to split is every column the view was given.
+//
+// `DoubleColumn` means two columns beside the detail's neighbour: on the
+// three-column form that is the content and the detail, and on the two-column
+// form — where there is no content column to fall back to — it is the sidebar
+// and the detail. SwiftUI reads the same way; the case is named for how many
+// columns are up, not for which one is hidden.
+enum NavigationSplitViewVisibility {
+    Automatic
+    All
+    DoubleColumn
+    DetailOnly
+}
+
+function navigationShowsSidebar(visibility: NavigationSplitViewVisibility, hasContent: Bool) -> Bool {
+    match visibility {
+        Automatic -> return true;
+        All -> return true;
+        DoubleColumn -> return hasContent == false;
+        DetailOnly -> return false;
+    }
+}
+
+function navigationShowsContent(visibility: NavigationSplitViewVisibility) -> Bool {
+    match visibility {
+        Automatic -> return true;
+        All -> return true;
+        DoubleColumn -> return true;
+        DetailOnly -> return false;
+    }
+}
+
+// A column of a split view: the width the split view gives it, the window's full
+// height, and NO paint of its own.
+//
+// The column does not fill itself because filling it is what stops the content
+// from doing so: a frosted list samples what is behind the column, and an opaque
+// pane behind it is all it can find. The list, the form or the surface inside
+// the column says what the column looks like, exactly as `.background(...)` and
+// the list style do in SwiftUI.
+function navigationColumn(
+    view: KiraUIFoundation.FoundationView,
+    width: KiraUIFoundation.SizeMode,
+) -> KiraUIFoundation.FoundationView {
+    return Frame(
+        move view,
+        move width,
+        KiraUIFoundation.SizeMode.Fill,
+        0,
+        KiraUIFoundation.Alignment.TopLeading,
+        KiraUIFoundation.EdgeInsets {}
+    )
+}
+
+// The detail column, which takes the width the fixed columns leave.
+//
+// It says so as an Expanded node rather than as a Fill frame: a Fill child of a
+// row measures to the WHOLE row, so a detail column spelled that way pushes any
+// fixed column after it off the window.
+function navigationDetailColumn(view: KiraUIFoundation.FoundationView) -> KiraUIFoundation.FoundationView {
+    return KiraUIFoundation.FoundationView {
+        kind: KiraUIFoundation.FoundationViewKind.Expanded
+        width: KiraUIFoundation.SizeMode.Fill
+        height: KiraUIFoundation.SizeMode.Fill
+        flex: 1
+        children: [move view]
+    }
+}
+
+// Was a middle column supplied? SwiftUI spells the two-column and three-column
+// forms as two initialisers; Kira spells them as one with a defaulted `content`,
+// and an EmptyView lowers to a childless leaf, which is the difference.
+function navigationHasContentColumn(view: borrow KiraUIFoundation.FoundationView) -> Bool {
+    return view.children.count > 0
+}
+
+// Two- or three-column navigation with the platform-adaptive collapse rule,
+// matching SwiftUI's NavigationSplitView: `sidebar` and `detail` alone are the
+// two-column form, and adding `content` makes it three. The same typed path
+// drives the detail column on regular widths and the pushed detail stack on
+// compact widths.
+//
+// The columns run the window's FULL HEIGHT. Anything across the top of the
+// window — a toolbar, a title bar — belongs to the column it sits over, so a
+// window states it inside `detail` rather than above the split view: a bar
+// stacked over the split view is a bar that cuts every column short of the
+// window's top edge.
+Widget NavigationSplitView(
+    sidebar: Any Widget,
+    detail: Any Widget,
+    content: Any Widget = EmptyView(),
+    columnVisibility: NavigationSplitViewVisibility = NavigationSplitViewVisibility.Automatic,
+    path: NavigationPath = NavigationPath {},
+) {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let metrics = navigationMetrics(context.viewport.width)
+        let previous = kiraUiNavigationEnter(true)
+        let sidebarView = sidebar.lower(context, modifiers)
+        let contentView = content.lower(context, modifiers)
+        let detailView = detail.lower(context, modifiers)
+        kiraUiNavigationLeave(previous)
+
+        if metrics.presentation == NavigationPresentation.Stack {
+            let current = NavigationPath {}
+            if current.isEmpty() {
+                return navigationFill(move sidebarView, navigationCanvas(modifiers))
+            }
+            return navigationFill(move detailView, navigationCanvas(modifiers))
+        }
+
+        let hasContent = navigationHasContentColumn(contentView)
+        var columns: [KiraUIFoundation.FoundationView] = []
+        if navigationShowsSidebar(columnVisibility, hasContent) {
+            columns.append(navigationColumn(
+                move sidebarView,
+                KiraUIFoundation.SizeMode.Fixed(metrics.primaryWidth)
+            ))
+        }
+        if hasContent && navigationShowsContent(columnVisibility) {
+            columns.append(navigationColumn(
+                move contentView,
+                KiraUIFoundation.SizeMode.Fixed(metrics.primaryWidth)
+            ))
+        }
+        columns.append(navigationDetailColumn(move detailView))
+        return KiraUIFoundation.Row(
+            children: move columns,
+            width: KiraUIFoundation.SizeMode.Fill,
+            height: KiraUIFoundation.SizeMode.Fill,
+            spacing: 0.0,
+            padding: KiraUIFoundation.EdgeInsets {},
+            crossAxisAlignment: KiraUIFoundation.CrossAlignment.Stretch
+        )
+    }
+}

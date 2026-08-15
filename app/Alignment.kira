@@ -1,0 +1,192 @@
+import Foundation
+import KiraUIFoundation
+
+// Alignment guides.
+//
+// A guide is a question a container asks the things inside it: "where does your
+// content actually begin?" A grouped list asks it of every row to place the
+// hairline under it, and the honest answer is not the row's leading edge — it is
+// wherever the row's LABEL begins, which is a fact only the row's own contents
+// know.
+//
+// So the answer travels the other way from everything else in the modifier
+// system. Themes, sizes and inks cascade DOWN; a guide is published by a
+// descendant and read by an ancestor:
+//
+//     LabeledContent(label = "Blur", symbol = .DropSimple) {
+//         Toggle(isOn = blurOn).onClick(toggleBlur)
+//     }
+//     .alignmentGuide(ListRowSeparatorLeading()) { dimensions in
+//         dimensions[.Leading] + 20.0
+//     }
+//
+// The closure is handed the publisher's own dimensions and returns a position in
+// the publisher's own coordinates; what the container receives is that position
+// resolved into ITS coordinates. That resolution is the layout pass's, because
+// an offset does not exist until layout has run — which is why the guide is
+// carried on the lowered view rather than computed while building it.
+
+// Which axis a guide answers on. A horizontal guide positions something along
+// the x axis (a separator's leading edge); a vertical one along the y axis (a
+// baseline two labels share).
+enum GuideAxis {
+    Horizontal
+    Vertical
+}
+
+// The edges and centres of a view, in the view's own coordinates.
+enum AlignmentAnchor {
+    Leading
+    Trailing
+    Top
+    Bottom
+    HorizontalCenter
+    VerticalCenter
+}
+
+// What a guide closure is handed: the size of the view the guide is attached to,
+// and its anchors.
+//
+// Anchors are read by subscript — `dimensions[.Leading]` — because that is what
+// the operation IS: addressing a value by which anchor is wanted. `.Leading` is
+// 0 and `.Trailing` is the width, so a guide is written as an offset from an
+// edge and stays correct when the view resizes.
+struct ViewDimensions {
+    let width: Float = 0.0
+    let height: Float = 0.0
+
+    function subscript(anchor: AlignmentAnchor) -> Float {
+        match anchor {
+            Leading -> return 0.0;
+            Trailing -> return width;
+            Top -> return 0.0;
+            Bottom -> return height;
+            HorizontalCenter -> return width / 2.0;
+            VerticalCenter -> return height / 2.0;
+        }
+    }
+}
+
+// A guide's identity, and what it answers when nothing overrides it.
+//
+// This is a construct family rather than an enum precisely so an application can
+// declare its own:
+//
+//     AlignmentGuide BadgeTrailing {
+//         let axis = GuideAxis.Horizontal
+//         function defaultValue(dimensions: ViewDimensions) -> Float {
+//             return dimensions[.Trailing]
+//         }
+//     }
+//
+// A closed set of guides would mean the library had to anticipate every
+// alignment an application might want to share between two subtrees, which it
+// cannot, and the ones it did not anticipate would go back to being literals.
+construct AlignmentGuide {
+    // What this guide IS, and the only thing that distinguishes it from another.
+    //
+    // Identity cannot be left to the value itself: two guides with the same
+    // fields — and most guides carry nothing but an axis — compare EQUAL, so a
+    // separator asking for its trailing edge was handed its leading one and drew
+    // itself zero points wide. A name is the one thing a guide always has that
+    // no other guide shares.
+    @Required let name: String
+    @Required let axis: GuideAxis
+
+    // Where the guide sits when no descendant publishes one. A container that
+    // finds no answer uses this against its own dimensions, so every guide has a
+    // sensible position without anything being written.
+    @Required function defaultValue(dimensions: ViewDimensions) -> Float
+}
+
+// Where the hairline under a row begins and ends.
+//
+// The defaults are the row's own edges, which is a full-bleed separator. A
+// grouped list moves the leading one to the label column by publishing it from
+// the column itself.
+AlignmentGuide ListRowSeparatorLeading {
+    let name = "listRowSeparatorLeading"
+    let axis = GuideAxis.Horizontal
+
+    function defaultValue(dimensions: ViewDimensions) -> Float {
+        return dimensions.subscript(AlignmentAnchor.Leading)
+    }
+}
+
+AlignmentGuide ListRowSeparatorTrailing {
+    let name = "listRowSeparatorTrailing"
+    let axis = GuideAxis.Horizontal
+
+    function defaultValue(dimensions: ViewDimensions) -> Float {
+        return dimensions.subscript(AlignmentAnchor.Trailing)
+    }
+}
+
+// --- Tags --------------------------------------------------------------------
+
+// The foundation matches a publisher to a reader by an integer, because it holds
+// views and geometry and knows nothing about this library's types. So a guide's
+// number is DERIVED from its name.
+//
+// Derived rather than handed out by a register, because a register has to
+// remember, and remembering across a frame means state the publisher and the
+// reader both have to see. A register that silently fails to accumulate hands
+// every guide the same number, and a separator asking for its trailing edge is
+// then given its leading one and draws itself zero points wide. A name always
+// hashes to the same number, from anywhere, with nothing to keep in sync.
+//
+// Zero is the foundation's "no guide", so the result is never zero.
+function guideTag(guide: borrow Any AlignmentGuide) -> Int {
+    var hash = 7
+    for code in kiraUiStringToCodepoints(guide.name) {
+        hash = (hash * 131 + code) % 1000000007
+    }
+    return hash + 1
+}
+
+// --- Publishing --------------------------------------------------------------
+
+// Answer `guide` for whatever encloses this view.
+//
+// The closure receives the view's own dimensions and returns a position in the
+// view's own coordinates; what an enclosing container reads is that position in
+// ITS coordinates, which the layout pass works out once the view has been placed.
+Widget AlignmentGuideLayer(guide: Any AlignmentGuide, value: (ViewDimensions) -> Float) {
+    @Content let content: Any Widget
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let tag = guideTag(guide)
+        let answer = value
+        // The foundation resolves against a placed size, so it hands back width
+        // and height rather than the dimensions value this library speaks in.
+        let resolve: (Float, Float) -> Float = { width, height in
+            return answer(ViewDimensions { width: width, height: height })
+        }
+        let view = content.lower(context, modifiers)
+        return viewPublishingGuide(move view, tag, move resolve)
+    }
+}
+
+// The same view, taking its painted extent from a pair of guides.
+function viewFollowingGuides(
+    view: KiraUIFoundation.FoundationView,
+    leading: Int,
+    trailing: Int,
+) -> KiraUIFoundation.FoundationView {
+    return viewWithGuideRange(move view, leading, trailing)
+}
+
+// The same view, answering one more guide. Publications accumulate, so a view
+// can answer several.
+function viewPublishingGuide(
+    view: KiraUIFoundation.FoundationView,
+    tag: Int,
+    resolve: (Float, Float) -> Float,
+) -> KiraUIFoundation.FoundationView {
+    var published = view.guides
+    published.append(KiraUIFoundation.FoundationGuidePublication {
+        tag: tag
+        resolve: resolve
+    })
+    return viewWithGuides(move view, move published)
+}

@@ -217,13 +217,6 @@ enum FontWeight {
     Bold
 }
 
-enum Distribution {
-    Start
-    Center
-    Stretch
-    Fill
-}
-
 struct KiraUIApp {
     let name: String
     let content: Any Widget
@@ -271,32 +264,52 @@ function defaultTextColor() -> KiraUIFoundation.Color {
     }
 }
 
-function themeColorAsColor(color: borrow ThemeColor) -> Color {
-    match color {
-        Default -> return colorWhite();
-        Secondary -> return colorSecondaryText();
-        Muted -> return colorMutedText();
-        Inverse -> return colorDarkText();
-        Accent -> return colorTaupe();
-        Blue -> return colorBlue();
-        Green -> return colorGreen();
-        Purple -> return colorPurple();
-        Red -> return Color {
-            r: 0.95
-            g: 0.22
-            b: 0.28
-            a: 1.0
-        };
-        Danger -> return Color {
-            r: 0.96
-            g: 0.31
-            b: 0.37
-            a: 1.0
-        };
-        Yellow -> return colorYellow();
-        Cyan -> return colorCyan();
-        White -> return colorWhite();
+// The tokens in effect for this widget: the applied theme's, or the default
+// style's when none was applied. One rule, so a themed and an unthemed tree
+// resolve a PrimaryColor identically.
+function modifierTokens(modifiers: borrow ModifierContext) -> ThemeTokens {
+    if modifiers.hasTheme {
+        return modifiers.theme.tokens()
     }
+    return defaultThemeTokens()
+}
+
+function primaryColorAsColor(color: borrow PrimaryColor, tokens: borrow ThemeTokens) -> Color {
+    match color {
+        Primary -> return tokens.foreground.primary;
+        Secondary -> return tokens.foreground.secondary;
+        Tertiary -> return tokens.foreground.tertiary;
+        Quaternary -> return tokens.foreground.quaternary;
+        Inverse -> return tokens.foreground.inverse;
+        Success -> return tokens.tint.success;
+        Warning -> return tokens.tint.warning;
+        Danger -> return tokens.tint.danger;
+        Accent -> return tokens.tint.accent;
+        Red -> return tokens.palette.red;
+        Orange -> return tokens.palette.orange;
+        Yellow -> return tokens.palette.yellow;
+        Green -> return tokens.palette.green;
+        Mint -> return tokens.palette.mint;
+        Teal -> return tokens.palette.teal;
+        Cyan -> return tokens.palette.cyan;
+        Blue -> return tokens.palette.blue;
+        Indigo -> return tokens.palette.indigo;
+        Purple -> return tokens.palette.purple;
+        Pink -> return tokens.palette.pink;
+        Brown -> return tokens.palette.brown;
+        Gray -> return tokens.palette.gray;
+        Black -> return Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 };
+        White -> return Color { r: 1.0, g: 1.0, b: 1.0, a: 1.0 };
+        Clear -> return Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 };
+    }
+}
+
+function modifierPrimaryColor(
+    color: PrimaryColor,
+    modifiers: borrow ModifierContext,
+) -> KiraUIFoundation.Color {
+    let tokens = modifierTokens(modifiers)
+    return foundationColor(primaryColorAsColor(color, tokens))
 }
 
 function modifierTextColor(modifiers: borrow ModifierContext) -> KiraUIFoundation.Color {
@@ -304,62 +317,31 @@ function modifierTextColor(modifiers: borrow ModifierContext) -> KiraUIFoundatio
         return foundationColor(modifiers.textColor)
     }
     if modifiers.hasForegroundColor {
-        return modifierThemeColor(modifiers.foregroundColor, modifiers)
-    }
-    if modifiers.hasThemeColor {
-        return modifierThemeColor(modifiers.themeColor, modifiers)
+        return modifierPrimaryColor(modifiers.foregroundColor, modifiers)
     }
     if modifiers.hasTheme {
         let tokens = modifiers.theme.tokens()
-        return foundationColor(tokens.foregroundPrimary)
+        return foundationColor(tokens.foreground.primary)
     }
     return defaultTextColor()
 }
 
-function modifierThemeColor(
-    color: ThemeColor,
+function modifierBackgroundStyle(
+    style: borrow BackgroundStyle,
     modifiers: borrow ModifierContext,
 ) -> KiraUIFoundation.Color {
     if modifiers.hasTheme {
         let tokens = modifiers.theme.tokens()
-        match color {
-            Default -> return foundationColor(tokens.foregroundPrimary);
-            Secondary -> return foundationColor(tokens.foregroundSecondary);
-            Muted -> return foundationColor(tokens.foregroundDisabled);
-            Inverse -> return foundationColor(tokens.foregroundInverse);
-            Accent -> return foundationColor(tokens.accent);
-            Blue -> return foundationColor(tokens.accent);
-            Green -> return foundationColor(tokens.success);
-            Purple -> return foundationColor(themeColorAsColor(color));
-            Red -> return foundationColor(tokens.danger);
-            Danger -> return foundationColor(tokens.danger);
-            Yellow -> return foundationColor(tokens.warning);
-            Cyan -> return foundationColor(themeColorAsColor(color));
-            White -> return foundationColor(tokens.foregroundPrimary);
-        }
-    }
-    return foundationColor(themeColorAsColor(color))
-}
-
-function modifierThemeSurface(
-    surface: borrow ThemeSurface,
-    modifiers: borrow ModifierContext,
-) -> KiraUIFoundation.Color {
-    if modifiers.hasTheme {
-        let tokens = modifiers.theme.tokens()
-        match surface {
+        match style {
             Clear -> return transparentFoundationColor();
-            Canvas -> return foundationColor(tokens.backgroundCanvas);
-            Surface -> return foundationColor(tokens.backgroundSurface);
-            Raised -> return foundationColor(tokens.backgroundRaised);
-            Control -> return foundationColor(tokens.backgroundControl);
-            Overlay -> return foundationColor(tokens.backgroundOverlay);
-            Accent -> return foundationColor(tokens.accent);
-            // A selection band reads as the accent behind the row's own ink, so
-            // it is the accent held well below reading strength; the hover wash
-            // is the foreground at a whisper.
-            Selected -> return foundationColor(colorWithAlpha(tokens.accent, 0.22));
-            Hovered -> return foundationColor(colorWithAlpha(tokens.foregroundPrimary, 0.08));
+            Window -> return foundationColor(tokens.background.canvas);
+            Surface -> return foundationColor(tokens.background.surface);
+            Raised -> return foundationColor(tokens.background.raised);
+            Control -> return foundationColor(tokens.fill.control);
+            Overlay -> return foundationColor(tokens.background.overlay);
+            Accent -> return foundationColor(tokens.tint.accent);
+            Selection -> return foundationColor(tokens.fill.selection);
+            Hover -> return foundationColor(tokens.fill.hover);
         }
     }
     return transparentFoundationColor()
@@ -372,10 +354,10 @@ function modifierSurfaceBorder(
     if modifiers.hasThemeBorder && modifiers.hasTheme {
         let tokens = modifiers.theme.tokens()
         match modifiers.themeBorder {
-            Subtle -> return modifierColor(foundationColor(tokens.borderSubtle), modifiers);
-            Standard -> return modifierColor(foundationColor(tokens.borderStandard), modifiers);
-            Strong -> return modifierColor(foundationColor(tokens.borderStrong), modifiers);
-            Focus -> return modifierColor(foundationColor(tokens.borderFocus), modifiers);
+            Subtle -> return modifierColor(foundationColor(tokens.border.subtle.color), modifiers);
+            Standard -> return modifierColor(foundationColor(tokens.border.standard.color), modifiers);
+            Strong -> return modifierColor(foundationColor(tokens.border.strong.color), modifiers);
+            Focus -> return modifierColor(foundationColor(tokens.border.focus.color), modifiers);
         }
     }
     return colorWithOpacity(fallback, modifiers.opacity)
@@ -388,8 +370,8 @@ function modifierSurfaceFill(
     if modifiers.hasFill {
         return modifierColor(foundationColor(modifiers.fillColor), modifiers)
     }
-    if modifiers.hasSurfaceTone {
-        return modifierColor(modifierThemeSurface(modifiers.surfaceTone, modifiers), modifiers)
+    if modifiers.hasBackgroundStyle {
+        return modifierColor(modifierBackgroundStyle(modifiers.backgroundStyle, modifiers), modifiers)
     }
     return colorWithOpacity(fallback, modifiers.opacity)
 }
@@ -400,7 +382,7 @@ function modifierThemeBackground(
 ) -> KiraUIFoundation.Color {
     if modifiers.hasTheme {
         let tokens = modifiers.theme.tokens()
-        return modifierColor(foundationColor(tokens.backgroundCanvas), modifiers)
+        return modifierColor(foundationColor(tokens.background.canvas), modifiers)
     }
     return colorWithOpacity(fallback, modifiers.opacity)
 }
@@ -622,6 +604,99 @@ function identityEffects(effects: [KiraUIFoundation.FoundationEffect]) -> [KiraU
     return effects
 }
 
+function identityGuides(
+    guides: [KiraUIFoundation.FoundationGuidePublication],
+) -> [KiraUIFoundation.FoundationGuidePublication] {
+    return guides
+}
+
+// The same view, answering one more guide, and the same view reading two.
+//
+// Every `viewWith…` helper below rebuilds the view field by field, so anything a
+// modifier attached earlier has to be carried through each of them or it is
+// dropped without a word. That is why the guide fields are restated in all of
+// them rather than left to a default.
+function viewWithGuides(
+    view: KiraUIFoundation.FoundationView,
+    guides: [KiraUIFoundation.FoundationGuidePublication],
+) -> KiraUIFoundation.FoundationView {
+    return viewWithGuideFields(move view, move guides, -1, -1)
+}
+
+// The same view, taking its painted extent from a pair of guides.
+function viewWithGuideRange(
+    view: KiraUIFoundation.FoundationView,
+    leading: Int,
+    trailing: Int,
+) -> KiraUIFoundation.FoundationView {
+    let carried = identityGuides(view.guides)
+    return viewWithGuideFields(move view, move carried, leading, trailing)
+}
+
+// One rebuild for both guide edits. `leading`/`trailing` of -1 keep what the
+// view already had, so publishing a guide never clears the ones it reads.
+function viewWithGuideFields(
+    view: KiraUIFoundation.FoundationView,
+    guides: [KiraUIFoundation.FoundationGuidePublication],
+    leading: Int,
+    trailing: Int,
+) -> KiraUIFoundation.FoundationView {
+    var readsLeading = view.guideLeading
+    var readsTrailing = view.guideTrailing
+    if leading >= 0 {
+        readsLeading = leading
+    }
+    if trailing >= 0 {
+        readsTrailing = trailing
+    }
+    return KiraUIFoundation.FoundationView {
+        kind: view.kind
+        key: view.key
+        guides: move guides
+        guideLeading: readsLeading
+        guideTrailing: readsTrailing
+        children: identityChildren(view.children)
+        width: view.width
+        height: view.height
+        flex: view.flex
+        gap: view.gap
+        padding: view.padding
+        crossAxisAlignment: view.crossAxisAlignment
+        alignment: view.alignment
+        fill: view.fill
+        border: view.border
+        borderWidth: view.borderWidth
+        radius: view.radius
+        shape: view.shape
+        material: view.material
+        effects: identityEffects(view.effects)
+        clipContent: view.clipContent
+        content: view.content
+        color: view.color
+        size: view.size
+        inkLeft: view.inkLeft
+        inkRight: view.inkRight
+        inkTop: view.inkTop
+        inkBottom: view.inkBottom
+        lineHeight: view.lineHeight
+        weight: view.weight
+        disabled: view.disabled
+        focusable: view.focusable
+        autofocus: view.autofocus
+        onPress: view.onPress
+        onTextInput: view.onTextInput
+        onTextCodepoint: view.onTextCodepoint
+        onBackspace: view.onBackspace
+        onSubmit: view.onSubmit
+        onKey: view.onKey
+        onScroll: view.onScroll
+        minLength: view.minLength
+        interaction: view.interaction
+        texture: view.texture
+        textureOpacity: view.textureOpacity
+    }
+}
+
 function modifierColor(
     color: KiraUIFoundation.Color,
     modifiers: borrow ModifierContext,
@@ -649,6 +724,9 @@ function viewWithSurfaceRadius(view: KiraUIFoundation.FoundationView, radius: Fl
     return KiraUIFoundation.FoundationView {
         kind: view.kind
         key: view.key
+        guides: identityGuides(view.guides)
+        guideLeading: view.guideLeading
+        guideTrailing: view.guideTrailing
         children: identityChildren(view.children)
         width: view.width
         height: view.height
@@ -695,6 +773,9 @@ function viewWithSurfaceShape(view: KiraUIFoundation.FoundationView, shape: Surf
     return KiraUIFoundation.FoundationView {
         kind: view.kind
         key: view.key
+        guides: identityGuides(view.guides)
+        guideLeading: view.guideLeading
+        guideTrailing: view.guideTrailing
         children: identityChildren(view.children)
         width: view.width
         height: view.height
@@ -741,6 +822,9 @@ function viewWithSurfaceBorder(view: KiraUIFoundation.FoundationView, color: Kir
     return KiraUIFoundation.FoundationView {
         kind: view.kind
         key: view.key
+        guides: identityGuides(view.guides)
+        guideLeading: view.guideLeading
+        guideTrailing: view.guideTrailing
         children: identityChildren(view.children)
         width: view.width
         height: view.height
@@ -787,6 +871,9 @@ function viewWithWidth(view: KiraUIFoundation.FoundationView, width: KiraUIFound
     return KiraUIFoundation.FoundationView {
         kind: view.kind
         key: view.key
+        guides: identityGuides(view.guides)
+        guideLeading: view.guideLeading
+        guideTrailing: view.guideTrailing
         children: identityChildren(view.children)
         width: width
         height: view.height
@@ -833,6 +920,9 @@ function viewWithHeight(view: KiraUIFoundation.FoundationView, height: KiraUIFou
     return KiraUIFoundation.FoundationView {
         kind: view.kind
         key: view.key
+        guides: identityGuides(view.guides)
+        guideLeading: view.guideLeading
+        guideTrailing: view.guideTrailing
         children: identityChildren(view.children)
         width: view.width
         height: height
@@ -879,6 +969,9 @@ function viewWithSurfacePadding(view: KiraUIFoundation.FoundationView, length: F
     return KiraUIFoundation.FoundationView {
         kind: view.kind
         key: view.key
+        guides: identityGuides(view.guides)
+        guideLeading: view.guideLeading
+        guideTrailing: view.guideTrailing
         children: identityChildren(view.children)
         width: view.width
         height: view.height
@@ -925,6 +1018,9 @@ function viewWithContentMargins(view: KiraUIFoundation.FoundationView, inset: Fl
     return KiraUIFoundation.FoundationView {
         kind: view.kind
         key: view.key
+        guides: identityGuides(view.guides)
+        guideLeading: view.guideLeading
+        guideTrailing: view.guideTrailing
         children: identityChildren(view.children)
         width: view.width
         height: view.height
@@ -1019,6 +1115,19 @@ Widget HeightLayer(value: Float) {
     }
 }
 
+function scaledTypography(
+    font: FontImplementation,
+    modifiers: borrow ModifierContext,
+) -> FontImplementation {
+    let scale = resolvedControlMetrics(modifiers).typeScale
+    return FontImplementation {
+        size: font.size * scale
+        weight: font.weight
+        lineHeight: font.lineHeight * scale
+        tracking: font.tracking
+    }
+}
+
 // Fill and Fixed both had a modifier; Hug did not, so a widget that fills by
 // default could never be told to shrink to its content without exposing its own
 // SizeMode argument.
@@ -1040,12 +1149,19 @@ Widget HugHeightLayer() {
     }
 }
 
+// A role's font, at the size the region around it is drawn in.
+//
+// The size class scales the WHOLE scale rather than each role separately, so the
+// relationships a theme authored — a header quieter than a label, a title well
+// above both — survive being drawn small. A per-role size per class would let
+// those relationships drift apart between classes, which is the thing a type
+// scale exists to prevent.
 function typographyImplementation(
     style: TypographyStyle,
     modifiers: borrow ModifierContext,
 ) -> FontImplementation {
     if modifiers.hasTheme {
-        return modifiers.theme.typography(style)
+        return scaledTypography(modifiers.theme.typography(style), modifiers)
     }
     let values = defaultStyleTypographyTokens()
     match style {
@@ -1118,20 +1234,29 @@ Widget Text(content: String) {
             textLineHeight = selected.lineHeight
             textWeight = foundationFontWeight(selected.weight)
         } else if modifiers.hasTheme {
-            let tokens = modifiers.theme.tokens()
-            textSize = tokens.bodySize
-            textLineHeight = KiraUIFoundation.foundationTextRunLineHeight(size: textSize)
-            textWeight = foundationFontWeight(tokens.bodyWeight)
+            // Through the same resolution every named role goes through, so an
+            // unstyled run is scaled by the size class like everything else.
+            // Reading `tokens.bodySize` directly is how a row label stayed at
+            // full size inside a `.Small` panel while the header beside it
+            // shrank.
+            let selected = typographyImplementation(TypographyStyle.body, modifiers)
+            textSize = selected.size
+            // Weight before metrics: a run's line height and ink are measured
+            // from the weight it will be DRAWN in, so resolving the weight after
+            // measuring hands layout the regular cut's numbers for a semibold
+            // run.
+            textWeight = foundationFontWeight(selected.weight)
+            textLineHeight = KiraUIFoundation.foundationTextRunLineHeight(size: textSize, weight: textWeight)
         }
         return KiraUIFoundation.FoundationView {
             kind: KiraUIFoundation.FoundationViewKind.Text
             content: content
             color: modifierColor(modifierTextColor(modifiers), modifiers)
             size: textSize
-            inkLeft: KiraUIFoundation.foundationTextRunInkLeft(content: content, size: textSize)
-            inkRight: KiraUIFoundation.foundationTextRunInkRight(content: content, size: textSize)
-            inkTop: KiraUIFoundation.foundationTextRunInkTop(content: content, size: textSize)
-            inkBottom: KiraUIFoundation.foundationTextRunInkBottom(content: content, size: textSize)
+            inkLeft: KiraUIFoundation.foundationTextRunInkLeft(content: content, size: textSize, weight: textWeight)
+            inkRight: KiraUIFoundation.foundationTextRunInkRight(content: content, size: textSize, weight: textWeight)
+            inkTop: KiraUIFoundation.foundationTextRunInkTop(content: content, size: textSize, weight: textWeight)
+            inkBottom: KiraUIFoundation.foundationTextRunInkBottom(content: content, size: textSize, weight: textWeight)
             lineHeight: textLineHeight
             weight: textWeight
             disabled: modifiers.disabled
@@ -1144,9 +1269,10 @@ enum ButtonRole {
     Destructive
 }
 
-// Button consumes the scoped foreground on its own presentation surface. Its
-// label is an implementation detail of the control, so it receives the
-// presentation context explicitly rather than inheriting foreground color
+// Button fills with the control token (or the danger tint for a destructive
+// role); the cascading `.foregroundColor(...)` names the LABEL ink, exactly as
+// it does on a bare Text. Its label is an implementation detail of the control,
+// so it receives the presentation context explicitly rather than inheriting
 // through the general child traversal.
 Widget Button(
     label: String,
@@ -1156,36 +1282,12 @@ Widget Button(
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let k = kiraUiTapSeqKey()
         let press = onPress
-        var buttonFill = KiraUIFoundation.Color {
-            r: 0.16
-            g: 0.18
-            b: 0.26
-            a: 1.0
-        }
-        if modifiers.hasTheme {
-            let tokens = modifiers.theme.tokens()
-            buttonFill = foundationColor(tokens.backgroundControl)
-        }
-        if modifiers.hasThemeColor {
-            buttonFill = modifierThemeColor(modifiers.themeColor, modifiers)
-        }
-        if modifiers.hasForegroundColor {
-            buttonFill = modifierThemeColor(modifiers.foregroundColor, modifiers)
-        }
+        let tokens = modifierTokens(modifiers)
+        var buttonFill = foundationColor(tokens.fill.control)
         match role {
             Normal -> {}
             Destructive -> {
-                if modifiers.hasTheme {
-                    let tokens = modifiers.theme.tokens()
-                    buttonFill = foundationColor(tokens.danger)
-                } else {
-                    buttonFill = KiraUIFoundation.Color {
-                        r: 0.82
-                        g: 0.12
-                        b: 0.18
-                        a: 1.0
-                    }
-                }
+                buttonFill = foundationColor(tokens.tint.danger)
             }
         }
         return buttonView(context, modifiers, k, move press, move label, move buttonFill)
@@ -1200,15 +1302,15 @@ function buttonView(
     label: String,
     fill: KiraUIFoundation.Color,
 ) -> KiraUIFoundation.FoundationView {
-    // A filled button's label is the inverse ink, not white — white on a light
-    // theme's control fill is unreadable every time.
+    // A filled button's default label is the inverse ink, not white — white on
+    // a light theme's control fill is unreadable every time. An explicit
+    // `.foregroundColor(...)` or `.textColor(...)` on the button wins.
     var labelModifiers = modifierContextForPresentation(modifiers)
-    var labelColor = colorWhite()
-    if modifiers.hasTheme {
-        labelColor = modifiers.theme.tokens().foregroundInverse
+    if modifiers.hasForegroundColor == false && modifiers.hasTextColor == false {
+        let labelColor = modifierTokens(modifiers).foreground.inverse
+        let labelDelta = modifierDeltaTextColor(move labelColor)
+        labelModifiers = modifierContextApply(labelModifiers, move labelDelta)
     }
-    let labelDelta = modifierDeltaTextColor(move labelColor)
-    labelModifiers = modifierContextApply(labelModifiers, move labelDelta)
     let labelView = Text(content: move label).lower(context, labelModifiers)
     return KiraUIFoundation.FoundationView {
         kind: KiraUIFoundation.FoundationViewKind.HitArea
@@ -1238,18 +1340,11 @@ function buttonView(
     }
 }
 
-Widget AppSurface(
-    padding: Spacing = Spacing.None,
-    paddingValue: Float = -1.0,
-) {
+Widget AppSurface() {
     @Content let content: Any Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let childModifiers = modifierContextForChildren(modifiers)
-        var resolvedPadding = spacingImplementation(padding, modifiers)
-        if paddingValue >= 0.0 {
-            resolvedPadding = paddingValue
-        }
         return Surface(
             children: [content.lower(context, childModifiers)],
             width: KiraUIFoundation.SizeMode.Fill,
@@ -1267,102 +1362,8 @@ Widget AppSurface(
             shape: KiraUIFoundation.FoundationShape.RegularRoundedRect,
             material: KiraUIFoundation.FoundationMaterial.Flat,
             effects: [],
-            padding: uniformInsets(resolvedPadding),
+            padding: KiraUIFoundation.EdgeInsets {},
             clipContent: false
-        )
-    }
-}
-
-Widget VStack(
-    spacing: Spacing = Spacing.Medium,
-    spacingValue: Float = -1.0,
-) {
-    @Content let children: [Any Widget]
-
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
-        var resolvedSpacing = spacingImplementation(spacing, modifiers)
-        if spacingValue >= 0.0 {
-            resolvedSpacing = spacingValue
-        }
-        return Column(
-            children: loweredChildren(context, modifiers, children),
-            width: KiraUIFoundation.SizeMode.Fill,
-            height: KiraUIFoundation.SizeMode.Hug,
-            spacing: resolvedSpacing,
-            padding: KiraUIFoundation.EdgeInsets {},
-            crossAxisAlignment: KiraUIFoundation.CrossAlignment.Start
-        )
-    }
-}
-
-function hStackWidth(distribution: Distribution) -> KiraUIFoundation.SizeMode {
-    match distribution {
-        Fill -> return KiraUIFoundation.SizeMode.Fill;
-        Start -> return KiraUIFoundation.SizeMode.Fill;
-        Center -> return KiraUIFoundation.SizeMode.Fill;
-        Stretch -> return KiraUIFoundation.SizeMode.Fill;
-    }
-}
-
-function hStackHeight(distribution: Distribution) -> KiraUIFoundation.SizeMode {
-    match distribution {
-        Fill -> return KiraUIFoundation.SizeMode.Fill;
-        Start -> return KiraUIFoundation.SizeMode.Hug;
-        Center -> return KiraUIFoundation.SizeMode.Hug;
-        Stretch -> return KiraUIFoundation.SizeMode.Hug;
-    }
-}
-
-function hStackCrossAxisAlignment(distribution: Distribution) -> KiraUIFoundation.CrossAlignment {
-    match distribution {
-        Fill -> return KiraUIFoundation.CrossAlignment.Stretch;
-        Start -> return KiraUIFoundation.CrossAlignment.Start;
-        Center -> return KiraUIFoundation.CrossAlignment.Center;
-        Stretch -> return KiraUIFoundation.CrossAlignment.Stretch;
-    }
-}
-
-Widget HStack(
-    spacing: Spacing = Spacing.Medium,
-    spacingValue: Float = -1.0,
-    distribution: Distribution = Distribution.Center,
-) {
-    @Content let children: [Any Widget]
-
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
-        var resolvedSpacing = spacingImplementation(spacing, modifiers)
-        if spacingValue >= 0.0 {
-            resolvedSpacing = spacingValue
-        }
-        return Row(
-            children: loweredChildren(context, modifiers, children),
-            width: hStackWidth(distribution),
-            height: hStackHeight(distribution),
-            spacing: resolvedSpacing,
-            padding: KiraUIFoundation.EdgeInsets {},
-            crossAxisAlignment: hStackCrossAxisAlignment(distribution)
-        )
-    }
-}
-
-Widget VStackFill(
-    spacing: Spacing = Spacing.Medium,
-    spacingValue: Float = -1.0,
-) {
-    @Content let children: [Any Widget]
-
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
-        var resolvedSpacing = spacingImplementation(spacing, modifiers)
-        if spacingValue >= 0.0 {
-            resolvedSpacing = spacingValue
-        }
-        return Column(
-            children: loweredChildren(context, modifiers, children),
-            width: KiraUIFoundation.SizeMode.Fill,
-            height: KiraUIFoundation.SizeMode.Fill,
-            spacing: resolvedSpacing,
-            padding: KiraUIFoundation.EdgeInsets {},
-            crossAxisAlignment: KiraUIFoundation.CrossAlignment.Start
         )
     }
 }
@@ -1384,13 +1385,13 @@ Widget Card(
             let tokens = modifiers.theme.tokens()
             selectedMaterial = tokens.surfaceMaterial
             selectedRadius = tokens.cardRadius
-            selectedFill = foundationColor(tokens.backgroundSurface)
-            selectedBorder = foundationColor(tokens.borderStandard)
+            selectedFill = foundationColor(tokens.background.surface)
+            selectedBorder = foundationColor(tokens.border.standard.color)
             selectedEffects = cardEffects(selectedMaterial)
             if material == Material.Flat {
                 selectedMaterial = Material.Flat
-                selectedFill = foundationColor(tokens.backgroundRaised)
-                selectedBorder = foundationColor(tokens.borderSubtle)
+                selectedFill = foundationColor(tokens.background.raised)
+                selectedBorder = foundationColor(tokens.border.subtle.color)
                 selectedEffects = cardEffects(selectedMaterial)
             }
         }
@@ -1399,8 +1400,8 @@ Widget Card(
             if modifiers.hasTheme {
                 let tokens = modifiers.theme.tokens()
                 if selectedMaterial == Material.Flat {
-                    selectedFill = foundationColor(tokens.backgroundRaised)
-                    selectedBorder = foundationColor(tokens.borderSubtle)
+                    selectedFill = foundationColor(tokens.background.raised)
+                    selectedBorder = foundationColor(tokens.border.subtle.color)
                 } else {
                     selectedFill = cardFill(selectedMaterial)
                     selectedBorder = cardBorder(selectedMaterial)
@@ -1448,6 +1449,8 @@ Widget Card(
     }
 }
 
+// The bar tints with the cascading `.foregroundColor(...)` when one is set,
+// the accent otherwise; the track is the control fill.
 Widget Progress(value: Float) {
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         var progress = value
@@ -1457,17 +1460,17 @@ Widget Progress(value: Float) {
         if progress > 1.0 {
             progress = 1.0
         }
+        let tokens = modifierTokens(modifiers)
+        var barColor = foundationColor(tokens.tint.accent)
+        if modifiers.hasForegroundColor {
+            barColor = modifierPrimaryColor(modifiers.foregroundColor, modifiers)
+        }
         let track = Surface(
             children: [],
             width: KiraUIFoundation.SizeMode.Fixed(96.0),
             height: KiraUIFoundation.SizeMode.Fixed(6.0),
             flex: 0,
-            fill: modifierSurfaceFill(KiraUIFoundation.Color {
-                r: 0.16
-                g: 0.18
-                b: 0.26
-                a: 1.0
-            }, modifiers),
+            fill: modifierSurfaceFill(foundationColor(tokens.fill.control), modifiers),
             border: transparentFoundationColor(),
             borderWidth: 0.0,
             radius: 999.0,
@@ -1482,12 +1485,7 @@ Widget Progress(value: Float) {
             width: KiraUIFoundation.SizeMode.Fixed(96.0 * progress),
             height: KiraUIFoundation.SizeMode.Fixed(6.0),
             flex: 0,
-            fill: modifierColor(KiraUIFoundation.Color {
-                r: 0.43
-                g: 0.67
-                b: 1.0
-                a: 1.0
-            }, modifiers),
+            fill: modifierColor(move barColor, modifiers),
             border: transparentFoundationColor(),
             borderWidth: 0.0,
             radius: 999.0,
@@ -1527,10 +1525,10 @@ Widget Circle() {
         var circleFill = defaultTextColor()
         if modifiers.hasTheme {
             let tokens = modifiers.theme.tokens()
-            circleFill = foundationColor(tokens.foregroundPrimary)
+            circleFill = foundationColor(tokens.foreground.primary)
         }
-        if modifiers.hasThemeColor {
-            circleFill = modifierThemeColor(modifiers.themeColor, modifiers)
+        if modifiers.hasForegroundColor {
+            circleFill = modifierPrimaryColor(modifiers.foregroundColor, modifiers)
         }
         return Surface(
             children: [],
@@ -1587,17 +1585,17 @@ Widget LinearGradient(start: Color, end: Color) {
     }
 }
 
-// A fill-sized wash in a surface role — the band behind a list row, the pill
+// A fill-sized wash in a background style — the band behind a list row, the pill
 // under a tab. The themed counterpart to SurfaceTint, which can only be handed a
 // color someone else already resolved.
-Widget ThemeTint(surface: ThemeSurface, radius: CornerRadius = CornerRadius.None) {
+Widget BackgroundFill(style: BackgroundStyle, radius: CornerRadius = CornerRadius.None) {
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let ignored = context.frameCount
         return KiraUIFoundation.FoundationView {
             kind: KiraUIFoundation.FoundationViewKind.Surface
             width: KiraUIFoundation.SizeMode.Fill
             height: KiraUIFoundation.SizeMode.Fill
-            fill: modifierColor(modifierThemeSurface(surface, modifiers), modifiers)
+            fill: modifierColor(modifierBackgroundStyle(style, modifiers), modifiers)
             radius: cornerRadiusImplementation(radius, modifiers)
         }
     }
@@ -1624,30 +1622,11 @@ Widget SurfaceTint(color: Color) {
     }
 }
 
-Widget Padding(length: Float) {
-    @Content let content: Any Widget
-
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
-        let childModifiers = modifierContextForChildren(modifiers)
-        return Frame(
-            content.lower(context, childModifiers),
-            KiraUIFoundation.SizeMode.Fill,
-            KiraUIFoundation.SizeMode.Hug,
-            0,
-            KiraUIFoundation.Alignment.TopLeading,
-            uniformInsets(length)
-        )
-    }
-}
-
-// Padding along one axis at a time, in spacing tokens.
+// A container's own inset, in spacing tokens, one axis at a time.
 //
-// Uniform padding was the only kind on offer, so the extremely common "inset the
-// row's contents from the panel edge, but do not add height" case had no way to
-// say itself, and every such row opened and closed with a FixedGap standing in
-// for the padding it actually wanted. A leading gap is not a gap — it is the
-// container's inset, and a reader cannot tell the two apart once they are both
-// spelled FixedGap.
+// This is not padding: padding is a length someone chose at a call site, and
+// every one of them drifts. An inset states which spacing STEP a container holds
+// its content off its edges by, and the theme decides what that step measures.
 Widget Inset(
     horizontal: Spacing = Spacing.None,
     vertical: Spacing = Spacing.None,
@@ -1658,10 +1637,17 @@ Widget Inset(
         let childModifiers = modifierContextForChildren(modifiers)
         let side = spacingImplementation(horizontal, modifiers)
         let ends = spacingImplementation(vertical, modifiers)
+        let view = content.lower(context, childModifiers)
+        // The inset takes the SIZING of what it wraps. Forcing Fill here is how
+        // a pill that hugs its label collapsed to nothing the moment it was
+        // given an inset: the frame claimed a width its hug-sized parent had
+        // none of. Padding is not a sizing decision.
+        let width = view.width
+        let height = view.height
         return Frame(
-            content.lower(context, childModifiers),
-            KiraUIFoundation.SizeMode.Fill,
-            KiraUIFoundation.SizeMode.Hug,
+            move view,
+            move width,
+            move height,
             0,
             KiraUIFoundation.Alignment.TopLeading,
             KiraUIFoundation.EdgeInsets {
@@ -1688,21 +1674,11 @@ Widget ThemeLayer(theme: Any Theme) {
     }
 }
 
-Widget ThemeColorLayer(color: ThemeColor) {
+Widget BackgroundStyleLayer(style: BackgroundStyle) {
     @Content let content: Any Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
-        let delta = modifierDeltaThemeColor(color)
-        let resolved = modifierContextApply(modifiers, move delta)
-        return content.lower(context, resolved)
-    }
-}
-
-Widget ThemeSurfaceLayer(surface: ThemeSurface) {
-    @Content let content: Any Widget
-
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
-        let delta = modifierDeltaThemeSurface(surface)
+        let delta = modifierDeltaBackgroundStyle(style)
         let resolved = modifierContextApply(modifiers, move delta)
         return content.lower(context, resolved)
     }
@@ -1718,13 +1694,33 @@ Widget ThemeBorderLayer(border: ThemeBorder) {
     }
 }
 
-Widget ForegroundColorLayer(color: ThemeColor) {
+Widget ForegroundColorLayer(color: PrimaryColor) {
     @Content let content: Any Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let delta = modifierDeltaForegroundColor(color)
         let resolved = modifierContextApply(modifiers, move delta)
         return content.lower(context, resolved)
+    }
+}
+
+// `.backgroundColor(...)` paints a hug-sized wash behind exactly the widget it
+// wraps — it never becomes the subtree's surface role, mirroring how a
+// background sits behind one view and not its descendants.
+Widget BackgroundColorLayer(color: PrimaryColor) {
+    @Content let content: Any Widget
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let resolved = modifierColor(modifierPrimaryColor(color, modifiers), modifiers)
+        let childModifiers = modifierContextForChildren(modifiers)
+        return KiraUIFoundation.FoundationView {
+            kind: KiraUIFoundation.FoundationViewKind.Surface
+            width: KiraUIFoundation.SizeMode.Hug
+            height: KiraUIFoundation.SizeMode.Hug
+            fill: move resolved
+            padding: KiraUIFoundation.EdgeInsets {}
+            children: [content.lower(context, childModifiers)]
+        }
     }
 }
 
@@ -1970,23 +1966,37 @@ Widget SurfaceBorderLayer(color: Color, width: Float) {
     }
 }
 
-Widget Divider(color: Color = Color {}) {
+// A hairline between two things.
+//
+// Its colour and its thickness are the theme's border tokens, and how far it is
+// held off the edges it runs between is the size class's — leading and trailing
+// separately, because a grouped list insets its separators to the label column
+// on one side and runs them to the edge on the other. `.themeBorder(...)` picks
+// which border it is drawn in.
+//
+// The inset lives on the divider rather than on whatever encloses it, so a
+// section, a sidebar and a toolbar all divide the same way without any of them
+// restating it.
+//
+// `follows` names a pair of guides the divider takes its extent from instead,
+// when something before it publishes them. That is how a hairline lines up with
+// a label column it has no way to measure: the column answers the guide, and the
+// divider reads the answer. The size class's insets remain the fallback for when
+// nothing does.
+Widget Divider(
+    followsLeading: Any AlignmentGuide = ListRowSeparatorLeading(),
+    followsTrailing: Any AlignmentGuide = ListRowSeparatorTrailing(),
+) {
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let ignored = context.frameCount
-        var dividerColor = foundationColor(color)
-        if modifiers.hasTheme {
-            let tokens = modifiers.theme.tokens()
-            dividerColor = foundationColor(tokens.borderSubtle)
-        }
-        if modifiers.hasThemeBorder {
-            dividerColor = modifierSurfaceBorder(move dividerColor, modifiers)
-        }
-        return Surface(
+        let metrics = resolvedControlMetrics(modifiers)
+        let border = modifierResolvedBorder(modifiers)
+        let line = Surface(
             children: [],
             width: KiraUIFoundation.SizeMode.Fill,
-            height: KiraUIFoundation.SizeMode.Fixed(1.0),
+            height: KiraUIFoundation.SizeMode.Fixed(border.width),
             flex: 0,
-            fill: modifierSurfaceFill(move dividerColor, modifiers),
+            fill: modifierSurfaceFill(foundationColor(border.color), modifiers),
             border: transparentFoundationColor(),
             borderWidth: 0.0,
             radius: 0.0,
@@ -1996,5 +2006,40 @@ Widget Divider(color: Color = Color {}) {
             padding: KiraUIFoundation.EdgeInsets {},
             clipContent: false
         )
+        // The hairline itself reads the guides, not the frame around it: what a
+        // guide moves is the painted extent, and the frame keeps the width the
+        // stack gave it so nothing beside the divider shifts.
+        let following = viewFollowingGuides(
+            move line,
+            guideTag(followsLeading),
+            guideTag(followsTrailing)
+        )
+        return Frame(
+            move following,
+            KiraUIFoundation.SizeMode.Fill,
+            KiraUIFoundation.SizeMode.Hug,
+            0,
+            KiraUIFoundation.Alignment.Leading,
+            KiraUIFoundation.EdgeInsets {
+                leading: metrics.dividerLeading
+                trailing: metrics.dividerTrailing
+            }
+        )
+    }
+}
+
+// The border a widget is drawn in: the named `.themeBorder(...)` when one is in
+// effect, the subtle hairline otherwise. Colour and width together, because a
+// border is both.
+function modifierResolvedBorder(modifiers: borrow ModifierContext) -> ResolvedBorder {
+    let tokens = modifierTokens(modifiers)
+    if modifiers.hasThemeBorder == false {
+        return tokens.border.subtle
+    }
+    match modifiers.themeBorder {
+        Subtle -> return tokens.border.subtle;
+        Standard -> return tokens.border.standard;
+        Strong -> return tokens.border.strong;
+        Focus -> return tokens.border.focus;
     }
 }
