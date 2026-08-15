@@ -1,0 +1,44 @@
+import Foundation
+
+// Which colour scheme the interface is presenting.
+//
+// An application does not choose this. The person using it chose it, once, in
+// their system settings, and every window they open is expected to already agree
+// with that choice and to follow it when they change their mind — which they do,
+// on a schedule, twice a day. A toolkit that reads the scheme at launch is a
+// toolkit whose windows go the wrong colour at sunset.
+//
+// So the platform is asked every time, and the answer is not cached here. The
+// caching belongs behind the call, where the platform's own handle can be held
+// open: a cache on this side has to be written from somewhere, and a write into
+// a recovered state slot copies the value rather than storing it — which is how
+// a correctly-read "light" turned back into the style's declared dark on the
+// very next read.
+//
+// `KIRA_UI_APPEARANCE=light|dark` overrides everything, for the runs that need a
+// fixed answer: a screenshot comparison, a test.
+
+// What the platform reports: 1 light, 2 dark, anything else no preference.
+function kiraUiPlatformScheme() -> Int {
+    return Int(kira_ui_platform_appearance())
+}
+
+// The scheme in effect: the host override, then the platform, then what the
+// style itself declared.
+function resolvedAppearance(declared: Appearance) -> Appearance {
+    let requested = environmentValue("KIRA_UI_APPEARANCE")
+    if requested == "light" {
+        return Appearance.Light
+    }
+    if requested == "dark" {
+        return Appearance.Dark
+    }
+    let scheme = kiraUiPlatformScheme()
+    if scheme == 1 {
+        return Appearance.Light
+    }
+    if scheme == 2 {
+        return Appearance.Dark
+    }
+    return declared
+}

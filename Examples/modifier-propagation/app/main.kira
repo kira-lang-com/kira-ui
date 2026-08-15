@@ -16,24 +16,19 @@ function checkContextPropagation() {
     let themedChildren = modifierContextForChildren(themed)
     checkModifier("theme is inherited", themedChildren.hasTheme)
 
-    let blueDelta = modifierDeltaThemeColor(ThemeColor.Blue)
+    let blueDelta = modifierDeltaForegroundColor(PrimaryColor.Blue)
     let blue = modifierContextApply(ModifierContext {}, move blueDelta)
-    let greenDelta = modifierDeltaThemeColor(ThemeColor.Green)
+    let greenDelta = modifierDeltaForegroundColor(PrimaryColor.Green)
     let green = modifierContextApply(blue, move greenDelta)
-    checkModifier("nearest theme color wins", green.themeColor == ThemeColor.Green)
+    checkModifier("nearest foreground color wins", green.foregroundColor == PrimaryColor.Green)
     checkModifier(
-        "theme color remains inherited",
-        modifierContextForChildren(green).themeColor == ThemeColor.Green
+        "foreground color cascades to children",
+        modifierContextForChildren(green).foregroundColor == PrimaryColor.Green
     )
 
     let materialDelta = modifierDeltaMaterial(Material.Frosted)
     let frosted = modifierContextApply(ModifierContext {}, move materialDelta)
     checkModifier("material is scoped", frosted.hasMaterial && modifierContextForChildren(frosted).hasMaterial == false)
-
-    let redDelta = modifierDeltaForegroundColor(ThemeColor.Red)
-    let red = modifierContextApply(ModifierContext {}, move redDelta)
-    let redChildren = modifierContextForChildren(red)
-    checkModifier("foreground is scoped", red.hasForegroundColor && redChildren.hasForegroundColor == false)
 
     let parentFontDelta = modifierDeltaFont(17.0, FontWeight.Regular)
     let parentFont = modifierContextApply(ModifierContext {}, move parentFontDelta)
@@ -63,46 +58,56 @@ function checkLoweringPropagation() {
         Text("Child font").font(size = 31.0, weight = FontWeight.Bold)
     }
         .font(size = 17.0)
-        .themeColor(.Blue)
+        .foregroundColor(.Blue)
     let styledView = styled.lower(foundationContext, ModifierContext {})
-    checkModifier("theme color reaches text", styledView.children[0].color.b == 1.0)
+    checkModifier("foreground color reaches text", styledView.children[0].color.b == 1.0)
     checkModifier("parent font reaches first child", styledView.children[0].size == 17.0)
     checkModifier("explicit child font wins", styledView.children[1].size == 31.0)
 
-    let scoped = VStack(spacingValue = 0.0) {
+    // The cascade is the SwiftUI rule: a foreground names the subtree's ink
+    // until something nearer restates it.
+    let cascaded = VStack(spacingValue = 0.0) {
         Text("One")
-        Text("Two")
+        Text("Two").foregroundColor(.Green)
     }
         .foregroundColor(.Red)
-    let scopedView = scoped.lower(foundationContext, ModifierContext {})
-    checkModifier("scoped foreground leaves first child alone", scopedView.children[0].color.g == 0.96)
-    checkModifier("scoped foreground leaves second child alone", scopedView.children[1].color.g == 0.96)
+    let cascadedView = cascaded.lower(foundationContext, ModifierContext {})
+    checkModifier("foreground cascades to first child", cascadedView.children[0].color.r == 1.0)
+    checkModifier("nearer foreground wins for second child", cascadedView.children[1].color.g == 0.82)
 
     let nested = VStack(spacingValue = 0.0) {
         Card(material = Material.Flat) {
             Text("Green")
         }
-            .themeColor(.Green)
+            .foregroundColor(.Green)
         Text("Blue")
     }
-        .themeColor(.Blue)
+        .foregroundColor(.Blue)
     let nestedView = nested.lower(foundationContext, ModifierContext {})
-    checkModifier("nested theme color overrides parent", nestedView.children[0].children[0].color.g == 0.85)
-    checkModifier("parent theme color remains for sibling", nestedView.children[1].color.b == 1.0)
+    // Card lowers to Surface -> Column -> content, so the text is two levels in.
+    checkModifier("nested foreground overrides parent", nestedView.children[0].children[0].children[0].color.g == 0.82)
+    checkModifier("parent foreground remains for sibling", nestedView.children[1].color.b == 1.0)
 
+    // The SwiftUI rule: the modifier call nearest the widget is the innermost
+    // layer, so it wins over a later call in the same chain.
     let ordered = Text("Order")
-        .themeColor(.Blue)
-        .themeColor(.Green)
+        .foregroundColor(.Blue)
+        .foregroundColor(.Green)
     let orderedView = ordered.lower(foundationContext, ModifierContext {})
-    checkModifier("nearest modifier in a chain wins", orderedView.color.g == 0.67)
+    checkModifier("modifier call nearest the widget wins", orderedView.color.g == 0.518)
 
     let mixed = Text("Mixed")
         .padding(4.0)
-        .themeColor(.Cyan)
+        .foregroundColor(.Cyan)
         .font(size = 19.0)
     let mixedView = mixed.lower(foundationContext, ModifierContext {})
-    checkModifier("semantic values cross structural wrappers", mixedView.children[0].color.b == 0.82)
+    checkModifier("semantic values cross structural wrappers", mixedView.children[0].color.b == 1.0)
     checkModifier("mixed chain preserves cascading font", mixedView.children[0].size == 19.0)
+
+    let washed = Text("Washed")
+        .backgroundColor(.Blue)
+        .lower(foundationContext, ModifierContext {})
+    checkModifier("background color paints behind the widget", washed.fill.b == 1.0)
 
     let opacityView = Text("Alpha")
         .opacity(0.5)
@@ -128,7 +133,7 @@ function buttonForegroundFixture() -> Any Widget {
 function checkButtonPresentation() {
     let foundationContext = KiraUIFoundation.FoundationUiContext {}
     let buttonView = buttonForegroundFixture().lower(foundationContext, ModifierContext {})
-    checkModifier("button consumes scoped foreground locally", buttonView.children[0].color.r == 0.65)
+    checkModifier("button label takes the cascading foreground", buttonView.children[0].color.r == 0.749)
     checkModifier("button receives disabled environment", buttonView.disabled)
     checkModifier("button receives isolated focus", buttonView.autofocus)
     return

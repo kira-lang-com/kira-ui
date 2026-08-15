@@ -263,7 +263,7 @@ function textFieldClickCaret(key: Int, size: Float, leftPad: Float) {
     var placed = false
     while k <= n && placed == false {
         let prefix = KiraUIFoundation.foundationStringFromCodepoints(st.codes, 0, k)
-        let w = KiraUIFoundation.foundationTextRunWidth(prefix, size)
+        let w = KiraUIFoundation.foundationTextRunWidth(prefix, size, textFieldWeight())
         if w >= relX {
             if k > 0 && (relX - prevW) < (w - relX) {
                 st.caret = k - 1
@@ -360,6 +360,15 @@ function textFieldColorWithOpacity(
     }
 }
 
+// The weight editable text is set at.
+//
+// One value, named once, because the caret is placed by measuring PREFIXES of
+// the same string the field draws: a measurement at one weight and a draw at
+// another puts the caret beside the glyph it belongs to rather than against it.
+function textFieldWeight() -> Float {
+    return 400.0
+}
+
 function textFieldTextNode(
     content: String,
     color: borrow KiraUIFoundation.Color,
@@ -371,11 +380,11 @@ function textFieldTextNode(
         content: content
         color: textFieldColorWithOpacity(color, opacity)
         size: size
-        inkLeft: KiraUIFoundation.foundationTextRunInkLeft(content: content, size: size)
-        inkRight: KiraUIFoundation.foundationTextRunInkRight(content: content, size: size)
-        inkTop: KiraUIFoundation.foundationTextRunInkTop(content: content, size: size)
-        inkBottom: KiraUIFoundation.foundationTextRunInkBottom(content: content, size: size)
-        weight: 400.0
+        inkLeft: KiraUIFoundation.foundationTextRunInkLeft(content: content, size: size, weight: textFieldWeight())
+        inkRight: KiraUIFoundation.foundationTextRunInkRight(content: content, size: size, weight: textFieldWeight())
+        inkTop: KiraUIFoundation.foundationTextRunInkTop(content: content, size: size, weight: textFieldWeight())
+        inkBottom: KiraUIFoundation.foundationTextRunInkBottom(content: content, size: size, weight: textFieldWeight())
+        weight: textFieldWeight()
     }
 }
 
@@ -427,7 +436,7 @@ function textFieldTextSize(modifiers: borrow ModifierContext) -> Float {
 
 function textFieldPlaceholderColor(modifiers: borrow ModifierContext) -> KiraUIFoundation.Color {
     if modifiers.hasTheme {
-        return modifierColor(foundationColor(modifiers.theme.tokens().foregroundDisabled), modifiers)
+        return modifierColor(foundationColor(modifiers.theme.tokens().foreground.tertiary), modifiers)
     }
     return modifierColor(foundationColor(colorMutedText()), modifiers)
 }
@@ -436,7 +445,7 @@ function textFieldPlaceholderColor(modifiers: borrow ModifierContext) -> KiraUIF
 // bury the glyphs it is drawn behind.
 function textFieldSelectionColor(modifiers: borrow ModifierContext) -> KiraUIFoundation.Color {
     if modifiers.hasTheme {
-        let accent = modifiers.theme.tokens().accent
+        let accent = modifiers.theme.tokens().tint.accent
         return modifierColor(foundationColor(colorWithAlpha(accent, 0.35)), modifiers)
     }
     return modifierColor(foundationColor(colorWithAlpha(colorBlue(), 0.35)), modifiers)
@@ -454,7 +463,7 @@ function textFieldRadius(modifiers: borrow ModifierContext) -> Float {
 // field could never follow a theme change, and made the surrounding code carry a
 // resolved palette purely to feed this constructor.
 //
-// Overrides remain available through the ordinary modifiers: `.themeSurface(...)`
+// Overrides remain available through the ordinary modifiers: `.background(...)`
 // or `.fill(...)` for the field's background, `.themeColor(...)` /
 // `.textColor(...)` for the ink, `.typography(...)` / `.font(...)` for the size.
 Widget TextField(
@@ -479,7 +488,7 @@ Widget TextField(
             a: 1.0
         }
         if modifiers.hasTheme {
-            bg = foundationColor(modifiers.theme.tokens().backgroundControl)
+            bg = foundationColor(modifiers.theme.tokens().fill.control)
         }
         bg = modifierSurfaceFill(move bg, modifiers)
         textFieldSeed(key, initial)

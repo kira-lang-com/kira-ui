@@ -1,0 +1,217 @@
+import Foundation
+import KiraGraphics
+import KiraLayout
+import KiraUIFoundation
+
+// SwiftUI's `Label` and `Picker`, in KiraUI's value-and-callback shape.
+//
+//     Label(title = "Blend Mode", icon = blendGlyph())
+//
+//     Picker(
+//         label = "Blend Mode",
+//         options = blendModes(),
+//         selection = mode,
+//         onSelect = chooseMode,
+//     )
+//
+// The caller owns the value and is told when it changes, the way it already is
+// for Toggle and Slider. What the caller does NOT own is which picker is open:
+// that is presentation, it belongs to the control, and an application carrying
+// it ended up with an open-menu field in its own state beside every list of
+// options.
+//
+// The options expand under the row rather than floating over the window. Every
+// view the foundation draws is a view it placed, so a list drawn outside the
+// layout is a list a press cannot reliably land on. One picker is open at a
+// time, as on the platform.
+
+// A title with an optional leading glyph — the label of a control, a row, or a
+// menu entry.
+// A title and the glyph that names it, as ONE view.
+//
+// The glyph sits in a column of its own width, and a label with NO glyph
+// reserves that column anyway, so a title begins in the same place whether or
+// not it has one. That is what keeps the appearance variants under a property
+// ("Dark", "Mono") lined up with the property above them.
+//
+// Reserving it here rather than in whatever encloses the label is the whole
+// point: a title and its glyph are one thing, and a container that positions
+// them separately can only relate them by arithmetic — which is how a glyph ends
+// up against the row's edge instead of in its column.
+Widget Label(title: String, symbol: Symbol = Symbol.None) {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let metrics = resolvedControlMetrics(modifiers)
+        var glyph = EmptyView().lower(context, modifiers)
+        if symbol != Symbol.None {
+            glyph = Icon(symbol: symbol)
+                .foregroundColor(.Secondary)
+                .lower(context, modifiers)
+        }
+        // Centred in the column, not against its leading edge. Glyphs differ in
+        // width — a chevron is narrow, a folder is wide — so aligning them to an
+        // edge lines up their BOXES and leaves their ink ragged. Centring lines
+        // up what the eye actually reads, which is why every platform column of
+        // icons is centred.
+        // The column stands the label's FULL height and centres the glyph in it,
+        // so the glyph is centred against the row rather than against its own
+        // box. Hugging the glyph instead centres it against itself, which is no
+        // centring at all — it just sits wherever the glyph happens to be tall.
+        let column = Frame(
+            move glyph,
+            KiraUIFoundation.SizeMode.Fixed(metrics.gutter),
+            KiraUIFoundation.SizeMode.Fill,
+            0,
+            KiraUIFoundation.Alignment.Center,
+            KiraUIFoundation.EdgeInsets {}
+        )
+        let label = HStack(spacing: Spacing.None, alignment: VerticalAlignment.Stretch) {
+            FoundationRaw(view: move column)
+
+            FoundationRaw(view: Frame(
+                Text(content: title).lower(context, modifiers),
+                KiraUIFoundation.SizeMode.Hug,
+                KiraUIFoundation.SizeMode.Fill,
+                0,
+                KiraUIFoundation.Alignment.Leading,
+                KiraUIFoundation.EdgeInsets {}
+            ))
+        }
+        .hugWidth()
+        return label.lower(context, modifiers)
+    }
+}
+
+struct KiraUiPickerState {
+    var openKey: Int = 0
+}
+
+function kiraUiPickerSlotKey() -> String {
+    return "kiraui.picker"
+}
+
+function kiraUiPickerState() -> KiraUiPickerState {
+    if kiraUiStateSlotHas(kiraUiPickerSlotKey()) == false {
+        kiraUiStateSlotPut(kiraUiPickerSlotKey(), nativeUserData(nativeState(KiraUiPickerState {})))
+    }
+    return nativeRecover<KiraUiPickerState>(kiraUiStateSlotGet(kiraUiPickerSlotKey()))
+}
+
+function kiraUiOpenPickerKey() -> Int {
+    return kiraUiPickerState().openKey
+}
+
+function kiraUiSetOpenPickerKey(key: Int) {
+    var state = kiraUiPickerState()
+    state.openKey = key
+    return
+}
+
+function kiraUiPickerToggleFn(key: Int) -> () -> Void {
+    let target = key
+    let press: () -> Void = { in
+        if kiraUiOpenPickerKey() == target {
+            kiraUiSetOpenPickerKey(0)
+        } else {
+            kiraUiSetOpenPickerKey(target)
+        }
+        return
+    }
+    return press
+}
+
+function kiraUiPickerChooseFn(index: Int, onSelect: (Int) -> Void) -> () -> Void {
+    let chosen = index
+    let select = onSelect
+    let press: () -> Void = { in
+        select(chosen)
+        kiraUiSetOpenPickerKey(0)
+        return
+    }
+    return press
+}
+
+function kiraUiPickerLabel(options: borrow [String], selection: Int) -> String {
+    if selection < 0 || selection >= options.count {
+        return ""
+    }
+    return options[selection]
+}
+
+function kiraUiPickerOptionInk(selection: Int, index: Int) -> PrimaryColor {
+    if selection == index {
+        return PrimaryColor.Accent
+    }
+    return PrimaryColor.Primary
+}
+
+function kiraUiPickerNoop(index: Int) {
+    let ignored = index + 0
+    return
+}
+
+// The value side: the current option and the chevron that opens the list.
+Widget PickerValue(key: Int, options: [String], selection: Int) {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let value = HStack(spacing: Spacing.ExtraSmall, alignment: VerticalAlignment.Center) {
+            Text(content: kiraUiPickerLabel(options, selection))
+
+            Icon(symbol: Symbol.CaretUpDown)
+                .imageScale(.Small)
+                .foregroundColor(.Secondary)
+        }
+        .hugWidth()
+        .onClick(kiraUiPickerToggleFn(key))
+        return value.lower(context, modifiers)
+    }
+}
+
+Widget PickerList(options: [String], selection: Int, onSelect: (Int) -> Void) {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let metrics = resolvedControlMetrics(modifiers)
+        let list = Panel(radius: CornerRadius.Small) {
+            PanelInset(length: metrics.fieldInset) {
+                VStack(spacing: Spacing.None) {
+                    For(index in indices(options.count)) {
+                        HStack(spacing: Spacing.Small, alignment: VerticalAlignment.Center) {
+                            Text(content: options[index])
+                                .foregroundColor(kiraUiPickerOptionInk(selection, index))
+
+                            Spacer()
+                        }
+                        .inset(horizontal: Spacing.ExtraSmall)
+                        .height(metrics.height)
+                        .onClick(kiraUiPickerChooseFn(index, onSelect))
+                    }
+                }
+            }
+        }
+        .backgroundStyle(.Overlay)
+        .themeBorder(.Subtle)
+        .hugHeight()
+        return list.lower(context, modifiers)
+    }
+}
+
+// The picker is the VALUE: the current option and the chevron that opens the
+// list under it. What names it is the row it sits in — `LabeledContent` — so the
+// control carries no label of its own and cannot disagree with the row about
+// where the label goes.
+Widget Picker(
+    options: [String],
+    selection: Int,
+    onSelect: (Int) -> Void = kiraUiPickerNoop,
+) {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let key = kiraUiTapSeqKey()
+        let open = kiraUiOpenPickerKey() == key
+        let picker = VStack(spacing: Spacing.ExtraSmall) {
+            PickerValue(key = key, options = options, selection = selection)
+
+            if open {
+                PickerList(options = options, selection = selection, onSelect = onSelect)
+            }
+        }
+        .hugWidth()
+        return picker.lower(context, modifiers)
+    }
+}

@@ -1,0 +1,287 @@
+import Foundation
+import KiraUIFoundation
+
+// The sizes a control IS.
+//
+// Colors, radii, spacing and type were already tokens; the geometry a control is
+// actually built from — how tall a form row stands, how wide the numeric field
+// beside it runs, which column its label starts in — was not, so every
+// application re-derived it with literals at the call site and every panel came
+// out a little different from the one beside it.
+//
+// A style declares the table once per size class. An application picks the class
+// for a region and states nothing else:
+//
+//     Inspector()
+//         .controlSize(.Small)
+//
+// and every row, field, switch, glyph and separator inside follows.
+//
+// GAPS are not here. The distance between two things is a spacing token, and the
+// theme's spacing scale already names those steps; a second scale for the same
+// decision is how a row's label gap ends up disagreeing with the panel's.
+
+// The size class a region's controls are drawn at, the way macOS sizes a control
+// mini through large. It cascades: naming it on a panel names it for everything
+// the panel contains.
+enum ControlSize {
+    Mini
+    Small
+    Regular
+    Large
+}
+
+// How large a glyph is drawn RELATIVE to the controls around it, the way
+// SwiftUI's image scale is relative. The absolute point size is the size class's
+// business, so the same `.Medium` glyph is smaller inside a `.Mini` region than
+// inside a `.Regular` one without anything at the call site changing.
+enum IconScale {
+    Small
+    Medium
+    Large
+    ExtraLarge
+}
+
+// One size class, resolved. The defaults are the regular class; a style states
+// all four.
+struct ControlMetricsImplementation {
+    // How large TYPE is drawn in this size class, against the theme's scale.
+    //
+    // Type belongs to the size class. Stated globally, a `.Small` region shrinks
+    // its rows and its controls and leaves the text at full size — which is how
+    // a row label ends up filling almost half its row while the header above it
+    // is barely legible. The theme still owns the RELATIONSHIPS between roles;
+    // this decides how loudly the whole scale speaks here.
+    let typeScale: Float = 1.0
+    // A form row's height. Every row in a section stands the same height
+    // whatever control it carries — that is what makes a column of them read as
+    // a list rather than as a stack of unrelated widgets.
+    let rowHeight: Float = 34.0
+    // An inline control's own height: a numeric field, a menu pill, a segment.
+    let height: Float = 24.0
+    // A numeric field's width, fixed so a column of them aligns on its right
+    // edge no matter what the values currently are, and its inset.
+    let fieldWidth: Float = 64.0
+    let fieldInset: Float = 7.0
+    // A form row's own inset from the card's edges. The separators between rows
+    // run the card's full width, so the inset belongs to the row rather than to
+    // the card around it.
+    let rowInset: Float = 12.0
+    // The leading column a row's glyph sits in. A row WITHOUT a glyph still
+    // reserves it, so a sub-property lines up with the property above it.
+    let gutter: Float = 28.0
+    let toggleWidth: Float = 38.0
+    let toggleHeight: Float = 22.0
+    // The track's inset around its knob.
+    let toggleInset: Float = 2.0
+    let iconSmall: Float = 12.0
+    let iconMedium: Float = 16.0
+    let iconLarge: Float = 20.0
+    let iconExtraLarge: Float = 26.0
+    // A two-dimensional value pad: its size, its knob, and the ruler along its
+    // bottom edge.
+    let padWidth: Float = 168.0
+    let padHeight: Float = 96.0
+    let padKnob: Float = 10.0
+    let padTick: Float = 6.0
+    // The window's toolbar: its height, its inset from the window edge, and how
+    // wide the glyph slots on it run.
+    let toolbarHeight: Float = 48.0
+    let toolbarInset: Float = 12.0
+    let buttonWidth: Float = 28.0
+    // A window control's diameter.
+    let windowButton: Float = 12.0
+    // A list or outline row: its height, the list's inset, and one level of
+    // disclosure.
+    let listRowHeight: Float = 28.0
+    let listInset: Float = 6.0
+    let listIndent: Float = 16.0
+    // The default widths of the columns beside a document: the source list on
+    // the leading side and the property panel on the trailing one.
+    let sidebarWidth: Float = 260.0
+    let inspectorWidth: Float = 300.0
+    // A section card's own inset around its rows, its header's height and how
+    // far the header is held off the card's leading edge.
+    let cardPadding: Float = 0.0
+    let headerHeight: Float = 20.0
+    let headerInset: Float = 10.0
+    // How far a divider is held off the edges it runs between. Leading and
+    // trailing separately: a grouped list insets its separators to the label
+    // column on the leading side and runs them to the edge on the trailing one,
+    // and a single inset cannot say that.
+    let dividerLeading: Float = 0.0
+    let dividerTrailing: Float = 0.0
+    // A form's inset from the surface it is placed on.
+    let formInset: Float = 10.0
+}
+
+// The four size classes a style declares.
+struct StyleMetricTokens {
+    let mini: ControlMetricsImplementation = ControlMetricsImplementation {
+        typeScale: 0.78
+        rowHeight: 24.0
+        height: 18.0
+        fieldWidth: 48.0
+        fieldInset: 5.0
+        rowInset: 8.0
+        gutter: 21.0
+        toggleWidth: 26.0
+        toggleHeight: 15.0
+        toggleInset: 1.5
+        iconSmall: 9.0
+        iconMedium: 11.0
+        iconLarge: 14.0
+        iconExtraLarge: 18.0
+        padWidth: 128.0
+        padHeight: 68.0
+        padKnob: 8.0
+        padTick: 4.0
+        toolbarHeight: 38.0
+        toolbarInset: 8.0
+        buttonWidth: 22.0
+        windowButton: 10.0
+        listRowHeight: 22.0
+        listInset: 4.0
+        listIndent: 12.0
+        sidebarWidth: 220.0
+        inspectorWidth: 260.0
+        cardPadding: 0.0
+        headerHeight: 16.0
+        headerInset: 6.0
+        dividerLeading: 0.0
+        dividerTrailing: 0.0
+        formInset: 6.0
+    }
+    let small: ControlMetricsImplementation = ControlMetricsImplementation {
+        typeScale: 0.88
+        rowHeight: 30.0
+        height: 21.0
+        fieldWidth: 58.0
+        fieldInset: 6.0
+        rowInset: 10.0
+        gutter: 25.0
+        toggleWidth: 34.0
+        toggleHeight: 20.0
+        toggleInset: 2.0
+        iconSmall: 11.0
+        iconMedium: 14.0
+        iconLarge: 17.0
+        iconExtraLarge: 22.0
+        padWidth: 148.0
+        padHeight: 84.0
+        padKnob: 9.0
+        padTick: 5.0
+        toolbarHeight: 44.0
+        toolbarInset: 10.0
+        buttonWidth: 26.0
+        windowButton: 12.0
+        listRowHeight: 26.0
+        listInset: 5.0
+        listIndent: 14.0
+        sidebarWidth: 268.0
+        inspectorWidth: 300.0
+        cardPadding: 0.0
+        headerHeight: 18.0
+        headerInset: 8.0
+        dividerLeading: 0.0
+        dividerTrailing: 0.0
+        formInset: 8.0
+    }
+    let regular: ControlMetricsImplementation = ControlMetricsImplementation {}
+    let large: ControlMetricsImplementation = ControlMetricsImplementation {
+        typeScale: 1.15
+        rowHeight: 40.0
+        height: 28.0
+        fieldWidth: 76.0
+        fieldInset: 9.0
+        rowInset: 14.0
+        gutter: 32.0
+        toggleWidth: 44.0
+        toggleHeight: 26.0
+        toggleInset: 2.0
+        iconSmall: 14.0
+        iconMedium: 18.0
+        iconLarge: 24.0
+        iconExtraLarge: 32.0
+        padWidth: 196.0
+        padHeight: 112.0
+        padKnob: 12.0
+        padTick: 7.0
+        toolbarHeight: 56.0
+        toolbarInset: 14.0
+        buttonWidth: 32.0
+        windowButton: 14.0
+        listRowHeight: 32.0
+        listInset: 8.0
+        listIndent: 18.0
+        sidebarWidth: 300.0
+        inspectorWidth: 340.0
+        cardPadding: 0.0
+        headerHeight: 22.0
+        headerInset: 12.0
+        dividerLeading: 0.0
+        dividerTrailing: 0.0
+        formInset: 12.0
+    }
+}
+
+// The metrics for one class, from the applied theme or from the library's own
+// table when no theme is in effect — the same rule every other token family
+// resolves by.
+function controlMetricsImplementation(
+    size: ControlSize,
+    modifiers: borrow ModifierContext,
+) -> ControlMetricsImplementation {
+    if modifiers.hasTheme {
+        return modifiers.theme.controlMetrics(size)
+    }
+    let values = StyleMetricTokens {}
+    match size {
+        Mini -> return values.mini;
+        Small -> return values.small;
+        Regular -> return values.regular;
+        Large -> return values.large;
+    }
+}
+
+// The metrics in effect here: the cascaded `.controlSize(...)`, or regular.
+function resolvedControlMetrics(modifiers: borrow ModifierContext) -> ControlMetricsImplementation {
+    return controlMetricsImplementation(modifiers.controlSize, modifiers)
+}
+
+function iconScaleSize(scale: IconScale, modifiers: borrow ModifierContext) -> Float {
+    let metrics = resolvedControlMetrics(modifiers)
+    match scale {
+        Small -> return metrics.iconSmall;
+        Medium -> return metrics.iconMedium;
+        Large -> return metrics.iconLarge;
+        ExtraLarge -> return metrics.iconExtraLarge;
+    }
+}
+
+Widget ControlSizeLayer(value: ControlSize) {
+    @Content let content: Any Widget
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let resolved = modifierContextApply(modifiers, modifierDeltaControlSize(value))
+        return content.lower(context, resolved)
+    }
+}
+
+Widget ImageScaleLayer(value: IconScale) {
+    @Content let content: Any Widget
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let resolved = modifierContextApply(modifiers, modifierDeltaImageScale(value))
+        return content.lower(context, resolved)
+    }
+}
+
+Widget TintLayer(value: PrimaryColor) {
+    @Content let content: Any Widget
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let resolved = modifierContextApply(modifiers, modifierDeltaTint(value))
+        return content.lower(context, resolved)
+    }
+}

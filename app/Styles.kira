@@ -1,6 +1,16 @@
-// KiraUI's canonical style vocabulary. The family is intentionally small and
-// typed: an application fills the tokens once, and component style values are
-// construct-backed updates of the same implementation.
+// KiraUI's canonical style vocabulary. An application fills the tokens once,
+// and component style values are construct-backed updates of the same
+// implementation.
+//
+// Color tokens are separated by what they are FOR, never mixed in one struct:
+//
+//   palette      the standard colors — what `.foregroundColor(.Blue)` resolves
+//   foregrounds  the content hierarchy: primary through quaternary ink
+//   backgrounds  the elevation roles a container paints
+//   fills        control interiors and interaction washes
+//   tints        the accent and the semantic roles
+//   borders      separator and focus hairlines, color and width together
+//   materials    frosted and Liquid Glass, including the glass wash
 
 // The presentation a style's tokens are authored around. A style declares the
 // branch it wants by default; the host environment overrides it with
@@ -17,25 +27,60 @@ struct AdaptiveColor {
     let dark: Color
 }
 
-struct StyleColorTokens {
-    let foregroundPrimary: AdaptiveColor
-    let foregroundSecondary: AdaptiveColor
-    let foregroundDisabled: AdaptiveColor
-    let foregroundInverse: AdaptiveColor
-    let backgroundCanvas: AdaptiveColor
-    let backgroundSurface: AdaptiveColor
-    let backgroundRaised: AdaptiveColor
-    let backgroundOverlay: AdaptiveColor
-    let backgroundControl: AdaptiveColor
+// The standard colors, one adaptive pair per name. These are the values behind
+// `PrimaryColor` — a theme retunes the whole palette (a softer red, a warmer
+// gray) and every `.foregroundColor(.Red)` in the application follows.
+struct StylePaletteTokens {
+    let red: AdaptiveColor
+    let orange: AdaptiveColor
+    let yellow: AdaptiveColor
+    let green: AdaptiveColor
+    let mint: AdaptiveColor
+    let teal: AdaptiveColor
+    let cyan: AdaptiveColor
+    let blue: AdaptiveColor
+    let indigo: AdaptiveColor
+    let purple: AdaptiveColor
+    let pink: AdaptiveColor
+    let brown: AdaptiveColor
+    let gray: AdaptiveColor
+}
+
+// The content hierarchy: how loudly a run of text or an icon speaks. `inverse`
+// is the ink that stays readable ON a filled control — without it, filled
+// buttons hardcode white and go unreadable in a light theme.
+struct StyleForegroundTokens {
+    let primary: AdaptiveColor
+    let secondary: AdaptiveColor
+    let tertiary: AdaptiveColor
+    let quaternary: AdaptiveColor
+    let inverse: AdaptiveColor
+}
+
+// The elevation roles a container paints, bottom to top.
+struct StyleBackgroundTokens {
+    let canvas: AdaptiveColor
+    let surface: AdaptiveColor
+    let raised: AdaptiveColor
+    let overlay: AdaptiveColor
+}
+
+// Control interiors and interaction washes. `hover` and `selection` are
+// declared rather than derived so a theme can hold a selection band that is not
+// literally its accent at some alpha.
+struct StyleFillTokens {
+    let control: AdaptiveColor
+    let hover: AdaptiveColor
+    let selection: AdaptiveColor
+}
+
+// The accent and the semantic roles. These are intents, not hues: a destructive
+// button asks for `danger`, never for `palette.red`.
+struct StyleTintTokens {
     let accent: AdaptiveColor
-    let danger: AdaptiveColor
     let success: AdaptiveColor
     let warning: AdaptiveColor
-    let borderSubtle: AdaptiveColor
-    let borderStandard: AdaptiveColor
-    let borderStrong: AdaptiveColor
-    let borderFocus: AdaptiveColor
-    let glassTint: AdaptiveColor
+    let danger: AdaptiveColor
 }
 
 struct StyleCornerRadiusTokens {
@@ -174,15 +219,11 @@ struct StyleTypographyTokens {
     }
 }
 
-enum StyleBorderColor {
-    BorderSubtle
-    BorderStandard
-    BorderStrong
-    BorderFocus
-}
-
+// A border is its color and its width together. The color lives here, adaptive,
+// rather than pointing back into a shared color struct: a hairline's color is a
+// border decision, not a general one.
 struct BorderImplementation {
-    let color: StyleBorderColor
+    let color: AdaptiveColor
     let width: Float
 }
 
@@ -211,9 +252,15 @@ struct LiquidGlassMaterialImplementation {
     let material: MaterialLevel = MaterialLevel.XHigh
 }
 
+// The wash a glass surface shades itself with belongs to the material, so it
+// lives with the material tokens rather than among content colors.
 struct StyleMaterialTokens {
     let frosted: FrostedMaterialImplementation
     let liquidGlass: LiquidGlassMaterialImplementation
+    let glassTint: AdaptiveColor = AdaptiveColor {
+        light: Color { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+        dark: Color { r: 0.72, g: 0.78, b: 0.92, a: 1.0 }
+    }
 }
 
 enum ShadowLevel {
@@ -226,51 +273,133 @@ struct ShadowEffect {
     let level: ShadowLevel
 }
 
-function defaultStyleColorTokens() -> StyleColorTokens {
-    return StyleColorTokens {
-        foregroundPrimary: AdaptiveColor {
+// The default palette is the system palette: one adaptive pair per standard
+// color, the darker branch tuned for dark backdrops.
+function defaultStylePaletteTokens() -> StylePaletteTokens {
+    return StylePaletteTokens {
+        red: AdaptiveColor {
+            light: Color { r: 1.0, g: 0.231, b: 0.188, a: 1.0 }
+            dark: Color { r: 1.0, g: 0.271, b: 0.227, a: 1.0 }
+        }
+        orange: AdaptiveColor {
+            light: Color { r: 1.0, g: 0.584, b: 0.0, a: 1.0 }
+            dark: Color { r: 1.0, g: 0.624, b: 0.039, a: 1.0 }
+        }
+        yellow: AdaptiveColor {
+            light: Color { r: 1.0, g: 0.8, b: 0.0, a: 1.0 }
+            dark: Color { r: 1.0, g: 0.839, b: 0.039, a: 1.0 }
+        }
+        green: AdaptiveColor {
+            light: Color { r: 0.204, g: 0.78, b: 0.349, a: 1.0 }
+            dark: Color { r: 0.188, g: 0.82, b: 0.345, a: 1.0 }
+        }
+        mint: AdaptiveColor {
+            light: Color { r: 0.0, g: 0.78, b: 0.745, a: 1.0 }
+            dark: Color { r: 0.388, g: 0.902, b: 0.886, a: 1.0 }
+        }
+        teal: AdaptiveColor {
+            light: Color { r: 0.188, g: 0.69, b: 0.78, a: 1.0 }
+            dark: Color { r: 0.251, g: 0.784, b: 0.878, a: 1.0 }
+        }
+        cyan: AdaptiveColor {
+            light: Color { r: 0.196, g: 0.678, b: 0.902, a: 1.0 }
+            dark: Color { r: 0.392, g: 0.824, b: 1.0, a: 1.0 }
+        }
+        blue: AdaptiveColor {
+            light: Color { r: 0.0, g: 0.478, b: 1.0, a: 1.0 }
+            dark: Color { r: 0.039, g: 0.518, b: 1.0, a: 1.0 }
+        }
+        indigo: AdaptiveColor {
+            light: Color { r: 0.345, g: 0.337, b: 0.839, a: 1.0 }
+            dark: Color { r: 0.369, g: 0.361, b: 0.902, a: 1.0 }
+        }
+        purple: AdaptiveColor {
+            light: Color { r: 0.686, g: 0.322, b: 0.871, a: 1.0 }
+            dark: Color { r: 0.749, g: 0.353, b: 0.949, a: 1.0 }
+        }
+        pink: AdaptiveColor {
+            light: Color { r: 1.0, g: 0.176, b: 0.333, a: 1.0 }
+            dark: Color { r: 1.0, g: 0.216, b: 0.373, a: 1.0 }
+        }
+        brown: AdaptiveColor {
+            light: Color { r: 0.635, g: 0.518, b: 0.369, a: 1.0 }
+            dark: Color { r: 0.675, g: 0.557, b: 0.408, a: 1.0 }
+        }
+        gray: AdaptiveColor {
+            light: Color { r: 0.557, g: 0.557, b: 0.576, a: 1.0 }
+            dark: Color { r: 0.557, g: 0.557, b: 0.576, a: 1.0 }
+        }
+    }
+}
+
+function defaultStyleForegroundTokens() -> StyleForegroundTokens {
+    return StyleForegroundTokens {
+        primary: AdaptiveColor {
             light: Color { r: 0.08, g: 0.09, b: 0.12, a: 1.0 }
             dark: Color { r: 0.95, g: 0.96, b: 0.99, a: 1.0 }
         }
-        foregroundSecondary: AdaptiveColor {
+        secondary: AdaptiveColor {
             light: Color { r: 0.38, g: 0.40, b: 0.46, a: 1.0 }
             dark: Color { r: 0.68, g: 0.71, b: 0.78, a: 1.0 }
         }
-        foregroundDisabled: AdaptiveColor {
+        tertiary: AdaptiveColor {
             light: Color { r: 0.50, g: 0.51, b: 0.55, a: 0.58 }
             dark: Color { r: 0.58, g: 0.60, b: 0.66, a: 0.58 }
         }
-        foregroundInverse: AdaptiveColor {
+        quaternary: AdaptiveColor {
+            light: Color { r: 0.50, g: 0.51, b: 0.55, a: 0.34 }
+            dark: Color { r: 0.58, g: 0.60, b: 0.66, a: 0.34 }
+        }
+        inverse: AdaptiveColor {
             light: Color { r: 0.98, g: 0.98, b: 1.0, a: 1.0 }
             dark: Color { r: 0.06, g: 0.07, b: 0.10, a: 1.0 }
         }
-        backgroundCanvas: AdaptiveColor {
+    }
+}
+
+function defaultStyleBackgroundTokens() -> StyleBackgroundTokens {
+    return StyleBackgroundTokens {
+        canvas: AdaptiveColor {
             light: Color { r: 0.95, g: 0.96, b: 0.98, a: 1.0 }
             dark: Color { r: 0.035, g: 0.04, b: 0.065, a: 1.0 }
         }
-        backgroundSurface: AdaptiveColor {
+        surface: AdaptiveColor {
             light: Color { r: 1.0, g: 1.0, b: 1.0, a: 0.92 }
             dark: Color { r: 0.08, g: 0.10, b: 0.15, a: 0.92 }
         }
-        backgroundRaised: AdaptiveColor {
+        raised: AdaptiveColor {
             light: Color { r: 1.0, g: 1.0, b: 1.0, a: 0.98 }
             dark: Color { r: 0.12, g: 0.14, b: 0.20, a: 0.96 }
         }
-        backgroundOverlay: AdaptiveColor {
+        overlay: AdaptiveColor {
             light: Color { r: 0.96, g: 0.97, b: 1.0, a: 0.88 }
             dark: Color { r: 0.10, g: 0.12, b: 0.18, a: 0.88 }
         }
-        backgroundControl: AdaptiveColor {
+    }
+}
+
+function defaultStyleFillTokens() -> StyleFillTokens {
+    return StyleFillTokens {
+        control: AdaptiveColor {
             light: Color { r: 0.91, g: 0.93, b: 0.98, a: 1.0 }
             dark: Color { r: 0.16, g: 0.18, b: 0.26, a: 1.0 }
         }
+        hover: AdaptiveColor {
+            light: Color { r: 0.08, g: 0.09, b: 0.12, a: 0.08 }
+            dark: Color { r: 0.95, g: 0.96, b: 0.99, a: 0.08 }
+        }
+        selection: AdaptiveColor {
+            light: Color { r: 0.20, g: 0.45, b: 0.96, a: 0.22 }
+            dark: Color { r: 0.43, g: 0.67, b: 1.0, a: 0.22 }
+        }
+    }
+}
+
+function defaultStyleTintTokens() -> StyleTintTokens {
+    return StyleTintTokens {
         accent: AdaptiveColor {
             light: Color { r: 0.20, g: 0.45, b: 0.96, a: 1.0 }
             dark: Color { r: 0.43, g: 0.67, b: 1.0, a: 1.0 }
-        }
-        danger: AdaptiveColor {
-            light: Color { r: 0.82, g: 0.12, b: 0.18, a: 1.0 }
-            dark: Color { r: 0.96, g: 0.31, b: 0.37, a: 1.0 }
         }
         success: AdaptiveColor {
             light: Color { r: 0.12, g: 0.58, b: 0.30, a: 1.0 }
@@ -280,25 +409,9 @@ function defaultStyleColorTokens() -> StyleColorTokens {
             light: Color { r: 0.78, g: 0.48, b: 0.06, a: 1.0 }
             dark: Color { r: 0.98, g: 0.75, b: 0.25, a: 1.0 }
         }
-        borderSubtle: AdaptiveColor {
-            light: Color { r: 0.08, g: 0.10, b: 0.16, a: 0.10 }
-            dark: Color { r: 1.0, g: 1.0, b: 1.0, a: 0.10 }
-        }
-        borderStandard: AdaptiveColor {
-            light: Color { r: 0.08, g: 0.10, b: 0.16, a: 0.18 }
-            dark: Color { r: 1.0, g: 1.0, b: 1.0, a: 0.18 }
-        }
-        borderStrong: AdaptiveColor {
-            light: Color { r: 0.08, g: 0.10, b: 0.16, a: 0.32 }
-            dark: Color { r: 1.0, g: 1.0, b: 1.0, a: 0.32 }
-        }
-        borderFocus: AdaptiveColor {
-            light: Color { r: 0.20, g: 0.45, b: 0.96, a: 0.86 }
-            dark: Color { r: 0.43, g: 0.67, b: 1.0, a: 0.90 }
-        }
-        glassTint: AdaptiveColor {
-            light: Color { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
-            dark: Color { r: 0.72, g: 0.78, b: 0.92, a: 1.0 }
+        danger: AdaptiveColor {
+            light: Color { r: 0.82, g: 0.12, b: 0.18, a: 1.0 }
+            dark: Color { r: 0.96, g: 0.31, b: 0.37, a: 1.0 }
         }
     }
 }
@@ -357,12 +470,40 @@ function defaultStyleTypographyTokens() -> StyleTypographyTokens {
 }
 
 function defaultStyleBorderTokens() -> StyleBorderTokens {
+    let subtle = AdaptiveColor {
+        light: Color { r: 0.08, g: 0.10, b: 0.16, a: 0.10 }
+        dark: Color { r: 1.0, g: 1.0, b: 1.0, a: 0.10 }
+    }
     return StyleBorderTokens {
-        none: BorderImplementation { color: StyleBorderColor.BorderSubtle, width: 0.0 }
-        subtle: BorderImplementation { color: StyleBorderColor.BorderSubtle, width: 1.0 }
-        standard: BorderImplementation { color: StyleBorderColor.BorderStandard, width: 1.0 }
-        strong: BorderImplementation { color: StyleBorderColor.BorderStrong, width: 1.5 }
-        focus: BorderImplementation { color: StyleBorderColor.BorderFocus, width: 2.0 }
+        none: BorderImplementation {
+            color: subtle
+            width: 0.0
+        }
+        subtle: BorderImplementation {
+            color: subtle
+            width: 1.0
+        }
+        standard: BorderImplementation {
+            color: AdaptiveColor {
+                light: Color { r: 0.08, g: 0.10, b: 0.16, a: 0.18 }
+                dark: Color { r: 1.0, g: 1.0, b: 1.0, a: 0.18 }
+            }
+            width: 1.0
+        }
+        strong: BorderImplementation {
+            color: AdaptiveColor {
+                light: Color { r: 0.08, g: 0.10, b: 0.16, a: 0.32 }
+                dark: Color { r: 1.0, g: 1.0, b: 1.0, a: 0.32 }
+            }
+            width: 1.5
+        }
+        focus: BorderImplementation {
+            color: AdaptiveColor {
+                light: Color { r: 0.20, g: 0.45, b: 0.96, a: 0.86 }
+                dark: Color { r: 0.43, g: 0.67, b: 1.0, a: 0.90 }
+            }
+            width: 2.0
+        }
     }
 }
 
@@ -377,12 +518,23 @@ function defaultStyleMaterialTokens() -> StyleMaterialTokens {
 }
 
 construct StyleImplementation {
-    @Required let colors: StyleColorTokens
+    @Required let palette: StylePaletteTokens
+    @Required let foregrounds: StyleForegroundTokens
+    @Required let backgrounds: StyleBackgroundTokens
+    @Required let fills: StyleFillTokens
+    @Required let tints: StyleTintTokens
     @Required let cornerRadii: StyleCornerRadiusTokens
     @Required let spacing: StyleSpacingTokens
     @Required let typography: StyleTypographyTokens
     @Required let borders: StyleBorderTokens
     @Required let materials: StyleMaterialTokens
+    // The geometry a control is built from, per size class. Defaulted rather
+    // than required: the library ships a complete table, and a style that has no
+    // opinion about how tall a switch stands should not have to restate one.
+    let metrics: StyleMetricTokens = StyleMetricTokens {}
+    // The drawings behind the symbol names, so a theme can redraw a glyph the
+    // way it retunes a colour.
+    let symbols: StyleSymbolTokens = StyleSymbolTokens {}
     // Which branch of every AdaptiveColor this style presents when the host has
     // no appearance preference.
     let appearance: Appearance = Appearance.Dark
@@ -397,7 +549,11 @@ construct StyleImplementation {
 }
 
 StyleImplementation DefaultStyle {
-    let colors = defaultStyleColorTokens()
+    let palette = defaultStylePaletteTokens()
+    let foregrounds = defaultStyleForegroundTokens()
+    let backgrounds = defaultStyleBackgroundTokens()
+    let fills = defaultStyleFillTokens()
+    let tints = defaultStyleTintTokens()
     let cornerRadii = defaultStyleCornerRadiusTokens()
     let spacing = defaultStyleSpacingTokens()
     let typography = defaultStyleTypographyTokens()

@@ -4,7 +4,27 @@ Package KiraUI {
     let kind = PackageKind.Library
     let moduleRoot = "KiraUI"
     let defaults = Defaults { executionMode: Backend.Llvm, buildTarget: BuildTarget.Host }
+    let allowThinFfiShim = true
     let dependencies = [
         Dependency { name: "KiraUIFoundation", path: "../ui-foundation" }
+    ]
+    // The platform's current colour scheme. Every operating system keeps it
+    // somewhere different and none of them expose it through the C standard
+    // library, so the four answers live behind one call.
+    let nativeLibraries = [
+        NativeLibrary {
+            name: "kirauiappearance",
+            linkMode: LinkMode.Static,
+            headers: Headers { entrypoint: "NativeLibs/Appearance/kira_ui_appearance.h", includeDirs: ["NativeLibs/Appearance"] },
+            sources: ["NativeLibs/Appearance/kira_ui_appearance.c"],
+            autobind: Autobind { module: "appearance", headers: ["NativeLibs/Appearance/kira_ui_appearance.h"], mode: AutobindMode.AllPublic },
+            nativeTargets: [
+                NativeTarget { triple: "x86_64-windows-msvc", systemLibs: ["advapi32"] },
+                NativeTarget { triple: "aarch64-macos-none", frameworks: ["CoreFoundation"] },
+                NativeTarget { triple: "x86_64-macos-none", frameworks: ["CoreFoundation"] },
+                NativeTarget { triple: "aarch64-ios-none", frameworks: ["CoreFoundation"] },
+                NativeTarget { triple: "aarch64-ios-simulator", frameworks: ["CoreFoundation"] }
+            ]
+        }
     ]
 }

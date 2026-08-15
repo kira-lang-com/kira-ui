@@ -1,0 +1,54 @@
+import Foundation
+
+// How a symbol becomes a drawing.
+//
+// The names are in SymbolNames.kira and the drawings in SymbolAssets.kira, both
+// generated from Phosphor Icons (MIT, phosphor-icons/core, regular weight). What
+// lives here is the part that is a design decision rather than a data dump: how
+// a theme redraws one.
+//
+// A theme states OVERRIDES rather than a full table. Fifteen hundred icons is
+// far past the point where "one struct member per icon" works — a theme wanting
+// its own folder would have to restate the other fifteen hundred and eleven —
+// and a list of the ones it disagrees about is the same statement without the
+// restating:
+//
+//     StyleImplementation AppStyle {
+//         let symbols = StyleSymbolTokens {
+//             overrides = [
+//                 SymbolOverride { symbol = Symbol.Folder, svg = "<svg …>" }
+//             ]
+//         }
+//     }
+
+// One redrawn symbol.
+struct SymbolOverride {
+    let symbol: Symbol
+    let svg: String
+}
+
+// The symbols a style draws differently from the library's own.
+struct StyleSymbolTokens {
+    let overrides: [SymbolOverride] = []
+}
+
+function styleSymbol(symbols: borrow StyleSymbolTokens, symbol: borrow Symbol) -> String {
+    var index = 0
+    while index < symbols.overrides.count {
+        if symbols.overrides[index].symbol == symbol {
+            return symbols.overrides[index].svg
+        }
+        index = index + 1
+    }
+    return symbolAsset(symbol)
+}
+
+// The drawing a symbol resolves to here: the applied theme's override when it
+// has one, the library's own otherwise — the same rule every other token family
+// resolves by.
+function symbolImplementation(symbol: Symbol, modifiers: borrow ModifierContext) -> String {
+    if modifiers.hasTheme {
+        return modifiers.theme.symbol(symbol)
+    }
+    return styleSymbol(StyleSymbolTokens {}, symbol)
+}

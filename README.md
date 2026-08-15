@@ -52,6 +52,8 @@ Built on [Kira UI Foundation](https://github.com/kira-lang-com/ui-foundation) �
 - **Divider** — horizontal line separator
 - **LinearGradient** — multi-strip gradient between two colors
 - **Button** — focused, disabled control with local label presentation
+- **NavigationStack / NavigationSplitView** — Apple-shaped path navigation
+  with responsive collapse, TV sizing, and device-independent screen code
 
 ## Modifiers
 
@@ -80,6 +82,13 @@ Chain modifiers onto any widget for declarative customization:
 | `.surfacePadding(value)` | Surface inner padding |
 | `.surfaceShape(shape)` | RegularRoundedRect or Squircle |
 | `.surfaceBorder(color, width)` | Surface border |
+
+## Navigation
+
+See [Navigation.md](Navigation.md) for the responsive `NavigationPath`,
+`NavigationStack`, `NavigationLink`, `navigationDestination`, and
+`NavigationSplitView` API. The layered runnable app is in
+[`Examples/navigation-app`](Examples/navigation-app).
 
 ## Project Structure
 
