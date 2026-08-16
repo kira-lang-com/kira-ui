@@ -195,18 +195,29 @@ Widget DragRegion(
         let dragStart = onDragStart
         let dragMove = onDragMove
         let dragEnd = onDragEnd
+        // The region takes the SIZE of what it wraps, exactly as a press region
+        // does: a splitter between two stacked panes is as wide as the panes and
+        // a few points tall, and a region that hugs whatever it holds gave that
+        // one the width of the hairline it draws.
+        let content = loweredChildren(context, modifiers, children)
+        var width = KiraUIFoundation.SizeMode.Hug
+        var height = KiraUIFoundation.SizeMode.Hug
+        if content.count == 1 {
+            width = content[0].width
+            height = content[0].height
+        }
         return KiraUIFoundation.FoundationView {
             kind: KiraUIFoundation.FoundationViewKind.HitArea
             key: k
-            width: KiraUIFoundation.SizeMode.Hug
-            height: KiraUIFoundation.SizeMode.Hug
+            width: move width
+            height: move height
             disabled: modifiers.disabled
             interaction: KiraUIFoundation.FoundationInteraction {
                 onDragStart: dragStart
                 onDragMove: dragMove
                 onDragEnd: dragEnd
             }
-            children: loweredChildren(context, modifiers, children)
+            children: move content
         }
     }
 }
