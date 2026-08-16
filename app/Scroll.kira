@@ -1,0 +1,77 @@
+import Foundation
+import KiraGraphics
+import KiraLayout
+import KiraUIFoundation
+
+// Content taller than the room it has.
+//
+//     ScrollView {
+//         VStack {
+//             For(item in items) { Row(item = item) }
+//         }
+//     }
+//
+// The content is laid out at its full height and the view shows a window onto
+// it, so nothing inside has to know it is being scrolled: a row is measured,
+// drawn and clicked exactly as it would be in a column that fit.
+//
+// How far it is scrolled belongs to the foundation rather than to a `@State`
+// here, because the two numbers that bound it — the content's height and the
+// window's — are only known once layout has run, and a wheel that counts past
+// the end of a list needs the same number of turns back before the list moves.
+//
+// The `key` is the application's, not a minted one, because where a list is
+// scrolled to has to survive the tree above it changing: a minted key is a
+// position in the build, so disclosing a folder in the panel above would
+// renumber this one and the list would jump back to its top.
+Widget ScrollView(key: Int) {
+    let content: some Widget
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let key = key
+        let wheel: (Float, Float) -> Void = { dx, dy in
+            KiraUIFoundation.foundationScrollBy(key, 0.0 - dy * kiraUiScrollStep())
+            return
+        }
+        let window = KiraUIFoundation.FoundationView {
+            kind: KiraUIFoundation.FoundationViewKind.Surface
+            key: key
+            width: KiraUIFoundation.SizeMode.Fill
+            height: KiraUIFoundation.SizeMode.Fill
+            fill: transparentFoundationColor()
+            clipContent: true
+            scrolls: true
+            // The content is measured at its OWN height, not at the window's:
+            // a child stretched to the window is a child that never overflows
+            // it, and a scroll view whose content always fits scrolls nothing.
+            children: [Frame(
+                content.lower(context, modifierContextForChildren(modifiers)),
+                KiraUIFoundation.SizeMode.Fill,
+                KiraUIFoundation.SizeMode.Hug,
+                0,
+                KiraUIFoundation.Alignment.TopLeading,
+                KiraUIFoundation.EdgeInsets {}
+            )]
+        }
+        // The region says it scrolls, so a wheel turn over a row inside it
+        // arrives here rather than at the row: `scrolls` on the hit region is
+        // what a wheel looks for, and `scrolls` on the window below is what
+        // layout moves.
+        return KiraUIFoundation.FoundationView {
+            kind: KiraUIFoundation.FoundationViewKind.HitArea
+            key: key
+            width: KiraUIFoundation.SizeMode.Fill
+            height: KiraUIFoundation.SizeMode.Fill
+            onScroll: wheel
+            wheel: true
+            children: [move window]
+        }
+    }
+}
+
+// How far one notch of the wheel moves the content. A notch is a line, and a
+// line is about a row: three of them per notch is what every platform's list
+// moves.
+function kiraUiScrollStep() -> Float {
+    return 48.0
+}
