@@ -61,7 +61,7 @@ Chain modifiers onto any widget for declarative customization:
 
 | Modifier | Description |
 |----------|-------------|
-| `.padding(length)` | Uniform padding |
+| `.inset(horizontal, vertical)` | A container's own inset, in spacing tokens |
 | `.background(fill)` | Layer a fill widget behind content |
 | `.cornerRadius(radius)` | Rounded corners with clip |
 | `.blurBehind(radius, saturation)` | Glass blur effect |
