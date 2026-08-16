@@ -49,15 +49,37 @@ expression. This is a syntax limitation, not an integer-based navigation model.
 uses the nearest path automatically. The root view is never part of the path,
 so it cannot be popped.
 
+A link whose label is a title has a second way to be constructed, matching
+SwiftUI's `NavigationLink("Settings", value: route)`:
+
+```kira
+NavigationLink(title = "Settings", value = SettingsRoute())
+```
+
 Use `NavigationStack` for push navigation. Use `NavigationSplitView` when the
 app has a leading navigation column and a detail column:
 
 ```kira
-NavigationSplitView(
-    sidebar = Sidebar(),
-    detail = Detail(path = path),
-    path = path
-)
+NavigationSplitView(path = path) {
+    Sidebar()
+} detail: {
+    Detail(path = path)
+}
+```
+
+The columns are child slots. The bare trailing block is the sidebar, because
+the sidebar is the slot declared first; `content:` and `detail:` name theirs,
+the way SwiftUI's labels do. Writing a `content:` block is what makes the view
+three-column:
+
+```kira
+NavigationSplitView(path = path) {
+    Sidebar()
+} content: {
+    ProjectList(path = path)
+} detail: {
+    Detail(path = path)
+}
 ```
 
 `NavigationSplitView` automatically collapses to one column below the compact
@@ -88,11 +110,11 @@ The important part is that every level appends a value to the same path. The
 detail stack registers all mappings once:
 
 ```kira
-NavigationSplitView(
-    sidebar = WorkspaceSidebar(),
-    detail = WorkspaceDetail(path = navigationPath),
-    path = navigationPath
-)
+NavigationSplitView(path = navigationPath) {
+    WorkspaceSidebar()
+} detail: {
+    WorkspaceDetail(path = navigationPath)
+}
 
 NavigationStack(path = navigationPath) {
     WorkspaceHome(path = navigationPath)

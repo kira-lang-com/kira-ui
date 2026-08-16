@@ -21,11 +21,7 @@ function surfaceGlassFrost() -> KiraUIFoundation.FoundationFrost {
 // through. Sniffing the environment here independently is how a light token set
 // used to end up washed over a dark glass stack.
 function surfaceGlassScheme(modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationScheme {
-    var appearance = resolvedAppearance(Appearance.Dark)
-    if modifiers.hasTheme {
-        appearance = modifiers.theme.appearance()
-    }
-    match appearance {
+    match modifierTheme(modifiers).appearance() {
         Light -> return KiraUIFoundation.FoundationScheme.Light;
         Dark -> return KiraUIFoundation.FoundationScheme.Dark;
     }
@@ -95,7 +91,7 @@ function surfaceGlassBlur(material: borrow Material) -> Float {
 // its rows, a row insets its label — and a padding argument here is how two
 // containers holding the same content end up spaced differently.
 Widget Panel(radius: CornerRadius = CornerRadius.Medium) {
-    @Content let content: Any Widget
+    let content: some Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let childModifiers = modifierContextForChildren(modifiers)
@@ -105,10 +101,7 @@ Widget Panel(radius: CornerRadius = CornerRadius.Medium) {
             semanticMaterial = modifiers.material
             selectedMaterial = foundationMaterial(modifiers.material)
         }
-        var fallbackFill = transparentFoundationColor()
-        if modifiers.hasTheme {
-            fallbackFill = foundationColor(modifiers.theme.tokens().background.surface)
-        }
+        let fallbackFill = foundationColor(modifierTokens(modifiers).background.surface)
         let selectedFill = modifierSurfaceFill(move fallbackFill, modifiers)
         var selectedBorder = modifierSurfaceBorder(transparentFoundationColor(), modifiers)
         var borderWidth = 1.0
@@ -144,7 +137,7 @@ Widget Panel(radius: CornerRadius = CornerRadius.Medium) {
 
 // A panel's content held off its edges by a length the size class owns.
 Widget PanelInset(length: Float) {
-    @Content let content: Any Widget
+    let content: some Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let view = content.lower(context, modifiers)
@@ -165,9 +158,13 @@ Widget PanelInset(length: Float) {
 
 // A run of rows under a header, grouped the way SwiftUI's `Section` groups one:
 //
-//     Section(header = Text("Liquid Glass"), footer = Text("Applies to every layer.")) {
+//     Section {
 //         Picker(label = "Mode", options = modes(), selection = mode, onSelect = chooseMode)
 //         Toggle(isOn = blurOn, onToggle = toggleBlur)
+//     } header: {
+//         Text("Liquid Glass")
+//     } footer: {
+//         Text("Applies to every layer.")
 //     }
 //
 // `header` and `footer` are VIEWS, as they are in SwiftUI — a header carrying a
@@ -184,12 +181,13 @@ Widget PanelInset(length: Float) {
 //
 // Every length here comes from the size class, so `.controlSize(.Small)` on the
 // panel is the whole statement of how dense the section is.
-Widget Section(
-    header: Any Widget = EmptyView(),
-    footer: Any Widget = EmptyView(),
-    spacing: Spacing = Spacing.ExtraSmall,
-) {
-    @Content let children: [Any Widget]
+Widget Section(spacing: Spacing = Spacing.ExtraSmall) {
+    // The rows are the bare block, and the two lines around them name their own
+    // slots: `Section { … } header: { … } footer: { … }`. Both default to
+    // nothing, so a section states only the lines it has.
+    let children: [some Widget]
+    let header: some Widget = EmptyView()
+    let footer: some Widget = EmptyView()
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let metrics = resolvedControlMetrics(modifiers)
@@ -235,7 +233,7 @@ Widget Section(
 // A header or footer line: its content across the section's width, held off the
 // card's leading and trailing edges.
 Widget SectionBand(inset: Float, height: Float) {
-    @Content let content: Any Widget
+    let content: some Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let band = HStack(spacing: Spacing.None, alignment: VerticalAlignment.Center) {
