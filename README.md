@@ -12,16 +12,15 @@ A high-level declarative widget layer for the Kira programming language. Build G
 import KiraUI
 
 RunWidgetApp(
-    VStack(spacing = 12.0) {
+    VStack(spacing = Spacing.Medium) {
         Text("Hello, Kira UI!")
-            .font(size = 24.0, weight = FontWeight.Bold)
-            .textColor(Color.White)
+            .typography(.title)
 
         Card(material = Material.Frosted) {
             Text("Frosted glass card")
         }
     }
-    .padding(20.0)
+    .inset(horizontal = Spacing.Large, vertical = Spacing.Large)
 )
 ```
 
