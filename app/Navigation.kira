@@ -489,31 +489,24 @@ Widget NavigationDestinationLayer(forType: Any NavigationValue) {
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let environment = kiraUiNavigationEnvironment()
         let path = NavigationPath {}
-        let active = path.lastMatches(value: forType)
-
-        if active && environment.split == false {
-            let detail = destination.lower(context, modifiers)
-            return navigationPage(context, modifiers, "", move detail)
+        if path.lastMatches(value: forType) == false {
+            return content.lower(context, modifiers)
         }
-
-        let root = content.lower(context, modifiers)
-        if active == false || environment.split == false {
-            return root
+        let page = destination.lower(context, modifiers)
+        // The FIRST value in a split view's path is the detail column's own
+        // selection — the sidebar's link chose which screen the column shows,
+        // exactly as a `List(selection:)` does, so the column has no bar and
+        // nothing to go back to. A value pushed on top of that one IS a push,
+        // and gets the bar with Back.
+        //
+        // Standing the stack's root up as a second column instead is how a
+        // window ended up with the screen it came from squeezed into 280 points
+        // beside the screen it went to. A middle column is the split view's
+        // `content:` block, which is the only place a window says it wants one.
+        if environment.split && path.values().count <= 1 {
+            return navigationFill(move page, navigationCanvas(modifiers))
         }
-
-        let metrics = navigationMetrics(context.viewport.width)
-        let detail = destination.lower(context, modifiers)
-        let primary = navigationPane(move root, KiraUIFoundation.SizeMode.Fixed(metrics.primaryWidth), navigationSurface(modifiers))
-        let detailPage = navigationPage(context, modifiers, "", move detail)
-        let detailPane = navigationPane(move detailPage, KiraUIFoundation.SizeMode.Fill, navigationCanvas(modifiers))
-        return KiraUIFoundation.Row(
-            children: [move primary, move detailPane],
-            width: KiraUIFoundation.SizeMode.Fill,
-            height: KiraUIFoundation.SizeMode.Fill,
-            spacing: 0.0,
-            padding: KiraUIFoundation.EdgeInsets {},
-            crossAxisAlignment: KiraUIFoundation.CrossAlignment.Stretch
-        )
+        return navigationPage(context, modifiers, "", move page)
     }
 }
 
