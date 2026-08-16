@@ -216,11 +216,6 @@ function styleThemeTokens(style: Any StyleImplementation) -> ThemeTokens {
     }
 }
 
-// The tokens a widget sees when no theme was applied.
-function defaultThemeTokens() -> ThemeTokens {
-    return styleThemeTokens(DefaultStyle {})
-}
-
 construct Theme {
     @Required let StyleImplementation: Any StyleImplementation
     @Required let text: Any StyleImplementation
@@ -314,6 +309,22 @@ Theme DefaultTheme {
     let slider = DefaultStyle {}
     let sidebar = DefaultStyle {}
     let divider = DefaultStyle {}
+}
+
+// The theme in effect here: the applied one, or the library's own when nothing
+// applied a theme.
+//
+// Every resolution goes through this, so a themed tree and an unthemed one
+// differ in their TOKENS and in nothing else. Asking `hasTheme` at a call site
+// and reaching for a literal on the other branch is what left an application
+// with no theme drawing near-white text on a light surface and asking
+// `.backgroundStyle(.Surface)` for a colour that came back transparent: two
+// defaults that were never authored together.
+function modifierTheme(modifiers: borrow ModifierContext) -> Any Theme {
+    if modifiers.hasTheme {
+        return copy modifiers.theme
+    }
+    return DefaultTheme {}
 }
 
 // What `.background(...)` paints with: a style, named after what it IS rather

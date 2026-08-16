@@ -335,7 +335,14 @@ function navigationPopAction() -> () -> Void {
 // Value-based link, matching SwiftUI's NavigationLink(value:label:). The
 // nearest stack or split view supplies the path through ambient environment.
 Widget NavigationLink(value: Any NavigationValue) {
-    @Content let label: Any Widget
+    let label: some Widget
+
+    // SwiftUI's `NavigationLink("Settings", value: route)`: a link whose label
+    // is the title it was given. It is a second way to construct the same
+    // declaration, not a second declaration, so both forms lower identically.
+    init(title: String, value: Any NavigationValue) {
+        return NavigationLink(value: value, label: Text(content: title))
+    }
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let metrics = navigationMetrics(context.viewport.width)
@@ -475,8 +482,9 @@ function navigationPage(
 // type-metatype expression, so `forType` receives a value of the route type as
 // its type witness. Matching is by the route declaration's family type, not by
 // a caller-assigned numeric discriminator.
-Widget NavigationDestinationLayer(forType: Any NavigationValue, destination: Any Widget) {
-    @Content let content: Any Widget
+Widget NavigationDestinationLayer(forType: Any NavigationValue) {
+    let content: some Widget
+    let destination: some Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let environment = kiraUiNavigationEnvironment()
@@ -524,7 +532,7 @@ extend Widget {
 // One-column push navigation. The root view is never put in the path and
 // cannot be popped, matching NavigationStack.
 Widget NavigationStack(path: NavigationPath = NavigationPath {}) {
-    @Content let root: Any Widget
+    let root: some Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let previous = kiraUiNavigationEnter(false)
@@ -624,12 +632,22 @@ function navigationHasContentColumn(view: borrow KiraUIFoundation.FoundationView
 // stacked over the split view is a bar that cuts every column short of the
 // window's top edge.
 Widget NavigationSplitView(
-    sidebar: Any Widget,
-    detail: Any Widget,
-    content: Any Widget = EmptyView(),
     columnVisibility: NavigationSplitViewVisibility = NavigationSplitViewVisibility.Automatic,
     path: NavigationPath = NavigationPath {},
 ) {
+    // The columns are child slots, so a window writes them as blocks in the
+    // order it reads them:
+    //
+    //     NavigationSplitView { Sidebar() } detail: { Detail() }
+    //
+    // The bare block is the sidebar because the sidebar is the slot declared
+    // first, and `content:` and `detail:` name theirs, which is what SwiftUI's
+    // labels do. `content` keeps its default, so the two-column form is the
+    // three-column one with the middle block left unwritten.
+    let sidebar: some Widget
+    let content: some Widget = EmptyView()
+    let detail: some Widget
+
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let metrics = navigationMetrics(context.viewport.width)
         let previous = kiraUiNavigationEnter(true)

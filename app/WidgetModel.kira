@@ -255,23 +255,10 @@ function transparentFoundationColor() -> KiraUIFoundation.Color {
     }
 }
 
-function defaultTextColor() -> KiraUIFoundation.Color {
-    return KiraUIFoundation.Color {
-        r: 0.95
-        g: 0.96
-        b: 0.99
-        a: 1.0
-    }
-}
-
-// The tokens in effect for this widget: the applied theme's, or the default
-// style's when none was applied. One rule, so a themed and an unthemed tree
-// resolve a PrimaryColor identically.
+// The tokens in effect for this widget: the theme in effect resolves them, and
+// the library's own theme is in effect when the application applied none.
 function modifierTokens(modifiers: borrow ModifierContext) -> ThemeTokens {
-    if modifiers.hasTheme {
-        return modifiers.theme.tokens()
-    }
-    return defaultThemeTokens()
+    return modifierTheme(modifiers).tokens()
 }
 
 function primaryColorAsColor(color: borrow PrimaryColor, tokens: borrow ThemeTokens) -> Color {
@@ -319,40 +306,37 @@ function modifierTextColor(modifiers: borrow ModifierContext) -> KiraUIFoundatio
     if modifiers.hasForegroundColor {
         return modifierPrimaryColor(modifiers.foregroundColor, modifiers)
     }
-    if modifiers.hasTheme {
-        let tokens = modifiers.theme.tokens()
-        return foundationColor(tokens.foreground.primary)
-    }
-    return defaultTextColor()
+    // The primary ink of the tokens IN EFFECT — the applied theme's, or the
+    // default style's when none was applied. A separate hardcoded ink for the
+    // unthemed case is how an application with no theme drew near-white text on
+    // the default style's light surface.
+    return foundationColor(modifierTokens(modifiers).foreground.primary)
 }
 
 function modifierBackgroundStyle(
     style: borrow BackgroundStyle,
     modifiers: borrow ModifierContext,
 ) -> KiraUIFoundation.Color {
-    if modifiers.hasTheme {
-        let tokens = modifiers.theme.tokens()
-        match style {
-            Clear -> return transparentFoundationColor();
-            Window -> return foundationColor(tokens.background.canvas);
-            Surface -> return foundationColor(tokens.background.surface);
-            Raised -> return foundationColor(tokens.background.raised);
-            Control -> return foundationColor(tokens.fill.control);
-            Overlay -> return foundationColor(tokens.background.overlay);
-            Accent -> return foundationColor(tokens.tint.accent);
-            Selection -> return foundationColor(tokens.fill.selection);
-            Hover -> return foundationColor(tokens.fill.hover);
-        }
+    let tokens = modifierTokens(modifiers)
+    match style {
+        Clear -> return transparentFoundationColor();
+        Window -> return foundationColor(tokens.background.canvas);
+        Surface -> return foundationColor(tokens.background.surface);
+        Raised -> return foundationColor(tokens.background.raised);
+        Control -> return foundationColor(tokens.fill.control);
+        Overlay -> return foundationColor(tokens.background.overlay);
+        Accent -> return foundationColor(tokens.tint.accent);
+        Selection -> return foundationColor(tokens.fill.selection);
+        Hover -> return foundationColor(tokens.fill.hover);
     }
-    return transparentFoundationColor()
 }
 
 function modifierSurfaceBorder(
     fallback: KiraUIFoundation.Color,
     modifiers: borrow ModifierContext,
 ) -> KiraUIFoundation.Color {
-    if modifiers.hasThemeBorder && modifiers.hasTheme {
-        let tokens = modifiers.theme.tokens()
+    if modifiers.hasThemeBorder {
+        let tokens = modifierTokens(modifiers)
         match modifiers.themeBorder {
             Subtle -> return modifierColor(foundationColor(tokens.border.subtle.color), modifiers);
             Standard -> return modifierColor(foundationColor(tokens.border.standard.color), modifiers);
@@ -376,15 +360,9 @@ function modifierSurfaceFill(
     return colorWithOpacity(fallback, modifiers.opacity)
 }
 
-function modifierThemeBackground(
-    fallback: KiraUIFoundation.Color,
-    modifiers: borrow ModifierContext,
-) -> KiraUIFoundation.Color {
-    if modifiers.hasTheme {
-        let tokens = modifiers.theme.tokens()
-        return modifierColor(foundationColor(tokens.background.canvas), modifiers)
-    }
-    return colorWithOpacity(fallback, modifiers.opacity)
+// What the window itself is painted in: the canvas of the theme in effect.
+function modifierCanvas(modifiers: borrow ModifierContext) -> KiraUIFoundation.Color {
+    return modifierColor(foundationColor(modifierTokens(modifiers).background.canvas), modifiers)
 }
 
 function foundationColor(color: Color) -> KiraUIFoundation.Color {
@@ -1069,7 +1047,7 @@ function viewWithContentMargins(view: KiraUIFoundation.FoundationView, inset: Fl
 }
 
 Widget SurfacePaddingLayer(value: Float) {
-    @Content let content: Any Widget
+    let content: some Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let childModifiers = modifierContextForChildren(modifiers)
@@ -1078,7 +1056,7 @@ Widget SurfacePaddingLayer(value: Float) {
 }
 
 Widget ContentMarginsLayer(value: ContentMargins) {
-    @Content let content: Any Widget
+    let content: some Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let childModifiers = modifierContextForChildren(modifiers)
@@ -1089,7 +1067,7 @@ Widget ContentMarginsLayer(value: ContentMargins) {
 }
 
 Widget WidthLayer(value: Float) {
-    @Content let content: Any Widget
+    let content: some Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let childModifiers = modifierContextForChildren(modifiers)
@@ -1098,7 +1076,7 @@ Widget WidthLayer(value: Float) {
 }
 
 Widget FillHeightLayer() {
-    @Content let content: Any Widget
+    let content: some Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let childModifiers = modifierContextForChildren(modifiers)
@@ -1107,7 +1085,7 @@ Widget FillHeightLayer() {
 }
 
 Widget HeightLayer(value: Float) {
-    @Content let content: Any Widget
+    let content: some Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let childModifiers = modifierContextForChildren(modifiers)
@@ -1132,7 +1110,7 @@ function scaledTypography(
 // default could never be told to shrink to its content without exposing its own
 // SizeMode argument.
 Widget HugWidthLayer() {
-    @Content let content: Any Widget
+    let content: some Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let childModifiers = modifierContextForChildren(modifiers)
@@ -1141,7 +1119,7 @@ Widget HugWidthLayer() {
 }
 
 Widget HugHeightLayer() {
-    @Content let content: Any Widget
+    let content: some Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let childModifiers = modifierContextForChildren(modifiers)
@@ -1160,63 +1138,21 @@ function typographyImplementation(
     style: TypographyStyle,
     modifiers: borrow ModifierContext,
 ) -> FontImplementation {
-    if modifiers.hasTheme {
-        return scaledTypography(modifiers.theme.typography(style), modifiers)
-    }
-    let values = defaultStyleTypographyTokens()
-    match style {
-        caption -> return values.caption;
-        body -> return values.body;
-        control -> return values.control;
-        subheadline -> return values.subheadline;
-        bodyEmphasis -> return values.bodyEmphasis;
-        footnote -> return values.footnote;
-        overline -> return values.overline;
-        label -> return values.label;
-        section -> return values.section;
-        headline -> return values.headline;
-        title -> return values.title;
-        title1 -> return values.title1;
-        title2 -> return values.title2;
-        title3 -> return values.title3;
-    }
+    return scaledTypography(modifierTheme(modifiers).typography(style), modifiers)
 }
 
 function cornerRadiusImplementation(
     style: CornerRadius,
     modifiers: borrow ModifierContext,
 ) -> Float {
-    if modifiers.hasTheme {
-        return modifiers.theme.cornerRadius(style)
-    }
-    let values = defaultStyleCornerRadiusTokens()
-    match style {
-        None -> return values.none;
-        Small -> return values.small;
-        Medium -> return values.medium;
-        Large -> return values.large;
-        ExtraLarge -> return values.extraLarge;
-        Capsule -> return values.capsule;
-    }
+    return modifierTheme(modifiers).cornerRadius(style)
 }
 
 function spacingImplementation(
     style: Spacing,
     modifiers: borrow ModifierContext,
 ) -> Float {
-    if modifiers.hasTheme {
-        return modifiers.theme.spacing(style)
-    }
-    let values = defaultStyleSpacingTokens()
-    match style {
-        None -> return values.none;
-        ExtraSmall -> return values.extraSmall;
-        Small -> return values.small;
-        Medium -> return values.medium;
-        Large -> return values.large;
-        ExtraLarge -> return values.extraLarge;
-        Section -> return values.section;
-    }
+    return modifierTheme(modifiers).spacing(style)
 }
 
 Widget Text(content: String) {
@@ -1233,7 +1169,7 @@ Widget Text(content: String) {
             textSize = selected.size
             textLineHeight = selected.lineHeight
             textWeight = foundationFontWeight(selected.weight)
-        } else if modifiers.hasTheme {
+        } else {
             // Through the same resolution every named role goes through, so an
             // unstyled run is scaled by the size class like everything else.
             // Reading `tokens.bodySize` directly is how a row label stayed at
@@ -1341,7 +1277,7 @@ function buttonView(
 }
 
 Widget AppSurface() {
-    @Content let content: Any Widget
+    let content: some Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let childModifiers = modifierContextForChildren(modifiers)
@@ -1350,12 +1286,7 @@ Widget AppSurface() {
             width: KiraUIFoundation.SizeMode.Fill,
             height: KiraUIFoundation.SizeMode.Fill,
             flex: 0,
-            fill: modifierThemeBackground(KiraUIFoundation.Color {
-                r: 0.035
-                g: 0.04
-                b: 0.065
-                a: 1.0
-            }, modifiers),
+            fill: modifierCanvas(modifiers),
             border: transparentFoundationColor(),
             borderWidth: 0.0,
             radius: 0.0,
@@ -1372,46 +1303,35 @@ Widget Card(
     title: String = "",
     material: Material = Material.Frosted,
 ) {
-    @Content let children: [Any Widget]
+    let children: [some Widget]
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let childModifiers = modifierContextForChildren(modifiers)
-        var selectedMaterial = material
-        var selectedRadius = 22.0
-        var selectedFill = cardFill(material)
-        var selectedBorder = cardBorder(material)
-        var selectedEffects = cardEffects(material)
-        if modifiers.hasTheme {
-            let tokens = modifiers.theme.tokens()
-            selectedMaterial = tokens.surfaceMaterial
-            selectedRadius = tokens.cardRadius
-            selectedFill = foundationColor(tokens.background.surface)
-            selectedBorder = foundationColor(tokens.border.standard.color)
-            selectedEffects = cardEffects(selectedMaterial)
-            if material == Material.Flat {
-                selectedMaterial = Material.Flat
-                selectedFill = foundationColor(tokens.background.raised)
-                selectedBorder = foundationColor(tokens.border.subtle.color)
-                selectedEffects = cardEffects(selectedMaterial)
-            }
+        let tokens = modifierTokens(modifiers)
+        // The card is the theme's surface, in the theme's material, at the
+        // theme's card radius. `material` names the one thing the card decides
+        // for itself: a FLAT card is the raised elevation rather than the glass
+        // stack, whatever the theme's own surface material is.
+        var selectedMaterial = tokens.surfaceMaterial
+        var selectedRadius = tokens.cardRadius
+        var selectedFill = foundationColor(tokens.background.surface)
+        var selectedBorder = foundationColor(tokens.border.standard.color)
+        if material == Material.Flat {
+            selectedMaterial = Material.Flat
+            selectedFill = foundationColor(tokens.background.raised)
+            selectedBorder = foundationColor(tokens.border.subtle.color)
         }
         if modifiers.hasMaterial {
             selectedMaterial = modifiers.material
-            if modifiers.hasTheme {
-                let tokens = modifiers.theme.tokens()
-                if selectedMaterial == Material.Flat {
-                    selectedFill = foundationColor(tokens.background.raised)
-                    selectedBorder = foundationColor(tokens.border.subtle.color)
-                } else {
-                    selectedFill = cardFill(selectedMaterial)
-                    selectedBorder = cardBorder(selectedMaterial)
-                }
+            if selectedMaterial == Material.Flat {
+                selectedFill = foundationColor(tokens.background.raised)
+                selectedBorder = foundationColor(tokens.border.subtle.color)
             } else {
                 selectedFill = cardFill(selectedMaterial)
                 selectedBorder = cardBorder(selectedMaterial)
             }
-            selectedEffects = cardEffects(selectedMaterial)
         }
+        let selectedEffects = cardEffects(selectedMaterial)
         var cardChildren: [KiraUIFoundation.FoundationView] = []
         if title.count > 0 {
             let titleDelta = modifierDeltaTypography(TypographyStyle.headline)
@@ -1522,11 +1442,7 @@ Widget Spacer() {
 Widget Circle() {
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let ignored = context.frameCount
-        var circleFill = defaultTextColor()
-        if modifiers.hasTheme {
-            let tokens = modifiers.theme.tokens()
-            circleFill = foundationColor(tokens.foreground.primary)
-        }
+        var circleFill = foundationColor(modifierTokens(modifiers).foreground.primary)
         if modifiers.hasForegroundColor {
             circleFill = modifierPrimaryColor(modifiers.foregroundColor, modifiers)
         }
@@ -1631,7 +1547,7 @@ Widget Inset(
     horizontal: Spacing = Spacing.None,
     vertical: Spacing = Spacing.None,
 ) {
-    @Content let content: Any Widget
+    let content: some Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let childModifiers = modifierContextForChildren(modifiers)
@@ -1665,7 +1581,7 @@ Widget Inset(
 // the value can be consumed by the widget itself and its own child traversal
 // can decide which fields continue downstream.
 Widget ThemeLayer(theme: Any Theme) {
-    @Content let content: Any Widget
+    let content: some Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let delta = modifierDeltaTheme(move theme)
@@ -1675,7 +1591,7 @@ Widget ThemeLayer(theme: Any Theme) {
 }
 
 Widget BackgroundStyleLayer(style: BackgroundStyle) {
-    @Content let content: Any Widget
+    let content: some Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let delta = modifierDeltaBackgroundStyle(style)
@@ -1685,7 +1601,7 @@ Widget BackgroundStyleLayer(style: BackgroundStyle) {
 }
 
 Widget ThemeBorderLayer(border: ThemeBorder) {
-    @Content let content: Any Widget
+    let content: some Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let delta = modifierDeltaThemeBorder(border)
@@ -1695,7 +1611,7 @@ Widget ThemeBorderLayer(border: ThemeBorder) {
 }
 
 Widget ForegroundColorLayer(color: PrimaryColor) {
-    @Content let content: Any Widget
+    let content: some Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let delta = modifierDeltaForegroundColor(color)
@@ -1708,7 +1624,7 @@ Widget ForegroundColorLayer(color: PrimaryColor) {
 // wraps — it never becomes the subtree's surface role, mirroring how a
 // background sits behind one view and not its descendants.
 Widget BackgroundColorLayer(color: PrimaryColor) {
-    @Content let content: Any Widget
+    let content: some Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let resolved = modifierColor(modifierPrimaryColor(color, modifiers), modifiers)
@@ -1725,7 +1641,7 @@ Widget BackgroundColorLayer(color: PrimaryColor) {
 }
 
 Widget MaterialLayer(value: Material) {
-    @Content let content: Any Widget
+    let content: some Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let delta = modifierDeltaMaterial(value)
@@ -1735,7 +1651,7 @@ Widget MaterialLayer(value: Material) {
 }
 
 Widget DisabledLayer(value: Bool) {
-    @Content let content: Any Widget
+    let content: some Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let delta = modifierDeltaDisabled(value)
@@ -1745,7 +1661,7 @@ Widget DisabledLayer(value: Bool) {
 }
 
 Widget FocusedLayer(value: Bool) {
-    @Content let content: Any Widget
+    let content: some Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let delta = modifierDeltaFocused(value)
@@ -1755,7 +1671,7 @@ Widget FocusedLayer(value: Bool) {
 }
 
 Widget BackgroundLayer(fill: Any Widget) {
-    @Content let content: Any Widget
+    let content: some Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let childModifiers = modifierContextForChildren(modifiers)
@@ -1764,7 +1680,7 @@ Widget BackgroundLayer(fill: Any Widget) {
 }
 
 Widget CornerRadiusLayer(radius: Float) {
-    @Content let content: Any Widget
+    let content: some Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let childModifiers = modifierContextForChildren(modifiers)
@@ -1787,7 +1703,7 @@ Widget CornerRadiusLayer(radius: Float) {
 }
 
 Widget BlurBehindLayer(radius: Float, saturation: Float) {
-    @Content let content: Any Widget
+    let content: some Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let ignored = saturation + intAsFloat(value: context.frameCount)
@@ -1822,7 +1738,7 @@ Widget BlurBehindLayer(radius: Float, saturation: Float) {
 }
 
 Widget GlowLayer(intensity: Float) {
-    @Content let content: Any Widget
+    let content: some Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let ignored = context.pointerX
@@ -1857,7 +1773,7 @@ Widget GlowLayer(intensity: Float) {
 }
 
 Widget FontLayer(size: Float, weight: FontWeight) {
-    @Content let content: Any Widget
+    let content: some Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let delta = modifierDeltaFont(size, weight)
@@ -1867,7 +1783,7 @@ Widget FontLayer(size: Float, weight: FontWeight) {
 }
 
 Widget TypographyLayer(style: TypographyStyle) {
-    @Content let content: Any Widget
+    let content: some Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let delta = modifierDeltaTypography(style)
@@ -1877,7 +1793,7 @@ Widget TypographyLayer(style: TypographyStyle) {
 }
 
 Widget OpacityLayer(value: Float) {
-    @Content let content: Any Widget
+    let content: some Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let delta = modifierDeltaOpacity(value)
@@ -1887,7 +1803,7 @@ Widget OpacityLayer(value: Float) {
 }
 
 Widget MinWidthLayer(value: Float) {
-    @Content let content: Any Widget
+    let content: some Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let childModifiers = modifierContextForChildren(modifiers)
@@ -1903,7 +1819,7 @@ Widget MinWidthLayer(value: Float) {
 }
 
 Widget SizeLayer(value: Float) {
-    @Content let content: Any Widget
+    let content: some Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let childModifiers = modifierContextForChildren(modifiers)
@@ -1919,7 +1835,7 @@ Widget SizeLayer(value: Float) {
 }
 
 Widget FillLayer(color: Color) {
-    @Content let content: Any Widget
+    let content: some Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let delta = modifierDeltaFill(move color)
@@ -1929,7 +1845,7 @@ Widget FillLayer(color: Color) {
 }
 
 Widget TextColorLayer(color: Color) {
-    @Content let content: Any Widget
+    let content: some Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let delta = modifierDeltaTextColor(move color)
@@ -1939,7 +1855,7 @@ Widget TextColorLayer(color: Color) {
 }
 
 Widget SurfaceRadiusLayer(value: Float) {
-    @Content let content: Any Widget
+    let content: some Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let childModifiers = modifierContextForChildren(modifiers)
@@ -1948,7 +1864,7 @@ Widget SurfaceRadiusLayer(value: Float) {
 }
 
 Widget SurfaceShapeLayer(shape: SurfaceShape) {
-    @Content let content: Any Widget
+    let content: some Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let childModifiers = modifierContextForChildren(modifiers)
@@ -1957,7 +1873,7 @@ Widget SurfaceShapeLayer(shape: SurfaceShape) {
 }
 
 Widget SurfaceBorderLayer(color: Color, width: Float) {
-    @Content let content: Any Widget
+    let content: some Widget
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let border = foundationColor(move color)
