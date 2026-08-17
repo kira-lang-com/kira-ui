@@ -55,10 +55,32 @@ struct KiraUiToolbarSink {
     var principal: [KiraUIFoundation.FoundationView] = []
     var primaryAction: [KiraUIFoundation.FoundationView] = []
     var automatic: [KiraUIFoundation.FoundationView] = []
+    // What each column called itself with `.navigationTitle(...)`. A title is a
+    // string rather than a view because that is what makes it a TITLE: the bar
+    // decides how a title is set, which is how the sidebar's and the document's
+    // are set the same way without either column saying so.
+    var sidebarTitle: String = ""
+    var detailTitle: String = ""
+    // Which column is being lowered, so a title declared inside one lands in the
+    // section over it: 0 the sidebar, 1 the content, 2 the detail.
+    var column: Int = 0
     // Whether a bar is being collected at all. An item declared with no split
     // view above it has nowhere to go, and is dropped rather than kept for
     // whatever window is built next.
     var collecting: Bool = false
+}
+
+// The columns, in the order a split view lowers them.
+function kiraUiToolbarSidebarColumn() -> Int {
+    return 0
+}
+
+function kiraUiToolbarContentColumn() -> Int {
+    return 1
+}
+
+function kiraUiToolbarDetailColumn() -> Int {
+    return 2
 }
 
 function kiraUiToolbarSinkKey() -> String {
@@ -89,7 +111,35 @@ function kiraUiToolbarCollect() {
     sink.principal = move principal
     sink.primaryAction = move primaryAction
     sink.automatic = move automatic
+    sink.sidebarTitle = ""
+    sink.detailTitle = ""
+    sink.column = kiraUiToolbarSidebarColumn()
     sink.collecting = true
+    return
+}
+
+// The column about to be lowered. Everything a view declares from here until the
+// next one belongs to it.
+function kiraUiToolbarEnterColumn(column: Int) {
+    kiraUiToolbarSinkEnsure()
+    var sink = nativeRecover<KiraUiToolbarSink>(kiraUiStateSlotGet(kiraUiToolbarSinkKey()))
+    sink.column = column
+    return
+}
+
+// What a column calls itself. The LAST title wins, matching SwiftUI: a title set
+// deeper in a column is the one that column is currently showing.
+function kiraUiToolbarSetTitle(title: String) {
+    kiraUiToolbarSinkEnsure()
+    var sink = nativeRecover<KiraUiToolbarSink>(kiraUiStateSlotGet(kiraUiToolbarSinkKey()))
+    if sink.collecting == false {
+        return
+    }
+    if sink.column == kiraUiToolbarSidebarColumn() {
+        sink.sidebarTitle = move title
+        return
+    }
+    sink.detailTitle = move title
     return
 }
 
@@ -175,13 +225,17 @@ Widget WindowToolbar(navigationWidth: Float, hasNavigationColumn: Bool) {
         var sections: [KiraUIFoundation.FoundationView] = []
         if hasNavigationColumn {
             sections.append(toolbarSection(
-                toolbarItemsRow(sink.navigation, context, modifiers),
+                toolbarItemsRow(sink.sidebarTitle, sink.navigation, context, modifiers),
                 KiraUIFoundation.SizeMode.Fixed(navigationWidth),
                 metrics
             ))
         }
+        // With no sidebar to sit over — a window collapsed to a stack — the
+        // navigation items lead the bar rather than disappearing with the
+        // column: they are what the view says it is showing, and it is still
+        // showing it.
         sections.append(toolbarSection(
-            toolbarDocumentRow(sink, context, modifiers),
+            toolbarDocumentRow(sink, hasNavigationColumn, context, modifiers),
             KiraUIFoundation.SizeMode.Fill,
             metrics
         ))
@@ -230,13 +284,19 @@ function toolbarSection(
     )
 }
 
-// A run of items, in the order they were declared.
+// What a column is showing, and what it can be asked to do about it: the title
+// first, then the items, in the order they were declared.
 function toolbarItemsRow(
+    title: borrow String,
     items: borrow [KiraUIFoundation.FoundationView],
     context: borrow KiraUIFoundation.FoundationUiContext,
     modifiers: borrow ModifierContext,
 ) -> KiraUIFoundation.FoundationView {
     let row = HStack(spacing: Spacing.Medium, alignment: VerticalAlignment.Center) {
+        if title.count > 0 {
+            ToolbarTitle(text: copy title)
+        }
+
         For(item in items) {
             FoundationRaw(view: item)
         }
@@ -244,14 +304,40 @@ function toolbarItemsRow(
     return row.lower(context, modifiers)
 }
 
+// A column's name, as the bar sets it. One place decides, so the sidebar's title
+// and the document's are the same weight at the same size — which is the whole
+// reason a title is a string handed up rather than a view sent up.
+Widget ToolbarTitle(text: String) {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let title = Text(content: text)
+            .typography(.headline)
+        return title.lower(context, modifiers)
+    }
+}
+
 // The document's section: what the window is showing at the leading end, and
 // what it can be asked to do at the trailing one.
 function toolbarDocumentRow(
     sink: borrow KiraUiToolbarSink,
+    hasNavigationColumn: Bool,
     context: borrow KiraUIFoundation.FoundationUiContext,
     modifiers: borrow ModifierContext,
 ) -> KiraUIFoundation.FoundationView {
     let row = HStack(spacing: Spacing.Medium, alignment: VerticalAlignment.Center) {
+        if hasNavigationColumn == false {
+            if sink.sidebarTitle.count > 0 {
+                ToolbarTitle(text: copy sink.sidebarTitle)
+            }
+
+            For(item in sink.navigation) {
+                FoundationRaw(view: item)
+            }
+        }
+
+        if sink.detailTitle.count > 0 {
+            ToolbarTitle(text: copy sink.detailTitle)
+        }
+
         For(item in sink.principal) {
             FoundationRaw(view: item)
         }
@@ -273,6 +359,9 @@ function toolbarDocumentRow(
 function kiraUiToolbarHasItems() -> Bool {
     kiraUiToolbarSinkEnsure()
     let sink = nativeRecover<KiraUiToolbarSink>(kiraUiStateSlotGet(kiraUiToolbarSinkKey()))
+    if sink.sidebarTitle.count + sink.detailTitle.count > 0 {
+        return true
+    }
     return sink.navigation.count
         + sink.principal.count
         + sink.primaryAction.count
@@ -287,6 +376,24 @@ extend Widget {
         return ToolbarLayer(items: items) {
             self
         }
+    }
+
+    // What this column is showing, matching SwiftUI's `.navigationTitle(...)`.
+    // The bar sets it, in the section over the column that declared it — a
+    // column names itself and says nothing about how a name is drawn.
+    function navigationTitle(title: String) -> Any Widget {
+        return NavigationTitleLayer(title: title) {
+            self
+        }
+    }
+}
+
+Widget NavigationTitleLayer(title: String) {
+    let content: some Widget
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        kiraUiToolbarSetTitle(copy title)
+        return content.lower(context, modifiers)
     }
 }
 
