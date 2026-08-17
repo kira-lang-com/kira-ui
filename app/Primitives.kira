@@ -288,6 +288,30 @@ Widget Artwork(svg: String, scale: IconScale = IconScale.Medium, points: Float =
     }
 }
 
+// A symbol's own metrics: where its ink begins and ends inside its box, as
+// fractions of that box. Asked per symbol, because a library is not one shape —
+// a folder fills the middle of its canvas, an open folder is drawn lower and
+// shorter — and one assumed margin puts each of them somewhere slightly
+// different against the words beside it.
+function iconInkTop(svg: borrow String) -> Float {
+    return KiraUIFoundation.foundationIconInkTop(svg)
+}
+
+function iconInkBottom(svg: borrow String) -> Float {
+    return KiraUIFoundation.foundationIconInkBottom(svg)
+}
+
+// The box that puts THIS symbol's ink on the cap band, and the line its ink
+// then sits on. Both from the same two measurements, so a symbol cannot be the
+// right size and the wrong height at once.
+function iconBoxForBand(svg: borrow String, band: Float) -> Float {
+    let ink = iconInkBottom(svg) - iconInkTop(svg)
+    if ink <= 0.0 {
+        return band
+    }
+    return band / ink
+}
+
 function iconView(
     svg: String,
     size: Float,
@@ -305,13 +329,19 @@ function iconView(
     if modifiers.hasTextColor {
         ink = modifierColor(foundationColor(modifiers.textColor), modifiers)
     }
+    // The box is this SYMBOL's, not the size class's: `size` asked for a band,
+    // and how large a box puts this artwork's ink on that band is a question
+    // only the artwork can answer.
+    let box = iconBoxForBand(svg, size)
+    let line = box * iconInkBottom(svg)
+    let growth = iconWeightGrowth(size, modifiers)
     return KiraUIFoundation.FoundationView {
         kind: KiraUIFoundation.FoundationViewKind.Icon
         content: move svg
         color: move ink
-        size: size
-        baseline: iconBaseline(size, modifiers)
-        weightGrowth: iconWeightGrowth(size, modifiers)
+        size: box
+        baseline: line
+        weightGrowth: growth
     }
 }
 
@@ -328,8 +358,8 @@ function iconView(
 // twelfth of the cap band, and a heavier one thickens roughly with its weight —
 // the difference, halved (growth applies to both sides of a stroke), is what the
 // glyph has to gain.
-function iconWeightGrowth(size: Float, modifiers: borrow ModifierContext) -> Float {
-    let drawn = size * 0.0625
+function iconWeightGrowth(band: Float, modifiers: borrow ModifierContext) -> Float {
+    let drawn = band * 0.0625
     let wanted = iconCapBand(modifiers) * iconStemRatio(iconTypeWeight(modifiers))
     if wanted <= drawn {
         return 0.0
@@ -345,19 +375,6 @@ function iconWeightGrowth(size: Float, modifiers: borrow ModifierContext) -> Flo
 // which is why the slope is steeper than one.
 function iconStemRatio(weight: Float) -> Float {
     return 0.09 * (1.0 + 1.7 * (weight / 400.0 - 1.0))
-}
-
-// Where a glyph asks to sit when the row it is in lines its children up on the
-// text's baseline: with its INK on that line, the way a capital letter does.
-//
-// The artwork is inset inside its own box, so the box has to reach past the line
-// by that margin — a box whose bottom EDGE sat on the baseline would hang its
-// drawing above the line, which is the "floating" a glyph beside a word must
-// never do. Sized on the cap band and sitting on the line, a symbol occupies
-// exactly the band a capital does, and there is nothing left to line up.
-function iconBaseline(size: Float, modifiers: borrow ModifierContext) -> Float {
-    let ignored = iconTypeSize(modifiers)
-    return size * (1.0 - iconArtworkInset())
 }
 
 // The weight the words beside the glyph are set at, so the band is measured on

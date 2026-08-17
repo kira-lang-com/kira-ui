@@ -237,22 +237,15 @@ function resolvedControlMetrics(modifiers: borrow ModifierContext) -> ControlMet
 // own table, which is how a 14-point glyph ended up beside 17-point type — a
 // size class is not a font size, and no arithmetic between the two tables makes
 // one track the other. There is no icon size in the metrics table any more.
+// The BAND a glyph's ink is asked to fill. What box that takes is the symbol's
+// own business — its artwork sits inside its canvas differently from the next
+// one's — and `iconView` asks it (see `iconBoxForBand`).
 function iconScaleSize(scale: IconScale, modifiers: borrow ModifierContext) -> Float {
-    return iconScaleFactor(scale) * iconCapSize(modifiers)
-}
-
-// The box that puts a glyph's INK on the cap band.
-//
-// A symbol's artwork does not fill its box: the drawing is inset inside the
-// canvas it is authored on, the same margin on every side. So the box has to be
-// bigger than the band by exactly that margin, twice — ask for a box the height
-// of the capitals and the ink lands a margin short of them at both ends.
-function iconCapSize(modifiers: borrow ModifierContext) -> Float {
     let band = iconCapBand(modifiers)
     if band <= 0.0 {
-        return iconTypeSize(modifiers)
+        return iconScaleFactor(scale) * iconTypeSize(modifiers)
     }
-    return band / (1.0 - 2.0 * iconArtworkInset())
+    return iconScaleFactor(scale) * band
 }
 
 // The cap band of the type in effect, measured from the face: `H` reaches the
@@ -261,15 +254,6 @@ function iconCapBand(modifiers: borrow ModifierContext) -> Float {
     return KiraUIFoundation.foundationTextRunInkTop("H", iconTypeSize(modifiers), iconTypeWeight(modifiers))
 }
 
-// How far a symbol's drawing is held off its own canvas, as a fraction of that
-// canvas. One number for the whole library, because the library is authored on
-// one canvas: every symbol is drawn on 256 units with its artwork inside the
-// middle 176 of them, so the margin is 40/256 on each side. A symbol that kept
-// its own margin would be a symbol that lined up differently from every other
-// one.
-function iconArtworkInset() -> Float {
-    return 0.15625
-}
 
 // The type a glyph is standing in, resolved through exactly the order a run of
 // text resolves its own size — so a glyph in a `.headline` is headline-sized, a
