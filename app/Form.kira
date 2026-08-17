@@ -195,6 +195,48 @@ Widget ValueField(text: String, unit: String = "") {
     }
 }
 
+// The same field, typed into: a value a person edits by selecting it and
+// writing a new one, committed with Enter.
+//
+//     NumberField(key = positionFieldKey(0), text = "1.500", onSubmit = commitX)
+//
+// It is a separate widget from `ValueField` rather than a flag on it, because
+// the two are different things to the input system: a readout registers no hit
+// area and cannot take the keyboard, while a field is focusable and keeps what
+// is being typed under its KEY. A caller that wanted both from one widget would
+// get a readout that takes focus.
+//
+// The key is the caller's, and it has to mean the same field from one frame to
+// the next — the edit buffer lives under it. A field does not take focus on its
+// own: a form that grabbed the keyboard the moment it was drawn would take it
+// off whatever the person was doing, so `.focused(true)` is how one is asked
+// for. It carries no unit, which is the other half of that split: a unit
+// belongs beside a number nobody is typing over.
+Widget NumberField(key: Int, text: String, onSubmit: () -> Void) {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let metrics = resolvedControlMetrics(modifiers)
+        let field = TextField(
+            key: key,
+            initial: text,
+            placeholder: "",
+            width: metrics.fieldWidth,
+            height: metrics.height,
+            onSubmit: onSubmit
+        )
+            .typography(.label)
+            .focused(fieldTakesFocus(modifiers))
+        return field.lower(context, modifiers)
+    }
+}
+
+// Whether a field asks for the keyboard as it appears: only when it was told to.
+function fieldTakesFocus(modifiers: borrow ModifierContext) -> Bool {
+    if modifiers.hasFocused {
+        return modifiers.focused
+    }
+    return false
+}
+
 // A word that qualifies a field rather than a property: the axis a pair of
 // fields runs along, a unit outside the fill. Quieter than a label and set at
 // the same size as a unit inside a field.

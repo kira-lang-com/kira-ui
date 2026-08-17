@@ -1,0 +1,303 @@
+import Foundation
+import KiraGraphics
+import KiraLayout
+import KiraUIFoundation
+
+// The window's toolbar, and the items a view puts on it.
+//
+// A toolbar belongs to the WINDOW, not to a column. That is the whole point of
+// the type: a split view's columns each have something to say across the top —
+// the sidebar names what it is listing, the detail names where it is — and if
+// each column builds its own bar, the three bars are three heights and nothing
+// in the window lines up. SwiftUI settles it by making the bar a property of the
+// scene: a view declares `.toolbar(...)` and the ITEMS travel up to the one bar,
+// which is why a sidebar item and a detail item share a baseline without either
+// view knowing the other exists.
+//
+//     HierarchyView()
+//         .toolbar(ToolbarItem(placement = .Navigation) {
+//             Icon(symbol = Symbol.FolderOpen)
+//         })
+//
+// An item is not drawn where it is written. It is lowered where it stands — so
+// it reads the modifiers and the theme of the view that declared it — and the
+// resulting view is handed to the nearest `NavigationSplitView`, which is the
+// thing that owns the bar.
+
+// Where on the bar an item sits, named for the ROLE rather than for a side, the
+// way SwiftUI names them: the same placement is leading on one platform and
+// trailing on another, and a view that said "trailing" could not follow.
+enum ToolbarItemPlacement {
+    // Wherever the platform puts an unspecified item: the trailing end of the
+    // section over the view that declared it.
+    Automatic
+    // The navigation section: over the sidebar, where a column says what it is
+    // showing.
+    Navigation
+    // The centre section: the document's own title and breadcrumb.
+    Principal
+    // The action the window is most likely to be asked for, at the trailing end.
+    PrimaryAction
+}
+
+// --- The sink ----------------------------------------------------------------
+//
+// Items are collected while the columns are lowered and read once the bar is
+// built, which is the order a split view already works in: it lowers every
+// column before it assembles anything. The collection lives in the ambient state
+// store rather than being threaded through `lower`, because an item can be
+// declared at any depth inside a column and every widget between it and the
+// window would otherwise have to carry a parameter for it. This is what
+// SwiftUI's preferences do, in the one direction this needs: child to ancestor.
+
+struct KiraUiToolbarSink {
+    var navigation: [KiraUIFoundation.FoundationView] = []
+    var principal: [KiraUIFoundation.FoundationView] = []
+    var primaryAction: [KiraUIFoundation.FoundationView] = []
+    var automatic: [KiraUIFoundation.FoundationView] = []
+    // Whether a bar is being collected at all. An item declared with no split
+    // view above it has nowhere to go, and is dropped rather than kept for
+    // whatever window is built next.
+    var collecting: Bool = false
+}
+
+function kiraUiToolbarSinkKey() -> String {
+    return "kiraui.toolbar.sink"
+}
+
+function kiraUiToolbarSinkEnsure() {
+    if kiraUiStateSlotHas(kiraUiToolbarSinkKey()) == false {
+        kiraUiStateSlotPut(
+            kiraUiToolbarSinkKey(),
+            nativeUserData(nativeState(KiraUiToolbarSink {}))
+        )
+    }
+    return
+}
+
+// Opens collection for the window about to lower its columns, discarding
+// whatever the last frame left: the tree is rebuilt every frame, and items are
+// rebuilt with it.
+function kiraUiToolbarCollect() {
+    kiraUiToolbarSinkEnsure()
+    var sink = nativeRecover<KiraUiToolbarSink>(kiraUiStateSlotGet(kiraUiToolbarSinkKey()))
+    var navigation: [KiraUIFoundation.FoundationView] = []
+    var principal: [KiraUIFoundation.FoundationView] = []
+    var primaryAction: [KiraUIFoundation.FoundationView] = []
+    var automatic: [KiraUIFoundation.FoundationView] = []
+    sink.navigation = move navigation
+    sink.principal = move principal
+    sink.primaryAction = move primaryAction
+    sink.automatic = move automatic
+    sink.collecting = true
+    return
+}
+
+function kiraUiToolbarStopCollecting() {
+    kiraUiToolbarSinkEnsure()
+    var sink = nativeRecover<KiraUiToolbarSink>(kiraUiStateSlotGet(kiraUiToolbarSinkKey()))
+    sink.collecting = false
+    return
+}
+
+function kiraUiToolbarAppend(placement: ToolbarItemPlacement, view: KiraUIFoundation.FoundationView) {
+    kiraUiToolbarSinkEnsure()
+    var sink = nativeRecover<KiraUiToolbarSink>(kiraUiStateSlotGet(kiraUiToolbarSinkKey()))
+    if sink.collecting == false {
+        return
+    }
+    match placement {
+        Automatic -> sink.automatic.append(move view);
+        Navigation -> sink.navigation.append(move view);
+        Principal -> sink.principal.append(move view);
+        PrimaryAction -> sink.primaryAction.append(move view);
+    }
+    return
+}
+
+// --- Items -------------------------------------------------------------------
+
+// One item on the window's bar, matching SwiftUI's `ToolbarItem(placement:)`.
+//
+// It lowers to nothing where it is written: the view it produces goes to the
+// bar, and what stands in its place is empty. That is what lets a column declare
+// its bar items beside the content they belong to without the items appearing
+// inside the column.
+Widget ToolbarItem(placement: ToolbarItemPlacement = ToolbarItemPlacement.Automatic) {
+    let content: some Widget
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        kiraUiToolbarAppend(placement, content.lower(context, modifiers))
+        return EmptyView().lower(context, modifiers)
+    }
+}
+
+// Several items, each with its own placement, matching SwiftUI's
+// `ToolbarContent`: what a view hands to `.toolbar(...)` when it has more than
+// one thing to put on the bar.
+Widget ToolbarContent() {
+    let children: [some Widget]
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        for index in 0..children.count {
+            let ignored = children[index].lower(context, modifiers)
+        }
+        return EmptyView().lower(context, modifiers)
+    }
+}
+
+// Several items at one placement, matching SwiftUI's `ToolbarItemGroup`: the
+// same as writing one `ToolbarItem` each, without repeating the placement.
+Widget ToolbarItemGroup(placement: ToolbarItemPlacement = ToolbarItemPlacement.Automatic) {
+    let children: [some Widget]
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        for index in 0..children.count {
+            kiraUiToolbarAppend(placement, children[index].lower(context, modifiers))
+        }
+        return EmptyView().lower(context, modifiers)
+    }
+}
+
+// --- The bar -----------------------------------------------------------------
+
+// The window's one bar, assembled from what the columns declared.
+//
+// Its sections are laid out against the COLUMNS beneath it: the navigation
+// section is exactly as wide as the sidebar, so an item over the sidebar is over
+// the sidebar and not merely near it, and the rest of the bar belongs to the
+// document. A window with nothing to put on the bar gets no bar at all — an
+// empty band across the top is a band that has to be explained.
+Widget WindowToolbar(navigationWidth: Float, hasNavigationColumn: Bool) {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let metrics = resolvedControlMetrics(modifiers)
+        let sink = nativeRecover<KiraUiToolbarSink>(kiraUiStateSlotGet(kiraUiToolbarSinkKey()))
+        var sections: [KiraUIFoundation.FoundationView] = []
+        if hasNavigationColumn {
+            sections.append(toolbarSection(
+                toolbarItemsRow(sink.navigation, context, modifiers),
+                KiraUIFoundation.SizeMode.Fixed(navigationWidth),
+                metrics
+            ))
+        }
+        sections.append(toolbarSection(
+            toolbarDocumentRow(sink, context, modifiers),
+            KiraUIFoundation.SizeMode.Fill,
+            metrics
+        ))
+        // The size class's height is a floor, not a cap: a control taller than
+        // the bar — a search field, a segmented picker — grows the bar rather
+        // than hanging out of both its edges.
+        let bar = Panel(radius: CornerRadius.None) {
+            FoundationRaw(view: KiraUIFoundation.Row(
+                children: move sections,
+                width: KiraUIFoundation.SizeMode.Fill,
+                height: KiraUIFoundation.SizeMode.Hug,
+                spacing: 0.0,
+                padding: KiraUIFoundation.EdgeInsets {},
+                crossAxisAlignment: KiraUIFoundation.CrossAlignment.Stretch
+            ))
+        }
+        .backgroundStyle(.Surface)
+        return KiraUIFoundation.Frame(
+            bar.lower(context, modifiers),
+            KiraUIFoundation.SizeMode.Fill,
+            KiraUIFoundation.SizeMode.Min(metrics.toolbarHeight),
+            0,
+            KiraUIFoundation.Alignment.Center,
+            KiraUIFoundation.EdgeInsets {}
+        )
+    }
+}
+
+// One section of the bar: its items centred across the toolbar's height, inset
+// from the window's edge the way every toolbar's items are.
+function toolbarSection(
+    items: KiraUIFoundation.FoundationView,
+    width: KiraUIFoundation.SizeMode,
+    metrics: borrow ControlMetricsImplementation,
+) -> KiraUIFoundation.FoundationView {
+    return KiraUIFoundation.Frame(
+        move items,
+        move width,
+        KiraUIFoundation.SizeMode.Fill,
+        0,
+        KiraUIFoundation.Alignment.Center,
+        KiraUIFoundation.EdgeInsets {
+            leading: metrics.toolbarInset
+            trailing: metrics.toolbarInset
+        }
+    )
+}
+
+// A run of items, in the order they were declared.
+function toolbarItemsRow(
+    items: borrow [KiraUIFoundation.FoundationView],
+    context: borrow KiraUIFoundation.FoundationUiContext,
+    modifiers: borrow ModifierContext,
+) -> KiraUIFoundation.FoundationView {
+    let row = HStack(spacing: Spacing.Medium, alignment: VerticalAlignment.Center) {
+        For(item in items) {
+            FoundationRaw(view: item)
+        }
+    }
+    return row.lower(context, modifiers)
+}
+
+// The document's section: what the window is showing at the leading end, and
+// what it can be asked to do at the trailing one.
+function toolbarDocumentRow(
+    sink: borrow KiraUiToolbarSink,
+    context: borrow KiraUIFoundation.FoundationUiContext,
+    modifiers: borrow ModifierContext,
+) -> KiraUIFoundation.FoundationView {
+    let row = HStack(spacing: Spacing.Medium, alignment: VerticalAlignment.Center) {
+        For(item in sink.principal) {
+            FoundationRaw(view: item)
+        }
+
+        Spacer()
+
+        For(item in sink.automatic) {
+            FoundationRaw(view: item)
+        }
+
+        For(item in sink.primaryAction) {
+            FoundationRaw(view: item)
+        }
+    }
+    return row.lower(context, modifiers)
+}
+
+// Whether anything was declared for the bar this frame.
+function kiraUiToolbarHasItems() -> Bool {
+    kiraUiToolbarSinkEnsure()
+    let sink = nativeRecover<KiraUiToolbarSink>(kiraUiStateSlotGet(kiraUiToolbarSinkKey()))
+    return sink.navigation.count
+        + sink.principal.count
+        + sink.primaryAction.count
+        + sink.automatic.count > 0
+}
+
+extend Widget {
+    // The items this view puts on the window's toolbar, matching SwiftUI's
+    // `.toolbar { … }`. They are declared beside the content they belong to and
+    // drawn on the one bar the window has.
+    function toolbar(items: Any Widget) -> Any Widget {
+        return ToolbarLayer(items: items) {
+            self
+        }
+    }
+}
+
+Widget ToolbarLayer(items: Any Widget) {
+    let content: some Widget
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let childModifiers = modifierContextForChildren(modifiers)
+        // The items are lowered where they were WRITTEN: an item reads the theme
+        // and the size class of the view that declared it, not the bar's.
+        let ignored = items.lower(context, childModifiers)
+        return content.lower(context, childModifiers)
+    }
+}

@@ -619,11 +619,13 @@ function navigationHasContentColumn(view: borrow KiraUIFoundation.FoundationView
 // drives the detail column on regular widths and the pushed detail stack on
 // compact widths.
 //
-// The columns run the window's FULL HEIGHT. Anything across the top of the
-// window — a toolbar, a title bar — belongs to the column it sits over, so a
-// window states it inside `detail` rather than above the split view: a bar
-// stacked over the split view is a bar that cuts every column short of the
-// window's top edge.
+// The bar across the top of the window belongs to the SPLIT VIEW, not to any
+// column, exactly as it does in SwiftUI: a column declares what it wants on the
+// bar with `.toolbar(...)`, the items travel up to here, and this is the one
+// place a toolbar height is stated. Three columns each building their own bar
+// is three heights, and nothing across the top of the window lines up — which
+// is precisely what the type exists to prevent. A window that declared no items
+// gets no bar, and its columns run the full height.
 Widget NavigationSplitView(
     columnVisibility: NavigationSplitViewVisibility = NavigationSplitViewVisibility.Automatic,
     path: NavigationPath = NavigationPath {},
@@ -644,17 +646,35 @@ Widget NavigationSplitView(
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let metrics = navigationMetrics(context.viewport.width)
         let previous = kiraUiNavigationEnter(true)
+        // The columns are lowered first, and lowering them is what puts their
+        // toolbar items on the window's bar: an item travels from wherever it
+        // was declared to here, and the bar is assembled once every column has
+        // had its say.
+        kiraUiToolbarCollect()
         let sidebarView = sidebar.lower(context, modifiers)
         let contentView = content.lower(context, modifiers)
         let detailView = detail.lower(context, modifiers)
+        kiraUiToolbarStopCollecting()
         kiraUiNavigationLeave(previous)
 
         if metrics.presentation == NavigationPresentation.Stack {
             let current = NavigationPath {}
             if current.isEmpty() {
-                return navigationFill(move sidebarView, navigationCanvas(modifiers))
+                return navigationWindow(
+                    navigationFill(move sidebarView, navigationCanvas(modifiers)),
+                    0.0,
+                    false,
+                    context,
+                    modifiers
+                )
             }
-            return navigationFill(move detailView, navigationCanvas(modifiers))
+            return navigationWindow(
+                navigationFill(move detailView, navigationCanvas(modifiers)),
+                0.0,
+                false,
+                context,
+                modifiers
+            )
         }
 
         let hasContent = navigationHasContentColumn(contentView)
@@ -672,13 +692,54 @@ Widget NavigationSplitView(
             ))
         }
         columns.append(navigationDetailColumn(move detailView))
-        return KiraUIFoundation.Row(
-            children: move columns,
-            width: KiraUIFoundation.SizeMode.Fill,
-            height: KiraUIFoundation.SizeMode.Fill,
-            spacing: 0.0,
-            padding: KiraUIFoundation.EdgeInsets {},
-            crossAxisAlignment: KiraUIFoundation.CrossAlignment.Stretch
+        let showsSidebar = navigationShowsSidebar(columnVisibility, hasContent)
+        return navigationWindow(
+            KiraUIFoundation.Row(
+                children: move columns,
+                width: KiraUIFoundation.SizeMode.Fill,
+                height: KiraUIFoundation.SizeMode.Fill,
+                spacing: 0.0,
+                padding: KiraUIFoundation.EdgeInsets {},
+                crossAxisAlignment: KiraUIFoundation.CrossAlignment.Stretch
+            ),
+            metrics.primaryWidth,
+            showsSidebar,
+            context,
+            modifiers
         )
     }
+}
+
+// The window: its bar across the top, its columns under it.
+//
+// The bar is a band the columns begin below rather than something drawn over
+// them, which is the whole of the alignment guarantee — every column starts at
+// the same y, whatever it puts on the bar and whatever it holds inside itself.
+// A window that put nothing on the bar has no band, and its columns run the
+// window's full height exactly as before.
+function navigationWindow(
+    columns: KiraUIFoundation.FoundationView,
+    navigationWidth: Float,
+    hasNavigationColumn: Bool,
+    context: borrow KiraUIFoundation.FoundationUiContext,
+    modifiers: borrow ModifierContext,
+) -> KiraUIFoundation.FoundationView {
+    if kiraUiToolbarHasItems() == false {
+        return move columns
+    }
+    let bar = WindowToolbar(
+        navigationWidth: navigationWidth,
+        hasNavigationColumn: hasNavigationColumn
+    )
+    return KiraUIFoundation.Column(
+        children: [
+            bar.lower(context, modifiers),
+            KiraUIFoundation.Expanded(move columns, 1),
+        ],
+        width: KiraUIFoundation.SizeMode.Fill,
+        height: KiraUIFoundation.SizeMode.Fill,
+        spacing: 0.0,
+        padding: KiraUIFoundation.EdgeInsets {},
+        crossAxisAlignment: KiraUIFoundation.CrossAlignment.Stretch
+    )
 }

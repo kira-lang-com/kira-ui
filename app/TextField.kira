@@ -463,7 +463,10 @@ Widget TextField(
     onSubmit: () -> Void
 ) {
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
-        let ignored = context.frameCount
+        // A caret marks where typing would land, so a field nobody is typing in
+        // does not draw one — a form of them all carrying a caret reads as a
+        // form where every field is being edited at once.
+        let editing = context.focusedKey == key
         let size = textFieldTextSize(modifiers)
         let textColor = modifierTextColor(modifiers)
         let caretColor = modifierTextColor(modifiers)
@@ -487,10 +490,19 @@ Widget TextField(
         var kids: [KiraUIFoundation.FoundationView] = []
         kids.append(textFieldGap(leftPad))
         if n == 0 {
-            kids.append(textFieldCaretNode(size, caretColor, opacity))
+            if editing {
+                kids.append(textFieldCaretNode(size, caretColor, opacity))
+            }
             kids.append(textFieldTextNode(move placeholder, placeholderColor, size, opacity))
         } else {
-            if anchor != caret {
+            if editing == false {
+                kids.append(textFieldTextNode(
+                    KiraUIFoundation.foundationStringFromCodepoints(st.codes, 0, n),
+                    textColor,
+                    size,
+                    opacity
+                ))
+            } else if anchor != caret {
                 let a = textFieldSelMin(anchor, caret)
                 let b = textFieldSelMax(anchor, caret)
                 let selBefore = KiraUIFoundation.foundationStringFromCodepoints(st.codes, 0, a)
