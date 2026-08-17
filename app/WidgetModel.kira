@@ -199,6 +199,16 @@ enum Material {
     Flat
     Frosted
     LayeredGlass
+    // What is behind the WINDOW, blurred and tinted by the desktop compositor:
+    // the material a platform sidebar is made of.
+    //
+    // Frosted and LayeredGlass blur what the application drew underneath them.
+    // This one does not blur anything the application can see — the surface
+    // becomes a hole in the window and the compositor fills it with everything
+    // under the window, which is the only place that view exists. It needs a
+    // transparent window (RunWidgetInteractiveApp(transparent: true)); in an
+    // ordinary one there is no hole to fill and it draws flat.
+    WindowBackdrop
 }
 
 enum SurfaceShape {
@@ -387,6 +397,7 @@ function foundationMaterial(material: borrow Material) -> KiraUIFoundation.Found
         Flat -> return KiraUIFoundation.FoundationMaterial.Flat;
         Frosted -> return KiraUIFoundation.FoundationMaterial.Frosted;
         LayeredGlass -> return KiraUIFoundation.FoundationMaterial.LiquidGlass;
+        WindowBackdrop -> return KiraUIFoundation.FoundationMaterial.WindowBackdrop;
     }
 }
 
@@ -444,6 +455,8 @@ function cardFill(material: borrow Material) -> KiraUIFoundation.Color {
             b: 1.0
             a: 0.18
         };
+        // The compositor fills it; the surface paints nothing of its own.
+        WindowBackdrop -> return transparentFoundationColor();
     }
 }
 
@@ -467,6 +480,7 @@ function cardBorder(material: borrow Material) -> KiraUIFoundation.Color {
             b: 1.0
             a: 0.20
         };
+        WindowBackdrop -> return transparentFoundationColor();
     }
 }
 
@@ -474,6 +488,7 @@ function cardEffects(material: borrow Material) -> [KiraUIFoundation.FoundationE
     match material {
         Flat -> return [];
         Frosted -> return [];
+        WindowBackdrop -> return [];
         LayeredGlass -> return [
             KiraUIFoundation.FoundationEffect.LayerGlow(KiraUIFoundation.Glow {
                 color: KiraUIFoundation.Color {
@@ -1464,40 +1479,49 @@ Widget Circle() {
     }
 }
 
-Widget LinearGradient(start: Color, end: Color) {
+// Which way a gradient runs. The application names a direction rather than an
+// angle, because these are the ones a layout can answer without knowing how
+// large the surface came out — an angle over a box whose aspect changes is a
+// gradient that shears when the window is resized.
+enum GradientDirection {
+    Down
+    Across
+    Diagonal
+}
+
+function foundationGradient(direction: borrow GradientDirection) -> KiraUIFoundation.FoundationGradient {
+    match direction {
+        Down -> return KiraUIFoundation.FoundationGradient.Down;
+        Across -> return KiraUIFoundation.FoundationGradient.Across;
+        Diagonal -> return KiraUIFoundation.FoundationGradient.Diagonal;
+    }
+}
+
+// A fade from one colour to another, across the space it is given.
+//
+//     LinearGradient(start: colorPurple(), end: colorBlue())
+//     LinearGradient(start: top, end: bottom, direction: .Across)
+//
+// ONE surface, blended per corner by the compositor. It used to be a column of
+// twelve strips, which is twelve quads, a visible band at every seam, and a
+// gradient that could only ever run downwards.
+Widget LinearGradient(
+    start: Color,
+    end: Color,
+    direction: GradientDirection = GradientDirection.Down,
+    radius: CornerRadius = CornerRadius.None,
+) {
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let ignored = context.viewport.width
-        var strips: [KiraUIFoundation.FoundationView] = []
-        var index = 0
-        while index < 12 {
-            let ratio = intAsFloat(value: index) / 11.0
-                let color = modifierSurfaceFill(foundationColor(lerpColor(start, end, ratio)), modifiers)
-            let strip = Surface(
-                children: [],
-                width: KiraUIFoundation.SizeMode.Fill,
-                height: KiraUIFoundation.SizeMode.Fill,
-                flex: 1,
-                fill: move color,
-                border: transparentFoundationColor(),
-                borderWidth: 0.0,
-                radius: 0.0,
-                shape: KiraUIFoundation.FoundationShape.RegularRoundedRect,
-                material: KiraUIFoundation.FoundationMaterial.Flat,
-                effects: [],
-                padding: KiraUIFoundation.EdgeInsets {},
-                clipContent: false
-            )
-            strips.append(move strip)
-            index = index + 1
+        return KiraUIFoundation.FoundationView {
+            kind: KiraUIFoundation.FoundationViewKind.Surface
+            width: KiraUIFoundation.SizeMode.Fill
+            height: KiraUIFoundation.SizeMode.Fill
+            fill: modifierColor(foundationColor(start), modifiers)
+            fillEnd: modifierColor(foundationColor(end), modifiers)
+            gradient: foundationGradient(direction)
+            radius: cornerRadiusImplementation(radius, modifiers)
         }
-        return Column(
-            children: move strips,
-            width: KiraUIFoundation.SizeMode.Fill,
-            height: KiraUIFoundation.SizeMode.Fill,
-            spacing: 0.0,
-            padding: KiraUIFoundation.EdgeInsets {},
-            crossAxisAlignment: KiraUIFoundation.CrossAlignment.Stretch
-        )
     }
 }
 
