@@ -311,7 +311,40 @@ function iconView(
         color: move ink
         size: size
         baseline: iconBaseline(size, modifiers)
+        weightGrowth: iconWeightGrowth(size, modifiers)
     }
+}
+
+// How much heavier than drawn this glyph is.
+//
+// The symbol library is one weight — a hairline outline — and the type around it
+// is not. Beside a semibold headline, an unthickened symbol is a different,
+// lighter object standing near the words rather than a character in the same
+// run: the stems say one thing and the outline says another, and no amount of
+// aligning it fixes that. So the artwork is grown outward until its stroke
+// matches the stems it stands with.
+//
+// The library's stroke is 16 of its 256 units. A regular face's stem is about a
+// twelfth of the cap band, and a heavier one thickens roughly with its weight —
+// the difference, halved (growth applies to both sides of a stroke), is what the
+// glyph has to gain.
+function iconWeightGrowth(size: Float, modifiers: borrow ModifierContext) -> Float {
+    let drawn = size * 0.0625
+    let wanted = iconCapBand(modifiers) * iconStemRatio(iconTypeWeight(modifiers))
+    if wanted <= drawn {
+        return 0.0
+    }
+    return (wanted - drawn) / 2.0
+}
+
+// A stem, as a fraction of the cap band, at a given weight.
+//
+// 400 is the face's regular cut, and at that weight the answer is what the
+// library already draws — a regular symbol beside regular words needs no
+// thickening at all. Heavier cuts thicken faster than their weight number does,
+// which is why the slope is steeper than one.
+function iconStemRatio(weight: Float) -> Float {
+    return 0.09 * (1.0 + 1.7 * (weight / 400.0 - 1.0))
 }
 
 // Where a glyph asks to sit when the row it is in lines its children up on the
