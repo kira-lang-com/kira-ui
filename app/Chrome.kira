@@ -266,7 +266,21 @@ function listRowModifiers(modifiers: borrow ModifierContext, selected: Bool) -> 
     if selected == false {
         return modifierContextApply(modifiers, ModifierDelta {})
     }
-    return modifierContextApply(modifiers, modifierDeltaForegroundColor(PrimaryColor.White))
+    return modifierContextApply(modifiers, modifierDeltaForegroundColor(listRowSelectedInk(modifiers)))
+}
+
+// The ink a selected row is set in.
+//
+// A selection band is one of two things, and the theme says which by the ALPHA
+// it gives the token: a filled bar, which the row's content has to invert
+// against, or a wash over the surface, which it must not — white on a pale wash
+// is a row a light interface cannot read. Hardcoding the inverse ink here is
+// what made the selected row disappear the moment a theme washed its selection.
+function listRowSelectedInk(modifiers: borrow ModifierContext) -> PrimaryColor {
+    if modifierTokens(modifiers).fill.selection.a >= 0.6 {
+        return PrimaryColor.Inverse
+    }
+    return PrimaryColor.Primary
 }
 
 function listRowSurface(selected: Bool) -> BackgroundStyle {
