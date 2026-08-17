@@ -74,10 +74,6 @@ struct ControlMetricsImplementation {
     let toggleHeight: Float = 22.0
     // The track's inset around its knob.
     let toggleInset: Float = 2.0
-    let iconSmall: Float = 12.0
-    let iconMedium: Float = 16.0
-    let iconLarge: Float = 20.0
-    let iconExtraLarge: Float = 26.0
     // A two-dimensional value pad: its size, its knob, and the ruler along its
     // bottom edge.
     let padWidth: Float = 168.0
@@ -128,10 +124,6 @@ struct StyleMetricTokens {
         toggleWidth: 26.0
         toggleHeight: 15.0
         toggleInset: 1.5
-        iconSmall: 9.0
-        iconMedium: 11.0
-        iconLarge: 14.0
-        iconExtraLarge: 18.0
         padWidth: 128.0
         padHeight: 68.0
         padKnob: 8.0
@@ -163,10 +155,6 @@ struct StyleMetricTokens {
         toggleWidth: 34.0
         toggleHeight: 20.0
         toggleInset: 2.0
-        iconSmall: 11.0
-        iconMedium: 14.0
-        iconLarge: 17.0
-        iconExtraLarge: 22.0
         padWidth: 148.0
         padHeight: 84.0
         padKnob: 9.0
@@ -199,10 +187,6 @@ struct StyleMetricTokens {
         toggleWidth: 44.0
         toggleHeight: 26.0
         toggleInset: 2.0
-        iconSmall: 14.0
-        iconMedium: 18.0
-        iconLarge: 24.0
-        iconExtraLarge: 32.0
         padWidth: 196.0
         padHeight: 112.0
         padKnob: 12.0
@@ -239,13 +223,47 @@ function resolvedControlMetrics(modifiers: borrow ModifierContext) -> ControlMet
     return controlMetricsImplementation(modifiers.controlSize, modifiers)
 }
 
+// How large a glyph is drawn here: by the TYPE it stands in, the way a symbol
+// is on the platform.
+//
+// A symbol is a character in the run beside it — a folder before a headline is
+// headline-sized, and the two share a cap band. The size class used to answer
+// this out of its own table, which is how a 14-point glyph ended up against
+// 17-point type: a size class is not a font size, and no arithmetic between the
+// two tables can make one track the other. There is no icon size in the metrics
+// table any more, because there is nothing left for it to say.
 function iconScaleSize(scale: IconScale, modifiers: borrow ModifierContext) -> Float {
-    let metrics = resolvedControlMetrics(modifiers)
+    return iconScaleFactor(scale) * iconTypeSize(modifiers)
+}
+
+// The type a glyph is standing in, resolved through exactly the order a run of
+// text resolves its own size — so a glyph in a `.headline` is headline-sized, a
+// glyph in a `.font(...)` is that font's, and a glyph in neither is body-sized
+// like the words it stands with.
+function iconTypeSize(modifiers: borrow ModifierContext) -> Float {
+    if modifiers.hasFont {
+        return modifiers.fontSize
+    }
+    if modifiers.hasTypography {
+        return typographyImplementation(modifiers.typography, modifiers).size
+    }
+    return modifierTokens(modifiers).bodySize
+}
+
+// The scale steps, relative to the type.
+//
+// A medium glyph is drawn slightly LARGER than the type it stands in, because a
+// glyph's box is not its ink: a symbol's artwork is inset inside its box, while
+// a run of text fills its own from ascender to descender. Matched box for box, a
+// symbol reads as the small thing beside the words. These are the factors that
+// put a symbol's ink on the same band as the text's — which is what a person
+// means when they say the two line up.
+function iconScaleFactor(scale: borrow IconScale) -> Float {
     match scale {
-        Small -> return metrics.iconSmall;
-        Medium -> return metrics.iconMedium;
-        Large -> return metrics.iconLarge;
-        ExtraLarge -> return metrics.iconExtraLarge;
+        Small -> return 0.95;
+        Medium -> return 1.2;
+        Large -> return 1.45;
+        ExtraLarge -> return 1.8;
     }
 }
 
