@@ -296,6 +296,17 @@ function iconInkAspect(svg: borrow String) -> Float {
     return KiraUIFoundation.foundationIconInkAspect(svg)
 }
 
+// How much of its own box a symbol's drawing covers, and the share above which
+// it counts as drawn SOLID rather than stroked. An outline leaves most of its
+// box empty; a filled shape does not.
+function iconInkDensity(svg: borrow String) -> Float {
+    return KiraUIFoundation.foundationIconInkDensity(svg)
+}
+
+function iconSolidDensity() -> Float {
+    return 0.4
+}
+
 function iconView(
     svg: String,
     size: Float,
@@ -319,7 +330,13 @@ function iconView(
     // the line a letter sits on — the two things that made a symbol beside a
     // word look like a picture placed near it.
     let aspect = iconInkAspect(svg)
-    let growth = iconWeightGrowth(size, modifiers)
+    var growth = 0.0
+    // Only a STROKED symbol is thickened. A solid one — a cursor, a filled
+    // marker — has no stems to match against the type beside it, and growing it
+    // just swells the shape until it reads as a blob.
+    if iconInkDensity(svg) < iconSolidDensity() {
+        growth = iconWeightGrowth(size, modifiers)
+    }
     return KiraUIFoundation.FoundationView {
         kind: KiraUIFoundation.FoundationViewKind.Icon
         content: move svg
