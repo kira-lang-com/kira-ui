@@ -288,28 +288,12 @@ Widget Artwork(svg: String, scale: IconScale = IconScale.Medium, points: Float =
     }
 }
 
-// A symbol's own metrics: where its ink begins and ends inside its box, as
-// fractions of that box. Asked per symbol, because a library is not one shape —
-// a folder fills the middle of its canvas, an open folder is drawn lower and
-// shorter — and one assumed margin puts each of them somewhere slightly
-// different against the words beside it.
-function iconInkTop(svg: borrow String) -> Float {
-    return KiraUIFoundation.foundationIconInkTop(svg)
-}
-
-function iconInkBottom(svg: borrow String) -> Float {
-    return KiraUIFoundation.foundationIconInkBottom(svg)
-}
-
-// The box that puts THIS symbol's ink on the cap band, and the line its ink
-// then sits on. Both from the same two measurements, so a symbol cannot be the
-// right size and the wrong height at once.
-function iconBoxForBand(svg: borrow String, band: Float) -> Float {
-    let ink = iconInkBottom(svg) - iconInkTop(svg)
-    if ink <= 0.0 {
-        return band
-    }
-    return band / ink
+// A symbol's own metrics. The library is not one shape — a folder is wider than
+// it is tall, a chevron is narrower — so the one thing a caller needs is how the
+// ink is SHAPED; where it sits inside the canvas it was drawn on is the icon
+// engine's business now, because the engine trims that margin away.
+function iconInkAspect(svg: borrow String) -> Float {
+    return KiraUIFoundation.foundationIconInkAspect(svg)
 }
 
 function iconView(
@@ -329,18 +313,20 @@ function iconView(
     if modifiers.hasTextColor {
         ink = modifierColor(foundationColor(modifiers.textColor), modifiers)
     }
-    // The box is this SYMBOL's, not the size class's: `size` asked for a band,
-    // and how large a box puts this artwork's ink on that band is a question
-    // only the artwork can answer.
-    let box = iconBoxForBand(svg, size)
-    let line = box * iconInkBottom(svg)
+    // The box IS the ink: `size` is the band the glyph's drawing fills, and the
+    // width follows from the shape of that drawing. There is no canvas margin
+    // left in it, so the glyph starts where a letter starts and its bottom is
+    // the line a letter sits on — the two things that made a symbol beside a
+    // word look like a picture placed near it.
+    let aspect = iconInkAspect(svg)
     let growth = iconWeightGrowth(size, modifiers)
     return KiraUIFoundation.FoundationView {
         kind: KiraUIFoundation.FoundationViewKind.Icon
         content: move svg
         color: move ink
-        size: box
-        baseline: line
+        size: size
+        iconWidth: size * aspect
+        baseline: size
         weightGrowth: growth
     }
 }
