@@ -1245,6 +1245,13 @@ Widget Button(
     }
 }
 
+// Whether a fill is dark enough that light ink reads on it. The usual weighted
+// luminance, so a saturated accent answers the way the eye does rather than the
+// way an average of three channels would.
+function colorIsDark(fill: borrow KiraUIFoundation.Color) -> Bool {
+    return (0.2126 * fill.r + 0.7152 * fill.g + 0.0722 * fill.b) < 0.5
+}
+
 function buttonView(
     context: borrow KiraUIFoundation.FoundationUiContext,
     modifiers: borrow ModifierContext,
@@ -1253,12 +1260,18 @@ function buttonView(
     label: String,
     fill: KiraUIFoundation.Color,
 ) -> KiraUIFoundation.FoundationView {
-    // A filled button's default label is the inverse ink, not white — white on
-    // a light theme's control fill is unreadable every time. An explicit
-    // `.foregroundColor(...)` or `.textColor(...)` on the button wins.
+    // A filled button's default label is whichever ink the FILL can be read
+    // against: the inverse ink over a light fill, the ordinary ink over a dark
+    // one. Naming one of them outright is how a label ends up dark grey on a
+    // dark control — legible on the theme it was written against and invisible
+    // on the next one. An explicit `.foregroundColor(...)` or `.textColor(...)`
+    // on the button still wins.
     var labelModifiers = modifierContextForPresentation(modifiers)
     if modifiers.hasForegroundColor == false && modifiers.hasTextColor == false {
-        let labelColor = modifierTokens(modifiers).foreground.inverse
+        var labelColor = modifierTokens(modifiers).foreground.inverse
+        if colorIsDark(fill) {
+            labelColor = modifierTokens(modifiers).foreground.primary
+        }
         let labelDelta = modifierDeltaTextColor(move labelColor)
         labelModifiers = modifierContextApply(labelModifiers, move labelDelta)
     }
