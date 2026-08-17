@@ -651,6 +651,7 @@ Widget NavigationSplitView(
         // was declared to here, and the bar is assembled once every column has
         // had its say.
         kiraUiToolbarCollect()
+        kiraUiInspectorCollect()
         kiraUiToolbarEnterColumn(kiraUiToolbarSidebarColumn())
         let sidebarView = sidebar.lower(context, modifiers)
         kiraUiToolbarEnterColumn(kiraUiToolbarContentColumn())
@@ -658,6 +659,7 @@ Widget NavigationSplitView(
         kiraUiToolbarEnterColumn(kiraUiToolbarDetailColumn())
         let detailView = detail.lower(context, modifiers)
         kiraUiToolbarStopCollecting()
+        kiraUiInspectorStopCollecting()
         kiraUiNavigationLeave(previous)
 
         if metrics.presentation == NavigationPresentation.Stack {
@@ -695,6 +697,13 @@ Widget NavigationSplitView(
             ))
         }
         columns.append(navigationDetailColumn(move detailView))
+        // The inspector is the trailing column, placed by the window rather than
+        // by the document beside it — `.inspector(...)` says it belongs to the
+        // window exactly as `.toolbar(...)` does.
+        if kiraUiInspectorIsPresented() {
+            let inspectorColumn = InspectorColumn()
+            columns.append(inspectorColumn.lower(context, modifiers))
+        }
         let showsSidebar = navigationShowsSidebar(columnVisibility, hasContent)
         return navigationWindow(
             KiraUIFoundation.Row(
