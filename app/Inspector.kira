@@ -1,0 +1,116 @@
+import Foundation
+import KiraGraphics
+import KiraLayout
+import KiraUIFoundation
+
+// The inspector: the column on the trailing edge of the window.
+//
+// It belongs to the WINDOW, exactly as the toolbar does, and for the same
+// reason. SwiftUI spells it `.inspector(isPresented:) { … }` — a modifier on a
+// view inside the scene, not a box the view packs beside its own content —
+// because an inspector is a column of the window: it runs the window's height,
+// it sits outside the document rather than inside it, and it is shown and hidden
+// as a whole. A document that laid one out beside itself would be a document
+// deciding the window's shape.
+//
+//     DocumentView()
+//         .inspector(isPresented = workspace().hasSelection()) {
+//             ItemInspector()
+//         }
+//
+// The content is lowered where it is written — it reads the theme and the size
+// class of the view that declared it — and the view travels up to the split
+// view, which is the thing that owns the columns.
+
+struct KiraUiInspectorSink {
+    var column: [KiraUIFoundation.FoundationView] = []
+    var collecting: Bool = false
+}
+
+function kiraUiInspectorSinkKey() -> String {
+    return "kiraui.inspector.sink"
+}
+
+function kiraUiInspectorSinkEnsure() {
+    if kiraUiStateSlotHas(kiraUiInspectorSinkKey()) == false {
+        kiraUiStateSlotPut(
+            kiraUiInspectorSinkKey(),
+            nativeUserData(nativeState(KiraUiInspectorSink {}))
+        )
+    }
+    return
+}
+
+// Opens collection for the window about to lower its columns, discarding what
+// the last frame left.
+function kiraUiInspectorCollect() {
+    kiraUiInspectorSinkEnsure()
+    var sink = nativeRecover<KiraUiInspectorSink>(kiraUiStateSlotGet(kiraUiInspectorSinkKey()))
+    var empty: [KiraUIFoundation.FoundationView] = []
+    sink.column = move empty
+    sink.collecting = true
+    return
+}
+
+function kiraUiInspectorStopCollecting() {
+    kiraUiInspectorSinkEnsure()
+    var sink = nativeRecover<KiraUiInspectorSink>(kiraUiStateSlotGet(kiraUiInspectorSinkKey()))
+    sink.collecting = false
+    return
+}
+
+function kiraUiInspectorPresent(view: KiraUIFoundation.FoundationView) {
+    kiraUiInspectorSinkEnsure()
+    var sink = nativeRecover<KiraUiInspectorSink>(kiraUiStateSlotGet(kiraUiInspectorSinkKey()))
+    if sink.collecting == false {
+        return
+    }
+    sink.column.append(move view)
+    return
+}
+
+function kiraUiInspectorIsPresented() -> Bool {
+    kiraUiInspectorSinkEnsure()
+    let sink = nativeRecover<KiraUiInspectorSink>(kiraUiStateSlotGet(kiraUiInspectorSinkKey()))
+    return sink.column.count > 0
+}
+
+// The inspector column, as the window places it: the width the metrics table
+// says an inspector is, the window's full height under the bar.
+Widget InspectorColumn() {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let metrics = resolvedControlMetrics(modifiers)
+        let sink = nativeRecover<KiraUiInspectorSink>(kiraUiStateSlotGet(kiraUiInspectorSinkKey()))
+        let column = VStack(spacing: Spacing.None) {
+            For(view in sink.column) {
+                FoundationRaw(view: view)
+            }
+        }
+        .width(metrics.inspectorWidth)
+        .fillHeight()
+        return column.lower(context, modifiers)
+    }
+}
+
+extend Widget {
+    // The inspector this view puts on the window's trailing edge, matching
+    // SwiftUI's `.inspector(isPresented:)`. An inspector nobody asked for is not
+    // built at all, and the columns beside it take the width back.
+    function inspector(isPresented: Bool = true, content: Any Widget) -> Any Widget {
+        return InspectorLayer(isPresented: isPresented, content: content) {
+            self
+        }
+    }
+}
+
+Widget InspectorLayer(isPresented: Bool = true, content: Any Widget) {
+    let subject: some Widget
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let childModifiers = modifierContextForChildren(modifiers)
+        if isPresented {
+            kiraUiInspectorPresent(content.lower(context, childModifiers))
+        }
+        return subject.lower(context, childModifiers)
+    }
+}
