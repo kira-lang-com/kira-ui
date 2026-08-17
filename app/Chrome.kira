@@ -3,65 +3,21 @@ import KiraGraphics
 import KiraLayout
 import KiraUIFoundation
 
-// Window chrome: the toolbar across the top, the source list beside the
-// document, and the boxes a chrome glyph sits in.
+// Window chrome: the source list beside the document, and the boxes a chrome
+// glyph sits in.
 //
 // These are the parts of a document window that every document window has, and
 // the parts hardest to get right by hand because none of their sizes are
-// content-derived: a toolbar is 44 points tall because that is what a toolbar
-// is, and an application that has to say so is an application that will say
+// content-derived: a source list row is 34 points tall because that is what a
+// row is, and an application that has to say so is an application that will say
 // something slightly different in its next window.
+//
+// The bar across the top is not here, and no widget builds one: it belongs to
+// the window, which is `NavigationSplitView`, and a view says what goes on it
+// with `.toolbar(...)`. See `Toolbar.kira`.
 //
 // There is no button widget here, and there should not be. A glyph that can be
 // pressed is a glyph with `.onClick(...)` on it.
-
-// --- Toolbar -----------------------------------------------------------------
-
-// The bar across the top of a window: its items across the size class's toolbar
-// height, inset from the window edge.
-// `background` is what lets a bar sit at the top of a column that paints itself:
-// a toolbar over a frosted sidebar has to be `.Clear`, or the column's material
-// stops at the bar and the window grows a seam across its top.
-Widget Toolbar(
-    spacing: Spacing = Spacing.Medium,
-    background: BackgroundStyle = BackgroundStyle.Surface,
-) {
-    let children: [some Widget]
-
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
-        let metrics = resolvedControlMetrics(modifiers)
-        let items = HStack(spacing: spacing, alignment: VerticalAlignment.Center) {
-            For(item in children) {
-                item
-            }
-        }
-        // The size class's height is a floor, not a cap: a control taller than
-        // the bar it sits on — a search field, a segmented picker — grows the
-        // bar instead of hanging out of both its edges.
-        let bar = Panel(radius: CornerRadius.None) {
-            FoundationRaw(view: Frame(
-                items.lower(context, modifiers),
-                KiraUIFoundation.SizeMode.Fill,
-                KiraUIFoundation.SizeMode.Hug,
-                0,
-                KiraUIFoundation.Alignment.Center,
-                KiraUIFoundation.EdgeInsets {
-                    leading: metrics.toolbarInset
-                    trailing: metrics.toolbarInset
-                }
-            ))
-        }
-        .backgroundStyle(background)
-        return FoundationRaw(view: Frame(
-            bar.lower(context, modifiers),
-            KiraUIFoundation.SizeMode.Fill,
-            KiraUIFoundation.SizeMode.Min(metrics.toolbarHeight),
-            0,
-            KiraUIFoundation.Alignment.Center,
-            KiraUIFoundation.EdgeInsets {}
-        )).lower(context, modifiers)
-    }
-}
 
 // The three window controls, in the standard order and the standard colours.
 Widget WindowControls(spacing: Spacing = Spacing.Small) {
