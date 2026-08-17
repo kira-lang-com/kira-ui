@@ -191,6 +191,11 @@ Widget ListRow(
 
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let metrics = resolvedControlMetrics(modifiers)
+        // The row FILLS its list rather than hugging its content, and holds it
+        // against the leading edge. A Spacer of its own would be one the caller
+        // cannot see: a row that ends with `Spacer()` and a trailing count would
+        // then have two of them, and the two would split the slack between them
+        // — which is how a right-hand count ends up in the middle of the row.
         let content = HStack(spacing: spacing, alignment: VerticalAlignment.Center) {
             if level > 0 {
                 FixedGap(width: intAsFloat(value: level) * metrics.listIndent, height: 1.0)
@@ -199,21 +204,37 @@ Widget ListRow(
             For(item in children) {
                 item
             }
-
-            Spacer()
         }
-        let row = FoundationRaw(view: Frame(
+        // The row's CONTENT starts at the column's margin, like everything else in
+        // the column — the bar above it, the header over the list. The selection
+        // band is what is inset instead: it is held off the column's edge by half
+        // that margin, so a selected row reads as a pill inside the column rather
+        // than as a stripe across it, and the text inside it does not move when it
+        // becomes selected.
+        let bandInset = metrics.contentMargin / 2.0
+        let band = FoundationRaw(view: Frame(
             content.lower(context, listRowModifiers(modifiers, selected)),
             KiraUIFoundation.SizeMode.Fill,
             KiraUIFoundation.SizeMode.Fixed(metrics.listRowHeight),
             0,
             KiraUIFoundation.Alignment.Leading,
             KiraUIFoundation.EdgeInsets {
-                leading: metrics.listInset
-                trailing: metrics.listInset
+                leading: metrics.contentMargin - bandInset
+                trailing: metrics.contentMargin - bandInset
             }
         ))
         .background(BackgroundFill(style: listRowSurface(selected), radius: CornerRadius.Small))
+        let row = FoundationRaw(view: Frame(
+            band.lower(context, modifiers),
+            KiraUIFoundation.SizeMode.Fill,
+            KiraUIFoundation.SizeMode.Hug,
+            0,
+            KiraUIFoundation.Alignment.Leading,
+            KiraUIFoundation.EdgeInsets {
+                leading: bandInset
+                trailing: bandInset
+            }
+        ))
         return row.lower(context, modifiers)
     }
 }

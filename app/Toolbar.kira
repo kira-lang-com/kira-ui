@@ -278,8 +278,8 @@ function toolbarSection(
         0,
         KiraUIFoundation.Alignment.Center,
         KiraUIFoundation.EdgeInsets {
-            leading: metrics.toolbarInset
-            trailing: metrics.toolbarInset
+            leading: metrics.contentMargin
+            trailing: metrics.contentMargin
         }
     )
 }
@@ -323,15 +323,50 @@ function toolbarDocumentRow(
     context: borrow KiraUIFoundation.FoundationUiContext,
     modifiers: borrow ModifierContext,
 ) -> KiraUIFoundation.FoundationView {
+    // The sidebar's own items lead this row only when there is no sidebar column
+    // for them to sit over. Written as one branch INSIDE the row, the empty case
+    // still stands a child in it — and a stack puts a gap before the next one,
+    // which is how the document's first glyph ended up a gap further in than the
+    // sidebar's title.
+    if hasNavigationColumn == false {
+        return toolbarCollapsedRow(sink, context, modifiers)
+    }
     let row = HStack(spacing: Spacing.Medium, alignment: VerticalAlignment.FirstTextBaseline) {
-        if hasNavigationColumn == false {
-            if sink.sidebarTitle.count > 0 {
-                ToolbarTitle(text: copy sink.sidebarTitle)
-            }
+        if sink.detailTitle.count > 0 {
+            ToolbarTitle(text: copy sink.detailTitle)
+        }
 
-            For(item in sink.navigation) {
-                FoundationRaw(view: item)
-            }
+        For(item in sink.principal) {
+            FoundationRaw(view: item)
+        }
+
+        Spacer()
+
+        For(item in sink.automatic) {
+            FoundationRaw(view: item)
+        }
+
+        For(item in sink.primaryAction) {
+            FoundationRaw(view: item)
+        }
+    }
+    return row.lower(context, modifiers)
+}
+
+// The same row on a window with no sidebar column: the sidebar's title and items
+// lead it, ahead of the document's own.
+function toolbarCollapsedRow(
+    sink: borrow KiraUiToolbarSink,
+    context: borrow KiraUIFoundation.FoundationUiContext,
+    modifiers: borrow ModifierContext,
+) -> KiraUIFoundation.FoundationView {
+    let row = HStack(spacing: Spacing.Medium, alignment: VerticalAlignment.FirstTextBaseline) {
+        if sink.sidebarTitle.count > 0 {
+            ToolbarTitle(text: copy sink.sidebarTitle)
+        }
+
+        For(item in sink.navigation) {
+            FoundationRaw(view: item)
         }
 
         if sink.detailTitle.count > 0 {
