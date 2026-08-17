@@ -315,25 +315,16 @@ function iconView(
 }
 
 // Where a glyph asks to sit when the row it is in lines its children up on the
-// text's baseline.
+// text's baseline: with its INK on that line, the way a capital letter does.
 //
-// Not ON the baseline, and not centred on the row either. A word's visual mass
-// is its x-height band — most letters have neither ascender nor descender — so a
-// symbol whose ink is centred on that band reads as level with the word, while
-// one sitting on the baseline reads as floating above it (its ink runs from the
-// ascender height down to the line, which no letter beside it does).
-//
-// The x-height is measured from the face rather than assumed: `x` has no
-// ascender, no descender, and no overshoot to speak of, so the top of its ink is
-// the height of the band. The glyph's artwork is centred in its own box, which
-// is why the answer is half a box plus half a band below the top.
+// The artwork is inset inside its own box, so the box has to reach past the line
+// by that margin — a box whose bottom EDGE sat on the baseline would hang its
+// drawing above the line, which is the "floating" a glyph beside a word must
+// never do. Sized on the cap band and sitting on the line, a symbol occupies
+// exactly the band a capital does, and there is nothing left to line up.
 function iconBaseline(size: Float, modifiers: borrow ModifierContext) -> Float {
-    let typeSize = iconTypeSize(modifiers)
-    let xHeight = KiraUIFoundation.foundationTextRunInkTop("x", typeSize, iconTypeWeight(modifiers))
-    if xHeight <= 0.0 {
-        return size
-    }
-    return size / 2.0 + xHeight / 2.0
+    let ignored = iconTypeSize(modifiers)
+    return size * (1.0 - iconArtworkInset())
 }
 
 // The weight the words beside the glyph are set at, so the band is measured on

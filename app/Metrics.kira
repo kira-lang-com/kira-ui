@@ -223,17 +223,52 @@ function resolvedControlMetrics(modifiers: borrow ModifierContext) -> ControlMet
     return controlMetricsImplementation(modifiers.controlSize, modifiers)
 }
 
-// How large a glyph is drawn here: by the TYPE it stands in, the way a symbol
-// is on the platform.
+// How large a glyph is drawn here: by the CAP HEIGHT of the type it stands in,
+// the way a symbol is on the platform.
 //
-// A symbol is a character in the run beside it — a folder before a headline is
-// headline-sized, and the two share a cap band. The size class used to answer
-// this out of its own table, which is how a 14-point glyph ended up against
-// 17-point type: a size class is not a font size, and no arithmetic between the
-// two tables can make one track the other. There is no icon size in the metrics
-// table any more, because there is nothing left for it to say.
+// A symbol is a character in the run beside it. What makes it look like one is
+// that its ink runs from the cap line to the baseline — exactly the band a
+// capital letter occupies — so the glyph and the words are the same object at
+// the same size, not a picture placed near some text.
+//
+// Cap height, not point size: a font's point size is its whole line box,
+// ascender to descender, and a glyph drawn that tall stands above the capitals
+// and hangs below the baseline. The size class used to answer this out of its
+// own table, which is how a 14-point glyph ended up beside 17-point type — a
+// size class is not a font size, and no arithmetic between the two tables makes
+// one track the other. There is no icon size in the metrics table any more.
 function iconScaleSize(scale: IconScale, modifiers: borrow ModifierContext) -> Float {
-    return iconScaleFactor(scale) * iconTypeSize(modifiers)
+    return iconScaleFactor(scale) * iconCapSize(modifiers)
+}
+
+// The box that puts a glyph's INK on the cap band.
+//
+// A symbol's artwork does not fill its box: the drawing is inset inside the
+// canvas it is authored on, the same margin on every side. So the box has to be
+// bigger than the band by exactly that margin, twice — ask for a box the height
+// of the capitals and the ink lands a margin short of them at both ends.
+function iconCapSize(modifiers: borrow ModifierContext) -> Float {
+    let band = iconCapBand(modifiers)
+    if band <= 0.0 {
+        return iconTypeSize(modifiers)
+    }
+    return band / (1.0 - 2.0 * iconArtworkInset())
+}
+
+// The cap band of the type in effect, measured from the face: `H` reaches the
+// cap line and sits on the baseline, so the top of its ink IS the band.
+function iconCapBand(modifiers: borrow ModifierContext) -> Float {
+    return KiraUIFoundation.foundationTextRunInkTop("H", iconTypeSize(modifiers), iconTypeWeight(modifiers))
+}
+
+// How far a symbol's drawing is held off its own canvas, as a fraction of that
+// canvas. One number for the whole library, because the library is authored on
+// one canvas: every symbol is drawn on 256 units with its artwork inside the
+// middle 176 of them, so the margin is 40/256 on each side. A symbol that kept
+// its own margin would be a symbol that lined up differently from every other
+// one.
+function iconArtworkInset() -> Float {
+    return 0.15625
 }
 
 // The type a glyph is standing in, resolved through exactly the order a run of
@@ -250,20 +285,14 @@ function iconTypeSize(modifiers: borrow ModifierContext) -> Float {
     return modifierTokens(modifiers).bodySize
 }
 
-// The scale steps, relative to the type.
-//
-// A medium glyph is drawn slightly LARGER than the type it stands in, because a
-// glyph's box is not its ink: a symbol's artwork is inset inside its box, while
-// a run of text fills its own from ascender to descender. Matched box for box, a
-// symbol reads as the small thing beside the words. These are the factors that
-// put a symbol's ink on the same band as the text's — which is what a person
-// means when they say the two line up.
+// The scale steps, against the cap band: a medium glyph IS the capitals beside
+// it, and the steps either side are the ones the platform's symbol scales take.
 function iconScaleFactor(scale: borrow IconScale) -> Float {
     match scale {
-        Small -> return 0.95;
-        Medium -> return 1.2;
-        Large -> return 1.45;
-        ExtraLarge -> return 1.8;
+        Small -> return 0.85;
+        Medium -> return 1.0;
+        Large -> return 1.2;
+        ExtraLarge -> return 1.5;
     }
 }
 
