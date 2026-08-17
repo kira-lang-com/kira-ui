@@ -61,6 +61,11 @@ struct KiraUiToolbarSink {
     // are set the same way without either column saying so.
     var sidebarTitle: String = ""
     var detailTitle: String = ""
+    // What each column holds its content off its edges by, so the SECTION over a
+    // column starts where that column's own content starts. A negative value is
+    // "the column did not say", and the size class answers instead.
+    var sidebarMargin: Float = 0.0 - 1.0
+    var detailMargin: Float = 0.0 - 1.0
     // Which column is being lowered, so a title declared inside one lands in the
     // section over it: 0 the sidebar, 1 the content, 2 the detail.
     var column: Int = 0
@@ -113,6 +118,8 @@ function kiraUiToolbarCollect() {
     sink.automatic = move automatic
     sink.sidebarTitle = ""
     sink.detailTitle = ""
+    sink.sidebarMargin = 0.0 - 1.0
+    sink.detailMargin = 0.0 - 1.0
     sink.column = kiraUiToolbarSidebarColumn()
     sink.collecting = true
     return
@@ -140,6 +147,21 @@ function kiraUiToolbarSetTitle(title: String) {
         return
     }
     sink.detailTitle = move title
+    return
+}
+
+// What the column being lowered holds its content off its edges by.
+function kiraUiToolbarSetMargin(margin: Float) {
+    kiraUiToolbarSinkEnsure()
+    var sink = nativeRecover<KiraUiToolbarSink>(kiraUiStateSlotGet(kiraUiToolbarSinkKey()))
+    if sink.collecting == false {
+        return
+    }
+    if sink.column == kiraUiToolbarSidebarColumn() {
+        sink.sidebarMargin = margin
+        return
+    }
+    sink.detailMargin = margin
     return
 }
 
@@ -227,7 +249,7 @@ Widget WindowToolbar(navigationWidth: Float, hasNavigationColumn: Bool) {
             sections.append(toolbarSection(
                 toolbarItemsRow(sink.sidebarTitle, sink.navigation, context, modifiers),
                 KiraUIFoundation.SizeMode.Fixed(navigationWidth),
-                metrics
+                toolbarMargin(sink.sidebarMargin, metrics)
             ))
         }
         // With no sidebar to sit over — a window collapsed to a stack — the
@@ -237,7 +259,7 @@ Widget WindowToolbar(navigationWidth: Float, hasNavigationColumn: Bool) {
         sections.append(toolbarSection(
             toolbarDocumentRow(sink, hasNavigationColumn, context, modifiers),
             KiraUIFoundation.SizeMode.Fill,
-            metrics
+            toolbarMargin(sink.detailMargin, metrics)
         ))
         // The size class's height is a floor, not a cap: a control taller than
         // the bar — a search field, a segmented picker — grows the bar rather
@@ -264,12 +286,22 @@ Widget WindowToolbar(navigationWidth: Float, hasNavigationColumn: Bool) {
     }
 }
 
+// What a section insets its items by: the margin the column under it stated, and
+// the size class's own when that column said nothing.
+function toolbarMargin(declared: Float, metrics: borrow ControlMetricsImplementation) -> Float {
+    if declared < 0.0 {
+        return metrics.contentMargin
+    }
+    return declared
+}
+
 // One section of the bar: its items centred across the toolbar's height, inset
-// from the window's edge the way every toolbar's items are.
+// by the margin the column beneath it holds ITS content off its edges by — so
+// the bar starts where the column starts, whatever that column decided.
 function toolbarSection(
     items: KiraUIFoundation.FoundationView,
     width: KiraUIFoundation.SizeMode,
-    metrics: borrow ControlMetricsImplementation,
+    margin: Float,
 ) -> KiraUIFoundation.FoundationView {
     return KiraUIFoundation.Frame(
         move items,
@@ -278,8 +310,8 @@ function toolbarSection(
         0,
         KiraUIFoundation.Alignment.Center,
         KiraUIFoundation.EdgeInsets {
-            leading: metrics.contentMargin
-            trailing: metrics.contentMargin
+            leading: margin
+            trailing: margin
         }
     )
 }
@@ -420,6 +452,18 @@ extend Widget {
         return NavigationTitleLayer(title: title) {
             self
         }
+    }
+}
+
+Widget ContentMarginLayer(value: Float) {
+    let content: some Widget
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        // The column tells the bar as well as its own contents: the section over
+        // a column is part of that column's leading edge, not the window's.
+        kiraUiToolbarSetMargin(value)
+        let resolved = modifierContextApply(modifiers, modifierDeltaContentMargin(value))
+        return content.lower(context, resolved)
     }
 }
 
