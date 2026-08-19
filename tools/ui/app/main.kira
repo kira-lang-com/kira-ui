@@ -1,0 +1,103 @@
+import Foundation
+import ArgumentParser
+import KiraUI
+import KiraGraphics
+
+// `ui` — the Kira UI command line, over both layers: it runs a tree of KiraUI
+// widgets, which lower onto the UI Foundation, and reads a frame back. Launch and
+// capture are typed flags fed through the foundation's harness, not the
+// KIRA_GRAPHICS_CAPTURE_* / KIRA_UI_* environment variables a driven run used.
+
+// A small gallery of KiraUI widgets, enough to prove both layers draw: the
+// widgets are KiraUI, the column and text they lower to are the Foundation's.
+function uiGalleryApp() -> KiraUIApp {
+    return KiraUIApp(
+        name: "Kira UI Gallery",
+        content: VStack(spacing: Spacing.Small) {
+            Text(content: "Kira UI")
+            Text(content: "UIFoundation + KiraUI")
+            Button(label: "Primary", onPress: { in
+                return
+            })
+            Button(label: "Danger", role: ButtonRole.Destructive, onPress: { in
+                return
+            })
+        }
+    )
+}
+
+@Derive(Parsable)
+struct ShotArguments {
+    let out: String
+    let frames: Int
+    let at: Int
+    let width: Int
+    let height: Int
+}
+
+ParsableCommand ShotCommand {
+    let configuration: CommandConfiguration {
+        return CommandConfiguration(
+            name: "shot",
+            abstract: "Run the widget gallery and capture a frame to a PPM"
+        )
+    }
+
+    let arguments: [ArgumentSpec] {
+        return [
+            option(name: "out", shortName: "o", help: "Destination .ppm for the captured frame"),
+            optionalIntegerOption(name: "frames", shortName: "f", defaultText: "120", help: "Quit after this many frames"),
+            optionalIntegerOption(name: "at", shortName: "a", defaultText: "0", help: "Capture at this frame (0 = the last one drawn)"),
+            optionalIntegerOption(name: "width", shortName: "w", defaultText: "1200", help: "Window width"),
+            optionalIntegerOption(name: "height", shortName: "t", defaultText: "800", help: "Window height")
+        ]
+    }
+
+    function run(arguments: borrow ParsedArguments) -> Int {
+        let parsed = parse_ShotArguments(arguments)
+        var harness = HarnessConfig {}
+        harness = harnessCapture(parsed.out, parsed.at, parsed.frames)
+        RunWidgetInteractiveApp(
+            title = "Kira UI Gallery",
+            width = parsed.width,
+            height = parsed.height,
+            rootBuilder = { in
+                return uiGalleryApp()
+            },
+            engineFrame = kiraUiNoopEngineFrame,
+            showFpsOverlay = false,
+            rebuildOnResize = true,
+            transparent = false,
+            opacity = 1.0,
+            harness = move harness
+        )
+        print("captured " + parsed.out)
+        return 0
+    }
+}
+
+ParsableCommand RootCommand {
+    let configuration: CommandConfiguration {
+        return CommandConfiguration(
+            name: "ui",
+            abstract: "Kira UI command line (UIFoundation + KiraUI)",
+            subcommands: ["shot"]
+        )
+    }
+
+    let arguments: [ArgumentSpec] {
+        return []
+    }
+
+    function run(arguments: borrow ParsedArguments) -> Int {
+        return 0
+    }
+}
+
+@Main
+function main() {
+    let root = RootCommand()
+    let children: [Any ParsableCommand] = [ShotCommand()]
+    runCommandRouter(root, children, commandLineArguments())
+    return
+}
