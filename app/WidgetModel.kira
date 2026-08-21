@@ -713,154 +713,30 @@ function modifierEffects(
     return adjusted
 }
 
-function viewWithSurfaceRadius(view: KiraUIFoundation.FoundationView, radius: Float) -> KiraUIFoundation.FoundationView {
-    return KiraUIFoundation.FoundationView {
-        kind: view.kind
-        key: view.key
-        guides: identityGuides(view.guides)
-        guideLeading: view.guideLeading
-        guideTrailing: view.guideTrailing
-        children: identityChildren(view.children)
-        width: view.width
-        height: view.height
-        flex: view.flex
-        gap: view.gap
-        padding: view.padding
-        crossAxisAlignment: view.crossAxisAlignment
-        alignment: view.alignment
-        fill: view.fill
-        border: view.border
-        borderWidth: view.borderWidth
-        radius: radius
-        shape: view.shape
-        material: view.material
-        effects: identityEffects(view.effects)
-        clipContent: view.clipContent
-        content: view.content
-        color: view.color
-        size: view.size
-        inkLeft: view.inkLeft
-        inkRight: view.inkRight
-        inkTop: view.inkTop
-        inkBottom: view.inkBottom
-        lineHeight: view.lineHeight
-        weight: view.weight
-        disabled: view.disabled
-        focusable: view.focusable
-        autofocus: view.autofocus
-        onPress: view.onPress
-        onTextInput: view.onTextInput
-        onTextCodepoint: view.onTextCodepoint
-        onBackspace: view.onBackspace
-        onSubmit: view.onSubmit
-        onKey: view.onKey
-        onScroll: view.onScroll
-        minLength: view.minLength
-        interaction: view.interaction
-        texture: view.texture
-        textureOpacity: view.textureOpacity
-    }
-}
-
-function viewWithSurfaceShape(view: KiraUIFoundation.FoundationView, shape: SurfaceShape) -> KiraUIFoundation.FoundationView {
-    return KiraUIFoundation.FoundationView {
-        kind: view.kind
-        key: view.key
-        guides: identityGuides(view.guides)
-        guideLeading: view.guideLeading
-        guideTrailing: view.guideTrailing
-        children: identityChildren(view.children)
-        width: view.width
-        height: view.height
-        flex: view.flex
-        gap: view.gap
-        padding: view.padding
-        crossAxisAlignment: view.crossAxisAlignment
-        alignment: view.alignment
-        fill: view.fill
-        border: view.border
-        borderWidth: view.borderWidth
-        radius: view.radius
-        shape: foundationShape(move shape)
-        material: view.material
-        effects: identityEffects(view.effects)
-        clipContent: view.clipContent
-        content: view.content
-        color: view.color
-        size: view.size
-        inkLeft: view.inkLeft
-        inkRight: view.inkRight
-        inkTop: view.inkTop
-        inkBottom: view.inkBottom
-        lineHeight: view.lineHeight
-        weight: view.weight
-        disabled: view.disabled
-        focusable: view.focusable
-        autofocus: view.autofocus
-        onPress: view.onPress
-        onTextInput: view.onTextInput
-        onTextCodepoint: view.onTextCodepoint
-        onBackspace: view.onBackspace
-        onSubmit: view.onSubmit
-        onKey: view.onKey
-        onScroll: view.onScroll
-        minLength: view.minLength
-        interaction: view.interaction
-        texture: view.texture
-        textureOpacity: view.textureOpacity
-    }
-}
-
-function viewWithSurfaceBorder(view: KiraUIFoundation.FoundationView, color: KiraUIFoundation.Color, width: Float) -> KiraUIFoundation.FoundationView {
-    return KiraUIFoundation.FoundationView {
-        kind: view.kind
-        key: view.key
-        guides: identityGuides(view.guides)
-        guideLeading: view.guideLeading
-        guideTrailing: view.guideTrailing
-        children: identityChildren(view.children)
-        width: view.width
-        height: view.height
-        flex: view.flex
-        gap: view.gap
-        padding: view.padding
-        crossAxisAlignment: view.crossAxisAlignment
-        alignment: view.alignment
-        fill: view.fill
-        border: color
-        borderWidth: width
-        radius: view.radius
-        shape: view.shape
-        material: view.material
-        effects: identityEffects(view.effects)
-        clipContent: view.clipContent
-        content: view.content
-        color: view.color
-        size: view.size
-        inkLeft: view.inkLeft
-        inkRight: view.inkRight
-        inkTop: view.inkTop
-        inkBottom: view.inkBottom
-        lineHeight: view.lineHeight
-        weight: view.weight
-        disabled: view.disabled
-        focusable: view.focusable
-        autofocus: view.autofocus
-        onPress: view.onPress
-        onTextInput: view.onTextInput
-        onTextCodepoint: view.onTextCodepoint
-        onBackspace: view.onBackspace
-        onSubmit: view.onSubmit
-        onKey: view.onKey
-        onScroll: view.onScroll
-        minLength: view.minLength
-        interaction: view.interaction
-        texture: view.texture
-        textureOpacity: view.textureOpacity
-    }
-}
-
-function viewWithWidth(view: KiraUIFoundation.FoundationView, width: KiraUIFoundation.SizeMode) -> KiraUIFoundation.FoundationView {
+// A view with a handful of fields replaced, and every other field carried.
+//
+// ONE list of the fields, because seven of them was seven chances to forget.
+// Each of the modifiers below used to rebuild the view field by field, and every
+// field added to `FoundationView` after those were written was dropped by all of
+// them -- silently, because a dropped field reads as its default rather than as
+// an error.
+//
+// What that cost: a TextureView lost the texture it was crossfading TOWARDS the
+// moment anything gave it a width, so a swipe between two components' sidebars
+// ran the whole transition and showed nothing move. A gradient lost its end
+// colour, glass lost its material and its blur, a scroll region lost the fact
+// that it scrolls. All the same bug, and none of them visible in the modifier
+// that caused it.
+function viewCopying(
+    view: borrow KiraUIFoundation.FoundationView,
+    width: KiraUIFoundation.SizeMode,
+    height: KiraUIFoundation.SizeMode,
+    radius: Float,
+    shape: KiraUIFoundation.FoundationShape,
+    border: KiraUIFoundation.Color,
+    borderWidth: Float,
+    padding: KiraUIFoundation.EdgeInsets,
+) -> KiraUIFoundation.FoundationView {
     return KiraUIFoundation.FoundationView {
         kind: view.kind
         key: view.key
@@ -869,66 +745,20 @@ function viewWithWidth(view: KiraUIFoundation.FoundationView, width: KiraUIFound
         guideTrailing: view.guideTrailing
         children: identityChildren(view.children)
         width: width
-        height: view.height
-        flex: view.flex
-        gap: view.gap
-        padding: view.padding
-        crossAxisAlignment: view.crossAxisAlignment
-        alignment: view.alignment
-        fill: view.fill
-        border: view.border
-        borderWidth: view.borderWidth
-        radius: view.radius
-        shape: view.shape
-        material: view.material
-        effects: identityEffects(view.effects)
-        clipContent: view.clipContent
-        content: view.content
-        color: view.color
-        size: view.size
-        inkLeft: view.inkLeft
-        inkRight: view.inkRight
-        inkTop: view.inkTop
-        inkBottom: view.inkBottom
-        lineHeight: view.lineHeight
-        weight: view.weight
-        disabled: view.disabled
-        focusable: view.focusable
-        autofocus: view.autofocus
-        onPress: view.onPress
-        onTextInput: view.onTextInput
-        onTextCodepoint: view.onTextCodepoint
-        onBackspace: view.onBackspace
-        onSubmit: view.onSubmit
-        onKey: view.onKey
-        onScroll: view.onScroll
-        minLength: view.minLength
-        interaction: view.interaction
-        texture: view.texture
-        textureOpacity: view.textureOpacity
-    }
-}
-
-function viewWithHeight(view: KiraUIFoundation.FoundationView, height: KiraUIFoundation.SizeMode) -> KiraUIFoundation.FoundationView {
-    return KiraUIFoundation.FoundationView {
-        kind: view.kind
-        key: view.key
-        guides: identityGuides(view.guides)
-        guideLeading: view.guideLeading
-        guideTrailing: view.guideTrailing
-        children: identityChildren(view.children)
-        width: view.width
         height: height
         flex: view.flex
         gap: view.gap
-        padding: view.padding
+        padding: padding
         crossAxisAlignment: view.crossAxisAlignment
         alignment: view.alignment
         fill: view.fill
-        border: view.border
-        borderWidth: view.borderWidth
-        radius: view.radius
-        shape: view.shape
+        border: border
+        borderWidth: borderWidth
+        fillEnd: view.fillEnd
+        gradient: view.gradient
+        radius: radius
+        backgroundFill: view.backgroundFill
+        shape: shape
         material: view.material
         effects: identityEffects(view.effects)
         clipContent: view.clipContent
@@ -941,6 +771,9 @@ function viewWithHeight(view: KiraUIFoundation.FoundationView, height: KiraUIFou
         inkBottom: view.inkBottom
         lineHeight: view.lineHeight
         weight: view.weight
+        baseline: view.baseline
+        iconWidth: view.iconWidth
+        weightGrowth: view.weightGrowth
         disabled: view.disabled
         focusable: view.focusable
         autofocus: view.autofocus
@@ -951,114 +784,116 @@ function viewWithHeight(view: KiraUIFoundation.FoundationView, height: KiraUIFou
         onSubmit: view.onSubmit
         onKey: view.onKey
         onScroll: view.onScroll
+        scrolls: view.scrolls
+        wheel: view.wheel
         minLength: view.minLength
         interaction: view.interaction
         texture: view.texture
         textureOpacity: view.textureOpacity
+        secondaryTexture: view.secondaryTexture
+        textureTransition: view.textureTransition
+        adaptiveInk: view.adaptiveInk
+        blur: view.blur
+        glassMaterial: view.glassMaterial
+        edgeRefraction: view.edgeRefraction
     }
+}
+
+function viewWithSurfaceRadius(view: KiraUIFoundation.FoundationView, radius: Float) -> KiraUIFoundation.FoundationView {
+    return viewCopying(
+        view,
+        view.width,
+        view.height,
+        move radius,
+        view.shape,
+        view.border,
+        view.borderWidth,
+        view.padding
+    )
+}
+
+function viewWithSurfaceShape(view: KiraUIFoundation.FoundationView, shape: SurfaceShape) -> KiraUIFoundation.FoundationView {
+    return viewCopying(
+        view,
+        view.width,
+        view.height,
+        view.radius,
+        foundationShape(move shape),
+        view.border,
+        view.borderWidth,
+        view.padding
+    )
+}
+
+function viewWithSurfaceBorder(view: KiraUIFoundation.FoundationView, color: KiraUIFoundation.Color, width: Float) -> KiraUIFoundation.FoundationView {
+    return viewCopying(
+        view,
+        view.width,
+        view.height,
+        view.radius,
+        view.shape,
+        move color,
+        move width,
+        view.padding
+    )
+}
+
+function viewWithWidth(view: KiraUIFoundation.FoundationView, width: KiraUIFoundation.SizeMode) -> KiraUIFoundation.FoundationView {
+    return viewCopying(
+        view,
+        move width,
+        view.height,
+        view.radius,
+        view.shape,
+        view.border,
+        view.borderWidth,
+        view.padding
+    )
+}
+
+function viewWithHeight(view: KiraUIFoundation.FoundationView, height: KiraUIFoundation.SizeMode) -> KiraUIFoundation.FoundationView {
+    return viewCopying(
+        view,
+        view.width,
+        move height,
+        view.radius,
+        view.shape,
+        view.border,
+        view.borderWidth,
+        view.padding
+    )
 }
 
 function viewWithSurfacePadding(view: KiraUIFoundation.FoundationView, length: Float) -> KiraUIFoundation.FoundationView {
-    return KiraUIFoundation.FoundationView {
-        kind: view.kind
-        key: view.key
-        guides: identityGuides(view.guides)
-        guideLeading: view.guideLeading
-        guideTrailing: view.guideTrailing
-        children: identityChildren(view.children)
-        width: view.width
-        height: view.height
-        flex: view.flex
-        gap: view.gap
-        padding: uniformInsets(length)
-        crossAxisAlignment: view.crossAxisAlignment
-        alignment: view.alignment
-        fill: view.fill
-        border: view.border
-        borderWidth: view.borderWidth
-        radius: view.radius
-        shape: view.shape
-        material: view.material
-        effects: identityEffects(view.effects)
-        clipContent: view.clipContent
-        content: view.content
-        color: view.color
-        size: view.size
-        inkLeft: view.inkLeft
-        inkRight: view.inkRight
-        inkTop: view.inkTop
-        inkBottom: view.inkBottom
-        lineHeight: view.lineHeight
-        weight: view.weight
-        disabled: view.disabled
-        focusable: view.focusable
-        autofocus: view.autofocus
-        onPress: view.onPress
-        onTextInput: view.onTextInput
-        onTextCodepoint: view.onTextCodepoint
-        onBackspace: view.onBackspace
-        onSubmit: view.onSubmit
-        onKey: view.onKey
-        onScroll: view.onScroll
-        minLength: view.minLength
-        interaction: view.interaction
-        texture: view.texture
-        textureOpacity: view.textureOpacity
-    }
+    return viewCopying(
+        view,
+        view.width,
+        view.height,
+        view.radius,
+        view.shape,
+        view.border,
+        view.borderWidth,
+        uniformInsets(length)
+    )
 }
 
 function viewWithContentMargins(view: KiraUIFoundation.FoundationView, inset: Float) -> KiraUIFoundation.FoundationView {
-    return KiraUIFoundation.FoundationView {
-        kind: view.kind
-        key: view.key
-        guides: identityGuides(view.guides)
-        guideLeading: view.guideLeading
-        guideTrailing: view.guideTrailing
-        children: identityChildren(view.children)
-        width: view.width
-        height: view.height
-        flex: view.flex
-        gap: view.gap
-        padding: KiraUIFoundation.EdgeInsets {
-            top: view.padding.top + inset
-            trailing: view.padding.trailing + inset
-            bottom: view.padding.bottom + inset
-            leading: view.padding.leading + inset
-        }
-        crossAxisAlignment: view.crossAxisAlignment
-        alignment: view.alignment
-        fill: view.fill
-        border: view.border
-        borderWidth: view.borderWidth
-        radius: view.radius
-        shape: view.shape
-        material: view.material
-        effects: identityEffects(view.effects)
-        clipContent: view.clipContent
-        content: view.content
-        color: view.color
-        size: view.size
-        inkLeft: view.inkLeft
-        inkRight: view.inkRight
-        inkTop: view.inkTop
-        inkBottom: view.inkBottom
-        lineHeight: view.lineHeight
-        weight: view.weight
-        disabled: view.disabled
-        focusable: view.focusable
-        autofocus: view.autofocus
-        onPress: view.onPress
-        onTextInput: view.onTextInput
-        onTextCodepoint: view.onTextCodepoint
-        onBackspace: view.onBackspace
-        onSubmit: view.onSubmit
-        onKey: view.onKey
-        onScroll: view.onScroll
-        minLength: view.minLength
-        interaction: view.interaction
-        texture: view.texture
-        textureOpacity: view.textureOpacity
+    let margins = KiraUIFoundation.EdgeInsets {
+        top: view.padding.top + inset
+        trailing: view.padding.trailing + inset
+        bottom: view.padding.bottom + inset
+        leading: view.padding.leading + inset
     }
+    return viewCopying(
+        view,
+        view.width,
+        view.height,
+        view.radius,
+        view.shape,
+        view.border,
+        view.borderWidth,
+        move margins
+    )
 }
 
 Widget SurfacePaddingLayer(value: Float) {
@@ -1087,6 +922,15 @@ Widget WidthLayer(value: Float) {
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let childModifiers = modifierContextForChildren(modifiers)
         return viewWithWidth(content.lower(context, childModifiers), KiraUIFoundation.SizeMode.Fixed(value))
+    }
+}
+
+Widget FillWidthLayer() {
+    let content: some Widget
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        let childModifiers = modifierContextForChildren(modifiers)
+        return viewWithWidth(content.lower(context, childModifiers), KiraUIFoundation.SizeMode.Fill)
     }
 }
 

@@ -53,10 +53,17 @@ function RunWidgetInteractiveApp(
         // gets. The application does not have to know that — it happens here,
         // once, for every interactive app.
         kiraUiTapSeqReset()
+        // Surface targets are collected around the whole build, not around a
+        // split view's columns, because an application that renders into
+        // textures may have no window furniture at all: a component with no
+        // window still has regions, and they are declared wherever they are.
+        kiraUiSurfaceCollect()
         let build: borrow () -> KiraUIApp = rootBuilder
         let app = build()
         let root = app.content
-        return root.lower(context, ModifierContext {})
+        let lowered = root.lower(context, ModifierContext {})
+        kiraUiSurfaceStopCollecting()
+        return lowered
     },
         engineFrame: engineFrame,
         needsRebuild: foundationNoContinuousRebuild,

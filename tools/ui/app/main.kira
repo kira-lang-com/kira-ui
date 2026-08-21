@@ -29,10 +29,36 @@ function uiGalleryApp() -> KiraUIApp {
 @Derive(Parsable)
 struct ShotArguments {
     let out: String
+    let app: String
+    let arg: String
     let frames: Int
     let at: Int
     let width: Int
     let height: Int
+}
+
+// Capture an application this command was never linked against.
+//
+// It needs no cooperation from the application and none of them were changed to
+// allow it: KiraGraphics resolves its harness from the ENVIRONMENT whenever a run
+// was handed none, so setting those variables and starting the program is the
+// whole mechanism. An application that builds its own harness in code is saying
+// it wants different knobs, and this correctly leaves it alone.
+//
+// The alternative -- a `shot` command inside every application -- is the same
+// work repeated once per program and then drifting: one spells the flag `--out`,
+// the next `-o`, and reviewing two side by side means remembering which is which.
+function shootForeignApp(parsed: borrow ShotArguments) -> Int {
+    kira_ui_launch_set("KIRA_GRAPHICS_CAPTURE_FRAME", parsed.out)
+    kira_ui_launch_set("KIRA_GRAPHICS_CAPTURE_AT", String(parsed.at))
+    kira_ui_launch_set("KIRA_GRAPHICS_QUIT_AFTER_FRAMES", String(parsed.frames))
+    let status = Int(kira_ui_launch_run(parsed.app, parsed.arg))
+    if status != 0 {
+        print("ui shot: " + parsed.app + " exited with " + String(status))
+        return status
+    }
+    print("captured " + parsed.out)
+    return 0
 }
 
 ParsableCommand ShotCommand {
@@ -46,6 +72,8 @@ ParsableCommand ShotCommand {
     let arguments: [ArgumentSpec] {
         return [
             option(name: "out", shortName: "o", help: "Destination .ppm for the captured frame"),
+            optionalOption(name: "app", shortName: "p", defaultText: "", help: "Executable to run and capture; omitted, the built-in gallery is drawn"),
+            optionalOption(name: "arg", shortName: "g", defaultText: "", help: "One argument to pass the application"),
             optionalIntegerOption(name: "frames", shortName: "f", defaultText: "120", help: "Quit after this many frames"),
             optionalIntegerOption(name: "at", shortName: "a", defaultText: "0", help: "Capture at this frame (0 = the last one drawn)"),
             optionalIntegerOption(name: "width", shortName: "w", defaultText: "1200", help: "Window width"),
@@ -55,6 +83,9 @@ ParsableCommand ShotCommand {
 
     function run(arguments: borrow ParsedArguments) -> Int {
         let parsed = parse_ShotArguments(arguments)
+        if parsed.app.count > 0 {
+            return shootForeignApp(parsed)
+        }
         var harness = HarnessConfig {}
         harness = harnessCapture(parsed.out, parsed.at, parsed.frames)
         RunWidgetInteractiveApp(

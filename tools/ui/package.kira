@@ -1,9 +1,28 @@
 Package Ui {
     let version = "0.1.0"
     let kind = .App
+    let allowThinFfiShim = true
     let dependencies = [
         Dependency { name: "ArgumentParser", path: "../../../argument-parser" },
         Dependency { name: "KiraUI", path: "../.." },
         Dependency { name: "KiraGraphics", path: "../../../kira-graphics" }
+    ]
+    // Starting another program, so `shot` can capture an application this
+    // command was not linked against.
+    let nativeLibraries = [
+        NativeLibrary {
+            name: "kira_ui_launch",
+            linkMode: LinkMode.Static,
+            headers: Headers { entrypoint: "NativeLibs/kira_ui_launch.h", includeDirs: ["NativeLibs"] },
+            sources: ["NativeLibs/kira_ui_launch.c"],
+            autobind: Autobind { module: "launch", headers: ["NativeLibs/kira_ui_launch.h"], mode: AutobindMode.AllPublic },
+            nativeTargets: [
+                NativeTarget { triple: "x86_64-windows-msvc", systemLibs: ["kernel32"] },
+                NativeTarget { triple: "x86_64-linux-gnu" },
+                NativeTarget { triple: "aarch64-linux-gnu" },
+                NativeTarget { triple: "aarch64-macos-none" },
+                NativeTarget { triple: "x86_64-macos-none" }
+            ]
+        }
     ]
 }
