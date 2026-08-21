@@ -2,10 +2,17 @@ import KiraLayout
 import Foundation
 import KiraUIFoundation
 
-// The editor-viewport widget: shows an external KiraGraphics texture (an offscreen render
-// target the engine draws into) inside the widget tree, filling whatever box the layout
-// gives it. One external texture is supported per frame (the compositor's slot-1 binding).
-Widget TextureViewport(texture: Int) {
+// An external KiraGraphics texture, shown inside the widget tree.
+//
+// The texture is an offscreen render target somebody else drew into: an engine's
+// viewport, or -- the case this exists for now -- a surface another PROCESS
+// rendered and handed over. The view fills whatever box the layout gives it.
+//
+// `secondary` and `transition` are a crossfade done on the GPU, in the shader
+// that samples them, rather than by drawing one view over another at an opacity.
+// That is what makes swiping between two components' surfaces cheap: the window
+// holds both textures already, and moving between them costs one number.
+Widget TextureViewport(texture: Int, secondary: Int = 0, transition: Float = 0.0) {
     function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
         let ignored = context.frameCount
         return KiraUIFoundation.TextureView(
@@ -14,7 +21,9 @@ Widget TextureViewport(texture: Int) {
             height: KiraUIFoundation.SizeMode.Fill,
             flex: 1,
             opacity: modifiers.opacity,
-            radius: 0.0
+            radius: 0.0,
+            secondaryTexture: secondary,
+            transition: transition
         )
     }
 }

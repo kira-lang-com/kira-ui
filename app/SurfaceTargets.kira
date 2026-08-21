@@ -1,0 +1,183 @@
+import Foundation
+import KiraGraphics
+import KiraLayout
+import KiraUIFoundation
+
+// Rendering part of a view into a texture somebody else composites.
+//
+// A window draws into its swapchain. An application whose pixels belong to
+// ANOTHER PROCESS does not have one: it renders each of its regions into a
+// shared GPU texture and tells that process where each one goes. This is how a
+// view says which texture it belongs in.
+//
+//     TextureTarget(handle = pageHandle, zLevel = 0) { PageContent() }
+//     TextureTarget(handle = sidebarHandle, zLevel = 0) { Sidebar() }
+//     OverlayTarget(handle = overlayHandle)
+//
+// # Several targets, not one
+//
+// Each region is its own texture, because each changes on its own schedule: a
+// sidebar does not repaint when the content beside it scrolls, and the
+// compositor can move or resize one region without disturbing the others. One
+// texture per process would tie all of that together for no gain.
+//
+// # Except the overlay, which is one and covers everything
+//
+// Everything a view FLOATS -- a menu, a dialog, a popover -- goes into a single
+// target the size of the whole canvas, declared once for the application rather
+// than per region. A menu opened from the sidebar runs across the content beside
+// it, and a menu clipped to the sidebar's rectangle is a menu with its bottom
+// half missing. That is what `zLevel` above zero means, and it is why the
+// overlay target takes no z of its own: it IS the z.
+//
+// # The z is declared, not inferred
+//
+// The compositor beneath this cuts a frame into streams of its own so a
+// backdrop-blurred surface can photograph what is behind it. Those are not
+// these. A glass layer is an implementation detail of one visual effect; a
+// zLevel is a contract with another process about what draws over what.
+
+// What one view declared it wants captured.
+//
+// The rectangle is filled in by LAYOUT, not by the declaration: a view does not
+// know where it is until it has been placed, and the whole point of reporting
+// geometry to a compositor is to report where things actually landed.
+struct KiraUiSurfaceTarget {
+    // The shared texture this region renders into, as this process names it.
+    var handle: Int = 0
+    // 0 is content, at the region's own rectangle. Above 0 is overlay, which
+    // covers the canvas.
+    var zLevel: Int = 0
+    var x: Float = 0.0
+    var y: Float = 0.0
+    var width: Float = 0.0
+    var height: Float = 0.0
+}
+
+struct KiraUiSurfaceSink {
+    var targets: [KiraUiSurfaceTarget] = []
+    var collecting: Bool = false
+}
+
+function kiraUiSurfaceSinkKey() -> String {
+    return "kiraui.surface.sink"
+}
+
+function kiraUiSurfaceSinkEnsure() {
+    if kiraUiStateSlotHas(kiraUiSurfaceSinkKey()) == false {
+        kiraUiStateSlotPut(
+            kiraUiSurfaceSinkKey(),
+            nativeUserData(nativeState(KiraUiSurfaceSink {}))
+        )
+    }
+    return
+}
+
+// Open collection for the frame about to be built, discarding what the last one
+// left. The tree is rebuilt every frame and its targets are rebuilt with it.
+function kiraUiSurfaceCollect() {
+    kiraUiSurfaceSinkEnsure()
+    var sink = nativeRecover<KiraUiSurfaceSink>(kiraUiStateSlotGet(kiraUiSurfaceSinkKey()))
+    var empty: [KiraUiSurfaceTarget] = []
+    sink.targets = move empty
+    sink.collecting = true
+    return
+}
+
+function kiraUiSurfaceStopCollecting() {
+    kiraUiSurfaceSinkEnsure()
+    var sink = nativeRecover<KiraUiSurfaceSink>(kiraUiStateSlotGet(kiraUiSurfaceSinkKey()))
+    sink.collecting = false
+    return
+}
+
+function kiraUiSurfaceDeclare(target: KiraUiSurfaceTarget) {
+    kiraUiSurfaceSinkEnsure()
+    var sink = nativeRecover<KiraUiSurfaceSink>(kiraUiStateSlotGet(kiraUiSurfaceSinkKey()))
+    if sink.collecting == false {
+        // Declared with no frame collecting. It has nowhere to go, and is
+        // dropped rather than kept for whatever frame is built next.
+        return
+    }
+    sink.targets.append(move target)
+    return
+}
+
+// Everything this frame declared, for the application to publish.
+//
+// Read once, after the tree is built, by whatever owns the channel to the
+// compositor. Nothing in the widget layer sends anything: a widget that talked
+// to another process would be a widget that could not be drawn in a window.
+function kiraUiSurfaceTargets() -> [KiraUiSurfaceTarget] {
+    kiraUiSurfaceSinkEnsure()
+    let sink = nativeRecover<KiraUiSurfaceSink>(kiraUiStateSlotGet(kiraUiSurfaceSinkKey()))
+    return sink.targets
+}
+
+// How many targets this frame declared.
+function kiraUiSurfaceTargetCount() -> Int {
+    return kiraUiSurfaceTargets().count
+}
+
+// A region of the view that renders into a shared texture.
+//
+// It lowers its content exactly as if it were not here -- same layout, same
+// modifiers, same size -- and records the texture the region belongs to. What
+// is inside is unaware: a sidebar written for a window is the same sidebar
+// written for a compositor, which is the property that makes this worth having
+// as a wrapper rather than as a different way to write a view.
+Widget TextureTarget(handle: Int, zLevel: Int = 0) {
+    let content: some Widget
+
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        // The viewport is the canvas this process was given, so a target that
+        // fills its parent reports the parent's extent. A target's exact
+        // rectangle is settled by layout after this returns, which is why the
+        // sink carries the extent the region was BUILT against and the
+        // compositor is told the placement separately.
+        kiraUiSurfaceDeclare(KiraUiSurfaceTarget {
+            handle: handle
+            zLevel: zLevel
+            x: 0.0
+            y: 0.0
+            width: context.viewport.width
+            height: context.viewport.height
+        })
+        return content.lower(context, modifiers)
+    }
+}
+
+// The one target every floating thing in the application is drawn into.
+//
+// It has no content block and no z of its own. What goes in it is whatever the
+// views declared with `.overlay(...)`, from anywhere in the tree, exactly as
+// `.toolbar(...)` items travel to the one bar -- and it covers the whole canvas
+// because a floating thing is not confined to the region that opened it.
+Widget OverlayTarget(handle: Int) {
+    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+        kiraUiSurfaceDeclare(KiraUiSurfaceTarget {
+            handle: handle
+            zLevel: kiraUiOverlayZLevel()
+            x: 0.0
+            y: 0.0
+            width: context.viewport.width
+            height: context.viewport.height
+        })
+        return EmptyView().lower(context, modifiers)
+    }
+}
+
+// The z every overlay shares.
+//
+// One number, not a range. Ordering WITHIN an application's overlay is settled
+// by the order things were drawn into it, and ordering BETWEEN applications is
+// the compositor's -- so a second overlay z would be a third answer to a
+// question two layers already answer.
+function kiraUiOverlayZLevel() -> Int {
+    return 1
+}
+
+// Whether a target is the overlay rather than a content region.
+function kiraUiSurfaceIsOverlay(target: borrow KiraUiSurfaceTarget) -> Bool {
+    return target.zLevel >= kiraUiOverlayZLevel()
+}
