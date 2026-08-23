@@ -1,0 +1,197 @@
+
+// The two formatters the display reads.
+//
+// The one rule this file exists for: a number the display can say plainly is
+// said plainly. 64 − 9 draws "55", never "5.5×10¹" — scientific notation is
+// reserved for magnitudes plain digits cannot carry, which is what keeps the
+// answer to an ordinary subtraction from wearing an exponent it did not earn.
+
+// A complex value: real when the imaginary part is measurement dust, otherwise
+// a + bi with the parts the display can omit omitted.
+function formatNumber(v: Cx) -> String {
+    if v.re != v.re || v.im != v.im {
+        return "Error"
+    }
+    let reMagnitude = positiveF(v.re)
+    let imMagnitude = positiveF(v.im)
+    var scale = reMagnitude
+    if imMagnitude > scale {
+        scale = imMagnitude
+    }
+    var floorScale = scale
+    if floorScale < 1.0 {
+        floorScale = 1.0
+    }
+    let dust = 0.000000000001 * floorScale
+    if imMagnitude <= dust {
+        return formatFloat(v.re)
+    }
+    if reMagnitude <= dust {
+        return formatFloat(v.im) + "i"
+    }
+    if v.im < 0.0 {
+        return formatFloat(v.re) + "-" + formatFloat(imMagnitude) + "i"
+    }
+    return formatFloat(v.re) + "+" + formatFloat(v.im) + "i"
+}
+
+// One real number in either plain or scientific dress.
+function formatFloat(x: Float) -> String {
+    if x != x {
+        return "Error"
+    }
+    if x == 0.0 {
+        return "0"
+    }
+    var negative = false
+    var magnitude = x
+    if magnitude < 0.0 {
+        negative = true
+        magnitude = 0.0 - magnitude
+    }
+    if magnitude >= calcOverflowBound() {
+        return "Overflow"
+    }
+    // Normalize into [1, 10), counting the decimal exponent as we go.
+    var exponent = 0
+    while magnitude >= 10.0 {
+        magnitude = magnitude / 10.0
+        exponent = exponent + 1
+        if exponent > 400 {
+            break
+        }
+    }
+    while magnitude < 1.0 {
+        magnitude = magnitude * 10.0
+        exponent = exponent - 1
+        if exponent < -400 {
+            break
+        }
+    }
+    // Round to the display's significant digits as one integer, so 9.999…→10
+    // renormalizes instead of printing a leading zero.
+    var mantissaUnits = Int(magnitude * 1000000000.0 + 0.5)
+    if mantissaUnits >= 10000000000 {
+        mantissaUnits = mantissaUnits / 10
+        exponent = exponent + 1
+    }
+    var digits = digitRun(mantissaUnits)
+    digits = stripTrailingZeros(digits)
+    var text = ""
+    if negative {
+        text = "-"
+    }
+    if exponent >= -6 {
+        if exponent <= 12 {
+            return text + formatPlain(digits, exponent)
+        }
+    }
+    return text + formatScientific(digits, exponent)
+}
+
+// Digits placed around a decimal point the exponent names: 10^exponent times
+// the first digit's place. Plain notation covers every magnitude the keypad's
+// answers realistically take.
+function formatPlain(digits: borrow String, exponent: Int) -> String {
+    let count = digits.count
+    let integerLength = exponent + 1
+    if count <= integerLength {
+        var whole = digits
+        var padded = 0
+        while padded < integerLength - count {
+            whole = whole + "0"
+            padded = padded + 1
+        }
+        return whole
+    }
+    if integerLength <= 0 {
+        var fraction = "0."
+        var zeros = 0
+        while zeros < 0 - integerLength {
+            fraction = fraction + "0"
+            zeros = zeros + 1
+        }
+        return fraction + digits
+    }
+    return digits.substring(0, integerLength) + "." + digits.substring(integerLength, count)
+}
+
+function formatScientific(digits: borrow String, exponent: Int) -> String {
+    var mantissa = digits.substring(0, 1)
+    if digits.count > 1 {
+        mantissa = mantissa + "." + digits.substring(1, digits.count)
+    }
+    return mantissa + "×10" + superscript(exponent)
+}
+
+// Superscript code points: ⁰ through ⁹ plus ⁻, so an exponent reads as an
+// exponent rather than as "E+15".
+function superscript(value: Int) -> String {
+    var text = ""
+    var rest = value
+    if rest < 0 {
+        text = scalarText(8315)
+        rest = 0 - rest
+    }
+    if rest == 0 {
+        return text + scalarText(2070)
+    }
+    var ordered = ""
+    while rest > 0 {
+        let d = rest % 10
+        rest = rest / 10
+        // Each new digit lands IN FRONT, so the number reads left-to-right
+        // without ever indexing into a multi-byte string.
+        ordered = scalarText(superscriptCodepoint(d)) + ordered
+    }
+    return text + ordered
+}
+
+function superscriptCodepoint(digit: Int) -> Int {
+    if digit == 0 {
+        return 2070
+    }
+    if digit == 1 {
+        return 185
+    }
+    if digit == 2 {
+        return 178
+    }
+    if digit == 3 {
+        return 179
+    }
+    return 2074 + digit - 4
+}
+
+// Decimal digits of a non-negative integer, most significant first, built the
+// way the foundation builds its own: one ASCII codepoint at a time.
+function digitRun(value: Int) -> String {
+    if value <= 0 {
+        return "0"
+    }
+    var remaining = value
+    var ordered = ""
+    while remaining > 0 {
+        let d = remaining % 10
+        remaining = remaining / 10
+        // Prepended as gathered, so no index arithmetic ever touches the
+        // growing string.
+        ordered = scalarText(48 + d) + ordered
+    }
+    return ordered
+}
+
+function stripTrailingZeros(digits: borrow String) -> String {
+    var end = digits.count
+    while end > 1 {
+        if digits.charAt(end - 1) == 48 {
+            end = end - 1
+        } else {
+            break
+        }
+    }
+    if end == digits.count {
+        return digits
+    }
+    return digits.substring(0, end)
+}

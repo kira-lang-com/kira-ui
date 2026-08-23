@@ -1,0 +1,221 @@
+import Foundation
+import KiraUI
+import KiraUIFoundation
+
+// Calculator — an advanced scientific calculator in the shape of the reference
+// design: a chrome bar over a gray display panel, the committed calculation
+// along the panel's bottom edge, the answer set large beneath it, and ten
+// columns of keys with complex arithmetic throughout.
+//
+// The model lives behind native state so the per-frame widget rebuild reads
+// fresh values every frame; the engine under Model.kira is pure and testable.
+
+@Main
+function main() {
+    let storage = nativeState(CalcModel {})
+    let modelUser = nativeUserData(storage)
+    if environmentIsSet("CALC_SELFTEST") {
+        calcSelfTest()
+        return
+    }
+    RunWidgetInteractiveApp(
+        title: "Calculator",
+        width: 720,
+        height: 700,
+        rootBuilder: { in
+            let m = nativeRecover<CalcModel>(modelUser)
+            return KiraUIApp(
+                name: "Calculator",
+                content: CalculatorScreen(modelUser, m)
+            )
+        }
+    )
+    return
+}
+
+// Engine checks run straight from the shell: CALC_SELFTEST=1 kira run apps/calculator
+function calcSelfTest() {
+    probe()
+    check("64-9", calcEval("64-9", true), "55")
+    check("2+3*4", calcEval("2+3*4", true), "14")
+    check("(2+3)*4", calcEval("(2+3)*4", true), "20")
+    check("2^10", calcEval("2^10", true), "1024")
+    check("2^-1", calcEval("2^-1", true), "0.5")
+    check("5!", calcEval("5!", true), "120")
+    check("50%", calcEval("50%", true), "0.5")
+    check("3i", calcEval("3i", true), "3i")
+    check("i*i", calcEval("i*i", true), "-1")
+    check("(1+i)*(2-i)", calcEval("(1+i)*(2-i)", true), "3+i")
+    check("1÷3", calcEval("1÷3", true), "0.3333333333")
+    check("sqrt2", calcEval("sqrt(2)", true), "1.414213562")
+    check("sin90deg", calcEval("sin(90)", true), "1")
+    check("sin-pi/2-rad", calcEval("sin(pi÷2)", false), "1")
+    check("ln-e", calcEval("ln(e)", true), "1")
+    check("log1000", calcEval("log(1000)", true), "3")
+    check("conj", calcEval("conj(3+4i)", true), "3-4i")
+    check("abs34i", calcEval("abs(3+4i)", true), "5")
+    check("re-im", calcEval("re(3+4i)+im(3+4i)*2", true), "11")
+    check("mod", calcEval("10 mod 3", true), "1")
+    check("nPr", calcEval("5 npr 2", true), "20")
+    check("nCr", calcEval("5 ncr 2", true), "10")
+    check("big-plain", calcEval("99999999999+1", true), "100000000000")
+    check("huge-sci", calcEval("9999999999999*10", true), "1×10¹³")
+    check("tiny-sci", calcEval("0.0000001÷10000000", true), "1×10⁻¹⁴")
+    check("exp-complex", calcEval("(1+i)^2", true), "2i")
+    probe()
+    print("selftest-done")
+    return
+}
+
+function probe() {
+    let s4 = scalarText(2074)
+    print("p2074:" + s4)
+    print("p2074len:" + String(s4.count))
+    print("pcombo:" + scalarText(8315) + scalarText(185) + s4)
+    return
+}
+
+function check(label: String, got: String, want: String) {
+    if got == want {
+        print("ok   " + label)
+        return
+    }
+    print("FAIL " + label + ": got " + got + " want " + want)
+    return
+}
+
+// A whole expression in one string to tokens — the self test's way of typing.
+// Digits and the dot build numbers directly into their VALUE; everything else
+// maps glyph by glyph, with letter runs read as function names or nPr/nCr.
+function calcScript(script: borrow String) -> [Tok] {
+    var out: [Tok] = []
+    var i = 0
+    while i < script.count {
+        let ch = script.charAt(i)
+        if ch >= 48 {
+            if ch <= 57 {
+                let d = Float(ch - 48)
+                let last = out.count - 1
+                if last >= 0 {
+                    if out[last].kind == tokNum() {
+                        out[last].re = out[last].re * 10.0 + d
+                        i = i + 1
+                        continue
+                    }
+                }
+                var t = Tok {}
+                t.kind = tokNum()
+                t.name = scalarText(ch)
+                t.re = d
+                out.append(t)
+                i = i + 1
+                continue
+            }
+        }
+        if ch == 46 {
+            i = i + 1
+            continue
+        }
+        if ch == 43 {
+            out.append(calcTokenOfKind(tokAdd()))
+        }
+        if ch == 45 {
+            out.append(calcTokenOfKind(tokSub()))
+        }
+        if ch == 42 {
+            out.append(calcTokenOfKind(tokMul()))
+        }
+        if ch == 215 {
+            out.append(calcTokenOfKind(tokMul()))
+        }
+        if ch == 247 {
+            out.append(calcTokenOfKind(tokDiv()))
+        }
+        if ch == 94 {
+            out.append(calcTokenOfKind(tokPow()))
+        }
+        if ch == 33 {
+            out.append(calcTokenOfKind(tokFact()))
+        }
+        if ch == 37 {
+            out.append(calcTokenOfKind(tokPct()))
+        }
+        if ch == 40 {
+            out.append(calcTokenOfKind(tokLPar()))
+        }
+        if ch == 41 {
+            out.append(calcTokenOfKind(tokRPar()))
+        }
+        
+        if ch >= 97 {
+            if ch <= 122 {
+                let word = readWord(script, i)
+                i = appendWord(out, word, i) - 1
+            }
+        }
+        i = i + 1
+    }
+    return out
+}
+
+function readWord(script: borrow String, start: Int) -> String {
+    var word = ""
+    var j = start
+    while j < script.count {
+        let ch = script.charAt(j)
+        if ch >= 97 {
+            if ch <= 122 {
+                word = word + scalarText(ch)
+                j = j + 1
+                continue
+            }
+        }
+        break
+    }
+    return word
+}
+
+// Appends the token(s) a letter run means and answers the index AFTER it.
+function appendWord(out: borrow mut [Tok], word: borrow String, start: Int) -> Int {
+    if word == "npr" {
+        out.append(calcTokenOfKind(tokNPr()))
+        return start + 3
+    }
+    if word == "ncr" {
+        out.append(calcTokenOfKind(tokNCr()))
+        return start + 3
+    }
+    if word == "pi" {
+        out.append(calcTokenOfKind(tokPi()))
+        return start + 2
+    }
+    if word == "mod" {
+        out.append(calcTokenOfKind(tokMod()))
+        return start + 3
+    }
+    if word == "i" {
+        out.append(calcTokenOfKind(tokI()))
+        return start + 1
+    }
+    if word == "e" {
+        out.append(calcTokenOfKind(tokE()))
+        return start + 1
+    }
+    // Any other run is a function call: its name plus the open bracket the
+    // script already carries.
+    var t = Tok {}
+    t.kind = tokFn()
+    t.name = word
+    out.append(t)
+    return start + word.count
+}
+
+function calcEval(script: borrow String, degrees: Bool) -> String {
+    let tokens = calcScript(script)
+    let outcome = evaluateTokens(tokens, degrees)
+    if outcome.failed {
+        return "Error"
+    }
+    return formatNumber(outcome.value)
+}
+

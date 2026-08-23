@@ -1,0 +1,183 @@
+import KiraUI
+import KiraUIFoundation
+
+// The display: the gray panel that holds either the live expression line or
+// the history sheet, and the result row under it with the backspace key.
+
+// The panel. With no computation behind it the design is an empty gray field;
+// the moment there is a committed calculation its line sits along the bottom.
+function displayPanel(modelUser: RawPtr, m: borrow CalcModel, panelHeight: Float, width: Float) -> Any Widget {
+    let innerWidth = width - 2.0 * calcSideMargin()
+    var content: Any Widget = FixedGap(width: 1.0, height: 1.0)
+    if m.historySheetOpen {
+        content = historySheet(modelUser, m, innerWidth)
+    } else {
+        if m.historyExpr.count > 0 {
+            content = historyLine(m)
+        }
+    }
+    let panel = ZStack(alignment: .Bottom) {
+        solidBox(innerWidth, panelHeight, 14.0, panelGray())
+        content.width(innerWidth)
+    }
+    .width(innerWidth)
+    .height(panelHeight)
+    return HStack(spacing: Spacing.None) {
+        Spacer()
+        panel
+        Spacer()
+    }
+}
+
+// The committed calculation: what was typed, the equals sign, and what it came
+// to — left, centre, right along the panel's bottom edge.
+function historyLine(m: borrow CalcModel) -> Any Widget {
+    return HStack(spacing: Spacing.None) {
+        Text(content: m.historyExpr)
+            .font(size = 17.0)
+            .textColor(inkColor())
+        Spacer()
+        Text(content: "=")
+            .font(size = 17.0)
+            .textColor(faintInk())
+        Spacer()
+        Text(content: m.historyResult)
+            .font(size = 17.0, weight = .SemiBold)
+            .textColor(inkColor())
+    }
+    .inset(horizontal: .Medium, vertical: .Small)
+    .hugHeight()
+}
+
+// The sheet behind the hamburger: past computations, newest first, each one
+// tappable to bring its answer back as the current value.
+function historySheet(modelUser: RawPtr, m: borrow CalcModel, width: Float) -> Any Widget {
+    var rowsList: [Any Widget] = []
+    let shown = m.history.count
+    var first = shown - 8
+    if first < 0 {
+        first = 0
+    }
+    var i = shown - 1
+    while i >= first {
+        let entry = m.history[i]
+        let index = i
+        let pick: () -> Void = { in
+            calcSelectHistory(modelUser, index)
+            return
+        }
+        let row = HStack(spacing: Spacing.Small) {
+            Text(content: entry.expr)
+                .font(size = 14.0)
+                .textColor(secondaryInk())
+            Spacer()
+            Text(content: entry.resultText)
+                .font(size = 14.0, weight = .SemiBold)
+                .textColor(inkColor())
+        }
+        .height(36.0)
+        .inset(horizontal: .Medium)
+        .onClick(move pick)
+        rowsList.append(row)
+        i = i - 1
+    }
+    if rowsList.count == 0 {
+        rowsList.append(HStack(spacing: Spacing.None) {
+            Text(content: "No calculations yet")
+                .font(size = 14.0)
+                .textColor(faintInk())
+            Spacer()
+        }
+        .inset(horizontal: .Medium))
+    }
+    let list = VStack(spacing: Spacing.None) {
+        For(row in rowsList) {
+            row
+        }
+        Spacer()
+    }
+    .width(width)
+    .fillHeight()
+    return ZStack(alignment: .TopLeading) {
+        solidBoxFill(14.0, pageWhite())
+        list.inset(vertical: .ExtraSmall)
+    }
+    .width(width)
+    .fillHeight()
+}
+
+// The big line: the current answer at rest, and the backspace key at the end.
+function resultRow(modelUser: RawPtr, m: borrow CalcModel, width: Float) -> Any Widget {
+    let backAction: () -> Void = { in
+        calcBackspace(modelUser)
+        return
+    }
+    let text = HStack(spacing: Spacing.None) {
+        Text(content: m.result)
+            .font(size = 30.0, weight = .Bold)
+            .textColor(inkColor())
+            .hugWidth()
+        Spacer()
+        ZStack(alignment: .Center) {
+            Icon(symbol: .DeleteLeft)
+                .imageScale(.Medium)
+                .foregroundColor(.Black)
+        }
+        .width(40.0)
+        .height(36.0)
+        .onClick(move backAction)
+    }
+    .height(calcResultHeight() - 1.0)
+    .inset(horizontal: .Large, vertical: .None)
+    return VStack(spacing: Spacing.None) {
+        text
+        Rectangle(
+            width: width,
+            height: 1.0,
+            radius: 0.0,
+            fill: hairlineInk()
+        )
+    }
+}
+
+// The f(x) sheet: extra functions the fixed pad has no face for. Each item
+// carries a dispatch code rather than its name so the press closure captures
+// an Int.
+function fxMenuRow(modelUser: RawPtr) -> Any Widget {
+    var buttons: [Any Widget] = []
+    buttons.append(fnMenuItem(modelUser, keyFxSqrt(), "√"))
+    buttons.append(fnMenuItem(modelUser, keyFxExp(), "exp"))
+    buttons.append(fnMenuItem(modelUser, keyFxRound(), "round"))
+    buttons.append(fnMenuItem(modelUser, keyFxConj(), "conj"))
+    let row = HStack(spacing: Spacing.Small) {
+        For(b in buttons) {
+            b
+        }
+    }
+    .height(44.0)
+    .inset(horizontal: .Large, vertical: .ExtraSmall)
+    return VStack(spacing: Spacing.None) {
+        row
+        Rectangle(
+            width: kiraUiViewportWidth(),
+            height: 1.0,
+            radius: 0.0,
+            fill: hairlineInk()
+        )
+    }
+}
+
+function fnMenuItem(modelUser: RawPtr, code: Int, label: String) -> Any Widget {
+    let press: () -> Void = { in
+        calcDispatch(modelUser, code)
+        calcCloseMenus(modelUser)
+        return
+    }
+    return ZStack(alignment: .Center) {
+        solidBox(64.0, 32.0, 16.0, accentWash())
+        Text(content: label)
+            .font(size = 14.0, weight = .SemiBold)
+            .textColor(accentBlue())
+    }
+    .onClick(move press)
+}

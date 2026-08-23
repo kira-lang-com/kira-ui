@@ -1,0 +1,584 @@
+import KiraUIFoundation
+// The calculator's state machine: the token list the keypad edits, the actions
+// that edit it, the undo stacks behind the toolbar arrows, and the rendering
+// of an expression back to display text.
+//
+// State lives behind `nativeState`, recovered fresh out of the ambient slot on
+// every read — the same shape the interactive-input example uses — because the
+// widget builder runs every frame and any value it merely held would be a copy
+// nobody sees.
+
+// --- Tokens ------------------------------------------------------------------
+
+// One thing the user typed. A struct rather than an enum so the whole model
+// survives the native-state round trip as plain data. `name` carries a
+// function's name for functions and the typed digits of a number literal —
+// which is what lets "5." stay "5." while it is being typed — while `re`/`im`
+// hold the literal's VALUE, kept in step on every digit press so evaluation
+// never has to re-read the text.
+struct Tok {
+    var kind: Int = 0
+    var re: Float = 0.0
+    var im: Float = 0.0
+    var name: String = ""
+    // Digits typed after the dot, zero while the number is still integral:
+    // the state a decimal point flips and backspace unflips.
+    var fractionDigits: Int = 0
+}
+
+function tokNum() -> Int {
+    return 0
+}
+function tokAdd() -> Int {
+    return 1
+}
+function tokSub() -> Int {
+    return 2
+}
+function tokMul() -> Int {
+    return 3
+}
+function tokDiv() -> Int {
+    return 4
+}
+function tokMod() -> Int {
+    return 5
+}
+function tokPow() -> Int {
+    return 6
+}
+function tokFact() -> Int {
+    return 7
+}
+function tokPct() -> Int {
+    return 8
+}
+function tokLPar() -> Int {
+    return 9
+}
+function tokRPar() -> Int {
+    return 10
+}
+function tokFn() -> Int {
+    return 11
+}
+function tokPi() -> Int {
+    return 12
+}
+function tokE() -> Int {
+    return 13
+}
+function tokI() -> Int {
+    return 14
+}
+function tokNPr() -> Int {
+    return 15
+}
+function tokNCr() -> Int {
+    return 16
+}
+function tokComma() -> Int {
+    return 17
+}
+
+// One past computation, kept for the history sheet and for tapping a result
+// back into the current calculation.
+struct HistEntry {
+    var expr: String = ""
+    var resultText: String = ""
+    var re: Float = 0.0
+    var im: Float = 0.0
+}
+
+struct CalcModel {
+    var tokens: [Tok] = []
+    var result: String = ""
+    var historyExpr: String = ""
+    var historyResult: String = ""
+    var lastAnswer: Cx = Cx {}
+    var hasAnswer: Bool = false
+    var error: Bool = false
+    var degrees: Bool = true
+    var inverse: Bool = false
+    var modeIndex: Int = 2
+    var historySheetOpen: Bool = false
+    var fxMenuOpen: Bool = false
+    var modeMenuOpen: Bool = false
+    var history: [HistEntry] = []
+    var undoStack: [[Tok]] = []
+    var redoStack: [[Tok]] = []
+}
+
+// --- Model plumbing ----------------------------------------------------------
+
+function calcSnapshot(modelUser: RawPtr) -> CalcModel {
+    return nativeRecover<CalcModel>(modelUser)
+}
+
+function calcPushUndo(m: borrow mut CalcModel) {
+    m.undoStack.append(copy m.tokens)
+    if m.undoStack.count > 64 {
+        // Drop the OLDEST entry: the stack protects recent work, and an
+        // unbounded one grows every press of a session-long calculation.
+        calcDropFirstUndo(m)
+    }
+    m.redoStack = []
+    return
+}
+
+function calcDropFirstUndo(m: borrow mut CalcModel) {
+    var shifted: [[Tok]] = []
+    var i = 1
+    while i < m.undoStack.count {
+        shifted.append(copy m.undoStack[i])
+        i = i + 1
+    }
+    m.undoStack = move shifted
+    return
+}
+
+// --- Editing actions ---------------------------------------------------------
+
+function calcLastKind(m: borrow CalcModel) -> Int {
+    if m.tokens.count == 0 {
+        return 0 - 1
+    }
+    return m.tokens[m.tokens.count - 1].kind
+}
+
+function calcAppendDigit(modelUser: RawPtr, digit: Int) {
+    var m = calcSnapshot(modelUser)
+    m.error = false
+    m.fxMenuOpen = false
+    if m.tokens.count == 0 && m.hasAnswer && m.result != "" {
+        // A number after a finished calculation clears the stage; the answer
+        // itself stays reachable through the ans key.
+        m.historyExpr = ""
+        m.historyResult = ""
+        m.result = ""
+    }
+    let codepoint = 48 + digit
+    if calcLastKind(m) == tokNum() {
+        let last = m.tokens.count - 1
+        if stringCountChars(m.tokens[last].name) >= 15 {
+            return
+        }
+        m.tokens[last].name = foundationAppendCodepoint(m.tokens[last].name, codepoint)
+        if m.tokens[last].fractionDigits > 0 {
+            let scale = pow10Ish(m.tokens[last].fractionDigits)
+            m.tokens[last].re = m.tokens[last].re + Float(digit) / scale
+            m.tokens[last].fractionDigits = m.tokens[last].fractionDigits + 1
+        } else {
+            m.tokens[last].re = m.tokens[last].re * 10.0 + Float(digit)
+        }
+        return
+    }
+    var t = Tok {}
+    t.kind = tokNum()
+    t.name = foundationAppendCodepoint("", codepoint)
+    t.re = Float(digit)
+    m.tokens.append(t)
+    return
+}
+
+function pow10Ish(n: Int) -> Float {
+    var scale = 1.0
+    var i = 0
+    while i < n {
+        scale = scale * 10.0
+        i = i + 1
+    }
+    return scale
+}
+
+function calcAppendDot(modelUser: RawPtr) {
+    var m = calcSnapshot(modelUser)
+    m.error = false
+    if calcLastKind(m) == tokNum() {
+        let last = m.tokens.count - 1
+        if m.tokens[last].fractionDigits > 0 {
+            return
+        }
+        m.tokens[last].name = foundationAppendCodepoint(m.tokens[last].name, 46)
+        m.tokens[last].fractionDigits = 1
+        return
+    }
+    calcPushUndo(m)
+    if calcLastKind(m) == tokRPar() || calcLastKind(m) == tokPi() || calcLastKind(m) == tokE() || calcLastKind(m) == tokI() {
+        m.tokens.append(calcTokenOfKind(tokMul()))
+    }
+    var t = Tok {}
+    t.kind = tokNum()
+    t.name = "0."
+    t.re = 0.0
+    t.fractionDigits = 1
+    m.tokens.append(t)
+    return
+}
+
+function calcTokenOfKind(kind: Int) -> Tok {
+    var t = Tok {}
+    t.kind = kind
+    return t
+}
+
+// Any operator, constant or bracket press funnels through here once the key
+// itself has decided what it means.
+function calcAppendKind(modelUser: RawPtr, kind: Int) {
+    var m = calcSnapshot(modelUser)
+    m.error = false
+    m.fxMenuOpen = false
+    // An operator after "=" continues from the answer.
+    if m.tokens.count == 0 && m.hasAnswer {
+        if kind >= tokAdd() && kind <= tokDiv() || kind == tokPow() || kind == tokMod() || kind == tokNPr() || kind == tokNCr() {
+            var ans = Tok {}
+            ans.kind = tokNum()
+            ans.name = formatNumber(m.lastAnswer)
+            ans.re = m.lastAnswer.re
+            ans.im = m.lastAnswer.im
+            m.tokens.append(ans)
+        }
+    }
+    if m.tokens.count == 0 {
+        // Leading operators other than minus have nothing to act on.
+        if kind == tokSub() {
+            calcPushUndo(m)
+            m.tokens.append(calcTokenOfKind(kind))
+        }
+        return
+    }
+    calcPushUndo(m)
+    m.tokens.append(calcTokenOfKind(kind))
+    return
+}
+
+function calcAppendFn(modelUser: RawPtr, name: String) {
+    var m = calcSnapshot(modelUser)
+    m.error = false
+    m.fxMenuOpen = false
+    calcPushUndo(m)
+    var t = Tok {}
+    t.kind = tokFn()
+    t.name = name
+    m.tokens.append(t)
+    m.tokens.append(calcTokenOfKind(tokLPar()))
+    return
+}
+
+function calcToggleInverse(modelUser: RawPtr) {
+    var m = calcSnapshot(modelUser)
+    m.inverse = m.inverse == false
+    return
+}
+
+function calcToggleDegrees(modelUser: RawPtr) {
+    var m = calcSnapshot(modelUser)
+    m.degrees = m.degrees == false
+    return
+}
+
+function calcClearAll(modelUser: RawPtr) {
+    var m = calcSnapshot(modelUser)
+    calcPushUndo(m)
+    m.tokens = []
+    m.result = ""
+    m.historyExpr = ""
+    m.historyResult = ""
+    m.error = false
+    return
+}
+
+function calcBackspace(modelUser: RawPtr) {
+    var m = calcSnapshot(modelUser)
+    if m.tokens.count == 0 {
+        m.error = false
+        m.result = ""
+        return
+    }
+    calcPushUndo(m)
+    let last = m.tokens.count - 1
+    if m.tokens[last].kind == tokNum() && stringCountChars(m.tokens[last].name) > 1 {
+        m.tokens[last].name = foundationDropLastScalar(m.tokens[last].name)
+        let rebuilt = parseNumberShape(m.tokens[last].name)
+        m.tokens[last].re = rebuilt.re
+        m.tokens[last].fractionDigits = rebuilt.fractionDigits
+        return
+    }
+    var shifted: [Tok] = []
+    var i = 0
+    while i < last {
+        shifted.append(copy m.tokens[i])
+        i = i + 1
+    }
+    m.tokens = move shifted
+    m.error = false
+    return
+}
+
+// The value and fraction state of a typed number, read back out of its text.
+// Backspace is the one place text and value can drift apart, so the text wins
+// there and the numbers are rebuilt from it.
+struct NumParse {
+    var re: Float = 0.0
+    var fractionDigits: Int = 0
+}
+
+function parseNumberShape(raw: borrow String) -> NumParse {
+    var shape = NumParse {}
+    var mantissa = 0.0
+    var scale = 1.0
+    var pastPoint = false
+    var i = 0
+    while i < raw.count {
+        let ch = raw.charAt(i)
+        if ch == 46 {
+            pastPoint = true
+        } else {
+            let d = ch - 48
+            if d >= 0 {
+                if d <= 9 {
+                    if pastPoint {
+                        scale = scale * 10.0
+                        mantissa = mantissa + Float(d) / scale
+                        shape.fractionDigits = shape.fractionDigits + 1
+                    } else {
+                        mantissa = mantissa * 10.0 + Float(d)
+                    }
+                }
+            }
+        }
+        i = i + 1
+    }
+    shape.re = mantissa
+    return shape
+}
+
+function calcEquals(modelUser: RawPtr) {
+    var m = calcSnapshot(modelUser)
+    if m.tokens.count == 0 {
+        return
+    }
+    let outcome = evaluateTokens(m.tokens, m.degrees)
+    let rendered = renderExpression(m.tokens)
+    if outcome.failed {
+        m.error = true
+        m.result = "Error"
+        return
+    }
+    m.error = false
+    m.historyExpr = rendered
+    m.historyResult = formatNumber(outcome.value)
+    m.result = formatNumber(outcome.value)
+    m.lastAnswer = outcome.value
+    m.hasAnswer = true
+    var entry = HistEntry {}
+    entry.expr = rendered
+    entry.resultText = m.result
+    entry.re = outcome.value.re
+    entry.im = outcome.value.im
+    m.history.append(entry)
+    if m.history.count > 30 {
+        var kept: [HistEntry] = []
+        var i = 1
+        while i < m.history.count {
+            kept.append(copy m.history[i])
+            i = i + 1
+        }
+        m.history = move kept
+    }
+    calcPushUndo(m)
+    m.tokens = []
+    return
+}
+
+function calcUndo(modelUser: RawPtr) {
+    var m = calcSnapshot(modelUser)
+    if m.undoStack.count == 0 {
+        return
+    }
+    let last = m.undoStack.count - 1
+    m.redoStack.append(copy m.tokens)
+    m.tokens = copy m.undoStack[last]
+    calcDropRedoTail(m)
+    calcDropUndoTail(m)
+    return
+}
+
+function calcDropUndoTail(m: borrow mut CalcModel) {
+    var shifted: [[Tok]] = []
+    var i = 0
+    while i < m.undoStack.count - 1 {
+        shifted.append(copy m.undoStack[i])
+        i = i + 1
+    }
+    m.undoStack = move shifted
+    return
+}
+
+function calcDropRedoTail(m: borrow mut CalcModel) {
+    var shifted: [[Tok]] = []
+    var i = 0
+    while i < m.redoStack.count - 1 {
+        shifted.append(copy m.redoStack[i])
+        i = i + 1
+    }
+    m.redoStack = move shifted
+    return
+}
+
+function calcRedo(modelUser: RawPtr) {
+    var m = calcSnapshot(modelUser)
+    if m.redoStack.count == 0 {
+        return
+    }
+    let last = m.redoStack.count - 1
+    m.undoStack.append(copy m.tokens)
+    m.tokens = copy m.redoStack[last]
+    calcDropRedoTail(m)
+    return
+}
+
+function calcInsertAnswer(modelUser: RawPtr) {
+    var m = calcSnapshot(modelUser)
+    if m.hasAnswer == false {
+        return
+    }
+    m.error = false
+    calcPushUndo(m)
+    var t = Tok {}
+    t.kind = tokNum()
+    t.name = formatNumber(m.lastAnswer)
+    t.re = m.lastAnswer.re
+    t.im = m.lastAnswer.im
+    m.tokens.append(t)
+    return
+}
+
+function calcSelectHistory(modelUser: RawPtr, index: Int) {
+    var m = calcSnapshot(modelUser)
+    if index < 0 || index >= m.history.count {
+        return
+    }
+    let entry = m.history[index]
+    m.historySheetOpen = false
+    calcPushUndo(m)
+    m.tokens = []
+    m.result = entry.resultText
+    m.hasAnswer = true
+    m.lastAnswer = cx(entry.re, entry.im)
+    return
+}
+
+function calcToggleHistorySheet(modelUser: RawPtr) {
+    var m = calcSnapshot(modelUser)
+    m.historySheetOpen = m.historySheetOpen == false
+    m.fxMenuOpen = false
+    m.modeMenuOpen = false
+    return
+}
+
+function calcToggleFxMenu(modelUser: RawPtr) {
+    var m = calcSnapshot(modelUser)
+    m.fxMenuOpen = m.fxMenuOpen == false
+    return
+}
+
+function calcCloseMenus(modelUser: RawPtr) {
+    var m = calcSnapshot(modelUser)
+    m.fxMenuOpen = false
+    m.modeMenuOpen = false
+    return
+}
+
+// --- Rendering ---------------------------------------------------------------
+
+// What a typed number looks like while it is being typed: exactly the digits,
+// dot included, never reformatted under the user's thumb.
+function fnDisplayName(name: borrow String) -> String {
+    if name == "logb" {
+        return "logᵧ"
+    }
+    if name == "floor" {
+        return "[x]"
+    }
+    return name
+}
+
+// The expression line: every token's glyph run together, the way the top row
+// of the display reads.
+function renderExpression(tokens: borrow [Tok]) -> String {
+    var text = ""
+    var previousKind = 0 - 1
+    var i = 0
+    while i < tokens.count {
+        let t = tokens[i]
+        text = text + tokenGlyph(t, previousKind)
+        previousKind = t.kind
+        i = i + 1
+    }
+    return text
+}
+
+function tokenGlyph(t: borrow Tok, previousKind: Int) -> String {
+    if t.kind == tokNum() {
+        return t.name
+    }
+    if t.kind == tokAdd() {
+        return "+"
+    }
+    if t.kind == tokSub() {
+        // The same key reads as negation straight after an operator or an open
+        // bracket and as subtraction anywhere else; either way it draws "-".
+        return "-"
+    }
+    if t.kind == tokMul() {
+        return "×"
+    }
+    if t.kind == tokDiv() {
+        return "÷"
+    }
+    if t.kind == tokMod() {
+        return " mod "
+    }
+    if t.kind == tokPow() {
+        return "^"
+    }
+    if t.kind == tokFact() {
+        return "!"
+    }
+    if t.kind == tokPct() {
+        return "%"
+    }
+    if t.kind == tokLPar() {
+        return "("
+    }
+    if t.kind == tokRPar() {
+        return ")"
+    }
+    if t.kind == tokFn() {
+        return fnDisplayName(t.name) + "("
+    }
+    if t.kind == tokPi() {
+        return "π"
+    }
+    if t.kind == tokE() {
+        return "e"
+    }
+    if t.kind == tokI() {
+        return "i"
+    }
+    if t.kind == tokNPr() {
+        return " nPr "
+    }
+    if t.kind == tokNCr() {
+        return " nCr "
+    }
+    if t.kind == tokComma() {
+        return ","
+    }
+    return ""
+}
+
+function stringCountChars(text: borrow String) -> Int {
+    return text.count
+}
