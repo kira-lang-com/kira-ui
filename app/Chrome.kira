@@ -20,28 +20,125 @@ import KiraUIFoundation
 // pressed is a glyph with `.onClick(...)` on it.
 
 // The three window controls, in the standard order and the standard colours.
-Widget WindowControls(spacing: Spacing = Spacing.Small) {
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
-        let controls = HStack(spacing: spacing, alignment: VerticalAlignment.Center) {
-            WindowButton(ink: PrimaryColor.Red)
+enum WindowControlGlyph {
+    Close
+    Minimize
+    Maximize
+}
 
-            WindowButton(ink: PrimaryColor.Yellow)
+Widget WindowControls(spacing: Spacing = .ExtraSmall) {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+        if graphicsUsesWaylandClientWindowControls() == false {
+            return EmptyView().lower(context, modifiers)
+        }
+        // macOS reveals all three marks when the pointer enters any one of the
+        // traffic lights. Mint the stable hit keys here so every button can see
+        // the group's hover state before it lowers.
+        let closeKey = kiraUiTapSeqKey()
+        let minimizeKey = kiraUiTapSeqKey()
+        let maximizeKey = kiraUiTapSeqKey()
+        let reveal = kiraUiHovered(closeKey) ||
+            kiraUiHovered(minimizeKey) ||
+            kiraUiHovered(maximizeKey)
+        let controls = HStack(spacing: spacing, alignment: .Center) {
+            WindowButton(
+                key: closeKey,
+                ink: .Red,
+                glyph: .Close,
+                revealGlyph: reveal,
+                action: kiraUiRequestWindowClose,
+            )
 
-            WindowButton(ink: PrimaryColor.Green)
+            WindowButton(
+                key: minimizeKey,
+                ink: .Yellow,
+                glyph: .Minimize,
+                revealGlyph: reveal,
+                action: kiraUiRequestWindowMinimize,
+            )
+
+            WindowButton(
+                key: maximizeKey,
+                ink: .Green,
+                glyph: .Maximize,
+                revealGlyph: reveal,
+                action: kiraUiRequestWindowToggleMaximize,
+            )
         }
         .hugWidth()
         return controls.lower(context, modifiers)
     }
 }
 
-Widget WindowButton(ink: PrimaryColor) {
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+Widget WindowButton(
+    key: Int,
+    ink: PrimaryColor,
+    glyph: WindowControlGlyph,
+    revealGlyph: Bool,
+    action: () -> Void,
+) {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         let metrics = resolvedControlMetrics(modifiers)
-        let button = Circle()
-            .width(metrics.windowButton)
-            .height(metrics.windowButton)
-            .foregroundColor(ink)
-        return button.lower(context, modifiers)
+        // The painted traffic light stays platform-sized; the transparent box
+        // around it is four points larger so acquiring a tiny dot does not
+        // require pixel-perfect aim.
+        let hitSize = metrics.windowButton + 4.0
+        let face = ZStack(alignment: .Center) {
+            Circle()
+                .width(metrics.windowButton)
+                .height(metrics.windowButton)
+                .foregroundColor(ink)
+
+            if revealGlyph {
+                WindowControlMark(kind: glyph)
+            }
+        }
+        .width(hitSize)
+        .height(hitSize)
+        let lowered = face.lower(context, modifiers)
+        let press = action
+        return FoundationView {
+            kind: .HitArea
+            key: key
+            width: lowered.width
+            height: lowered.height
+            // A HitArea's zero value is an opaque fill. Window controls paint
+            // their own coloured face, so the acquisition box must be
+            // explicitly transparent or it covers the hover glyphs it owns.
+            backgroundFill: transparentFoundationColor()
+            radius: hitSize / 2.0
+            disabled: modifiers.disabled
+            focusable: true
+            autofocus: modifiers.hasFocused && modifiers.focused
+            onPress: press
+            children: [move lowered]
+        }
+    }
+}
+
+// Tiny geometric marks rather than general-purpose symbol artwork: these live
+// inside a twelve-point face, and a library icon's text-sized layout box can
+// extend across neighbouring controls even when its ink is requested smaller.
+Widget WindowControlMark(kind: WindowControlGlyph) {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+        let black = Color { r: 0.0 g: 0.0 b: 0.0 a: 0.65 }
+        let mark = ZStack(alignment: .Center) {
+            if kind == .Close {
+                Text(content: "×")
+                    .typography(.caption)
+                    .foregroundColor(.Black)
+            }
+            if kind == .Minimize {
+                Rectangle(width: 6.0, height: 1.25, radius: 0.625, fill: black)
+            }
+            if kind == .Maximize {
+                Rectangle(width: 6.0, height: 1.25, radius: 0.625, fill: black)
+                Rectangle(width: 1.25, height: 6.0, radius: 0.625, fill: black)
+            }
+        }
+        .width(8.0)
+        .height(8.0)
+        return mark.lower(context, modifiers)
     }
 }
 
@@ -56,30 +153,29 @@ Widget WindowButton(ink: PrimaryColor) {
 Widget CenteredContent() {
     let content: some Widget
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         return Frame(
             content.lower(context, modifiers),
-            KiraUIFoundation.SizeMode.Fill,
-            KiraUIFoundation.SizeMode.Fill,
+            .Fill,
+            .Fill,
             0,
-            KiraUIFoundation.Alignment.Center,
-            KiraUIFoundation.EdgeInsets {}
+            .Center,
+            EdgeInsets {}
         )
     }
 }
 
 // A control-sized box around a glyph: the toolbar item, one segment of a group.
 // It carries the pressed-in fill a mode item holds while its mode is on.
-Widget ControlSlot(active: Bool = false, radius: CornerRadius = CornerRadius.Small) {
+Widget ControlSlot(active: Bool = false, radius: CornerRadius = .Small) {
     let content: some Widget
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         let metrics = resolvedControlMetrics(modifiers)
-        let slot = Panel(radius: radius) {
-            CenteredContent() {
-                content
-            }
+        let slot = CenteredContent() {
+            content
         }
+        .background(RoundedRectangle(radius: radius))
         .backgroundStyle(controlSlotSurface(active))
         .width(metrics.buttonWidth)
         .height(metrics.height)
@@ -89,44 +185,43 @@ Widget ControlSlot(active: Bool = false, radius: CornerRadius = CornerRadius.Sma
 
 function controlSlotSurface(active: Bool) -> BackgroundStyle {
     if active {
-        return BackgroundStyle.Control
+        return .Control
     }
-    return BackgroundStyle.Clear
+    return .Clear
 }
 
 // The ink a chrome glyph takes: the accent while its mode is on, secondary
 // otherwise.
 function controlStateInk(active: Bool) -> PrimaryColor {
     if active {
-        return PrimaryColor.Accent
+        return .Accent
     }
-    return PrimaryColor.Secondary
+    return .Secondary
 }
 
 // A capsule of controls that belong together: the appearance previews on a
 // toolbar, a run of mode glyphs. It is a container, not a control — what each
 // item does is that item's own `.onClick(...)`.
-Widget ControlGroup(spacing: Spacing = Spacing.ExtraSmall) {
+Widget ControlGroup(spacing: Spacing = .ExtraSmall) {
     let children: [some Widget]
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         let metrics = resolvedControlMetrics(modifiers)
-        let items = HStack(spacing: spacing, alignment: VerticalAlignment.Center) {
+        let items = HStack(spacing: spacing, alignment: .Center) {
             For(item in children) {
                 item
             }
         }
         .hugWidth()
-        let group = Panel(radius: CornerRadius.Capsule) {
-            FoundationRaw(view: Frame(
-                items.lower(context, modifiers),
-                KiraUIFoundation.SizeMode.Hug,
-                KiraUIFoundation.SizeMode.Hug,
-                0,
-                KiraUIFoundation.Alignment.Center,
-                uniformInsets(metrics.toggleInset)
-            ))
-        }
+        let group = FoundationRaw(view: Frame(
+            items.lower(context, modifiers),
+            .Hug,
+            .Hug,
+            0,
+            .Center,
+            uniformInsets(metrics.toggleInset)
+        ))
+        .background(Capsule())
         .backgroundStyle(.Control)
         .hugWidth()
         .hugHeight()
@@ -151,23 +246,22 @@ Widget ControlGroup(spacing: Spacing = Spacing.ExtraSmall) {
 // a row on the platform, and a tighter one makes three cards read as one long
 // list rather than as three groups.
 Widget Inspector(
-    spacing: Spacing = Spacing.ExtraLarge,
-    background: BackgroundStyle = BackgroundStyle.Surface,
-    material: Material = Material.Flat,
+    spacing: Spacing = .ExtraLarge,
+    background: BackgroundStyle = .Surface,
+    material: Material = .Flat,
 ) {
     let children: [some Widget]
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         let metrics = resolvedControlMetrics(modifiers)
-        let panel = Panel(radius: CornerRadius.None) {
-            Form(spacing: spacing) {
-                For(section in children) {
-                    section
-                }
-
-                Spacer()
+        let panel = Form(spacing: spacing) {
+            For(section in children) {
+                section
             }
+
+            Spacer()
         }
+        .background(RoundedRectangle())
         .backgroundStyle(background)
         .material(material)
         .width(metrics.inspectorWidth)
@@ -185,18 +279,18 @@ Widget Inspector(
 Widget ListRow(
     selected: Bool = false,
     level: Int = 0,
-    spacing: Spacing = Spacing.Small,
+    spacing: Spacing = .Small,
 ) {
     let children: [some Widget]
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         let metrics = resolvedControlMetrics(modifiers)
         // The row FILLS its list rather than hugging its content, and holds it
         // against the leading edge. A Spacer of its own would be one the caller
         // cannot see: a row that ends with `Spacer()` and a trailing count would
         // then have two of them, and the two would split the slack between them
         // — which is how a right-hand count ends up in the middle of the row.
-        let content = HStack(spacing: spacing, alignment: VerticalAlignment.Center) {
+        let content = HStack(spacing: spacing, alignment: .Center) {
             if level > 0 {
                 FixedGap(width: intAsFloat(value: level) * metrics.listIndent, height: 1.0)
             }
@@ -215,23 +309,23 @@ Widget ListRow(
         let bandInset = margin / 2.0
         let band = FoundationRaw(view: Frame(
             content.lower(context, listRowModifiers(modifiers, selected)),
-            KiraUIFoundation.SizeMode.Fill,
-            KiraUIFoundation.SizeMode.Fixed(metrics.listRowHeight),
+            .Fill,
+            .Fixed(metrics.listRowHeight),
             0,
-            KiraUIFoundation.Alignment.Leading,
-            KiraUIFoundation.EdgeInsets {
+            .Leading,
+            EdgeInsets {
                 leading: margin - bandInset
                 trailing: margin - bandInset
             }
         ))
-        .background(BackgroundFill(style: listRowSurface(selected), radius: CornerRadius.Small))
+        .background(BackgroundFill(style: listRowSurface(selected), radius: .Small))
         let row = FoundationRaw(view: Frame(
             band.lower(context, modifiers),
-            KiraUIFoundation.SizeMode.Fill,
-            KiraUIFoundation.SizeMode.Hug,
+            .Fill,
+            .Hug,
             0,
-            KiraUIFoundation.Alignment.Leading,
-            KiraUIFoundation.EdgeInsets {
+            .Leading,
+            EdgeInsets {
                 leading: bandInset
                 trailing: bandInset
             }
@@ -256,14 +350,14 @@ function listRowModifiers(modifiers: borrow ModifierContext, selected: Bool) -> 
 // what made the selected row disappear the moment a theme washed its selection.
 function listRowSelectedInk(modifiers: borrow ModifierContext) -> PrimaryColor {
     if modifierTokens(modifiers).fill.selection.a >= 0.6 {
-        return PrimaryColor.Inverse
+        return .Inverse
     }
-    return PrimaryColor.Primary
+    return .Primary
 }
 
 function listRowSurface(selected: Bool) -> BackgroundStyle {
     if selected {
-        return BackgroundStyle.Selection
+        return .Selection
     }
-    return BackgroundStyle.Clear
+    return .Clear
 }

@@ -16,24 +16,24 @@ function checkContextPropagation() {
     let themedChildren = modifierContextForChildren(themed)
     checkModifier("theme is inherited", themedChildren.hasTheme)
 
-    let blueDelta = modifierDeltaForegroundColor(PrimaryColor.Blue)
+    let blueDelta = modifierDeltaForegroundColor(.Blue)
     let blue = modifierContextApply(ModifierContext {}, move blueDelta)
-    let greenDelta = modifierDeltaForegroundColor(PrimaryColor.Green)
+    let greenDelta = modifierDeltaForegroundColor(.Green)
     let green = modifierContextApply(blue, move greenDelta)
-    checkModifier("nearest foreground color wins", green.foregroundColor == PrimaryColor.Green)
+    checkModifier("nearest foreground color wins", green.foregroundColor == .Green)
     checkModifier(
         "foreground color cascades to children",
-        modifierContextForChildren(green).foregroundColor == PrimaryColor.Green
+        modifierContextForChildren(green).foregroundColor == .Green
     )
 
-    let materialDelta = modifierDeltaMaterial(Material.Frosted)
+    let materialDelta = modifierDeltaMaterial(.Frosted)
     let frosted = modifierContextApply(ModifierContext {}, move materialDelta)
     checkModifier("material is scoped", frosted.hasMaterial && modifierContextForChildren(frosted).hasMaterial == false)
 
-    let parentFontDelta = modifierDeltaFont(17.0, FontWeight.Regular)
+    let parentFontDelta = modifierDeltaFont(17.0, .Regular)
     let parentFont = modifierContextApply(ModifierContext {}, move parentFontDelta)
     let childFontContext = modifierContextForChildren(parentFont)
-    let childFontDelta = modifierDeltaFont(31.0, FontWeight.Bold)
+    let childFontDelta = modifierDeltaFont(31.0, .Bold)
     let childFont = modifierContextApply(childFontContext, move childFontDelta)
     checkModifier("font cascades", childFontContext.fontSize == 17.0)
     checkModifier("nearer font wins", childFont.fontSize == 31.0)
@@ -53,9 +53,9 @@ function checkContextPropagation() {
 
 function checkLoweringPropagation() {
     let foundationContext = KiraUIFoundation.FoundationUiContext {}
-    let styled = VStack(spacing = Spacing.None) {
+    let styled = VStack(spacing = .None) {
         Text("Parent font")
-        Text("Child font").font(size = 31.0, weight = FontWeight.Bold)
+        Text("Child font").font(size = 31.0, weight = .Bold)
     }
         .font(size = 17.0)
         .foregroundColor(.Blue)
@@ -66,7 +66,7 @@ function checkLoweringPropagation() {
 
     // The cascade is the SwiftUI rule: a foreground names the subtree's ink
     // until something nearer restates it.
-    let cascaded = VStack(spacing = Spacing.None) {
+    let cascaded = VStack(spacing = .None) {
         Text("One")
         Text("Two").foregroundColor(.Green)
     }
@@ -75,8 +75,8 @@ function checkLoweringPropagation() {
     checkModifier("foreground cascades to first child", cascadedView.children[0].color.r == 1.0)
     checkModifier("nearer foreground wins for second child", cascadedView.children[1].color.g == 0.82)
 
-    let nested = VStack(spacing = Spacing.None) {
-        Card(material = Material.Flat) {
+    let nested = VStack(spacing = .None) {
+        Card(material = .Flat) {
             Text("Green")
         }
             .foregroundColor(.Green)
@@ -97,7 +97,7 @@ function checkLoweringPropagation() {
     checkModifier("modifier call nearest the widget wins", orderedView.color.g == 0.518)
 
     let mixed = Text("Mixed")
-        .inset(horizontal = Spacing.ExtraSmall, vertical = Spacing.ExtraSmall)
+        .inset(horizontal = .ExtraSmall, vertical = .ExtraSmall)
         .foregroundColor(.Cyan)
         .font(size = 19.0)
     let mixedView = mixed.lower(foundationContext, ModifierContext {})
@@ -124,7 +124,7 @@ function buttonNoop() {
 }
 
 function buttonForegroundFixture() -> Any Widget {
-    return Button(label = "Continue", role = .Normal, onPress = buttonNoop)
+    return Button(title = "Continue", role = .Normal, action = buttonNoop)
         .foregroundColor(.Purple)
         .focused(true)
         .disabled(true)

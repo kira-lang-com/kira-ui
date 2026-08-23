@@ -23,7 +23,7 @@ import KiraUIFoundation
 // view, which is the thing that owns the columns.
 
 struct KiraUiInspectorSink {
-    var column: [KiraUIFoundation.FoundationView] = []
+    var column: [FoundationView] = []
     var collecting: Bool = false
 }
 
@@ -46,7 +46,7 @@ function kiraUiInspectorSinkEnsure() {
 function kiraUiInspectorCollect() {
     kiraUiInspectorSinkEnsure()
     var sink = nativeRecover<KiraUiInspectorSink>(kiraUiStateSlotGet(kiraUiInspectorSinkKey()))
-    var empty: [KiraUIFoundation.FoundationView] = []
+    var empty: [FoundationView] = []
     sink.column = move empty
     sink.collecting = true
     return
@@ -59,7 +59,7 @@ function kiraUiInspectorStopCollecting() {
     return
 }
 
-function kiraUiInspectorPresent(view: KiraUIFoundation.FoundationView) {
+function kiraUiInspectorPresent(view: FoundationView) {
     kiraUiInspectorSinkEnsure()
     var sink = nativeRecover<KiraUiInspectorSink>(kiraUiStateSlotGet(kiraUiInspectorSinkKey()))
     if sink.collecting == false {
@@ -78,10 +78,10 @@ function kiraUiInspectorIsPresented() -> Bool {
 // The inspector column, as the window places it: the width the metrics table
 // says an inspector is, the window's full height under the bar.
 Widget InspectorColumn() {
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         let metrics = resolvedControlMetrics(modifiers)
         let sink = nativeRecover<KiraUiInspectorSink>(kiraUiStateSlotGet(kiraUiInspectorSinkKey()))
-        let column = VStack(spacing: Spacing.None) {
+        let column = VStack(spacing: .None) {
             For(view in sink.column) {
                 FoundationRaw(view: view)
             }
@@ -96,7 +96,7 @@ extend Widget {
     // The inspector this view puts on the window's trailing edge, matching
     // SwiftUI's `.inspector(isPresented:)`. An inspector nobody asked for is not
     // built at all, and the columns beside it take the width back.
-    function inspector(isPresented: Bool = true, content: Any Widget) -> Any Widget {
+    function inspector(isPresented: Bool = true, content: some Widget) -> Any Widget {
         return InspectorLayer(isPresented: isPresented, content: content) {
             self
         }
@@ -106,7 +106,7 @@ extend Widget {
 Widget InspectorLayer(isPresented: Bool = true, content: Any Widget) {
     let subject: some Widget
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         let childModifiers = modifierContextForChildren(modifiers)
         if isPresented {
             kiraUiInspectorPresent(content.lower(context, childModifiers))

@@ -6,7 +6,7 @@ import KiraUIFoundation
 //
 // The library owns the edit state (codepoint buffer + caret) in a per-key state
 // slot, seeded once from `initial` (String is opaque, so it is decoded to
-// codepoints via KiraUIFoundation.foundationStringToCodepoints). Typing inserts
+// codepoints via foundationStringToCodepoints). Typing inserts
 // at the caret; Backspace / forward-Delete remove around it; Left/Right/Home/End
 // move it (routed through onKey); a click sets the caret to the nearest character
 // (prefix measurement). The caret is rendered without measurement by splitting
@@ -58,7 +58,7 @@ function textFieldSlotKey(key: Int) -> String {
         codes.append(digitsRev[i])
         i = i - 1
     }
-    return "kiraui.tf." + KiraUIFoundation.foundationStringFromCodepoints(codes, 0, codes.count)
+    return "kiraui.tf." + foundationStringFromCodepoints(codes, 0, codes.count)
 }
 
 function textFieldEnsure(key: Int) {
@@ -72,7 +72,7 @@ function textFieldSeed(key: Int, initial: borrow String) {
     textFieldEnsure(key)
     var st = nativeRecover<KiraUiTextFieldState>(kiraUiStateSlotGet(textFieldSlotKey(key)))
     if st.seeded == false {
-        st.codes = KiraUIFoundation.foundationStringToCodepoints(initial)
+        st.codes = foundationStringToCodepoints(initial)
         st.caret = st.codes.count
         st.anchor = st.caret
         st.seeded = true
@@ -83,7 +83,7 @@ function textFieldSeed(key: Int, initial: borrow String) {
 function textFieldText(key: Int) -> String {
     textFieldEnsure(key)
     let st = nativeRecover<KiraUiTextFieldState>(kiraUiStateSlotGet(textFieldSlotKey(key)))
-    return KiraUIFoundation.foundationStringFromCodepoints(st.codes, 0, st.codes.count)
+    return foundationStringFromCodepoints(st.codes, 0, st.codes.count)
 }
 
 function textFieldReset(key: Int) {
@@ -262,8 +262,8 @@ function textFieldClickCaret(key: Int, size: Float, leftPad: Float) {
     var prevW = 0.0
     var placed = false
     while k <= n && placed == false {
-        let prefix = KiraUIFoundation.foundationStringFromCodepoints(st.codes, 0, k)
-        let w = KiraUIFoundation.foundationTextRunWidth(prefix, size, textFieldWeight())
+        let prefix = foundationStringFromCodepoints(st.codes, 0, k)
+        let w = foundationTextRunWidth(prefix, size, textFieldWeight())
         if w >= relX {
             if k > 0 && (relX - prevW) < (w - relX) {
                 st.caret = k - 1
@@ -323,41 +323,26 @@ function textFieldPressFn(key: Int, size: Float, leftPad: Float) -> () -> Void {
     return f
 }
 
-function textFieldGap(width: Float) -> KiraUIFoundation.FoundationView {
-    return KiraUIFoundation.FoundationView {
-        kind: KiraUIFoundation.FoundationViewKind.Surface
-        width: SizeMode.Fixed(width)
-        height: SizeMode.Fixed(1.0)
-        fill: KiraUIFoundation.Color {
-            r: 0.0
-            g: 0.0
-            b: 0.0
-            a: 0.0
-        }
+function textFieldGap(width: Float) -> FoundationView {
+    return FoundationView {
+        kind: .Surface
+        width: .Fixed(width)
+        height: .Fixed(1.0)
+        fill: foundationRgba(0.0, 0.0, 0.0, 0.0)
     }
 }
 
 // Color is non-Copy; the node builders take it by borrow and clone into the view
 // so a caller can reuse one color across several nodes.
-function textFieldColor(c: borrow KiraUIFoundation.Color) -> KiraUIFoundation.Color {
-    return KiraUIFoundation.Color {
-        r: c.r
-        g: c.g
-        b: c.b
-        a: c.a
-    }
+function textFieldColor(c: borrow FoundationColor) -> FoundationColor {
+    return foundationRgba(c.r, c.g, c.b, c.a)
 }
 
 function textFieldColorWithOpacity(
-    c: borrow KiraUIFoundation.Color,
+    c: borrow FoundationColor,
     opacity: Float,
-) -> KiraUIFoundation.Color {
-    return KiraUIFoundation.Color {
-        r: c.r
-        g: c.g
-        b: c.b
-        a: c.a * opacity
-    }
+) -> FoundationColor {
+    return foundationRgba(c.r, c.g, c.b, c.a * opacity)
 }
 
 // The weight editable text is set at.
@@ -371,32 +356,32 @@ function textFieldWeight() -> Float {
 
 function textFieldTextNode(
     content: String,
-    color: borrow KiraUIFoundation.Color,
+    color: borrow FoundationColor,
     size: Float,
     opacity: Float,
-) -> KiraUIFoundation.FoundationView {
-    return KiraUIFoundation.FoundationView {
-        kind: KiraUIFoundation.FoundationViewKind.Text
+) -> FoundationView {
+    return FoundationView {
+        kind: .Text
         content: content
         color: textFieldColorWithOpacity(color, opacity)
         size: size
-        inkLeft: KiraUIFoundation.foundationTextRunInkLeft(content: content, size: size, weight: textFieldWeight())
-        inkRight: KiraUIFoundation.foundationTextRunInkRight(content: content, size: size, weight: textFieldWeight())
-        inkTop: KiraUIFoundation.foundationTextRunInkTop(content: content, size: size, weight: textFieldWeight())
-        inkBottom: KiraUIFoundation.foundationTextRunInkBottom(content: content, size: size, weight: textFieldWeight())
+        inkLeft: foundationTextRunInkLeft(content: content, size: size, weight: textFieldWeight())
+        inkRight: foundationTextRunInkRight(content: content, size: size, weight: textFieldWeight())
+        inkTop: foundationTextRunInkTop(content: content, size: size, weight: textFieldWeight())
+        inkBottom: foundationTextRunInkBottom(content: content, size: size, weight: textFieldWeight())
         weight: textFieldWeight()
     }
 }
 
 function textFieldCaretNode(
     size: Float,
-    color: borrow KiraUIFoundation.Color,
+    color: borrow FoundationColor,
     opacity: Float,
-) -> KiraUIFoundation.FoundationView {
-    return KiraUIFoundation.FoundationView {
-        kind: KiraUIFoundation.FoundationViewKind.Surface
-        width: SizeMode.Fixed(1.5)
-        height: SizeMode.Fixed(size)
+) -> FoundationView {
+    return FoundationView {
+        kind: .Surface
+        width: .Fixed(1.5)
+        height: .Fixed(size)
         fill: textFieldColorWithOpacity(color, opacity)
     }
 }
@@ -404,15 +389,15 @@ function textFieldCaretNode(
 // Selected text: a highlight box (Hug to the text) painted behind the glyphs.
 function textFieldSelBox(
     content: String,
-    highlight: borrow KiraUIFoundation.Color,
-    textColor: borrow KiraUIFoundation.Color,
+    highlight: borrow FoundationColor,
+    textColor: borrow FoundationColor,
     size: Float,
     opacity: Float,
-) -> KiraUIFoundation.FoundationView {
-    return KiraUIFoundation.FoundationView {
-        kind: KiraUIFoundation.FoundationViewKind.Surface
-        width: KiraUIFoundation.SizeMode.Hug
-        height: KiraUIFoundation.SizeMode.Hug
+) -> FoundationView {
+    return FoundationView {
+        kind: .Surface
+        width: .Hug
+        height: .Hug
         fill: textFieldColorWithOpacity(highlight, opacity)
         radius: 2.0
         children: [textFieldTextNode(move content, textColor, size, opacity)]
@@ -431,13 +416,13 @@ function textFieldTextSize(modifiers: borrow ModifierContext) -> Float {
     return modifierTokens(modifiers).bodySize
 }
 
-function textFieldPlaceholderColor(modifiers: borrow ModifierContext) -> KiraUIFoundation.Color {
+function textFieldPlaceholderColor(modifiers: borrow ModifierContext) -> FoundationColor {
     return modifierColor(foundationColor(modifierTokens(modifiers).foreground.tertiary), modifiers)
 }
 
 // The selection band is the accent at reading strength — opaque accent would
 // bury the glyphs it is drawn behind.
-function textFieldSelectionColor(modifiers: borrow ModifierContext) -> KiraUIFoundation.Color {
+function textFieldSelectionColor(modifiers: borrow ModifierContext) -> FoundationColor {
     let accent = modifierTokens(modifiers).tint.accent
     return modifierColor(foundationColor(colorWithAlpha(accent, 0.35)), modifiers)
 }
@@ -462,7 +447,7 @@ Widget TextField(
     height: Float,
     onSubmit: () -> Void
 ) {
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         // A caret marks where typing would land, so a field nobody is typing in
         // does not draw one — a form of them all carrying a caret reads as a
         // form where every field is being edited at once.
@@ -487,7 +472,7 @@ Widget TextField(
         }
         let leftPad = 6.0
         let opacity = modifiers.opacity
-        var kids: [KiraUIFoundation.FoundationView] = []
+        var kids: [FoundationView] = []
         kids.append(textFieldGap(leftPad))
         if n == 0 {
             if editing {
@@ -497,7 +482,7 @@ Widget TextField(
         } else {
             if editing == false {
                 kids.append(textFieldTextNode(
-                    KiraUIFoundation.foundationStringFromCodepoints(st.codes, 0, n),
+                    foundationStringFromCodepoints(st.codes, 0, n),
                     textColor,
                     size,
                     opacity
@@ -505,33 +490,33 @@ Widget TextField(
             } else if anchor != caret {
                 let a = textFieldSelMin(anchor, caret)
                 let b = textFieldSelMax(anchor, caret)
-                let selBefore = KiraUIFoundation.foundationStringFromCodepoints(st.codes, 0, a)
-                let selMid = KiraUIFoundation.foundationStringFromCodepoints(st.codes, a, b)
-                let selAfter = KiraUIFoundation.foundationStringFromCodepoints(st.codes, b, n)
+                let selBefore = foundationStringFromCodepoints(st.codes, 0, a)
+                let selMid = foundationStringFromCodepoints(st.codes, a, b)
+                let selAfter = foundationStringFromCodepoints(st.codes, b, n)
                 kids.append(textFieldTextNode(move selBefore, textColor, size, opacity))
                 kids.append(textFieldSelBox(move selMid, selectColor, textColor, size, opacity))
                 kids.append(textFieldTextNode(move selAfter, textColor, size, opacity))
             } else {
-                let before = KiraUIFoundation.foundationStringFromCodepoints(st.codes, 0, caret)
-                let after = KiraUIFoundation.foundationStringFromCodepoints(st.codes, caret, n)
+                let before = foundationStringFromCodepoints(st.codes, 0, caret)
+                let after = foundationStringFromCodepoints(st.codes, caret, n)
                 kids.append(textFieldTextNode(move before, textColor, size, opacity))
                 kids.append(textFieldCaretNode(size, caretColor, opacity))
                 kids.append(textFieldTextNode(move after, textColor, size, opacity))
             }
         }
-        let row = KiraUIFoundation.Row(
+        let row = Row(
             children: move kids,
-            width: KiraUIFoundation.SizeMode.Fill,
-            height: KiraUIFoundation.SizeMode.Fill,
+            width: .Fill,
+            height: .Fill,
             spacing: 0.0,
-            padding: KiraUIFoundation.EdgeInsets {},
-            crossAxisAlignment: KiraUIFoundation.CrossAlignment.Center
+            padding: EdgeInsets {},
+            crossAxisAlignment: .Center
         )
-        return KiraUIFoundation.FoundationView {
-            kind: KiraUIFoundation.FoundationViewKind.HitArea
+        return FoundationView {
+            kind: .HitArea
             key: key
-            width: SizeMode.Fixed(width)
-            height: SizeMode.Fixed(height)
+            width: .Fixed(width)
+            height: .Fixed(height)
             focusable: true
             autofocus: modifiers.hasFocused ? modifiers.focused : true
             disabled: modifiers.disabled

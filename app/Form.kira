@@ -14,7 +14,7 @@ import KiraUIFoundation
 //
 //     Form {
 //         Section {
-//             LabeledContent(label = "Blur", symbol = .DropSimple) {
+//             LabeledContent(label = "Blur", symbol = .Drop) {
 //                 Toggle(isOn = blurOn).onClick(toggleBlur)
 //                 ValueField(text = "50", unit = "%").onScrub(scrubBlur)
 //             }
@@ -34,10 +34,10 @@ import KiraUIFoundation
 // --- Form --------------------------------------------------------------------
 
 // The sections of a property panel, inset from the surface they sit on.
-Widget Form(spacing: Spacing = Spacing.Large) {
+Widget Form(spacing: Spacing = .Large) {
     let children: [some Widget]
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         let metrics = resolvedControlMetrics(modifiers)
         let column = VStack(spacing: spacing) {
             For(section in children) {
@@ -46,10 +46,10 @@ Widget Form(spacing: Spacing = Spacing.Large) {
         }
         return Frame(
             column.lower(context, modifiers),
-            KiraUIFoundation.SizeMode.Fill,
-            KiraUIFoundation.SizeMode.Fill,
+            .Fill,
+            .Fill,
             0,
-            KiraUIFoundation.Alignment.TopLeading,
+            .TopLeading,
             uniformInsets(metrics.formInset)
         )
     }
@@ -67,28 +67,28 @@ Widget Form(spacing: Spacing = Spacing.Large) {
 // legible and accented while the property is off.
 Widget LabeledContent(
     label: String = "",
-    symbol: Symbol = Symbol.None,
+    symbol: Symbol = .None,
     active: Bool = true,
-    spacing: Spacing = Spacing.Small,
+    spacing: Spacing = .Small,
 ) {
     let children: [some Widget]
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         let metrics = resolvedControlMetrics(modifiers)
-        let row = HStack(spacing: Spacing.None, alignment: VerticalAlignment.Center) {
+        let row = HStack(spacing: .None, alignment: .Center) {
             // The label owns its glyph and its title together, and the hairline
             // under the row reads where its title begins. Neither names a
             // number, so moving the glyph column moves the hairline with it.
-            Label(title: label, symbol: symbol)
+            Label(title: label, systemImage: symbol)
                 .foregroundColor(rowLabelInk(active))
                 .alignmentGuide(ListRowSeparatorLeading()) { dimensions in
-                    return dimensions.subscript(AlignmentAnchor.Leading)
+                    return dimensions.subscript(.Leading)
                 }
                 .height(metrics.rowHeight)
 
             Spacer()
 
-            HStack(spacing: spacing, alignment: VerticalAlignment.Center) {
+            HStack(spacing: spacing, alignment: .Center) {
                 For(control in children) {
                     control
                 }
@@ -97,11 +97,11 @@ Widget LabeledContent(
         }
         return Frame(
             row.lower(context, modifiers),
-            KiraUIFoundation.SizeMode.Fill,
-            KiraUIFoundation.SizeMode.Hug,
+            .Fill,
+            .Hug,
             0,
-            KiraUIFoundation.Alignment.Center,
-            KiraUIFoundation.EdgeInsets {
+            .Center,
+            EdgeInsets {
                 leading: rowInset(metrics, modifiers)
                 trailing: rowInset(metrics, modifiers)
             }
@@ -124,16 +124,16 @@ function rowInset(
 
 function rowLabelInk(active: Bool) -> PrimaryColor {
     if active {
-        return PrimaryColor.Primary
+        return .Primary
     }
-    return PrimaryColor.Quaternary
+    return .Quaternary
 }
 
 function rowGlyphInk(active: Bool) -> PrimaryColor {
     if active {
-        return PrimaryColor.Secondary
+        return .Secondary
     }
-    return PrimaryColor.Quaternary
+    return .Quaternary
 }
 
 // --- Value field -------------------------------------------------------------
@@ -150,10 +150,10 @@ function rowGlyphInk(active: Bool) -> PrimaryColor {
 // `.disabled(...)`. A field with neither is a readout, and it looks like one
 // without being told to.
 Widget ValueField(text: String, unit: String = "") {
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         let metrics = resolvedControlMetrics(modifiers)
         let tokens = modifierTokens(modifiers)
-        let content = HStack(spacing: Spacing.ExtraSmall, alignment: VerticalAlignment.Center) {
+        let content = HStack(spacing: .ExtraSmall, alignment: .Center) {
             Spacer()
 
             Text(content: text)
@@ -168,28 +168,28 @@ Widget ValueField(text: String, unit: String = "") {
         }
         let box = Frame(
             content.lower(context, modifiers),
-            KiraUIFoundation.SizeMode.Fill,
-            KiraUIFoundation.SizeMode.Fill,
+            .Fill,
+            .Fill,
             0,
-            KiraUIFoundation.Alignment.Center,
-            KiraUIFoundation.EdgeInsets {
+            .Center,
+            EdgeInsets {
                 leading: metrics.fieldInset
                 trailing: metrics.fieldInset
             }
         )
         return Surface(
             children: [move box],
-            width: KiraUIFoundation.SizeMode.Fixed(metrics.fieldWidth),
-            height: KiraUIFoundation.SizeMode.Fixed(metrics.height),
+            width: .Fixed(metrics.fieldWidth),
+            height: .Fixed(metrics.height),
             flex: 0,
             fill: modifierSurfaceFill(foundationColor(tokens.fill.control), modifiers),
             border: transparentFoundationColor(),
             borderWidth: 0.0,
-            radius: cornerRadiusImplementation(CornerRadius.Small, modifiers),
-            shape: KiraUIFoundation.FoundationShape.RegularRoundedRect,
-            material: KiraUIFoundation.FoundationMaterial.Flat,
+            radius: cornerRadiusImplementation(.Small, modifiers),
+            shape: .RegularRoundedRect,
+            material: .Flat,
             effects: [],
-            padding: KiraUIFoundation.EdgeInsets {},
+            padding: EdgeInsets {},
             clipContent: true
         )
     }
@@ -213,7 +213,7 @@ Widget ValueField(text: String, unit: String = "") {
 // for. It carries no unit, which is the other half of that split: a unit
 // belongs beside a number nobody is typing over.
 Widget NumberField(key: Int, text: String, onSubmit: () -> Void) {
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         let metrics = resolvedControlMetrics(modifiers)
         let field = TextField(
             key: key,
@@ -241,7 +241,7 @@ function fieldTakesFocus(modifiers: borrow ModifierContext) -> Bool {
 // fields runs along, a unit outside the fill. Quieter than a label and set at
 // the same size as a unit inside a field.
 Widget FieldCaption(text: String) {
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         let caption = Text(content: text)
             .typography(.footnote)
             .foregroundColor(fieldUnitInk(modifiers.disabled))
@@ -251,16 +251,16 @@ Widget FieldCaption(text: String) {
 
 function fieldValueInk(disabled: Bool) -> PrimaryColor {
     if disabled {
-        return PrimaryColor.Quaternary
+        return .Quaternary
     }
-    return PrimaryColor.Primary
+    return .Primary
 }
 
 function fieldUnitInk(disabled: Bool) -> PrimaryColor {
     if disabled {
-        return PrimaryColor.Quaternary
+        return .Quaternary
     }
-    return PrimaryColor.Tertiary
+    return .Tertiary
 }
 
 // --- Value pad ---------------------------------------------------------------
@@ -270,8 +270,8 @@ function fieldUnitInk(disabled: Bool) -> PrimaryColor {
 // edge is the scale. Both axes run 0...1, and `.onScrub(...)` reports both at
 // once.
 Widget XYPad(x: Float, y: Float) {
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
-        let pad = ZStack(alignment: StackAlignment.TopLeading) {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+        let pad = ZStack(alignment: .TopLeading) {
             PadFace()
 
             PadKnob(x: x, y: y)
@@ -294,24 +294,23 @@ function padGuideCount(metrics: borrow ControlMetricsImplementation) -> Int {
 }
 
 Widget PadFace() {
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         let metrics = resolvedControlMetrics(modifiers)
         // The guide and the ruler are RULES, not separators: they mark a scale
         // inside the pad rather than divide two things, so they are drawn as
         // hairline rectangles and do not take the divider's insets with them.
         let ink = modifierTokens(modifiers).border.subtle.color
-        let face = Panel(radius: CornerRadius.Small) {
-            ZStack(alignment: StackAlignment.Center) {
-                VStack(spacing: Spacing.ExtraSmall, alignment: HorizontalAlignment.Center) {
+        let face = ZStack(alignment: .Center) {
+                VStack(spacing: .ExtraSmall, alignment: .Center) {
                     For(dash in indices(padGuideCount(metrics))) {
                         Rectangle(width: 1.0, height: metrics.padTick, fill: ink)
                     }
                 }
                 .hugWidth()
 
-                PadRuler()
-            }
+            PadRuler()
         }
+        .background(RoundedRectangle(radius: .Small))
         .backgroundStyle(.Control)
         .width(metrics.padWidth)
         .height(metrics.padHeight)
@@ -320,20 +319,20 @@ Widget PadFace() {
 }
 
 Widget PadRuler() {
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         let metrics = resolvedControlMetrics(modifiers)
-        let pitch = spacingImplementation(Spacing.Small, modifiers)
+        let pitch = spacingImplementation(.Small, modifiers)
         let ink = modifierTokens(modifiers).border.subtle.color
-        let ruler = VStack(spacing: Spacing.None) {
+        let ruler = VStack(spacing: .None) {
             Spacer()
 
-            HStack(spacing: Spacing.Small, alignment: VerticalAlignment.Bottom) {
+            HStack(spacing: .Small, alignment: .Bottom) {
                 For(tick in indices(padTickCount(metrics, pitch))) {
                     Rectangle(width: 1.0, height: metrics.padTick, fill: ink)
                 }
             }
             .hugWidth()
-            .inset(horizontal: Spacing.ExtraSmall, vertical: Spacing.ExtraSmall)
+            .inset(horizontal: .ExtraSmall, vertical: .ExtraSmall)
         }
         .fillHeight()
         return ruler.lower(context, modifiers)
@@ -341,12 +340,12 @@ Widget PadRuler() {
 }
 
 Widget PadKnob(x: Float, y: Float) {
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         let metrics = resolvedControlMetrics(modifiers)
-        let knob = VStack(spacing: Spacing.None) {
+        let knob = VStack(spacing: .None) {
             FixedGap(width: 1.0, height: y * (metrics.padHeight - metrics.padKnob))
 
-            HStack(spacing: Spacing.None) {
+            HStack(spacing: .None) {
                 FixedGap(width: x * (metrics.padWidth - metrics.padKnob), height: 1.0)
 
                 Circle()

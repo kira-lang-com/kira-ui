@@ -52,17 +52,47 @@ extend Widget {
         }
     }
 
+    // SwiftUI's `.padding(_ length:)`: the same length on all four edges. The
+    // token spelling below is the one to reach for — it keeps a control on the
+    // theme's scale — and this one is for the lengths a size class computes,
+    // which have no token to name them.
+    function padding(length: Float) -> Any Widget {
+        return PaddingLayer(length: length) {
+            self
+        }
+    }
+
     function inset(
-        horizontal: Spacing = Spacing.None,
-        vertical: Spacing = Spacing.None,
+        horizontal: Spacing = .None,
+        vertical: Spacing = .None,
     ) -> Any Widget {
         return Inset(horizontal: horizontal, vertical: vertical) {
             self
         }
     }
 
-    function background(fill: Any Widget) -> Any Widget {
+    // SwiftUI writes this both ways — `.background(someView)` and
+    // `.background { … }` — and so does this. A content parameter is an
+    // ordinary parameter that a trailing block may also fill, so the
+    // parenthesized form keeps working unchanged.
+    function background(fill: some Widget) -> Any Widget {
         return BackgroundLayer(fill: fill) {
+            self
+        }
+    }
+
+    // The other half of the pair is not an overload of this one: a modifier is
+    // one obligation per name on the family, so `background` cannot also take a
+    // style and a shape. It does not need to. SwiftUI writes that case as a
+    // SHAPE that has been filled — `.background(RoundedRectangle(cornerRadius:
+    // 12).fill(.regularMaterial))` — and a filled shape is already a view, so it
+    // goes through the spelling above with nothing added.
+
+    // `.glassEffect(in:)`. The shape defaults to a capsule because SwiftUI's
+    // does — glass is applied to controls far more often than to panels, and a
+    // control is a capsule.
+    function glassEffect(shape: ContainerShape = .Capsule) -> Any Widget {
+        return SurfaceLayer(style: .LayeredGlass, shape: shape) {
             self
         }
     }
@@ -85,7 +115,7 @@ extend Widget {
         }
     }
 
-    function font(size: Float, weight: FontWeight = FontWeight.Regular) -> Any Widget {
+    function font(size: Float, weight: FontWeight = .Regular) -> Any Widget {
         return FontLayer(size: size, weight: weight) {
             self
         }
@@ -146,7 +176,7 @@ extend Widget {
     function onClickKeyed(
         key: Int,
         action: () -> Void,
-        radius: CornerRadius = CornerRadius.Small,
+        radius: CornerRadius = .Small,
     ) -> Any Widget {
         return ClickRegion(key: key, onPress: action, radius: radius) {
             self
@@ -168,6 +198,19 @@ extend Widget {
 
     function minWidth(value: Float) -> Any Widget {
         return MinWidthLayer(value: value) {
+            self
+        }
+    }
+
+    // SwiftUI's `.frame(minHeight:)`: a FLOOR under the height, never a cap.
+    //
+    // The distinction is the whole reason this exists. A minimum tap target
+    // written as `.height(44)` pins a two-line label at 44 points and lets its
+    // second line hang out of the bottom; written as a minimum, a label that
+    // needs more simply gets more. `minWidth` above already had this shape and
+    // height did not, which is how the fixed spelling got reached for.
+    function minHeight(value: Float) -> Any Widget {
+        return MinHeightLayer(value: value) {
             self
         }
     }

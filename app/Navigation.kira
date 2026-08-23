@@ -48,64 +48,64 @@ struct NavigationMetrics {
 
 function navigationWidthClass(width: Float) -> NavigationWidthClass {
     if width < 600.0 {
-        return NavigationWidthClass.Compact
+        return .Compact
     }
     if width < 960.0 {
-        return NavigationWidthClass.Regular
+        return .Regular
     }
-    return NavigationWidthClass.Expanded
+    return .Expanded
 }
 
 function navigationDeviceOverride() -> NavigationDevice {
     let requested = environmentValue("KIRA_UI_DEVICE")
     if requested == "phone" {
-        return NavigationDevice.Phone
+        return .Phone
     }
     if requested == "tablet" {
-        return NavigationDevice.Tablet
+        return .Tablet
     }
     if requested == "pc" || requested == "desktop" {
-        return NavigationDevice.PC
+        return .PC
     }
     if requested == "tv" || requested == "television" {
-        return NavigationDevice.TV
+        return .TV
     }
-    return NavigationDevice.Automatic
+    return .Automatic
 }
 
 function resolvedNavigationDevice(width: Float) -> NavigationDevice {
     let requestedDevice = navigationDeviceOverride()
-    if requestedDevice != NavigationDevice.Automatic {
+    if requestedDevice != .Automatic {
         return requestedDevice
     }
     if width < 600.0 {
-        return NavigationDevice.Phone
+        return .Phone
     }
     if width < 960.0 {
-        return NavigationDevice.Tablet
+        return .Tablet
     }
-    return NavigationDevice.PC
+    return .PC
 }
 
 function navigationAdaptivePresentation(width: Float) -> NavigationPresentation {
     let device = resolvedNavigationDevice(width)
     let widthClass = navigationWidthClass(width)
     match device {
-        Phone -> return NavigationPresentation.Stack;
+        Phone -> return .Stack;
         Tablet -> {
-            if widthClass == NavigationWidthClass.Compact {
-                return NavigationPresentation.Stack
+            if widthClass == .Compact {
+                return .Stack
             }
-            return NavigationPresentation.Split
+            return .Split
         }
         PC -> {
-            if widthClass == NavigationWidthClass.Compact {
-                return NavigationPresentation.Stack
+            if widthClass == .Compact {
+                return .Stack
             }
-            return NavigationPresentation.Split
+            return .Split
         }
-        TV -> return NavigationPresentation.Split;
-        Automatic -> return NavigationPresentation.Stack;
+        TV -> return .Split;
+        Automatic -> return .Stack;
     }
 }
 
@@ -116,20 +116,20 @@ function navigationMetrics(width: Float) -> NavigationMetrics {
     var targetSize = 44.0
     var toolbarHeight = 48.0
     var toolbarInset = 12.0
-    if widthClass == NavigationWidthClass.Expanded {
+    if widthClass == .Expanded {
         primaryWidth = 320.0
     }
-    if device == NavigationDevice.Phone {
+    if device == .Phone {
         targetSize = 44.0
         toolbarHeight = 52.0
         toolbarInset = 16.0
     }
-    if device == NavigationDevice.Tablet {
+    if device == .Tablet {
         targetSize = 48.0
         toolbarHeight = 52.0
         toolbarInset = 16.0
     }
-    if device == NavigationDevice.PC {
+    if device == .PC {
         targetSize = 40.0
         // The bar's real height, not a floor it always exceeds.
         //
@@ -142,7 +142,7 @@ function navigationMetrics(width: Float) -> NavigationMetrics {
         // made every surface 4pt too tall for the box it was drawn into.
         toolbarHeight = 52.0
     }
-    if device == NavigationDevice.TV {
+    if device == .TV {
         primaryWidth = 320.0
         targetSize = 64.0
         toolbarHeight = 64.0
@@ -353,27 +353,31 @@ Widget NavigationLink(value: Any NavigationValue) {
         return NavigationLink(value: value, label: Text(content: title))
     }
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         let metrics = navigationMetrics(context.viewport.width)
-        let target = label.height(metrics.targetSize)
+        // The tap target is a MINIMUM. A link whose label is a card, a two-line
+        // row or anything else taller than the target keeps its own height; a
+        // bare `Text` is grown up to it. Fixing the height instead crushed every
+        // label that needed more room and let it overflow the box it was in.
+        let target = label.minHeight(metrics.targetSize)
         return target.onClick(navigationPushAction(move value)).lower(context, modifiers)
     }
 }
 
 Widget NavigationBackButton() {
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         return Button(
-            label: "Back",
-            onPress: navigationPopAction()
+            title: "Back",
+            action: navigationPopAction()
         ).lower(context, modifiers)
     }
 }
 
 Widget NavigationBar(title: String = "") {
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         let path = NavigationPath {}
         let metrics = navigationMetrics(context.viewport.width)
-        let items = HStack(spacing: Spacing.Small, alignment: VerticalAlignment.Center) {
+        let items = HStack(spacing: .Small, alignment: .Center) {
             if path.isEmpty() == false {
                 NavigationBackButton()
             }
@@ -383,49 +387,48 @@ Widget NavigationBar(title: String = "") {
             }
             Spacer()
         }
-        let bar = Panel(radius: CornerRadius.None) {
-            FoundationRaw(view = Frame(
-                items.lower(context, modifiers),
-                KiraUIFoundation.SizeMode.Fill,
-                KiraUIFoundation.SizeMode.Fill,
-                0,
-                KiraUIFoundation.Alignment.Center,
-                KiraUIFoundation.EdgeInsets {
-                    leading: metrics.toolbarInset
-                    trailing: metrics.toolbarInset
-                }
-            ))
-        }
+        let bar = FoundationRaw(view = Frame(
+            items.lower(context, modifiers),
+            .Fill,
+            .Fill,
+            0,
+            .Center,
+            EdgeInsets {
+                leading: metrics.toolbarInset
+                trailing: metrics.toolbarInset
+            }
+        ))
+            .background(RoundedRectangle())
             .backgroundStyle(.Surface)
             .height(metrics.toolbarHeight)
         return bar.lower(context, modifiers)
     }
 }
 
-function navigationCanvas(modifiers: borrow ModifierContext) -> KiraUIFoundation.Color {
+function navigationCanvas(modifiers: borrow ModifierContext) -> FoundationColor {
     return foundationColor(modifierTokens(modifiers).background.canvas)
 }
 
-function navigationSurface(modifiers: borrow ModifierContext) -> KiraUIFoundation.Color {
+function navigationSurface(modifiers: borrow ModifierContext) -> FoundationColor {
     return foundationColor(modifierTokens(modifiers).background.surface)
 }
 
 function navigationFill(
-    view: KiraUIFoundation.FoundationView,
-    fill: KiraUIFoundation.Color,
-) -> KiraUIFoundation.FoundationView {
+    view: FoundationView,
+    fill: FoundationColor,
+) -> FoundationView {
     let stretched = Frame(
         move view,
-        KiraUIFoundation.SizeMode.Fill,
-        KiraUIFoundation.SizeMode.Fill,
+        .Fill,
+        .Fill,
         0,
-        KiraUIFoundation.Alignment.TopLeading,
-        KiraUIFoundation.EdgeInsets {}
+        .TopLeading,
+        EdgeInsets {}
     )
-    return KiraUIFoundation.FoundationView {
-        kind: KiraUIFoundation.FoundationViewKind.Surface
-        width: KiraUIFoundation.SizeMode.Fill
-        height: KiraUIFoundation.SizeMode.Fill
+    return FoundationView {
+        kind: .Surface
+        width: .Fill
+        height: .Fill
         fill: move fill
         children: [move stretched]
         clipContent: true
@@ -433,22 +436,22 @@ function navigationFill(
 }
 
 function navigationPane(
-    view: KiraUIFoundation.FoundationView,
-    width: KiraUIFoundation.SizeMode,
-    fill: KiraUIFoundation.Color,
-) -> KiraUIFoundation.FoundationView {
+    view: FoundationView,
+    width: SizeMode,
+    fill: FoundationColor,
+) -> FoundationView {
     let stretched = Frame(
         move view,
-        KiraUIFoundation.SizeMode.Fill,
-        KiraUIFoundation.SizeMode.Fill,
+        .Fill,
+        .Fill,
         0,
-        KiraUIFoundation.Alignment.TopLeading,
-        KiraUIFoundation.EdgeInsets {}
+        .TopLeading,
+        EdgeInsets {}
     )
-    return KiraUIFoundation.FoundationView {
-        kind: KiraUIFoundation.FoundationViewKind.Surface
+    return FoundationView {
+        kind: .Surface
         width: move width
-        height: KiraUIFoundation.SizeMode.Fill
+        height: .Fill
         fill: move fill
         children: [move stretched]
         clipContent: true
@@ -456,32 +459,32 @@ function navigationPane(
 }
 
 function navigationPage(
-    context: borrow KiraUIFoundation.FoundationUiContext,
+    context: borrow FoundationUiContext,
     modifiers: borrow ModifierContext,
     title: borrow String,
-    view: KiraUIFoundation.FoundationView,
-) -> KiraUIFoundation.FoundationView {
+    view: FoundationView,
+) -> FoundationView {
     let path = NavigationPath {}
     var page = move view
     if title.count > 0 || path.isEmpty() == false {
         let bar = NavigationBar(title: title).lower(context, modifiers)
-        page = KiraUIFoundation.Column(
+        page = Column(
             children: [
                 move bar,
                 Frame(
                     move page,
-                    KiraUIFoundation.SizeMode.Fill,
-                    KiraUIFoundation.SizeMode.Fill,
+                    .Fill,
+                    .Fill,
                     1,
-                    KiraUIFoundation.Alignment.TopLeading,
-                    KiraUIFoundation.EdgeInsets {}
+                    .TopLeading,
+                    EdgeInsets {}
                 )
             ],
-            width: KiraUIFoundation.SizeMode.Fill,
-            height: KiraUIFoundation.SizeMode.Fill,
+            width: .Fill,
+            height: .Fill,
             spacing: 0.0,
-            padding: KiraUIFoundation.EdgeInsets {},
-            crossAxisAlignment: KiraUIFoundation.CrossAlignment.Stretch
+            padding: EdgeInsets {},
+            crossAxisAlignment: .Stretch
         )
     }
     return navigationFill(move page, navigationCanvas(modifiers))
@@ -495,7 +498,7 @@ Widget NavigationDestinationLayer(forType: Any NavigationValue) {
     let content: some Widget
     let destination: some Widget
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         let environment = kiraUiNavigationEnvironment()
         let path = NavigationPath {}
         if path.lastMatches(value: forType) == false {
@@ -522,7 +525,10 @@ Widget NavigationDestinationLayer(forType: Any NavigationValue) {
 extend Widget {
     // The type witness is the Kira spelling of SwiftUI's `for: Route.self`.
     // It keeps the public navigation model typed without numeric route IDs.
-    function navigationDestination(forType: Any NavigationValue, destination: Any Widget) -> Any Widget {
+    function navigationDestination(
+        forType: Any NavigationValue,
+        destination: some Widget,
+    ) -> Any Widget {
         return NavigationDestinationLayer(forType: move forType, destination: destination) {
             self
         }
@@ -536,7 +542,7 @@ extend Widget {
 Widget NavigationStack(path: NavigationPath = NavigationPath {}) {
     let root: some Widget
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         let previous = kiraUiNavigationEnter(false)
         let view = root.lower(context, modifiers)
         kiraUiNavigationLeave(previous)
@@ -587,16 +593,16 @@ function navigationShowsContent(visibility: NavigationSplitViewVisibility) -> Bo
 // the column says what the column looks like, exactly as `.background(...)` and
 // the list style do in SwiftUI.
 function navigationColumn(
-    view: KiraUIFoundation.FoundationView,
-    width: KiraUIFoundation.SizeMode,
-) -> KiraUIFoundation.FoundationView {
+    view: FoundationView,
+    width: SizeMode,
+) -> FoundationView {
     return Frame(
         move view,
         move width,
-        KiraUIFoundation.SizeMode.Fill,
+        .Fill,
         0,
-        KiraUIFoundation.Alignment.TopLeading,
-        KiraUIFoundation.EdgeInsets {}
+        .TopLeading,
+        EdgeInsets {}
     )
 }
 
@@ -605,11 +611,11 @@ function navigationColumn(
 // It says so as an Expanded node rather than as a Fill frame: a Fill child of a
 // row measures to the WHOLE row, so a detail column spelled that way pushes any
 // fixed column after it off the window.
-function navigationDetailColumn(view: KiraUIFoundation.FoundationView) -> KiraUIFoundation.FoundationView {
-    return KiraUIFoundation.FoundationView {
-        kind: KiraUIFoundation.FoundationViewKind.Expanded
-        width: KiraUIFoundation.SizeMode.Fill
-        height: KiraUIFoundation.SizeMode.Fill
+function navigationDetailColumn(view: FoundationView) -> FoundationView {
+    return FoundationView {
+        kind: .Expanded
+        width: .Fill
+        height: .Fill
         flex: 1
         children: [move view]
     }
@@ -618,7 +624,7 @@ function navigationDetailColumn(view: KiraUIFoundation.FoundationView) -> KiraUI
 // Was a middle column supplied? SwiftUI spells the two-column and three-column
 // forms as two initialisers; Kira spells them as one with a defaulted `content`,
 // and an EmptyView lowers to a childless leaf, which is the difference.
-function navigationHasContentColumn(view: borrow KiraUIFoundation.FoundationView) -> Bool {
+function navigationHasContentColumn(view: borrow FoundationView) -> Bool {
     return view.children.count > 0
 }
 
@@ -636,7 +642,7 @@ function navigationHasContentColumn(view: borrow KiraUIFoundation.FoundationView
 // is precisely what the type exists to prevent. A window that declared no items
 // gets no bar, and its columns run the full height.
 Widget NavigationSplitView(
-    columnVisibility: NavigationSplitViewVisibility = NavigationSplitViewVisibility.Automatic,
+    columnVisibility: NavigationSplitViewVisibility = .Automatic,
     path: NavigationPath = NavigationPath {},
 ) {
     // The columns are child slots, so a window writes them as blocks in the
@@ -652,7 +658,7 @@ Widget NavigationSplitView(
     let content: some Widget = EmptyView()
     let detail: some Widget
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         let metrics = navigationMetrics(context.viewport.width)
         let previous = kiraUiNavigationEnter(true)
         // The columns are lowered first, and lowering them is what puts their
@@ -671,13 +677,14 @@ Widget NavigationSplitView(
         kiraUiInspectorStopCollecting()
         kiraUiNavigationLeave(previous)
 
-        if metrics.presentation == NavigationPresentation.Stack {
+        if metrics.presentation == .Stack {
             let current = NavigationPath {}
             if current.isEmpty() {
                 return navigationWindow(
                     navigationFill(move sidebarView, navigationCanvas(modifiers)),
                     0.0,
                     false,
+                    kiraUiToolbarSidebarColumn(),
                     context,
                     modifiers
                 )
@@ -686,23 +693,24 @@ Widget NavigationSplitView(
                 navigationFill(move detailView, navigationCanvas(modifiers)),
                 0.0,
                 false,
+                kiraUiToolbarDetailColumn(),
                 context,
                 modifiers
             )
         }
 
         let hasContent = navigationHasContentColumn(contentView)
-        var columns: [KiraUIFoundation.FoundationView] = []
+        var columns: [FoundationView] = []
         if navigationShowsSidebar(columnVisibility, hasContent) {
             columns.append(navigationColumn(
                 move sidebarView,
-                KiraUIFoundation.SizeMode.Fixed(metrics.primaryWidth)
+                .Fixed(metrics.primaryWidth)
             ))
         }
         if hasContent && navigationShowsContent(columnVisibility) {
             columns.append(navigationColumn(
                 move contentView,
-                KiraUIFoundation.SizeMode.Fixed(metrics.primaryWidth)
+                .Fixed(metrics.primaryWidth)
             ))
         }
         columns.append(navigationDetailColumn(move detailView))
@@ -715,16 +723,17 @@ Widget NavigationSplitView(
         }
         let showsSidebar = navigationShowsSidebar(columnVisibility, hasContent)
         return navigationWindow(
-            KiraUIFoundation.Row(
+            Row(
                 children: move columns,
-                width: KiraUIFoundation.SizeMode.Fill,
-                height: KiraUIFoundation.SizeMode.Fill,
+                width: .Fill,
+                height: .Fill,
                 spacing: 0.0,
-                padding: KiraUIFoundation.EdgeInsets {},
-                crossAxisAlignment: KiraUIFoundation.CrossAlignment.Stretch
+                padding: EdgeInsets {},
+                crossAxisAlignment: .Stretch
             ),
             metrics.primaryWidth,
             showsSidebar,
+            kiraUiToolbarDetailColumn(),
             context,
             modifiers
         )
@@ -739,28 +748,30 @@ Widget NavigationSplitView(
 // A window that put nothing on the bar has no band, and its columns run the
 // window's full height exactly as before.
 function navigationWindow(
-    columns: KiraUIFoundation.FoundationView,
+    columns: FoundationView,
     navigationWidth: Float,
     hasNavigationColumn: Bool,
-    context: borrow KiraUIFoundation.FoundationUiContext,
+    visibleToolbarColumn: Int,
+    context: borrow FoundationUiContext,
     modifiers: borrow ModifierContext,
-) -> KiraUIFoundation.FoundationView {
+) -> FoundationView {
     if kiraUiToolbarHasItems() == false {
         return move columns
     }
     let bar = WindowToolbar(
         navigationWidth: navigationWidth,
-        hasNavigationColumn: hasNavigationColumn
+        hasNavigationColumn: hasNavigationColumn,
+        visibleColumn: visibleToolbarColumn
     )
-    return KiraUIFoundation.Column(
+    return Column(
         children: [
             bar.lower(context, modifiers),
-            KiraUIFoundation.Expanded(move columns, 1),
+            FoundationExpanded(move columns, 1),
         ],
-        width: KiraUIFoundation.SizeMode.Fill,
-        height: KiraUIFoundation.SizeMode.Fill,
+        width: .Fill,
+        height: .Fill,
         spacing: 0.0,
-        padding: KiraUIFoundation.EdgeInsets {},
-        crossAxisAlignment: KiraUIFoundation.CrossAlignment.Stretch
+        padding: EdgeInsets {},
+        crossAxisAlignment: .Stretch
     )
 }
