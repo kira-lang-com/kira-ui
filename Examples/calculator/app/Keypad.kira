@@ -1,0 +1,587 @@
+import KiraUI
+import KiraUIFoundation
+
+// The keypad: what each key says, and the one dispatch code every press
+// funnels through. Labels are built per frame from the model, so the INV
+// toggle rewrites the trig keys' faces and the Deg key's caption without any
+// widget remembering anything.
+
+struct KeySpec {
+    var code: Int = 0
+    var main: String = ""
+    var sup: String = ""
+    var sub: String = ""
+    // 0 plain key, 1 digit key, 2 equals accent, 3 accent-while-active
+    var style: Int = 0
+    var active: Bool = false
+}
+
+// Dispatch codes. Digits are keyDigit0()..keyDigit0()+9 so a digit is its offset.
+function keyDigit0() -> Int {
+    return 10
+}
+function keyDot() -> Int {
+    return 20
+}
+function keyAdd() -> Int {
+    return 21
+}
+function keySub() -> Int {
+    return 22
+}
+function keyMul() -> Int {
+    return 23
+}
+function keyDiv() -> Int {
+    return 24
+}
+function keyMod() -> Int {
+    return 25
+}
+function keyPow() -> Int {
+    return 26
+}
+function keySq() -> Int {
+    return 27
+}
+function keyInv() -> Int {
+    return 28
+}
+function keyRecip() -> Int {
+    return 29
+}
+function keyClear() -> Int {
+    return 30
+}
+function keyNPr() -> Int {
+    return 31
+}
+function keyNCr() -> Int {
+    return 32
+}
+function keyPct() -> Int {
+    return 33
+}
+function keyParens() -> Int {
+    return 34
+}
+function keyFact() -> Int {
+    return 35
+}
+function keyDeg() -> Int {
+    return 36
+}
+function keyPi() -> Int {
+    return 37
+}
+function keyEuler() -> Int {
+    return 38
+}
+function keyImag() -> Int {
+    return 39
+}
+function keyAxB() -> Int {
+    return 40
+}
+function keyAns() -> Int {
+    return 41
+}
+function keyFxMenu() -> Int {
+    return 42
+}
+function keyEquals() -> Int {
+    return 80
+}
+
+// The fifteen science functions occupy one contiguous range; the keypad's rows
+// name their slots through these.
+function keyFnSin() -> Int {
+    return 50
+}
+function keyFnSinh() -> Int {
+    return 51
+}
+function keyFnLogY() -> Int {
+    return 52
+}
+function keyFnArg() -> Int {
+    return 53
+}
+function keyFnFloor() -> Int {
+    return 54
+}
+function keyFnCos() -> Int {
+    return 55
+}
+function keyFnCosh() -> Int {
+    return 56
+}
+function keyFnLog() -> Int {
+    return 57
+}
+function keyFnRe() -> Int {
+    return 58
+}
+function keyFnAbs() -> Int {
+    return 59
+}
+function keyFnTan() -> Int {
+    return 60
+}
+function keyFnTanh() -> Int {
+    return 61
+}
+function keyFnLn() -> Int {
+    return 62
+}
+function keyFnIm() -> Int {
+    return 63
+}
+function keyFnConj() -> Int {
+    return 64
+}
+
+// The f(x) sheet's extra functions, dispatched through the same code path as
+// the pad.
+function keyFxSqrt() -> Int {
+    return 90
+}
+
+function keyFxExp() -> Int {
+    return 91
+}
+
+function keyFxRound() -> Int {
+    return 92
+}
+
+function keyFxConj() -> Int {
+    return 93
+}
+
+function calcDispatch(modelUser: RawPtr, code: Int) {
+    if code >= keyDigit0() {
+        if code < keyDigit0() + 10 {
+            calcAppendDigit(modelUser, code - keyDigit0())
+            return
+        }
+    }
+    if code == keyDot() {
+        calcAppendDot(modelUser)
+        return
+    }
+    if code == keyAdd() {
+        calcAppendKind(modelUser, tokAdd())
+        return
+    }
+    if code == keySub() {
+        calcAppendKind(modelUser, tokSub())
+        return
+    }
+    if code == keyMul() {
+        calcAppendKind(modelUser, tokMul())
+        return
+    }
+    if code == keyDiv() {
+        calcAppendKind(modelUser, tokDiv())
+        return
+    }
+    if code == keyMod() {
+        calcAppendKind(modelUser, tokMod())
+        return
+    }
+    if code == keyPow() {
+        calcAppendKind(modelUser, tokPow())
+        return
+    }
+    if code == keySq() {
+        // x² lands as ^2 so the expression line reads the way it was meant.
+        calcExponentLiteral(modelUser, 2.0, "2")
+        return
+    }
+    if code == keyInv() {
+        calcToggleInverse(modelUser)
+        return
+    }
+    if code == keyRecip() {
+        // x⁻¹ lands as ^(-1): power, open, negation, one, close — visible on
+        // the line exactly as pressed.
+        calcReciprocal(modelUser)
+        return
+    }
+    if code == keyClear() {
+        calcClearAll(modelUser)
+        return
+    }
+    if code == keyNPr() {
+        calcAppendKind(modelUser, tokNPr())
+        return
+    }
+    if code == keyNCr() {
+        calcAppendKind(modelUser, tokNCr())
+        return
+    }
+    if code == keyPct() {
+        calcAppendKind(modelUser, tokPct())
+        return
+    }
+    if code == keyParens() {
+        calcSmartParen(modelUser)
+        return
+    }
+    if code == keyFact() {
+        calcAppendKind(modelUser, tokFact())
+        return
+    }
+    if code == keyDeg() {
+        calcToggleDegrees(modelUser)
+        return
+    }
+    if code == keyPi() {
+        calcConst(modelUser, tokPi())
+        return
+    }
+    if code == keyEuler() {
+        calcConst(modelUser, tokE())
+        return
+    }
+    if code == keyImag() {
+        calcConst(modelUser, tokI())
+        return
+    }
+    if code == keyAxB() {
+        calcAppendKind(modelUser, tokMul())
+        return
+    }
+    if code == keyAns() {
+        calcInsertAnswer(modelUser)
+        return
+    }
+    if code == keyFxMenu() {
+        calcToggleFxMenu(modelUser)
+        return
+    }
+    if code == keyEquals() {
+        calcEquals(modelUser)
+        return
+    }
+    if code >= keyFnSin() {
+        if code <= keyFnConj() {
+            calcDispatchFn(modelUser, code - keyFnSin())
+            return
+        }
+    }
+    if code == keyFxSqrt() {
+        calcAppendFn(modelUser, "sqrt")
+        return
+    }
+    if code == keyFxExp() {
+        calcAppendFn(modelUser, "exp")
+        return
+    }
+    if code == keyFxRound() {
+        calcAppendFn(modelUser, "round")
+        return
+    }
+    if code == keyFxConj() {
+        calcAppendFn(modelUser, "conj")
+        return
+    }
+    return
+}
+
+// ^ followed by a literal: the power operator plus a number token, pushed with
+// one undo step so backspace and undo treat the pair as one edit.
+function calcExponentLiteral(modelUser: RawPtr, value: Float, glyph: String) {
+    var m = calcSnapshot(modelUser)
+    calcPushUndo(m)
+    m.error = false
+    m.fxMenuOpen = false
+    if calcHasValueToRaise(m) == false {
+        return
+    }
+    m.tokens.append(calcTokenOfKind(tokPow()))
+    var t = Tok {}
+    t.kind = tokNum()
+    t.name = glyph
+    t.re = value
+    m.tokens.append(t)
+    return
+}
+
+// A power needs something to raise: a value, a closing bracket, or a constant.
+function calcHasValueToRaise(m: borrow CalcModel) -> Bool {
+    if m.tokens.count == 0 {
+        return false
+    }
+    let last = calcLastKind(m)
+    if last == tokNum() || last == tokRPar() || last == tokPi() || last == tokE() || last == tokI() || last == tokFact() || last == tokPct() {
+        return true
+    }
+    return false
+}
+
+function calcReciprocal(modelUser: RawPtr) {
+    var m = calcSnapshot(modelUser)
+    if calcHasValueToRaise(m) == false {
+        return
+    }
+    calcPushUndo(m)
+    m.error = false
+    m.fxMenuOpen = false
+    m.tokens.append(calcTokenOfKind(tokPow()))
+    m.tokens.append(calcTokenOfKind(tokLPar()))
+    m.tokens.append(calcTokenOfKind(tokSub()))
+    var one = Tok {}
+    one.kind = tokNum()
+    one.name = "1"
+    one.re = 1.0
+    m.tokens.append(one)
+    m.tokens.append(calcTokenOfKind(tokRPar()))
+    return
+}
+
+function calcSmartParen(modelUser: RawPtr) {
+    var m = calcSnapshot(modelUser)
+    calcPushUndo(m)
+    // Open when nothing precedes, or after an operator or open bracket; close
+    // while a bracket is unclosed; otherwise multiply into a fresh bracket.
+    let last = calcLastKind(m)
+    if m.tokens.count == 0 || last == tokAdd() || last == tokSub() || last == tokMul() || last == tokDiv() || last == tokMod() || last == tokLPar() || last == tokPow() || last == tokFn() || last == tokComma() || last == tokNPr() || last == tokNCr() {
+        m.tokens.append(calcTokenOfKind(tokLPar()))
+        return
+    }
+    var unclosed = 0
+    var i = 0
+    while i < m.tokens.count {
+        if m.tokens[i].kind == tokLPar() {
+            unclosed = unclosed + 1
+        }
+        if m.tokens[i].kind == tokRPar() {
+            unclosed = unclosed - 1
+        }
+        i = i + 1
+    }
+    if unclosed > 0 {
+        m.tokens.append(calcTokenOfKind(tokRPar()))
+        return
+    }
+    m.tokens.append(calcTokenOfKind(tokMul()))
+    m.tokens.append(calcTokenOfKind(tokLPar()))
+    return
+}
+
+function calcConst(modelUser: RawPtr, kind: Int) {
+    var m = calcSnapshot(modelUser)
+    m.error = false
+    m.fxMenuOpen = false
+    calcPushUndo(m)
+    m.tokens.append(calcTokenOfKind(kind))
+    return
+}
+
+// The science slots. INV swaps each base for its inverse on both the face the
+// key shows and the name the evaluator sees.
+function calcDispatchFn(modelUser: RawPtr, slot: Int) {
+    let inv = calcSnapshot(modelUser).inverse
+    if slot == 0 {
+        calcAppendFn(modelUser, pickFn(inv, "sin", "asin"))
+        return
+    }
+    if slot == 1 {
+        calcAppendFn(modelUser, pickFn(inv, "sinh", "asinh"))
+        return
+    }
+    if slot == 2 {
+        calcAppendFn(modelUser, "logb")
+        return
+    }
+    if slot == 3 {
+        calcAppendFn(modelUser, "arg")
+        return
+    }
+    if slot == 4 {
+        calcAppendFn(modelUser, "floor")
+        return
+    }
+    if slot == 5 {
+        calcAppendFn(modelUser, pickFn(inv, "cos", "acos"))
+        return
+    }
+    if slot == 6 {
+        calcAppendFn(modelUser, pickFn(inv, "cosh", "acosh"))
+        return
+    }
+    if slot == 7 {
+        calcAppendFn(modelUser, "log")
+        return
+    }
+    if slot == 8 {
+        calcAppendFn(modelUser, "re")
+        return
+    }
+    if slot == 9 {
+        calcAppendFn(modelUser, "abs")
+        return
+    }
+    if slot == 10 {
+        calcAppendFn(modelUser, pickFn(inv, "tan", "atan"))
+        return
+    }
+    if slot == 11 {
+        calcAppendFn(modelUser, pickFn(inv, "tanh", "atanh"))
+        return
+    }
+    if slot == 12 {
+        calcAppendFn(modelUser, "ln")
+        return
+    }
+    if slot == 13 {
+        calcAppendFn(modelUser, "im")
+        return
+    }
+    calcAppendFn(modelUser, "conj")
+    return
+}
+
+function pickFn(inverse: Bool, base: borrow String, flipped: borrow String) -> String {
+    if inverse {
+        return flipped
+    }
+    return base
+}
+
+// --- The grid ----------------------------------------------------------------
+
+// The five science rows, four full-width digit/operator rows and the tall
+// equals column beside the last two.
+function scienceRowSpecs(m: borrow CalcModel) -> [[KeySpec]] {
+    var rows: [[KeySpec]] = []
+
+    var r1: [KeySpec] = []
+    r1.append(makeKey(keyInv(), "INV", "", "", 3, m.inverse))
+    r1.append(makeKey(keySq(), "x", "2", "", 0, false))
+    r1.append(makeKey(keyPow(), "x", "y", "", 0, false))
+    r1.append(makeKey(keyFnConj(), "conj", "", "", 0, false))
+    r1.append(makeKey(keyRecip(), "x", "-1", "", 0, false))
+    r1.append(makeKey(keyClear(), "C", "", "", 0, false))
+    r1.append(makeKey(keyNPr(), "nPr", "", "", 0, false))
+    r1.append(makeKey(keyNCr(), "nCr", "", "", 0, false))
+    r1.append(makeKey(keyDiv(), "÷", "", "", 0, false))
+    r1.append(makeKey(keyMod(), "mod", "", "", 0, false))
+    rows.append(r1)
+
+    var r2: [KeySpec] = []
+    r2.append(trigSlot(m.inverse, keyFnSin(), "sin"))
+    r2.append(trigSlot(m.inverse, keyFnSinh(), "sinh"))
+    r2.append(makeKey(keyFnLogY(), "log", "y", "", 0, false))
+    r2.append(makeKey(keyFnArg(), "Arg", "", "", 0, false))
+    r2.append(makeKey(keyFnFloor(), "[x]", "", "", 0, false))
+    r2.append(digitKey(7))
+    r2.append(digitKey(8))
+    r2.append(digitKey(9))
+    r2.append(makeKey(keyMul(), "×", "", "", 0, false))
+    r2.append(makeKey(keyPct(), "%", "", "", 0, false))
+    rows.append(r2)
+
+    var r3: [KeySpec] = []
+    r3.append(trigSlot(m.inverse, keyFnCos(), "cos"))
+    r3.append(trigSlot(m.inverse, keyFnCosh(), "cosh"))
+    r3.append(makeKey(keyFnLog(), "log", "", "", 0, false))
+    r3.append(makeKey(keyFnRe(), "Re", "", "", 0, false))
+    r3.append(makeKey(keyFnAbs(), "|x|", "", "", 0, false))
+    r3.append(digitKey(4))
+    r3.append(digitKey(5))
+    r3.append(digitKey(6))
+    r3.append(makeKey(keySub(), "-", "", "", 0, false))
+    r3.append(makeKey(keyParens(), "( )", "", "", 0, false))
+    rows.append(r3)
+
+    var r4: [KeySpec] = []
+    r4.append(trigSlot(m.inverse, keyFnTan(), "tan"))
+    r4.append(trigSlot(m.inverse, keyFnTanh(), "tanh"))
+    r4.append(makeKey(keyFnLn(), "ln", "", "", 0, false))
+    r4.append(makeKey(keyFnIm(), "Im", "", "", 0, false))
+    r4.append(makeKey(keyFact(), "x!", "", "", 0, false))
+    r4.append(digitKey(1))
+    r4.append(digitKey(2))
+    r4.append(digitKey(3))
+    r4.append(makeKey(keyAdd(), "+", "", "", 0, false))
+    rows.append(r4)
+
+    var r5: [KeySpec] = []
+    r5.append(makeKey(keyDeg(), degreesName(m.degrees), "", "", 3, true))
+    r5.append(makeKey(keyPi(), "π", "", "", 0, false))
+    r5.append(makeKey(keyEuler(), "e", "", "", 0, false))
+    r5.append(makeKey(keyImag(), "i", "", "", 0, false))
+    r5.append(makeKey(keyAxB(), "a×b", "", "", 0, false))
+    r5.append(digitKey(0))
+    r5.append(makeKey(keyDot(), ".", "", "", 0, false))
+    r5.append(makeKey(keyAns(), "ans", "", "", 0, false))
+    r5.append(makeKey(keyFxMenu(), "f(x)", "", "", 3, m.fxMenuOpen))
+    rows.append(r5)
+
+    return rows
+}
+
+function trigSlot(inverse: Bool, code: Int, base: String) -> KeySpec {
+    if inverse {
+        var k = makeKey(code, base, "-1", "", 0, false)
+        k.active = false
+        return k
+    }
+    return makeKey(code, base, "", "", 0, false)
+}
+
+function makeKey(code: Int, main: borrow String, sup: borrow String, sub: borrow String, style: Int, active: Bool) -> KeySpec {
+    var k = KeySpec {}
+    k.code = code
+    k.main = main
+    k.sup = sup
+    k.sub = sub
+    k.style = style
+    k.active = active
+    return k
+}
+
+function digitKey(d: Int) -> KeySpec {
+    return makeKey(keyDigit0() + d, digitName(d), "", "", 1, false)
+}
+
+function digitName(d: Int) -> String {
+    if d == 0 {
+        return "0"
+    }
+    if d == 1 {
+        return "1"
+    }
+    if d == 2 {
+        return "2"
+    }
+    if d == 3 {
+        return "3"
+    }
+    if d == 4 {
+        return "4"
+    }
+    if d == 5 {
+        return "5"
+    }
+    if d == 6 {
+        return "6"
+    }
+    if d == 7 {
+        return "7"
+    }
+    if d == 8 {
+        return "8"
+    }
+    return "9"
+}
+
+function degreesName(degrees: Bool) -> String {
+    if degrees {
+        return "Deg"
+    }
+    return "Rad"
+}

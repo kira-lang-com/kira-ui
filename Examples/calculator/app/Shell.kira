@@ -1,0 +1,298 @@
+import KiraUI
+import KiraUIFoundation
+
+// The screen around the keypad: the chrome bar, the display panel, the result
+// line, and the sheets that drop out of them. Every colour is stated outright
+// because the design being reproduced is light-theme specific, and every
+// filled box goes through `solidBox` — a raw surface — because exact colours,
+// not theme tokens, are the point here.
+
+// --- Palette -----------------------------------------------------------------
+
+function inkColor() -> Color {
+    return Color { r: 0.106 g: 0.106 b: 0.122 a: 1.0 }
+}
+
+function secondaryInk() -> Color {
+    return Color { r: 0.478 g: 0.478 b: 0.502 a: 1.0 }
+}
+
+function faintInk() -> Color {
+    return Color { r: 0.0 g: 0.0 b: 0.0 a: 0.35 }
+}
+
+function pageWhite() -> Color {
+    return Color { r: 1.0 g: 1.0 b: 1.0 a: 1.0 }
+}
+
+function panelGray() -> Color {
+    return Color { r: 0.949 g: 0.949 b: 0.957 a: 1.0 }
+}
+
+function hairlineInk() -> Color {
+    return Color { r: 0.0 g: 0.0 b: 0.0 a: 0.08 }
+}
+
+function accentBlue() -> Color {
+    return Color { r: 0.212 g: 0.463 b: 0.965 a: 1.0 }
+}
+
+function accentWash() -> Color {
+    return Color { r: 0.867 g: 0.914 b: 0.992 a: 1.0 }
+}
+
+function keyPlainFill() -> Color {
+    return Color { r: 0.941 g: 0.941 b: 0.953 a: 1.0 }
+}
+
+function keyDigitFill() -> Color {
+    return Color { r: 0.902 g: 0.902 b: 0.918 a: 1.0 }
+}
+
+// --- The one box every painted region uses -----------------------------------
+
+function solidBox(width: Float, height: Float, radius: Float, fill: borrow Color) -> Any Widget {
+    return FoundationRaw(view: FoundationView {
+        kind: .Surface
+        width: .Fixed(width)
+        height: .Fixed(height)
+        fill: foundationColor(copy fill)
+        border: transparentFoundationColor()
+        borderWidth: 0.0
+        radius: radius
+        shape: .RegularRoundedRect
+        material: .Flat
+    })
+}
+
+function solidBoxFill(radius: Float, fill: borrow Color) -> Any Widget {
+    return FoundationRaw(view: FoundationView {
+        kind: .Surface
+        width: .Fill
+        height: .Fill
+        fill: foundationColor(copy fill)
+        border: transparentFoundationColor()
+        borderWidth: 0.0
+        radius: radius
+        shape: .RegularRoundedRect
+        material: .Flat
+    })
+}
+
+// --- Geometry ----------------------------------------------------------------
+
+function calcBarHeight() -> Float {
+    return 52.0
+}
+function calcResultHeight() -> Float {
+    return 58.0
+}
+function calcKeyHeight() -> Float {
+    return 52.0
+}
+function calcKeyGap() -> Float {
+    return 7.0
+}
+function calcSideMargin() -> Float {
+    return 12.0
+}
+
+function calcKeypadHeight() -> Float {
+    return 5.0 * calcKeyHeight() + 4.0 * calcKeyGap()
+}
+
+function calcKeyWidth(viewportWidth: Float, columns: Int) -> Float {
+    let gaps = Float(columns - 1) * calcKeyGap()
+    return (viewportWidth - 2.0 * calcSideMargin() - gaps) / Float(columns)
+}
+
+// --- Screen ------------------------------------------------------------------
+
+Widget CalculatorScreen(modelUser: RawPtr, m: CalcModel) {
+    body {
+        AppSurface {
+            screenRoot(modelUser, m)
+        }
+    }
+}
+
+function screenRoot(modelUser: RawPtr, m: borrow CalcModel) -> Any Widget {
+    let width = kiraUiViewportWidth()
+    let height = kiraUiViewportHeight()
+    var menuHeight = 0.0
+    if m.modeMenuOpen {
+        menuHeight = 118.0
+    }
+    var panelHeight = height - calcBarHeight() - calcResultHeight() - calcKeypadHeight() - menuHeight - 24.0
+    if panelHeight < 120.0 {
+        panelHeight = 120.0
+    }
+    let column = VStack(spacing: Spacing.None) {
+        topBar(modelUser, m)
+
+        if m.modeMenuOpen {
+            modeMenu(modelUser, m)
+        }
+
+        displayPanel(modelUser, m, panelHeight, width)
+        resultRow(modelUser, m, width)
+
+        if m.fxMenuOpen {
+            fxMenuRow(modelUser)
+        }
+
+        keypadBlock(modelUser, m, width)
+    }
+    let page = ZStack(alignment: .TopLeading) {
+        Rectangle(
+            width: width,
+            height: height,
+            radius: 0.0,
+            fill: pageWhite()
+        )
+        column
+    }
+    return page
+}
+
+// --- Chrome bar --------------------------------------------------------------
+
+function chromeIconButton(symbol: Symbol, enabled: Bool, action: () -> Void) -> Any Widget {
+    var icon = Icon(symbol: symbol)
+        .imageScale(.Medium)
+        .foregroundColor(.Black)
+    if enabled == false {
+        icon = icon.opacity(0.25)
+    }
+    let box = ZStack(alignment: .Center) {
+        icon
+    }
+    .width(34.0)
+    .height(30.0)
+    return box.onClick(move action)
+}
+
+function topBar(modelUser: RawPtr, m: borrow CalcModel) -> Any Widget {
+    let undoAction: () -> Void = { in
+        calcUndo(modelUser)
+        return
+    }
+    let redoAction: () -> Void = { in
+        calcRedo(modelUser)
+        return
+    }
+    let sheetAction: () -> Void = { in
+        calcToggleHistorySheet(modelUser)
+        return
+    }
+    let titleAction: () -> Void = { in
+        calcToggleModeMenu(modelUser)
+        return
+    }
+    let bar = HStack(spacing: Spacing.None) {
+        FixedGap(width: 14.0, height: 1.0)
+        WindowControls()
+        FixedGap(width: 8.0, height: 1.0)
+        chromeIconButton(.ArrowCounterclockwise, m.undoStack.count > 0, move undoAction)
+        chromeIconButton(.ArrowClockwise, m.redoStack.count > 0, move redoAction)
+        Spacer()
+        HStack(spacing: Spacing.None, spacingLength: 5.0) {
+            Text(content: modeName(m.modeIndex))
+                .font(size = 15.0, weight = .SemiBold)
+                .textColor(inkColor())
+            Icon(symbol: .ChevronDown)
+                .imageScale(.Small)
+                .textColor(faintInk())
+        }
+        .hugWidth()
+        .onClick(move titleAction)
+        Spacer()
+        chromeIconButton(.LineHorizontal3, true, move sheetAction)
+        FixedGap(width: 14.0, height: 1.0)
+    }
+    .height(calcBarHeight())
+
+    let ruled = VStack(spacing: Spacing.None) {
+        bar
+        Rectangle(
+            width: kiraUiViewportWidth(),
+            height: 1.0,
+            radius: 0.0,
+            fill: hairlineInk()
+        )
+    }
+    return ruled
+}
+
+function modeName(index: Int) -> String {
+    if index == 0 {
+        return "Basic"
+    }
+    if index == 1 {
+        return "Scientific"
+    }
+    return "Advanced"
+}
+
+function calcToggleModeMenu(modelUser: RawPtr) {
+    var m = calcSnapshot(modelUser)
+    m.modeMenuOpen = m.modeMenuOpen == false
+    m.fxMenuOpen = false
+    m.historySheetOpen = false
+    return
+}
+
+function calcSetMode(modelUser: RawPtr, index: Int) {
+    var m = calcSnapshot(modelUser)
+    m.modeIndex = index
+    m.modeMenuOpen = false
+    return
+}
+
+function modeMenu(modelUser: RawPtr, m: borrow CalcModel) -> Any Widget {
+    var items: [Any Widget] = []
+    var i = 0
+    while i < 3 {
+        let index = i
+        let chosen = m.modeIndex == i
+        let select: () -> Void = { in
+            calcSetMode(modelUser, index)
+            return
+        }
+        var label = Text(content: modeName(i))
+            .font(size = 13.0)
+            .textColor(inkColor())
+        if chosen {
+            label = label.textColor(accentBlue())
+        }
+        let row = HStack(spacing: Spacing.None) {
+            label
+            Spacer()
+        }
+        .height(32.0)
+        .inset(horizontal: .Small)
+        .onClick(move select)
+        items.append(row)
+        i = i + 1
+    }
+    let list = VStack(spacing: Spacing.ExtraSmall) {
+        For(item in items) {
+            item
+        }
+    }
+    .width(220.0)
+    .hugHeight()
+    .inset(horizontal: .ExtraSmall, vertical: .ExtraSmall)
+    let card = ZStack(alignment: .Center) {
+        solidBoxFill(10.0, pageWhite())
+        list
+    }
+    .width(220.0)
+    .hugHeight()
+    return HStack(spacing: Spacing.None) {
+        Spacer()
+        card.surfaceBorder(hairlineInk())
+        Spacer()
+    }
+    .padding(length: 6.0)
+}

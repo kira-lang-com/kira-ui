@@ -1,0 +1,201 @@
+import KiraUI
+import KiraUIFoundation
+
+// The keypad's face: rows of keys built from this frame's specs, the tall
+// equals key beside the last two rows, and the label composition that puts a
+// superscript or subscript on the keys that read differently at one size.
+
+function keypadBlock(modelUser: RawPtr, m: borrow CalcModel, width: Float) -> Any Widget {
+    let basic = m.modeIndex == 0
+    if basic {
+        return basicPad(modelUser, width)
+    }
+    let specs = scienceRowSpecs(m)
+    let keyWidth = calcKeyWidth(width, 10)
+
+    var topRows: [Any Widget] = []
+    var r = 0
+    while r < 3 {
+        topRows.append(specRow(modelUser, specs[r], keyWidth, calcKeyHeight()))
+        r = r + 1
+    }
+    let upper = VStack(spacing: Spacing.None, spacingLength: calcKeyGap()) {
+        For(row in topRows) {
+            row
+        }
+    }
+
+    // The last two rows lose their tenth cell to the tall equals key.
+    let lowerLeft = VStack(spacing: Spacing.None, spacingLength: calcKeyGap()) {
+        specRow(modelUser, specs[3], keyWidth, calcKeyHeight())
+        specRow(modelUser, specs[4], keyWidth, calcKeyHeight())
+    }
+    var equalsSpec = KeySpec {}
+    equalsSpec.code = keyEquals()
+    equalsSpec.main = "="
+    equalsSpec.style = 2
+    let tall = keyView(equalsSpec, keyWidth, 2.0 * calcKeyHeight() + calcKeyGap(), accentBlue(), modelUser)
+    let lower = HStack(spacing: Spacing.None, spacingLength: calcKeyGap()) {
+        lowerLeft
+        tall
+    }
+
+    let pad = VStack(spacing: Spacing.None, spacingLength: calcKeyGap()) {
+        upper
+        lower
+    }
+    return HStack(spacing: Spacing.None) {
+        FixedGap(width: calcSideMargin(), height: 1.0)
+        pad
+        FixedGap(width: calcSideMargin(), height: 1.0)
+    }
+    .width(width)
+}
+
+// One row of specs laid across the pad's width.
+function specRow(modelUser: RawPtr, row: borrow [KeySpec], keyWidth: Float, keyHeight: Float) -> Any Widget {
+    return HStack(spacing: Spacing.None, spacingLength: calcKeyGap()) {
+        For(spec in row) {
+            keyView(spec, keyWidth, keyHeight, styleFill(spec.style, spec.active), modelUser)
+        }
+    }
+    .hugHeight()
+}
+
+function styleFill(style: Int, active: Bool) -> Color {
+    if style == 2 {
+        return accentBlue()
+    }
+    if style == 3 && active {
+        return accentWash()
+    }
+    if style == 1 {
+        return keyDigitFill()
+    }
+    return keyPlainFill()
+}
+
+// One key: its fill behind, its composed label centred, its press on top.
+function keyView(spec: borrow KeySpec, width: Float, height: Float, fill: borrow Color, modelUser: RawPtr) -> Any Widget {
+    // The press closure captures scalars only: a copied code and the state
+    // pointer. The spec itself never enters the closure.
+    let codeValue = spec.code
+    let press: () -> Void = { in
+        calcDispatch(modelUser, codeValue)
+        return
+    }
+    let face = solidBox(width, height, 12.0, fill)
+    let label = keyLabel(spec)
+    let box = ZStack(alignment: .Center) {
+        face
+        label
+    }
+    .width(width)
+    .height(height)
+    return box.onClick(move press)
+}
+
+// The label. A main run plus an optional raised or lowered tail, so x², xʸ,
+// logᵧ and sin⁻¹ all read as themselves instead of as approximations.
+function keyLabel(spec: borrow KeySpec) -> Any Widget {
+    var main = Text(content: spec.main)
+        .font(size = 16.0, weight = .Regular)
+    if spec.style == 1 {
+        main = Text(content: spec.main)
+            .font(size = 18.0, weight = .SemiBold)
+    }
+    if spec.style == 2 {
+        main = Text(content: spec.main)
+            .font(size = 20.0, weight = .SemiBold)
+    }
+    if spec.style == 3 && spec.active {
+        main = main.textColor(accentBlue())
+    } else {
+        if spec.style == 2 {
+            main = main.textColor(pageWhite())
+        } else {
+            main = main.textColor(inkColor())
+        }
+    }
+    if spec.sup.count > 0 {
+        let sup = Text(content: spec.sup)
+            .font(size = 11.0)
+            .textColor(inkColor())
+        return HStack(spacing: Spacing.None, alignment: .Center, spacingLength: 1.0) {
+            main
+            sup.inset(vertical: .ExtraSmall)
+        }
+        .hugWidth()
+    }
+    if spec.sub.count > 0 {
+        let sub = Text(content: spec.sub)
+            .font(size = 10.0)
+            .textColor(inkColor())
+        return HStack(spacing: Spacing.None, spacingLength: 1.0) {
+            main
+            sub.inset(vertical: .Small)
+        }
+        .hugWidth()
+    }
+    return main
+}
+
+// --- Basic pad ---------------------------------------------------------------
+
+// Five columns, digits and the four rules — the mode that answers "what is
+// 64 − 9" with nothing else on the glass.
+function basicPad(modelUser: RawPtr, width: Float) -> Any Widget {
+    let keyWidth = calcKeyWidth(width, 5)
+    var rows: [[KeySpec]] = []
+
+    var r1: [KeySpec] = []
+    r1.append(makeKey(keyClear(), "C", "", "", 0, false))
+    r1.append(makeKey(keyParens(), "( )", "", "", 0, false))
+    r1.append(makeKey(keyPct(), "%", "", "", 0, false))
+    r1.append(makeKey(keyDiv(), "÷", "", "", 0, false))
+    r1.append(makeKey(keyMul(), "×", "", "", 0, false))
+    rows.append(r1)
+
+    var r2: [KeySpec] = []
+    r2.append(digitKey(7))
+    r2.append(digitKey(8))
+    r2.append(digitKey(9))
+    r2.append(makeKey(keySub(), "-", "", "", 0, false))
+    r2.append(makeKey(keyMod(), "mod", "", "", 0, false))
+    rows.append(r2)
+
+    var r3: [KeySpec] = []
+    r3.append(digitKey(4))
+    r3.append(digitKey(5))
+    r3.append(digitKey(6))
+    r3.append(makeKey(keyAdd(), "+", "", "", 0, false))
+    r3.append(makeKey(keyPow(), "^", "", "", 0, false))
+    rows.append(r3)
+
+    var r4: [KeySpec] = []
+    r4.append(digitKey(1))
+    r4.append(digitKey(2))
+    r4.append(digitKey(3))
+    r4.append(makeKey(keyDot(), ".", "", "", 0, false))
+    r4.append(makeKey(keyAns(), "ans", "", "", 0, false))
+    rows.append(r4)
+
+    var r5: [KeySpec] = []
+    r5.append(makeKey(keyDeg(), degreesName(calcSnapshot(modelUser).degrees), "", "", 3, true))
+    r5.append(digitKey(0))
+    r5.append(makeKey(keyFact(), "x!", "", "", 0, false))
+    r5.append(makeKey(keyAxB(), "a×b", "", "", 0, false))
+    r5.append(makeKey(keyEquals(), "=", "", "", 2, false))
+    rows.append(r5)
+
+    return HStack(spacing: Spacing.None) {
+        FixedGap(width: calcSideMargin(), height: 1.0)
+        VStack(spacing: Spacing.None, spacingLength: calcKeyGap()) {
+            For(row in rows) {
+                specRow(modelUser, row, keyWidth, calcKeyHeight())
+            }
+        }
+        FixedGap(width: calcSideMargin(), height: 1.0)
+    }
+    .width(width)
+}
