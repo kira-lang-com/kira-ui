@@ -38,12 +38,17 @@ import KiraUIFoundation
 // point: a title and its glyph are one thing, and a container that positions
 // them separately can only relate them by arithmetic — which is how a glyph ends
 // up against the row's edge instead of in its column.
-Widget Label(title: String, symbol: Symbol = Symbol.None) {
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+// SwiftUI spells the glyph half `systemImage:` — `Label("Copy", systemImage:
+// "doc.on.doc")` — and the name is worth keeping: it says the glyph comes from
+// the SYSTEM's set, not from artwork the application supplies, which is the
+// difference between a label that restyles itself with the platform and one
+// that does not.
+Widget Label(title: String, systemImage: Symbol = .None) {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         let metrics = resolvedControlMetrics(modifiers)
         var glyph = EmptyView().lower(context, modifiers)
-        if symbol != Symbol.None {
-            glyph = Icon(symbol: symbol)
+        if systemImage != .None {
+            glyph = Icon(symbol: systemImage)
                 .foregroundColor(.Secondary)
                 .lower(context, modifiers)
         }
@@ -58,22 +63,22 @@ Widget Label(title: String, symbol: Symbol = Symbol.None) {
         // centring at all — it just sits wherever the glyph happens to be tall.
         let column = Frame(
             move glyph,
-            KiraUIFoundation.SizeMode.Fixed(metrics.gutter),
-            KiraUIFoundation.SizeMode.Fill,
+            .Fixed(metrics.gutter),
+            .Fill,
             0,
-            KiraUIFoundation.Alignment.Center,
-            KiraUIFoundation.EdgeInsets {}
+            .Center,
+            EdgeInsets {}
         )
-        let label = HStack(spacing: Spacing.None, alignment: VerticalAlignment.Stretch) {
+        let label = HStack(spacing: .None, alignment: .Stretch) {
             FoundationRaw(view: move column)
 
             FoundationRaw(view: Frame(
                 Text(content: title).lower(context, modifiers),
-                KiraUIFoundation.SizeMode.Hug,
-                KiraUIFoundation.SizeMode.Fill,
+                .Hug,
+                .Fill,
                 0,
-                KiraUIFoundation.Alignment.Leading,
-                KiraUIFoundation.EdgeInsets {}
+                .Leading,
+                EdgeInsets {}
             ))
         }
         .hugWidth()
@@ -139,9 +144,9 @@ function kiraUiPickerLabel(options: borrow [String], selection: Int) -> String {
 
 function kiraUiPickerOptionInk(selection: Int, index: Int) -> PrimaryColor {
     if selection == index {
-        return PrimaryColor.Accent
+        return .Accent
     }
-    return PrimaryColor.Primary
+    return .Primary
 }
 
 function kiraUiPickerNoop(index: Int) {
@@ -151,11 +156,11 @@ function kiraUiPickerNoop(index: Int) {
 
 // The value side: the current option and the chevron that opens the list.
 Widget PickerValue(key: Int, options: [String], selection: Int) {
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
-        let value = HStack(spacing: Spacing.ExtraSmall, alignment: VerticalAlignment.Center) {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+        let value = HStack(spacing: .ExtraSmall, alignment: .Center) {
             Text(content: kiraUiPickerLabel(options, selection))
 
-            Icon(symbol: Symbol.CaretUpDown)
+            Icon(symbol: .ChevronUpChevronDown)
                 .imageScale(.Small)
                 .foregroundColor(.Secondary)
         }
@@ -166,25 +171,23 @@ Widget PickerValue(key: Int, options: [String], selection: Int) {
 }
 
 Widget PickerList(options: [String], selection: Int, onSelect: (Int) -> Void) {
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         let metrics = resolvedControlMetrics(modifiers)
-        let list = Panel(radius: CornerRadius.Small) {
-            PanelInset(length: metrics.fieldInset) {
-                VStack(spacing: Spacing.None) {
+        let list = VStack(spacing: .None) {
                     For(index in indices(options.count)) {
-                        HStack(spacing: Spacing.Small, alignment: VerticalAlignment.Center) {
+                        HStack(spacing: .Small, alignment: .Center) {
                             Text(content: options[index])
                                 .foregroundColor(kiraUiPickerOptionInk(selection, index))
 
                             Spacer()
                         }
-                        .inset(horizontal: Spacing.ExtraSmall)
+                        .inset(horizontal: .ExtraSmall)
                         .height(metrics.height)
-                        .onClick(kiraUiPickerChooseFn(index, onSelect))
-                    }
-                }
+                .onClick(kiraUiPickerChooseFn(index, onSelect))
             }
         }
+        .padding(length: metrics.fieldInset)
+        .background(RoundedRectangle(radius: .Small))
         .backgroundStyle(.Overlay)
         .themeBorder(.Subtle)
         .hugHeight()
@@ -201,10 +204,10 @@ Widget Picker(
     selection: Int,
     onSelect: (Int) -> Void = kiraUiPickerNoop,
 ) {
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         let key = kiraUiTapSeqKey()
         let open = kiraUiOpenPickerKey() == key
-        let picker = VStack(spacing: Spacing.ExtraSmall) {
+        let picker = VStack(spacing: .ExtraSmall) {
             PickerValue(key = key, options = options, selection = selection)
 
             if open {

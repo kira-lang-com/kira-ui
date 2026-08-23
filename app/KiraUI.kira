@@ -2,13 +2,6 @@ import Foundation
 import KiraGraphics
 import KiraUIFoundation
 
-function RunWidgetApp(root: Any Widget) {
-    RunKiraApp(KiraUIApp(
-        name: "Kira UI",
-        content: root
-    ))
-    return
-}
 
 // Interactive widget app: `rootBuilder` runs EVERY frame, so widgets rebuilt from it observe
 // current `@State` values (state lives in the ambient slot store, not in the widget values) and
@@ -45,6 +38,12 @@ function RunWidgetInteractiveApp(
     // foundation runner; default is unconfigured (environment as before).
     harness: KiraGraphics.HarnessConfig = KiraGraphics.HarnessConfig {},
 ) {
+    let hostEngineFrame: borrow (borrow mut KiraGraphics.RenderFrame) -> Void = engineFrame
+    let windowAwareEngineFrame: (borrow mut KiraGraphics.RenderFrame) -> Void = { frame in
+        kiraUiConsumeWindowCommand(frame)
+        hostEngineFrame(frame)
+        return
+    }
     RunFoundationInteractiveApp(move title, width, height, { context in
         // Auto-minted hit-area keys are build-sequence numbers, so the counter
         // starts over with every build: a tree whose keys drift frame to frame
@@ -65,15 +64,16 @@ function RunWidgetInteractiveApp(
         kiraUiSurfaceStopCollecting()
         return lowered
     },
-        engineFrame: engineFrame,
+        engineFrame: windowAwareEngineFrame,
         needsRebuild: foundationNoContinuousRebuild,
         showFpsOverlay: showFpsOverlay,
         showGraphicsHud: false,
         rebuildOnResize: rebuildOnResize,
-        windowMode: WindowMode.Windowed,
+        windowMode: .Windowed,
         transparent: transparent,
         opacity: opacity,
-        harness: move harness
+        harness: move harness,
+        windowDragRegion: kiraUiToolbarWindowDragRegion
     )
     return
 }
@@ -84,8 +84,8 @@ function RunWidgetInteractiveApp(
 // measured underline, a hand-placed caret — otherwise ends up carrying a number
 // somebody sampled off a mock, one per string, which stops being true the moment
 // the text or the font changes.
-function kiraUiTextWidth(content: borrow String, size: Float, weight: FontWeight = FontWeight.Regular) -> Float {
-    return KiraUIFoundation.foundationTextRunWidth(content, size, foundationFontWeight(weight))
+function kiraUiTextWidth(content: borrow String, size: Float, weight: FontWeight = .Regular) -> Float {
+    return foundationTextRunWidth(content, size, foundationFontWeight(weight))
 }
 
 // Text as its Unicode scalars, and back again.
@@ -96,24 +96,58 @@ function kiraUiTextWidth(content: borrow String, size: Float, weight: FontWeight
 // app do its own editing without naming the foundation package: KiraUI and
 // KiraGraphics are the whole surface an app is meant to see.
 function kiraUiStringToCodepoints(content: borrow String) -> [Int] {
-    return KiraUIFoundation.foundationStringToCodepoints(content)
+    return foundationStringToCodepoints(content)
 }
 
 // The `[start, end)` slice of `codes` as a string. Out-of-range indices
 // contribute nothing, so a caret range never has to be clamped first.
 function kiraUiStringFromCodepoints(codes: borrow [Int], start: Int, end: Int) -> String {
-    return KiraUIFoundation.foundationStringFromCodepoints(codes, start, end)
+    return foundationStringFromCodepoints(codes, start, end)
 }
 
-function RunKiraApp(app: KiraUIApp) {
-    let ignoredTitle = app.name.count
-    let root = app.content
-    let context = KiraUIFoundation.FoundationUiContext {}
-    // The app content owns its own surface and margins. Adding an implicit
-    // padded shell here leaves the renderer's default dark clear color visible
-    // as a black frame around themed roots.
-    let view = root.lower(context, ModifierContext {})
-    RunFoundationApp(move view, .Windowed, false)
-    let ignored = ignoredTitle + 0
+// Runs a KiraUI app, interactively.
+//
+// The block is a BUILDER, and it runs every frame — which is what makes the app
+// respond to anything. A tree lowered once is a picture: `@State` lives in the
+// ambient slot store, so a press that changes it changes nothing on screen until
+// the widgets are built again from the new value. Lowering is `@Consuming`, so
+// "again" means a fresh tree, so it means a builder rather than a value.
+//
+//     RunKiraApp {
+//         KiraUIApp(
+//             name: "Workspace",
+//             content: WorkspaceHome().theme(Opacity())
+//         )
+//     }
+//
+// The brace is a zero-parameter closure — no `in` — because the parameter is a
+// function type and that is what a brace means in that position.
+function RunKiraApp(app: borrow () -> KiraUIApp) {
+    let build: borrow () -> KiraUIApp = app
+    RunFoundationInteractiveApp("Kira UI", 1280, 720, { context in
+        kiraUiTapSeqReset()
+        kiraUiSurfaceCollect()
+        let made = build()
+        let root = made.content
+        let lowered = root.lower(context, ModifierContext {})
+        kiraUiSurfaceStopCollecting()
+        return lowered
+    },
+        engineFrame: kiraUiWindowEngineFrame,
+        needsRebuild: foundationNoContinuousRebuild,
+        showFpsOverlay: true,
+        showGraphicsHud: false,
+        rebuildOnResize: true,
+        windowMode: .Windowed,
+        transparent: false,
+        opacity: 1.0,
+        harness: KiraGraphics.HarnessConfig {},
+        windowDragRegion: kiraUiToolbarWindowDragRegion
+    )
+    return
+}
+
+function kiraUiWindowEngineFrame(frame: borrow mut KiraGraphics.RenderFrame) {
+    kiraUiConsumeWindowCommand(frame)
     return
 }

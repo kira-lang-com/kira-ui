@@ -1,4 +1,5 @@
 import KiraUI
+import OpacityUI
 
 // A real layered navigation app:
 //
@@ -53,9 +54,22 @@ function main() {
         width = 1280,
         height = 820,
         rootBuilder = { in
+            // Every token comes from ONE style. Without a theme the app falls
+            // back to KiraUI's built-in default, and that default resolved the
+            // canvas dark while resolving the toolbar's surface light — a bar
+            // the same colour as nothing else on screen, carrying ink chosen for
+            // the opposite appearance. A style is the thing that makes the two
+            // agree, so the app names one.
             return KiraUIApp(
                 name: "KiraUI Layered Navigation",
-                content: LayeredNavigationApp()
+                // `AppSurface` paints the window in the theme's canvas. Without
+                // it every region the tree does not cover shows the graphics
+                // layer's clear colour — a hardcoded light page — so a dark app
+                // wore a cream band wherever its widgets stopped.
+                content: AppSurface() {
+                    LayeredNavigationApp()
+                }
+                .theme(Opacity())
             )
         }
     )
@@ -76,12 +90,32 @@ Widget LayeredNavigationApp() {
     }
 }
 
+// Both bar actions return to the root, which is the one thing this demo can
+// honestly do from anywhere.
+function workspaceRefreshAction() -> () -> Void {
+    return { in
+        NavigationPath {}.removeAll()
+        return
+    }
+}
+
+// The plus opens the projects branch. A demo whose content is fixed has nothing
+// to create, so the button does the nearest real thing rather than nothing —
+// a control wired to an empty body teaches the reader that this is where a
+// no-op goes.
+function workspaceAddAction() -> () -> Void {
+    return { in
+        NavigationPath {}.append(ProjectsRoute())
+        return
+    }
+}
+
 Widget WorkspaceSidebar() {
     body {
         AppSurface {
-            VStack(spacing = Spacing.Small) {
+            VStack(spacing = .Small) {
                 Text("Kira Workspace")
-                    .font(size = 22.0, weight = FontWeight.Bold)
+                    .font(size = 22.0, weight = .Bold)
 
                 Text("The same path drives desktop split view and phone stack navigation.")
                     .font(size = 13.0)
@@ -107,16 +141,28 @@ Widget WorkspaceSidebar() {
             }
             .surfacePadding(20.0)
         }
+        .navigationTitle("Workspace")
+        // `.Automatic` is the trailing end of the section over the view that
+        // declared it, and the sidebar declares this — so the item lands at the
+        // sidebar's trailing edge without anything here naming a position. The
+        // column says what it wants on the bar; the bar decides where.
+        .toolbar {
+            ToolbarItem(placement = .Automatic) {
+                Button(action = workspaceAddAction()) {
+                    Icon(symbol = .Plus)
+                }
+            }
+        }
     }
 }
 
 Widget NavigationRow(title: String, detail: String, route: Any NavigationValue) {
     body {
         NavigationLink(value = move route) {
-            Card(material = Material.Frosted) {
-                VStack(spacing = Spacing.ExtraSmall) {
+            Card(material = .Frosted) {
+                VStack(spacing = .ExtraSmall) {
                     Text(title)
-                        .font(size = 16.0, weight = FontWeight.SemiBold)
+                        .font(size = 16.0, weight = .SemiBold)
 
                     Text(detail)
                         .font(size = 12.0)
@@ -137,53 +183,72 @@ Widget WorkspaceDetail(path: NavigationPath) {
         // values can be appended in sequence for a deep link such as
         // [ProjectsRoute(), ProjectOverviewRoute(), ProjectFilesRoute(),
         //  ProjectFileDetailRoute()].
-        .navigationDestination(
-            forType = ProjectsRoute(),
-            destination = ProjectsPage(path = path)
-        )
-        .navigationDestination(
-            forType = ActivityRoute(),
-            destination = ActivityPage(path = path)
-        )
-        .navigationDestination(
-            forType = SettingsRoute(),
-            destination = SettingsPage(path = path)
-        )
-        .navigationDestination(
-            forType = ProjectOverviewRoute(),
-            destination = ProjectOverviewPage(path = path)
-        )
-        .navigationDestination(
-            forType = ProjectFilesRoute(),
-            destination = ProjectFilesPage(path = path)
-        )
-        .navigationDestination(
-            forType = ProjectFileDetailRoute(),
-            destination = ProjectFileDetailPage(path = path)
-        )
-        .navigationDestination(
-            forType = ActivityDetailRoute(),
-            destination = ActivityDetailPage(path = path)
-        )
-        .navigationDestination(
-            forType = AccountRoute(),
-            destination = AccountPage(path = path)
-        )
+        .navigationDestination(forType = ProjectsRoute()) {
+            ProjectsPage(path = path)
+        }
+        .navigationDestination(forType = ActivityRoute()) {
+            ActivityPage(path = path)
+        }
+        .navigationDestination(forType = SettingsRoute()) {
+            SettingsPage(path = path)
+        }
+        .navigationDestination(forType = ProjectOverviewRoute()) {
+            ProjectOverviewPage(path = path)
+        }
+        .navigationDestination(forType = ProjectFilesRoute()) {
+            ProjectFilesPage(path = path)
+        }
+        .navigationDestination(forType = ProjectFileDetailRoute()) {
+            ProjectFileDetailPage(path = path)
+        }
+        .navigationDestination(forType = ActivityDetailRoute()) {
+            ActivityDetailPage(path = path)
+        }
+        .navigationDestination(forType = AccountRoute()) {
+            AccountPage(path = path)
+        }
+        .navigationTitle("Overview")
+        // Three items and one spacer, which is two pieces of glass.
+        //
+        // Items on a bar share a background by default — that is the whole
+        // Liquid Glass toolbar look, and it is why nothing here asks for one.
+        // `ToolbarSpacer` is the opt-out: it closes the run before it and opens
+        // the next, so the two actions arrive as one capsule and the overflow
+        // arrives as its own beside it.
+        .toolbar {
+            ToolbarItemGroup(placement = .PrimaryAction) {
+                Button(action = workspaceRefreshAction()) {
+                    Icon(symbol = .ArrowClockwise)
+                }
+
+                Button(action = workspaceRefreshAction()) {
+                    Icon(symbol = .Bell)
+                }
+            }
+
+            ToolbarSpacer(.Fixed, placement = .PrimaryAction)
+
+            ToolbarItem(placement = .PrimaryAction) {
+                Button(action = workspaceRefreshAction()) {
+                    Icon(symbol = .EllipsisCircle)
+                }
+            }
+        }
     }
 }
 
 Widget WorkspaceHome(path: NavigationPath) {
     body {
         AppSurface {
-            VStack(spacing = Spacing.Medium) {
+            VStack(spacing = .Medium) {
                 Text("Workspace")
-                    .font(size = 30.0, weight = FontWeight.Bold)
+                    .font(size = 30.0, weight = .Bold)
 
                 Text("Choose a branch from the sidebar or start a layered flow here.")
                     .font(size = 15.0)
                     .opacity(0.64)
 
-                HStack(spacing = Spacing.Small) {
+                HStack(spacing = .Small) {
                     NavigationRow(
                         title = "Open Projects",
                         detail = "Projects → overview → files",
@@ -209,7 +274,7 @@ Widget ProjectsPage(path: NavigationPath) {
             title = "Projects",
             subtitle = "The first level of the project flow."
         ) {
-            VStack(spacing = Spacing.Small) {
+            VStack(spacing = .Small) {
                 NavigationLink(value = ProjectOverviewRoute()) {
                     LayerRow(
                         title = "KiraUI",
@@ -234,7 +299,7 @@ Widget ProjectOverviewPage(path: NavigationPath) {
             title = "KiraUI Overview",
             subtitle = "A second level nested below Projects."
         ) {
-            VStack(spacing = Spacing.Small) {
+            VStack(spacing = .Small) {
                 Text("This destination is selected by the last value in NavigationPath.")
                     .font(size = 14.0)
                     .opacity(0.68)
@@ -256,7 +321,7 @@ Widget ProjectFilesPage(path: NavigationPath) {
             title = "Project Files",
             subtitle = "A third level that can continue into a file."
         ) {
-            VStack(spacing = Spacing.Small) {
+            VStack(spacing = .Small) {
                 NavigationLink(value = ProjectFileDetailRoute()) {
                     LayerRow(
                         title = "app/Navigation.kira",
@@ -351,9 +416,9 @@ Widget LayerPage(title: String, subtitle: String) {
 
     body {
         AppSurface {
-            VStack(spacing = Spacing.Medium) {
+            VStack(spacing = .Medium) {
                 Text(title)
-                    .font(size = 28.0, weight = FontWeight.Bold)
+                    .font(size = 28.0, weight = .Bold)
 
                 Text(subtitle)
                     .font(size = 14.0)
@@ -368,10 +433,10 @@ Widget LayerPage(title: String, subtitle: String) {
 
 Widget LayerRow(title: String, detail: String) {
     body {
-        Card(material = Material.Frosted) {
-            VStack(spacing = Spacing.ExtraSmall) {
+        Card(material = .Frosted) {
+            VStack(spacing = .ExtraSmall) {
                 Text(title)
-                    .font(size = 16.0, weight = FontWeight.SemiBold)
+                    .font(size = 16.0, weight = .SemiBold)
 
                 Text(detail)
                     .font(size = 13.0)

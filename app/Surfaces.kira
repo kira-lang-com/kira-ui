@@ -5,48 +5,47 @@ import KiraUIFoundation
 
 // Painted containers.
 //
-// `Panel` is the one applications should reach for: a themed box that takes its
-// fill, border, material, radius and padding from the theme, and its size from
-// the ordinary sizing modifiers. `SurfaceBox` underneath it is the low-level
-// escape hatch for the rare case that needs to name explicit colors.
+// A themed box is `.background(RoundedRectangle(radius: …))` on the content —
+// see the note further down. `SurfaceBox` is the low-level escape hatch for the
+// rare case that needs to name explicit colors.
 
 // --- Glass -------------------------------------------------------------------
 
-function surfaceGlassFrost() -> KiraUIFoundation.FoundationFrost {
+function surfaceGlassFrost() -> FoundationFrost {
     // Use the authored Medium Liquid Glass intensity for every glass container.
-    return KiraUIFoundation.FoundationFrost.Medium
+    return .Medium
 }
 
 // The glass scheme follows the SAME appearance the theme's color tokens resolve
 // through. Sniffing the environment here independently is how a light token set
 // used to end up washed over a dark glass stack.
-function surfaceGlassScheme(modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationScheme {
+function surfaceGlassScheme(modifiers: borrow ModifierContext) -> FoundationScheme {
     match modifierTheme(modifiers).appearance() {
-        Light -> return KiraUIFoundation.FoundationScheme.Light;
-        Dark -> return KiraUIFoundation.FoundationScheme.Dark;
+        Light -> return .Light;
+        Dark -> return .Dark;
     }
 }
 
-function surfaceGlassStack(modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationTintStack {
-    return KiraUIFoundation.foundationFrostStack(surfaceGlassFrost(), surfaceGlassScheme(modifiers))
+function surfaceGlassStack(modifiers: borrow ModifierContext) -> FoundationTintStack {
+    return foundationFrostStack(surfaceGlassFrost(), surfaceGlassScheme(modifiers))
 }
 
 function surfaceGlassMaterial(
     material: borrow Material,
     modifiers: borrow ModifierContext,
-) -> KiraUIFoundation.FoundationGlassMaterial {
+) -> FoundationGlassMaterial {
     match material {
         LayeredGlass -> {
             let stack = surfaceGlassStack(modifiers)
-            let base = KiraUIFoundation.FoundationGlassMaterial {}
-            return KiraUIFoundation.foundationGlassMaterialWithTint(
+            let base = FoundationGlassMaterial {}
+            return foundationGlassMaterialWithTint(
                 base,
                 stack
             )
         }
-        Flat -> return KiraUIFoundation.FoundationGlassMaterial {}
-        Frosted -> return KiraUIFoundation.FoundationGlassMaterial {}
-        WindowBackdrop -> return KiraUIFoundation.FoundationGlassMaterial {}
+        Flat -> return FoundationGlassMaterial {}
+        Frosted -> return FoundationGlassMaterial {}
+        WindowBackdrop -> return FoundationGlassMaterial {}
     }
 }
 
@@ -54,107 +53,40 @@ function surfaceGlassFill(
     fill: Color,
     material: borrow Material,
     modifiers: borrow ModifierContext,
-) -> KiraUIFoundation.Color {
+) -> FoundationColor {
     // A Liquid Glass surface owns its wash. Passing a token fill through here
     // used to turn the material's lower layer into an opaque rectangle, hiding
     // the captured backdrop. Use the named Foundation stack instead; an explicit
     // `.fill(...)` remains an intentional override.
-    if modifiers.hasFill == false && material == Material.LayeredGlass {
-        return KiraUIFoundation.foundationTintFill(surfaceGlassStack(modifiers))
+    if modifiers.hasFill == false && material == .LayeredGlass {
+        return foundationTintFill(surfaceGlassStack(modifiers))
     }
     return modifierSurfaceFill(foundationColor(move fill), modifiers)
 }
 
 function surfaceGlassBlur(material: borrow Material) -> Float {
     match material {
-        LayeredGlass -> return KiraUIFoundation.foundationFrostBlur(surfaceGlassFrost());
+        LayeredGlass -> return foundationFrostBlur(surfaceGlassFrost());
         Flat -> return 1.0;
         Frosted -> return 1.0;
         WindowBackdrop -> return 1.0;
     }
 }
 
-// --- Panel -------------------------------------------------------------------
-
-// A themed container. Everything it paints is a token:
+// Painted containers are NOT a widget here.
 //
-//   Panel(radius = .Small) { … }
-//       .backgroundStyle(.Surface)
-//       .themeBorder(.Subtle)
-//       .material(.LayeredGlass)
+// SwiftUI has no `Panel`: a themed box is content with a shape behind it —
 //
-// It fills the space its parent gives it; `.width(...)`, `.height(...)` and
-// `.fillHeight()` override that the same way they do for any other widget. An
-// application that wants a panel does NOT need to state five explicit colors and
-// two SizeModes to get one.
+//     content.background(RoundedRectangle(radius: .Small))
+//         .backgroundStyle(.Surface)
+//         .material(.LayeredGlass)
 //
-// It has no padding of its own. What a container holds off its edges is the
-// business of the thing inside it — a form insets its sections, a list insets
-// its rows, a row insets its label — and a padding argument here is how two
-// containers holding the same content end up spaced differently.
-Widget Panel(radius: CornerRadius = CornerRadius.Medium) {
-    let content: some Widget
-
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
-        let childModifiers = modifierContextForChildren(modifiers)
-        var selectedMaterial = KiraUIFoundation.FoundationMaterial.Flat
-        var semanticMaterial = Material.Flat
-        if modifiers.hasMaterial {
-            semanticMaterial = modifiers.material
-            selectedMaterial = foundationMaterial(modifiers.material)
-        }
-        let fallbackFill = foundationColor(modifierTokens(modifiers).background.surface)
-        let selectedFill = modifierSurfaceFill(move fallbackFill, modifiers)
-        var selectedBorder = modifierSurfaceBorder(transparentFoundationColor(), modifiers)
-        var borderWidth = 1.0
-        if modifiers.hasThemeBorder == false {
-            borderWidth = 0.0
-        }
-        // Liquid Glass draws its own edge; a token border on top of it reads as
-        // a hairline seam around the material.
-        if semanticMaterial == Material.LayeredGlass {
-            selectedBorder = transparentFoundationColor()
-        }
-        return KiraUIFoundation.FoundationView {
-            kind: KiraUIFoundation.FoundationViewKind.Surface
-            width: KiraUIFoundation.SizeMode.Fill
-            height: KiraUIFoundation.SizeMode.Fill
-            fill: surfaceGlassFill(Color {}, semanticMaterial, modifiers)
-            border: selectedBorder
-            borderWidth: borderWidth
-            radius: cornerRadiusImplementation(radius, modifiers)
-            shape: KiraUIFoundation.FoundationShape.RegularRoundedRect
-            material: selectedMaterial
-            effects: []
-            padding: KiraUIFoundation.EdgeInsets {}
-            clipContent: true
-            blur: surfaceGlassBlur(semanticMaterial)
-            edgeRefraction: 1.0
-            glassMaterial: surfaceGlassMaterial(semanticMaterial, modifiers)
-            disabled: modifiers.disabled
-            children: [content.lower(context, childModifiers)]
-        }
-    }
-}
-
-// A panel's content held off its edges by a length the size class owns.
-Widget PanelInset(length: Float) {
-    let content: some Widget
-
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
-        let view = content.lower(context, modifiers)
-        let width = view.width
-        let height = view.height
-        return Frame(
-            move view,
-            move width,
-            move height,
-            0,
-            KiraUIFoundation.Alignment.TopLeading,
-            uniformInsets(length)
-        )
-    }
-}
+// which is the same five tokens the container used to take as arguments, minus
+// the container. The difference matters because a container can only paint the
+// combinations it declared parameters for, and every combination it did not is
+// a second container someone has to add; a background is one modifier that
+// composes with every other one already there. `Shapes.kira` holds the shapes
+// and `SurfaceBox` below is still the escape hatch for explicit colours.
 
 // --- Section -----------------------------------------------------------------
 
@@ -183,7 +115,7 @@ Widget PanelInset(length: Float) {
 //
 // Every length here comes from the size class, so `.controlSize(.Small)` on the
 // panel is the whole statement of how dense the section is.
-Widget Section(spacing: Spacing = Spacing.ExtraSmall) {
+Widget Section(spacing: Spacing = .ExtraSmall) {
     // The rows are the bare block, and the two lines around them name their own
     // slots: `Section { … } header: { … } footer: { … }`. Both default to
     // nothing, so a section states only the lines it has.
@@ -191,23 +123,23 @@ Widget Section(spacing: Spacing = Spacing.ExtraSmall) {
     let header: some Widget = EmptyView()
     let footer: some Widget = EmptyView()
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         let metrics = resolvedControlMetrics(modifiers)
         // A row's content begins where the card's corner arc ends, so the card's
         // radius IS the inset and the rows are told it rather than carrying a
         // number of their own. Stated separately the two drift: an eleven-point
         // inset inside a twelve-point corner starts the label a point under the
         // arc, and retuning the radius leaves the inset behind entirely.
-        let cardRadius = cornerRadiusImplementation(CornerRadius.Medium, modifiers)
+        let cardRadius = cornerRadiusImplementation(.Medium, modifiers)
         let inset = modifierContextApply(modifiers, modifierDeltaContentInset(cardRadius))
         let rows = sectionRowViews(context, inset, children, metrics)
         let card = Column(
             children: move rows,
-            width: KiraUIFoundation.SizeMode.Fill,
-            height: KiraUIFoundation.SizeMode.Hug,
+            width: .Fill,
+            height: .Hug,
             spacing: 0.0,
             padding: uniformInsets(metrics.cardPadding),
-            crossAxisAlignment: KiraUIFoundation.CrossAlignment.Stretch
+            crossAxisAlignment: .Stretch
         )
         let section = VStack(spacing: spacing) {
             SectionBand(inset: metrics.headerInset, height: metrics.headerHeight) {
@@ -216,9 +148,8 @@ Widget Section(spacing: Spacing = Spacing.ExtraSmall) {
             .typography(.footnote)
             .foregroundColor(.Secondary)
 
-            Panel(radius: CornerRadius.Medium) {
-                FoundationRaw(view: move card)
-            }
+            FoundationRaw(view: move card)
+            .background(RoundedRectangle(cornerRadius: cardRadius))
             .backgroundStyle(.Raised)
             .hugHeight()
 
@@ -237,17 +168,17 @@ Widget Section(spacing: Spacing = Spacing.ExtraSmall) {
 Widget SectionBand(inset: Float, height: Float) {
     let content: some Widget
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
-        let band = HStack(spacing: Spacing.None, alignment: VerticalAlignment.Center) {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+        let band = HStack(spacing: .None, alignment: .Center) {
             content
         }
         return Frame(
             band.lower(context, modifiers),
-            KiraUIFoundation.SizeMode.Fill,
-            KiraUIFoundation.SizeMode.Fixed(height),
+            .Fill,
+            .Fixed(height),
             0,
-            KiraUIFoundation.Alignment.Leading,
-            KiraUIFoundation.EdgeInsets {
+            .Leading,
+            EdgeInsets {
                 leading: inset
                 trailing: inset
             }
@@ -257,12 +188,12 @@ Widget SectionBand(inset: Float, height: Float) {
 
 // The section's rows with a hairline between each consecutive pair.
 function sectionRowViews(
-    context: borrow KiraUIFoundation.FoundationUiContext,
+    context: borrow FoundationUiContext,
     modifiers: borrow ModifierContext,
     children: [Any Widget],
     metrics: borrow ControlMetricsImplementation,
-) -> [KiraUIFoundation.FoundationView] {
-    var rows: [KiraUIFoundation.FoundationView] = []
+) -> [FoundationView] {
+    var rows: [FoundationView] = []
     let childModifiers = modifierContextForChildren(modifiers)
     var index = 0
     while index < children.count {
@@ -276,4 +207,3 @@ function sectionRowViews(
     }
     return rows
 }
-

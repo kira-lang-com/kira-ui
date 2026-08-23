@@ -1,0 +1,188 @@
+import KiraGraphics
+import Foundation
+import KiraUIFoundation
+import KiraLayout
+
+// The shape a container is drawn in, stated AT THE POINT OF USE:
+//
+//     content.background(.Frosted, in: .RoundedRect(12.0))
+//     content.glassEffect(in: .Capsule)
+//
+// which is why SwiftUI has no panel widget to wrap something in. The material
+// and the shape are two arguments to a modifier on the content itself, so the
+// same content is a plain box in one place and a glass capsule in another
+// without a second container type having to exist for the second case. A
+// container widget forces the opposite: every combination it does not take an
+// argument for is a container someone has to add.
+//
+// These are SwiftUI's shape shorthands — `.rect`, `.rect(cornerRadius:)`,
+// `.capsule`, `.circle`. `.Radius` is the one addition, and it is here because
+// KiraUI's themes carry a corner-radius scale: a container that names `.Medium`
+// follows the theme where a literal 12 stops following it.
+enum ContainerShape {
+    Rect
+    RoundedRect(Float)
+    Radius(CornerRadius)
+    Capsule
+    Circle
+}
+
+// A capsule is a rounded rect whose radius no box can reach, so one number
+// answers for both and the renderer needs no separate case.
+function containerShapeUnbounded() -> Float {
+    return 9999.0
+}
+
+function containerShapeRadius(shape: ContainerShape, modifiers: borrow ModifierContext) -> Float {
+    match shape {
+        Rect -> return 0.0;
+        RoundedRect(value) -> return value;
+        Radius(style) -> return cornerRadiusImplementation(move style, modifiers);
+        Capsule -> return containerShapeUnbounded();
+        Circle -> return containerShapeUnbounded();
+    }
+}
+
+// What `.background(_:in:)` and `.glassEffect(in:)` both lower to: one surface
+// painted BEHIND the content, taking the footprint the content already resolved
+// to rather than a footprint of its own. That is the whole difference from a
+// container — a background never moves what it is behind.
+Widget SurfaceLayer(style: Material, shape: ContainerShape) {
+    let content: some Widget
+
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+        let childModifiers = modifierContextForChildren(modifiers)
+        let view = content.lower(context, childModifiers)
+        let width = view.width
+        let height = view.height
+        let fallbackFill = foundationColor(modifierTokens(modifiers).background.surface)
+        var selectedBorder = modifierSurfaceBorder(transparentFoundationColor(), modifiers)
+        var borderWidth = 1.0
+        if modifiers.hasThemeBorder == false {
+            borderWidth = 0.0
+        }
+        // Liquid Glass draws its own edge; a token border on top of it reads as
+        // a hairline seam around the material.
+        if style == .LayeredGlass {
+            selectedBorder = transparentFoundationColor()
+        }
+        return FoundationView {
+            kind: .Surface
+            width: width
+            height: height
+            fill: surfaceGlassFill(Color {}, style, modifiers)
+            border: selectedBorder
+            borderWidth: borderWidth
+            radius: containerShapeRadius(shape, modifiers)
+            shape: .RegularRoundedRect
+            material: foundationMaterial(style)
+            effects: []
+            padding: EdgeInsets {}
+            clipContent: true
+            blur: surfaceGlassBlur(style)
+            edgeRefraction: 1.0
+            glassMaterial: surfaceGlassMaterial(style, modifiers)
+            disabled: modifiers.disabled
+            children: [move view]
+        }
+    }
+}
+
+// --- Shapes ------------------------------------------------------------------
+//
+// SwiftUI's shapes are RESIZABLE views: `RoundedRectangle(cornerRadius: 12)`
+// states a corner and nothing else, and takes the size of whatever it is placed
+// in. That is what makes `.background(RoundedRectangle(cornerRadius: 12))` work
+// without repeating the content's size — and what makes a `Panel` unnecessary,
+// because a background shape already fills the box behind the content.
+//
+// `Rectangle` here is the older fixed-size atom (a swatch, a hairline rule) and
+// keeps its own signature; these are the resizable ones.
+Widget RoundedRectangle(
+    cornerRadius: Float = 0.0,
+    style: CornerRadius = .None,
+    followsTheme: Bool = false,
+) {
+    // Two ways to name one corner, so one name answers to both.
+    //
+    // SwiftUI's shape takes a LENGTH, and a length is right wherever a size
+    // class computed it. KiraUI's themes also carry a radius scale, and a
+    // container that names `.Medium` keeps following the theme where a literal
+    // 12 stops following it the moment the theme is retuned. Neither is a
+    // different shape, so neither gets a different type: the token spelling is
+    // an `init`, and `RoundedRectangle(…)` names both.
+    init(radius: CornerRadius) {
+        return RoundedRectangle(cornerRadius: 0.0, style: radius, followsTheme: true)
+    }
+
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+        var radius = cornerRadius
+        if followsTheme {
+            radius = cornerRadiusImplementation(style, modifiers)
+        }
+        return shapeSurface(context, modifiers, radius)
+    }
+}
+
+Widget Capsule() {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+        return shapeSurface(context, modifiers, containerShapeUnbounded())
+    }
+}
+
+// One shape, filled the way the modifiers in effect say to fill it: `.material`
+// picks the material, `.backgroundStyle` / `.foregroundColor` the flat fill,
+// `.themeBorder` the edge. A shape does not name its own colour, exactly as
+// SwiftUI's does not — `.fill(...)` and the cascade decide.
+function shapeSurface(
+    context: borrow FoundationUiContext,
+    modifiers: borrow ModifierContext,
+    radius: Float,
+) -> FoundationView {
+    let ignored = context.frameCount
+    var style: Material = .Flat
+    if modifiers.hasMaterial {
+        style = modifiers.material
+    }
+    var border = modifierSurfaceBorder(transparentFoundationColor(), modifiers)
+    var borderWidth = 1.0
+    if modifiers.hasThemeBorder == false {
+        borderWidth = 0.0
+    }
+    // Liquid Glass draws its own edge; a token border on top of it reads as a
+    // hairline seam around the material.
+    if style == .LayeredGlass {
+        border = transparentFoundationColor()
+    }
+    return FoundationView {
+        kind: .Surface
+        width: .Fill
+        height: .Fill
+        fill: surfaceGlassFill(Color {}, style, modifiers)
+        border: border
+        borderWidth: borderWidth
+        radius: radius
+        shape: .RegularRoundedRect
+        material: foundationMaterial(style)
+        effects: []
+        padding: EdgeInsets {}
+        clipContent: true
+        blur: surfaceGlassBlur(style)
+        edgeRefraction: 1.0
+        glassMaterial: surfaceGlassMaterial(style, modifiers)
+        disabled: modifiers.disabled
+    }
+}
+
+// `.padding(_:)`: the content held off its own edges by one length, and nothing
+// else changed about it.
+Widget PaddingLayer(length: Float) {
+    let content: some Widget
+
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+        let view = content.lower(context, modifierContextForChildren(modifiers))
+        let width = view.width
+        let height = view.height
+        return Frame(move view, move width, move height, 0, .Center, uniformInsets(length))
+    }
+}

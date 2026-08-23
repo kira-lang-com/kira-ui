@@ -51,36 +51,36 @@ enum HorizontalAlignment {
     Stretch
 }
 
-function foundationAlignment(alignment: StackAlignment) -> KiraUIFoundation.Alignment {
+function foundationAlignment(alignment: StackAlignment) -> Alignment {
     match alignment {
-        TopLeading -> return KiraUIFoundation.Alignment.TopLeading;
-        Top -> return KiraUIFoundation.Alignment.Top;
-        TopTrailing -> return KiraUIFoundation.Alignment.TopTrailing;
-        Leading -> return KiraUIFoundation.Alignment.Leading;
-        Center -> return KiraUIFoundation.Alignment.Center;
-        Trailing -> return KiraUIFoundation.Alignment.Trailing;
-        BottomLeading -> return KiraUIFoundation.Alignment.BottomLeading;
-        Bottom -> return KiraUIFoundation.Alignment.Bottom;
-        BottomTrailing -> return KiraUIFoundation.Alignment.BottomTrailing;
+        TopLeading -> return .TopLeading;
+        Top -> return .Top;
+        TopTrailing -> return .TopTrailing;
+        Leading -> return .Leading;
+        Center -> return .Center;
+        Trailing -> return .Trailing;
+        BottomLeading -> return .BottomLeading;
+        Bottom -> return .Bottom;
+        BottomTrailing -> return .BottomTrailing;
     }
 }
 
-function foundationVerticalAlignment(alignment: VerticalAlignment) -> KiraUIFoundation.CrossAlignment {
+function foundationVerticalAlignment(alignment: VerticalAlignment) -> CrossAlignment {
     match alignment {
-        Top -> return KiraUIFoundation.CrossAlignment.Start;
-        Center -> return KiraUIFoundation.CrossAlignment.Center;
-        Bottom -> return KiraUIFoundation.CrossAlignment.End;
-        Stretch -> return KiraUIFoundation.CrossAlignment.Stretch;
-        FirstTextBaseline -> return KiraUIFoundation.CrossAlignment.Baseline;
+        Top -> return .Start;
+        Center -> return .Center;
+        Bottom -> return .End;
+        Stretch -> return .Stretch;
+        FirstTextBaseline -> return .Baseline;
     }
 }
 
-function foundationHorizontalAlignment(alignment: HorizontalAlignment) -> KiraUIFoundation.CrossAlignment {
+function foundationHorizontalAlignment(alignment: HorizontalAlignment) -> CrossAlignment {
     match alignment {
-        Leading -> return KiraUIFoundation.CrossAlignment.Start;
-        Center -> return KiraUIFoundation.CrossAlignment.Center;
-        Trailing -> return KiraUIFoundation.CrossAlignment.End;
-        Stretch -> return KiraUIFoundation.CrossAlignment.Stretch;
+        Leading -> return .Start;
+        Center -> return .Center;
+        Trailing -> return .End;
+        Stretch -> return .Stretch;
     }
 }
 
@@ -102,8 +102,8 @@ function indices(count: Int) -> [Int] {
 // Adopts an already-built low-level FoundationView into the Widget family, so an
 // existing hand-lowered helper drops straight into a `For(...)` content block
 // without rewriting its body: `FoundationRaw(view = …)`.
-Widget FoundationRaw(view: KiraUIFoundation.FoundationView) {
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+Widget FoundationRaw(view: FoundationView) {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         let ignored = context.frameCount
         return view
     }
@@ -114,12 +114,12 @@ Widget FoundationRaw(view: KiraUIFoundation.FoundationView) {
 // footer draws no footer, rather than the container having to carry a flag for
 // each optional slot.
 Widget EmptyView() {
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         let ignored = context.frameCount
-        return KiraUIFoundation.FoundationView {
-            kind: KiraUIFoundation.FoundationViewKind.Surface
-            width: KiraUIFoundation.SizeMode.Fixed(0.0)
-            height: KiraUIFoundation.SizeMode.Fixed(0.0)
+        return FoundationView {
+            kind: .Surface
+            width: .Fixed(0.0)
+            height: .Fixed(0.0)
             fill: transparentFoundationColor()
         }
     }
@@ -149,19 +149,19 @@ function stackSpacing(
 // A row across its parent's width. `.hugWidth()` makes it a group around its
 // content instead.
 Widget HStack(
-    spacing: Spacing = Spacing.None,
-    alignment: VerticalAlignment = VerticalAlignment.Center,
+    spacing: Spacing = .None,
+    alignment: VerticalAlignment = .Center,
     spacingLength: Float = -1.0,
 ) {
     let children: [some Widget]
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
-        return KiraUIFoundation.Row(
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+        return Row(
             children: loweredChildren(context, modifiers, children),
-            width: KiraUIFoundation.SizeMode.Fill,
-            height: KiraUIFoundation.SizeMode.Hug,
+            width: .Fill,
+            height: .Hug,
             spacing: stackSpacing(spacing, spacingLength, modifiers),
-            padding: KiraUIFoundation.EdgeInsets {},
+            padding: EdgeInsets {},
             crossAxisAlignment: foundationVerticalAlignment(alignment)
         )
     }
@@ -170,19 +170,19 @@ Widget HStack(
 // A column down its parent's width. `.fillHeight()` makes it claim the whole
 // height; `.hugWidth()` makes it a group around its content.
 Widget VStack(
-    spacing: Spacing = Spacing.None,
-    alignment: HorizontalAlignment = HorizontalAlignment.Leading,
+    spacing: Spacing = .None,
+    alignment: HorizontalAlignment = .Leading,
     spacingLength: Float = -1.0,
 ) {
     let children: [some Widget]
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
-        return KiraUIFoundation.Column(
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+        return Column(
             children: loweredChildren(context, modifiers, children),
-            width: KiraUIFoundation.SizeMode.Fill,
-            height: KiraUIFoundation.SizeMode.Hug,
+            width: .Fill,
+            height: .Hug,
             spacing: stackSpacing(spacing, spacingLength, modifiers),
-            padding: KiraUIFoundation.EdgeInsets {},
+            padding: EdgeInsets {},
             crossAxisAlignment: foundationHorizontalAlignment(alignment)
         )
     }
@@ -190,16 +190,16 @@ Widget VStack(
 
 // An overlay stack: children draw in declaration order (first at the bottom),
 // each placed by `alignment` within the stack's bounds.
-Widget ZStack(alignment: StackAlignment = StackAlignment.Center) {
+Widget ZStack(alignment: StackAlignment = .Center) {
     let children: [some Widget]
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
-        return KiraUIFoundation.FoundationView {
-            kind: KiraUIFoundation.FoundationViewKind.Frame
-            width: KiraUIFoundation.SizeMode.Fill
-            height: KiraUIFoundation.SizeMode.Fill
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+        return FoundationView {
+            kind: .Frame
+            width: .Fill
+            height: .Fill
             alignment: foundationAlignment(alignment)
-            padding: KiraUIFoundation.EdgeInsets {}
+            padding: EdgeInsets {}
             children: loweredChildren(context, modifiers, children)
         }
     }
@@ -210,12 +210,12 @@ Widget ZStack(alignment: StackAlignment = StackAlignment.Center) {
 // A fixed-size, paint-free box: deterministic spacing inside stacks, where the
 // flexing Spacer would absorb leftover space instead.
 Widget FixedGap(width: Float, height: Float) {
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         let ignored = context.frameCount
-        return KiraUIFoundation.FoundationView {
-            kind: KiraUIFoundation.FoundationViewKind.Surface
-            width: KiraUIFoundation.SizeMode.Fixed(width)
-            height: KiraUIFoundation.SizeMode.Fixed(height)
+        return FoundationView {
+            kind: .Surface
+            width: .Fixed(width)
+            height: .Fixed(height)
             fill: transparentFoundationColor()
         }
     }
@@ -231,12 +231,12 @@ Widget Rectangle(
     stroke: Color = Color { a: 0.0 },
     strokeWidth: Float = 0.0,
 ) {
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         let ignored = context.frameCount
-        return KiraUIFoundation.FoundationView {
-            kind: KiraUIFoundation.FoundationViewKind.Surface
-            width: KiraUIFoundation.SizeMode.Fixed(width)
-            height: KiraUIFoundation.SizeMode.Fixed(height)
+        return FoundationView {
+            kind: .Surface
+            width: .Fixed(width)
+            height: .Fixed(height)
             fill: modifierSurfaceFill(foundationColor(fill), modifiers)
             border: modifierColor(foundationColor(stroke), modifiers)
             borderWidth: strokeWidth
@@ -256,7 +256,7 @@ Widget Rectangle(
 // names the glyph's size RELATIVE to the size class in effect, and
 // `.foregroundColor(...)` names its ink exactly as it does a run of text's.
 Widget Icon(symbol: Symbol) {
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         let ignored = context.frameCount
         return iconView(
             symbolImplementation(symbol, modifiers),
@@ -277,8 +277,8 @@ Widget Icon(symbol: Symbol) {
 //
 // `svg` is SVG text (the subset the foundation's rasterizer reads: paths
 // including arcs, circle / rect / line / polyline / polygon, fill and stroke).
-Widget Artwork(svg: String, scale: IconScale = IconScale.Medium, points: Float = -1.0) {
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+Widget Artwork(svg: String, scale: IconScale = .Medium, points: Float = -1.0) {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         let ignored = context.frameCount
         var size = iconScaleSize(scale, modifiers)
         if points >= 0.0 {
@@ -293,14 +293,14 @@ Widget Artwork(svg: String, scale: IconScale = IconScale.Medium, points: Float =
 // ink is SHAPED; where it sits inside the canvas it was drawn on is the icon
 // engine's business now, because the engine trims that margin away.
 function iconInkAspect(svg: borrow String) -> Float {
-    return KiraUIFoundation.foundationIconInkAspect(svg)
+    return foundationIconInkAspect(svg)
 }
 
 // How much of its own box a symbol's drawing covers, and the share above which
 // it counts as drawn SOLID rather than stroked. An outline leaves most of its
 // box empty; a filled shape does not.
 function iconInkDensity(svg: borrow String) -> Float {
-    return KiraUIFoundation.foundationIconInkDensity(svg)
+    return foundationIconInkDensity(svg)
 }
 
 function iconSolidDensity() -> Float {
@@ -311,7 +311,7 @@ function iconView(
     svg: String,
     size: Float,
     modifiers: borrow ModifierContext,
-) -> KiraUIFoundation.FoundationView {
+) -> FoundationView {
     var ink = modifierColor(foundationColor(modifierTokens(modifiers).foreground.primary), modifiers)
     if modifiers.hasForegroundColor {
         ink = modifierColor(modifierPrimaryColor(modifiers.foregroundColor, modifiers), modifiers)
@@ -337,8 +337,8 @@ function iconView(
     if iconInkDensity(svg) < iconSolidDensity() {
         growth = iconWeightGrowth(size, modifiers)
     }
-    return KiraUIFoundation.FoundationView {
-        kind: KiraUIFoundation.FoundationViewKind.Icon
+    return FoundationView {
+        kind: .Icon
         content: move svg
         color: move ink
         size: size

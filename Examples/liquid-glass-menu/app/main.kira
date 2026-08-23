@@ -1,0 +1,645 @@
+import KiraGraphics
+import Foundation
+import KiraLayout
+import KiraUIFoundation
+import KiraUI
+import KiraUIMotion
+
+// A context menu on liquid glass — the real thing, not a coloured rectangle.
+//
+// Three actions across the top, then rows with a leading icon and a trailing
+// chevron, separated by hairlines. Pressing a row lights it from where the
+// finger landed and the panel flexes under it; both come from `KiraUIMotion`
+// driving `deform` and `glow` on the views.
+
+// Every number below is measured off a 3x screenshot of the real thing
+// (Photos' context menu), not guessed: the panel is 250pt wide, its separators
+// are inset 24pt on each side rather than running edge to edge, its rows are on
+// a 42pt pitch, and its corners are a CONTINUOUS superellipse — a squircle —
+// rather than a circular arc.
+
+// The platform's own label and separator colours, read out of the material
+// tables rather than eyeballed: primary label, secondary label, and the
+// #0000001F rule that rides on every material.
+function ink() -> Color {
+    return foundationVibrantLabel(1, FoundationScheme.Light)
+}
+
+function dimInk() -> Color {
+    return foundationVibrantLabel(2, FoundationScheme.Light)
+}
+
+function hairline() -> Color {
+    return foundationSeparator(FoundationScheme.Light)
+}
+
+function menuWidth() -> Float { return 250.0 }
+// A menu's corner is a big part of why the real one reads as expensive, and it
+// is not a circular arc: the curvature runs continuously into the straight
+// edges instead of meeting them at a point where it jumps.
+function menuRadius() -> Float { return 34.0 }
+function rowHeight() -> Float { return 42.0 }
+// `Divider().padding(.horizontal, 24)` — the separator stops short of the
+// panel's edge. Running it edge to edge is what makes a menu look like a table.
+function separatorInset() -> Float { return 24.0 }
+function rowLeading() -> Float { return 30.0 }
+function rowTrailing() -> Float { return 28.0 }
+// The icon COLUMN, not the icon: a fixed width is what puts every label on the
+// same x, which is `Image(systemName:).frame(width:)` in SwiftUI.
+// Sized from the reference's INK, not from its nominal point size. Apple's row
+// glyph measures 17.33pt of ink and its label 12.33pt — the icon stands 1.41x
+// the label. At 17.0/17.0 this drew 17.00 against 12.67, a ratio of 1.34, and
+// the icon read as slightly too small for the type beside it.
+function iconColumn() -> Float { return 17.4 }
+// The COLUMN the glyph is centred in, which is not the glyph's height.
+//
+// A symbol is rasterized trimmed to its ink, so its box is its ink's box and a
+// non-square symbol is wider than it is tall — `foundationIconWidth` sizes the
+// Icon view to `size * inkAspect` for exactly that reason. Framing it in a
+// square 17.4 truncated the wide ones: EyeSlash needs 21.8pt at this height,
+// SlidersHorizontal 20.9, Images 20.6, and MonitorPlay lost the right-hand
+// edge of its screen because the quad it rasterized into was 17.4 across.
+//
+// 22 is the widest of the nine this menu draws, so every one of them fits and
+// they all still centre on the same column.
+function iconBox() -> Float { return 22.0 }
+// 30 (inset) + 22 (box) + 14 = 66pt to the label, which is where the
+// reference puts it.
+function iconGap() -> Float { return 14.0 }
+// 16.5, not 17: the face here renders 3% larger than SF Pro Text at the same
+// nominal size — 12.67pt of ink against 12.33, and 53.3pt of advance for
+// "Add To" against 51.7. Matching the point size matched the wrong thing.
+function labelSize() -> Float { return 16.5 }
+
+// Stroke weight measured, not chosen: the reference's row glyph is 16.3pt in a
+// 17pt column with a 4-device-pixel stroke at 3x — 1.33pt. A 2.0 stroke on a
+// 24-unit viewBox at 17pt renders 1.67pt here, a quarter heavier, which is what
+// made these read as chunky beside the type. 1.6 lands on the measurement.
+// The icons are Apple's own vocabulary, from the Cupertino set.
+//
+// `kira-ui` now carries two libraries. Phosphor (`Symbol`) is the general one;
+// Cupertino (`Symbol`) is the iOS set, converted from the MIT
+// `cupertino_icons` TTF. For a menu that is copying an iOS menu the second is
+// not a preference, it is the difference between naming the glyph you want and
+// settling for the nearest shape: Apple's Duplicate is `plus_square_on_square`,
+// a square on a square with a plus knocked out of it, and Phosphor has no such
+// icon — the closest was a page with a plus, which is a different idea. Its
+// Start Slideshow is `play_rectangle`; the nearest Phosphor shape was a play
+// triangle in a CIRCLE.
+
+// An icon sized by its EM, not by its ink.
+//
+// `size` on an Icon is the height of its INK, because a symbol is rasterized
+// trimmed to its drawing. Asking the same `size` for every glyph therefore asks
+// for the same ink height for every glyph, which is not what an icon set is:
+// `play_rectangle` is drawn squat and `photo_on_rectangle` tall, and the
+// reference renders them at 69 and 83 device pixels for exactly that reason.
+// Ours drew both at 52, so the squat one towered over the type beside it.
+//
+// The caller states the em and this works out the ink: the fraction of the em
+// box this glyph's ink occupies, which the shared viewBox in CupertinoAssets
+// makes knowable.
+function glyphEm(svg: String, color: Color, em: Float) -> FoundationView {
+    let inkHeight = foundationIconInkBottom(svg) - foundationIconInkTop(svg)
+    return glyph(move svg, move color, em * inkHeight)
+}
+
+function glyph(svg: String, color: Color, size: Float) -> FoundationView {
+    return FoundationView {
+        kind: .Icon
+        content: svg
+        color: color
+        size: size
+    }
+}
+
+function iconCopy() -> String { return symbolAsset(Symbol.DocOnDoc) }
+function iconDuplicate() -> String { return symbolAsset(Symbol.PlusSquareOnSquare) }
+function iconHide() -> String { return symbolAsset(Symbol.EyeSlash) }
+function iconSlideshow() -> String { return symbolAsset(Symbol.PlayRectangle) }
+function iconAddTo() -> String { return symbolAsset(Symbol.PhotoOnRectangle) }
+function iconAdjust() -> String { return symbolAsset(Symbol.InfoCircle) }
+function iconEdits() -> String { return symbolAsset(Symbol.SliderHorizontal3) }
+function iconSaveFrame() -> String { return symbolAsset(Symbol.Photo) }
+function chevron() -> String { return symbolAsset(Symbol.ChevronRight) }
+
+// --- what the menu is doing --------------------------------------------------
+
+struct MenuMotion {
+    // The backdrop photograph, loaded once. A menu over three flat colour bands
+    // cannot show what the material does: flat colour through glass is still
+    // flat colour, and the only thing left to look at is the edge. The app
+    // example refracts a photograph, so this refracts the same one.
+    var textureId: Int = 0
+    var textureTried: Bool = false
+    var pull: MotionPullState = MotionPullState { reach: 180.0 }
+    var glow: MotionGlowState = MotionGlowState {}
+    var pressX: Float = 0.0
+    var pressY: Float = 0.0
+    var shape: MotionDeformation = MotionDeformation {}
+}
+
+function menuSlot() -> String {
+    return "liquidglassmenu.state"
+}
+
+function menuEnsure() {
+    if stateSlotHas(menuSlot()) == false {
+        stateSlotPut(menuSlot(), nativeUserData(nativeState(MenuMotion {})))
+    }
+    return
+}
+
+// Read-only. Every mutation below recovers INLINE, because a recovered value
+// handed back by a function is a copy and writes to it are thrown away.
+function menuRead() -> MenuMotion {
+    menuEnsure()
+    return nativeRecover<MenuMotion>(stateSlotGet(menuSlot()))
+}
+
+function menuOriginX() -> Float {
+    return (900.0 - menuWidth()) * 0.5
+}
+
+function menuOriginY() -> Float {
+    return 120.0
+}
+
+function onMenuPress(x: Float, y: Float) {
+    menuEnsure()
+    var state = nativeRecover<MenuMotion>(stateSlotGet(menuSlot()))
+    state.pressX = x
+    state.pressY = y
+    motionPullPress(state.pull, x, y, false)
+    motionGlowPress(state.glow, x - menuOriginX(), y - menuOriginY())
+    return
+}
+
+function onMenuMove(dx: Float, dy: Float) {
+    menuEnsure()
+    var state = nativeRecover<MenuMotion>(stateSlotGet(menuSlot()))
+    let x = state.pressX + dx
+    let y = state.pressY + dy
+    motionPullMove(state.pull, x, y, 1.0 / 60.0)
+    motionGlowMove(state.glow, x - menuOriginX(), y - menuOriginY())
+    return
+}
+
+function onMenuRelease(x: Float, y: Float) {
+    menuEnsure()
+    var state = nativeRecover<MenuMotion>(stateSlotGet(menuSlot()))
+    motionPullRelease(state.pull, false)
+    motionGlowRelease(state.glow)
+    return
+}
+
+function onMenuTap() {
+    menuEnsure()
+    var state = nativeRecover<MenuMotion>(stateSlotGet(menuSlot()))
+    motionPullPress(state.pull, menuOriginX() + menuWidth() * 0.5, menuOriginY() + 100.0, false)
+    motionGlowPress(state.glow, menuWidth() * 0.5, 100.0)
+    motionPullRelease(state.pull, false)
+    motionGlowRelease(state.glow)
+    return
+}
+
+function menuAdvance() -> MenuMotion {
+    menuEnsure()
+    var state = nativeRecover<MenuMotion>(stateSlotGet(menuSlot()))
+    state.shape = motionPullAdvance(state.pull, 1.0 / 60.0, false)
+    let ignored = motionGlowAdvance(state.glow, 1.0 / 60.0)
+    return menuRead()
+}
+
+function menuMoving() -> Bool {
+    let state = menuRead()
+    if motionPullMoving(state.pull) {
+        return true
+    }
+    return motionGlowLit(state.glow)
+}
+
+// --- the menu itself ---------------------------------------------------------
+
+function pad(l: Float, t: Float, r: Float, b: Float) -> EdgeInsets {
+    return EdgeInsets { leading: l, top: t, trailing: r, bottom: b }
+}
+
+// `Image(systemName:)` occupies the font's EM BOX, with the glyph sitting on a
+// shared baseline inside it — it does not shrink to fit the glyph's ink. Ours
+// rasterises trimmed to ink, so handing the ink straight to a stack gives each
+// icon a different height: `eye_slash` is squat, `doc_on_doc` is tall, and the
+// label under each one lands at a different y. The Frame puts the em box back,
+// so all three icons share a centre line and all three labels share a baseline.
+function actionIcon(svg: String, em: Float) -> FoundationView {
+    return Frame(
+        child: glyphEm(move svg, ink(), em),
+        width: SizeMode.Hug,
+        height: SizeMode.Fixed(em),
+        flex: 0,
+        alignment: Alignment.Center,
+        padding: pad(0.0, 0.0, 0.0, 0.0)
+    )
+}
+
+// One of the three actions across the top: `VStack { Image; Text }` in a column
+// that takes an equal third — `.frame(maxWidth: .infinity)`.
+function action(svg: String, label: String) -> FoundationView {
+    return Column(
+        children: [
+            actionIcon(move svg, 21.0),
+            AdaptiveText(move label, ink(), 13.0, 400.0)
+        ],
+        width: SizeMode.Fill,
+        height: SizeMode.Hug,
+        spacing: 8.0,
+        padding: pad(0.0, 0.0, 0.0, 0.0),
+        crossAxisAlignment: CrossAlignment.Center
+    )
+}
+
+function actionsRow() -> FoundationView {
+    return Row(
+        children: [
+            action(iconCopy(), "Copy"),
+            action(iconDuplicate(), "Duplicate"),
+            action(iconHide(), "Hide")
+        ],
+        width: SizeMode.Fill,
+        height: SizeMode.Hug,
+        spacing: 0.0,
+        // 14 above and 10 below, not 18/16: the block came out 80pt tall
+        // against the real menu's ~70, and all of the excess read as a gap
+        // between the actions and the first row.
+        padding: pad(0.0, blockPad(), 0.0, 10.0),
+        crossAxisAlignment: CrossAlignment.Center
+    )
+}
+
+// The group inset, applied ONCE by the column that holds the rows.
+//
+// The divider does not carry a padding of its own and neither does the row: a
+// menu has one horizontal inset and everything inside it lines up against that.
+// Measured off the real menu, the divider sits exactly on it (24pt) and the row
+// content sits a few points further in (30pt to the icon, 28pt back from the
+// chevron), so the row adds the DIFFERENCE and nothing else.
+function groupInset() -> Float { return 24.0 }
+function rowExtraLeading() -> Float { return 6.0 }
+function rowExtraTrailing() -> Float { return 4.0 }
+
+// A group boundary, which is a rule plus the air around it.
+//
+// Measured off the reference: rows inside a group sit on a 42pt pitch, and rows
+// either side of a separator sit on 64pt. So a separator is not a 1pt line
+// between two rows — it is a 1pt line with about ten points above and below it,
+// and a menu that draws only the line reads as a list with hairlines in it
+// rather than as groups.
+// The air above the first icon, which the bottom matches.
+function blockPad() -> Float { return 18.0 }
+
+function separatorPad() -> Float { return 10.5 }
+
+function separator() -> FoundationView {
+    return Column(
+        children: [
+            FoundationView {
+                kind: .Surface
+                width: .Fill
+                height: .Fixed(1.0)
+                fill: hairline()
+            }
+        ],
+        width: SizeMode.Fill,
+        height: SizeMode.Fixed(1.0 + separatorPad() * 2.0),
+        spacing: 0.0,
+        padding: pad(0.0, separatorPad(), 0.0, separatorPad()),
+        crossAxisAlignment: CrossAlignment.Stretch
+    )
+}
+
+// A row: a fixed-width icon column, the label, and an optional chevron pinned to
+// the trailing edge by a `Spacer`.
+function row(svg: String, label: String, chevronToo: Bool) -> FoundationView {
+    var trailing: [FoundationView] = []
+    if chevronToo {
+        trailing.append(glyphEm(chevron(), dimInk(), 11.0))
+    }
+    return Row(
+        children: [
+            // `Image(systemName:).frame(width: 17)` — the COLUMN is fixed, so
+            // every label starts at the same x whatever the glyph is.
+            Frame(
+                child: glyphEm(move svg, ink(), iconColumn()),
+                width: SizeMode.Fixed(iconBox()),
+                height: SizeMode.Fixed(iconColumn()),
+                flex: 0,
+                alignment: Alignment.Center,
+                padding: pad(0.0, 0.0, 0.0, 0.0)
+            ),
+            AdaptiveText(move label, ink(), labelSize(), 400.0),
+            // `FoundationView` directly rather than Foundation's `Spacer`
+            // helper: KiraUI declares a widget of the same name, and this file
+            // imports both packages.
+            FoundationView { kind: .Spacer, width: .Fill, height: .Fill, flex: 1 },
+            Row(
+                children: move trailing,
+                width: SizeMode.Hug,
+                height: SizeMode.Hug,
+                spacing: 0.0,
+                padding: pad(0.0, 0.0, 0.0, 0.0),
+                crossAxisAlignment: CrossAlignment.Center
+            )
+        ],
+        width: SizeMode.Fill,
+        height: SizeMode.Fixed(rowHeight()),
+        spacing: iconGap(),
+        padding: pad(rowExtraLeading(), 0.0, rowExtraTrailing(), 0.0),
+        crossAxisAlignment: CrossAlignment.Center
+    )
+}
+
+// A row whose title does not fit on one line.
+//
+// The reference wraps "Save Video Frame as Photo" and gives the row the height
+// of two lines rather than shrinking the type: at 17pt the title is about
+// 200pt wide and the content box between the icon column and the trailing
+// margin is 156, so one line was never going to hold it.
+function rowTwoLine(svg: String, first: String, second: String) -> FoundationView {
+    return Row(
+        children: [
+            Frame(
+                child: glyphEm(move svg, ink(), iconColumn()),
+                width: SizeMode.Fixed(iconBox()),
+                height: SizeMode.Fixed(iconColumn()),
+                flex: 0,
+                alignment: Alignment.Center,
+                padding: pad(0.0, 0.0, 0.0, 0.0)
+            ),
+            Column(
+                children: [
+                    AdaptiveText(move first, ink(), labelSize(), 400.0),
+                    AdaptiveText(move second, ink(), labelSize(), 400.0)
+                ],
+                width: SizeMode.Hug,
+                height: SizeMode.Hug,
+                spacing: 2.0,
+                padding: pad(0.0, 0.0, 0.0, 0.0),
+                crossAxisAlignment: CrossAlignment.Start
+            ),
+            // `FoundationView` directly rather than Foundation's `Spacer`
+            // helper: KiraUI declares a widget of the same name, and this file
+            // imports both packages.
+            FoundationView { kind: .Spacer, width: .Fill, height: .Fill, flex: 1 }
+        ],
+        width: SizeMode.Fill,
+        height: SizeMode.Fixed(62.0),
+        spacing: iconGap(),
+        padding: pad(rowExtraLeading(), 0.0, rowExtraTrailing(), 0.0),
+        crossAxisAlignment: CrossAlignment.Center
+    )
+}
+
+function menu(state: borrow MenuMotion) -> FoundationView {
+    // `LiquidGlassSurface`, not a hand-rolled Surface with a wash written as a
+    // loose alpha. The step is what names the material: it reads the platform's
+    // own two-layer tint table for the scheme, crossfades it, and derives the
+    // blur from the same step — which is why a hand-picked `fill` and a blur
+    // dial cannot get here. `.Max` is Chrome: shapes and colour survive the
+    // backdrop, detail does not, which is what a menu over a photograph does.
+    return LiquidGlassSurface(
+        children: [
+            Column(
+                children: [
+                    // Full width: the three actions are thirds of the PANEL, so
+                    // this one sits outside the group inset.
+                    actionsRow(),
+                    Column(
+                        children: [
+                            separator(),
+                            row(iconSlideshow(), "Start Slideshow", false),
+                            separator(),
+                            // No separator between these two: a rule marks the
+                            // end of a GROUP, not the end of a row.
+                            row(iconAddTo(), "Add To", true),
+                            row(iconAdjust(), "Adjust Info", true),
+                            row(iconEdits(), "Edits", true),
+                            separator(),
+                            rowTwoLine(iconSaveFrame(), "Save Video Frame", "as Photo")
+                        ],
+                        width: SizeMode.Fill,
+                        height: SizeMode.Hug,
+                        spacing: 0.0,
+                        // The one horizontal inset in the whole menu, and the
+                        // bottom breathing room.
+                        //
+                        // UNIFIED with the top, not larger: the gap above the
+                        // first icon and the gap below the last line of text are
+                        // the same. The last row already centres its two lines
+                        // inside its own 62pt, which contributes about fourteen
+                        // points on its own — so this adds the remainder to
+                        // reach `blockPad()`, rather than the whole of it.
+                        padding: pad(groupInset(), 0.0, groupInset(), 4.0),
+                        crossAxisAlignment: CrossAlignment.Stretch
+                    )
+                ],
+                width: SizeMode.Fill,
+                height: SizeMode.Hug,
+                spacing: 0.0,
+                padding: pad(0.0, 0.0, 0.0, 0.0),
+                crossAxisAlignment: CrossAlignment.Stretch
+            )
+        ],
+        width: SizeMode.Fixed(menuWidth()),
+        height: SizeMode.Hug,
+        radius: menuRadius(),
+        frost: menuFrost(),
+        // Spelled out one by one because `shape` and the motion fields are last
+        // and arguments bind POSITIONALLY: none of these can be skipped on the
+        // way to them, even at their defaults.
+        tint: Color { r: 1.0 g: 1.0 b: 1.0 a: 1.0 },
+        // NOT `.Step`. The frost step's own blur ramp tops out at 0.25, which is
+        // exactly `blurNearSplit` — it is spent entirely crossing sharp -> near
+        // and never reaches the far level of the pyramid, so the backdrop stays
+        // legible through the panel. That is the right default for chrome that
+        // should not read as a half-resolution capture; it is not what a menu
+        // over a photograph does, which is keep the colour and lose the detail.
+        blur: menuBlur(),
+        edgeRefraction: 1.0,
+        // A menu's own material, not the package default.
+        //
+        // `lensMaxBend` defaults to 72pt, which is the right reach for a small
+        // control where the lens IS the effect — a pill, a round button. On a
+        // 250pt panel it bends the backdrop over the outer 72pt and leaves a
+        // pale band down the inside of every edge. The reference has none: its
+        // edge reads flat from the first pixel inside the hairline, so a menu
+        // is uniform frost with an edge, and whatever lensing it has is inside
+        // a few points of the rim.
+        glassMaterial: FoundationGlassMaterial { lensMaxBend: 6.0 },
+        edgeLighting: true,
+        flex: 0,
+        padding: EdgeInsets {},
+        clipContent: true,
+        scheme: FoundationScheme.Light,
+        schemeMix: 1.0,
+        shape: FoundationShape.Squircle,
+        deform: state.shape,
+        glow: state.glow
+    )
+}
+
+// The material this run shows, so one build can be photographed at every step
+// instead of six builds being compared from memory. `KIRA_MENU_FROST` is the
+// frost step 0..5 and `KIRA_MENU_BLUR` the blur, -1 meaning "follow the step".
+// High — REGULAR — which is what an iOS context menu is made of.
+//
+// Measured against the reference over a photograph: Regular's interior reads
+// luma 222.7 and Apple's 222.3. Thick reads 242.9, twenty levels too bright and
+// with almost no colour left in it (chroma spread 5.2 against Apple's 47.8) —
+// its two dodge layers, 34% linear over 84% colour, crush the backdrop toward
+// white. Regular's are gentler, 25% over 60%.
+//
+// Thick was chosen here first because it had the smallest edge halo, which was
+// optimising the wrong quantity: the halo is worth a few levels at the rim, the
+// wash is the whole surface.
+//
+// (The chroma figures are across different photographs and are indicative only;
+// the luma match is the one to trust.)
+//
+// The steps are not one scale with Max at the end of it. Thick is two dodge
+// layers (34% linear, 84% colour) and covers the backdrop harder than anything
+// else in the table; Chrome is ONE 75% hard-light layer and the only entry whose
+// background blur radius is 50 rather than 100. Hard light keeps the backdrop's
+// contrast where the two dodges crush it toward white, so at a high blur the
+// sharp-to-blurred step across the rim's blur fade survives Chrome and reads as
+// a dark halo hugging the edge — measured at 5 levels deep on Chrome against 2
+// on Thick, with Thick's interior brighter (250 against 244) despite Chrome
+// sorting after it.
+function menuFrost() -> FoundationFrost {
+    let level = environmentInt("KIRA_MENU_FROST", 4)
+    if level <= 0 { return .Translucent }
+    if level == 1 { return .Light }
+    if level == 2 { return .Medium }
+    if level == 3 { return .High }
+    if level == 4 { return .XHigh }
+    return .Max
+}
+
+function menuBlur() -> FoundationBlur {
+    let level = environmentInt("KIRA_MENU_BLUR", 5)
+    if level < 0 { return .Step }
+    if level == 0 { return .None }
+    if level == 1 { return .Light }
+    if level == 2 { return .Medium }
+    if level == 3 { return .High }
+    if level == 4 { return .XHigh }
+    return .Max
+}
+
+function menuBackdropTexture(graphics: borrow Graphics) -> Int {
+    attempt {
+        let beside = try loadRgbaTexture(graphics, "assets/background-cubes-cool.rgba", 1600, 900)
+        return beside
+    } handle {
+        AssetUnreadable {
+            attempt {
+                let shared = try loadRgbaTexture(graphics, "../../../ui-foundation/Examples/liquid-glass-app/assets/background-cubes-cool.rgba", 1600, 900)
+                return shared
+            } handle {
+                AssetUnreadable { return 0 }
+                DeviceRefused { return 0 }
+                ShaderRejected { return 0 }
+            }
+        }
+        DeviceRefused { return 0 }
+        ShaderRejected { return 0 }
+    }
+}
+
+// Something for the glass to be glass about: a photograph stands in as bands of
+// colour, because a menu over a flat page shows nothing of the material.
+function backdrop(state: borrow MenuMotion) -> FoundationView {
+    if state.textureId > 0 {
+        return TextureView(
+            texture: state.textureId,
+            width: SizeMode.Fill,
+            height: SizeMode.Fill,
+            flex: 0,
+            opacity: 1.0,
+            radius: 0.0
+        )
+    }
+    // No photograph on disk: bands, so the run still shows something.
+    return Column(
+        children: [
+            FoundationView { kind: .Surface, width: .Fill, height: .Fixed(150.0), fill: Color { r: 0.16 g: 0.42 b: 0.72 a: 1.0 } },
+            FoundationView { kind: .Surface, width: .Fill, height: .Fixed(120.0), fill: Color { r: 0.86 g: 0.55 b: 0.28 a: 1.0 } },
+            FoundationView { kind: .Surface, width: .Fill, height: .Fixed(140.0), fill: Color { r: 0.93 g: 0.86 b: 0.72 a: 1.0 } },
+            FoundationView { kind: .Surface, width: .Fill, height: .Fill, fill: Color { r: 0.22 g: 0.31 b: 0.25 a: 1.0 } }
+        ],
+        width: SizeMode.Fill,
+        height: SizeMode.Fill,
+        spacing: 0.0,
+        padding: pad(0.0, 0.0, 0.0, 0.0),
+        crossAxisAlignment: CrossAlignment.Stretch
+    )
+}
+
+function rootView(state: borrow MenuMotion) -> FoundationView {
+    return FoundationView {
+        kind: .Surface
+        width: .Fill
+        height: .Fill
+        fill: Color { r: 0.08 g: 0.09 b: 0.11 a: 1.0 }
+        children: [
+            backdrop(state),
+            Frame(
+                child: GestureHitArea(
+                    key: 9100,
+                    disabled: false,
+                    onPress: onMenuTap,
+                    interaction: FoundationInteraction {
+                        onDragStart: onMenuPress
+                        onDragMove: onMenuMove
+                        onDragEnd: onMenuRelease
+                    },
+                    children: [menu(state)]
+                ),
+                width: SizeMode.Fill,
+                height: SizeMode.Fill,
+                flex: 0,
+                alignment: Alignment.Center,
+                padding: pad(0.0, 0.0, 0.0, 0.0)
+            )
+        ]
+    }
+}
+
+@Main
+function main() {
+    RunFoundationInteractiveApp(
+        title: "Liquid Glass — menu",
+        // 360x320 points at a 3x render scale, which is what the reference
+        // screenshots are: a menu measured at 1x cannot say whether a hairline
+        // is a hairline.
+        width: 1000,
+        height: 940,
+        rootBuilder: { ui in
+            let ignored = ui.frameCount
+            let state = menuAdvance()
+            return rootView(state)
+        },
+        engineFrame: { frame in
+            menuEnsure()
+            var state = nativeRecover<MenuMotion>(stateSlotGet(menuSlot()))
+            if state.textureTried {
+                return
+            }
+            state.textureTried = true
+            state.textureId = menuBackdropTexture(foundationFrameGraphics(frame))
+            return
+        },
+        needsRebuild: menuMoving,
+        showFpsOverlay: false
+    )
+    return
+}

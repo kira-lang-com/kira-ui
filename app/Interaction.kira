@@ -55,16 +55,11 @@ function kiraUiTapSeqKey() -> Int {
 // a subtle white wash (~8% alpha), transparent otherwise. Foundation forces a
 // rebuild when the hovered region changes, so the fill flips as the pointer
 // crosses button boundaries.
-function kiraUiHoverWash() -> KiraUIFoundation.Color {
-    return KiraUIFoundation.Color {
-        r: 1.0
-        g: 1.0
-        b: 1.0
-        a: 0.08
-    }
+function kiraUiHoverWash() -> FoundationColor {
+    return foundationRgba(1.0, 1.0, 1.0, 0.08)
 }
 
-function kiraUiTapBackground(key: Int) -> KiraUIFoundation.Color {
+function kiraUiTapBackground(key: Int) -> FoundationColor {
     if kiraUiHovered(key) {
         return kiraUiHoverWash()
     }
@@ -88,19 +83,19 @@ function kiraUiTapBackground(key: Int) -> KiraUIFoundation.Color {
 Widget ClickLayer(action: () -> Void) {
     let content: some Widget
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         let k = kiraUiTapSeqKey()
         let press = action
         let view = content.lower(context, modifiers)
         let width = view.width
         let height = view.height
-        return KiraUIFoundation.FoundationView {
-            kind: KiraUIFoundation.FoundationViewKind.HitArea
+        return FoundationView {
+            kind: .HitArea
             key: k
             width: width
             height: height
             backgroundFill: modifierColor(kiraUiTapBackground(k), modifiers)
-            radius: cornerRadiusImplementation(CornerRadius.Small, modifiers)
+            radius: cornerRadiusImplementation(.Small, modifiers)
             disabled: modifiers.disabled
             focusable: true
             autofocus: modifiers.hasFocused && modifiers.focused
@@ -116,18 +111,18 @@ Widget ClickLayer(action: () -> Void) {
 Widget ScrubLayer(action: (Float, Float) -> Void) {
     let content: some Widget
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         let k = kiraUiTapSeqKey()
         let view = content.lower(context, modifiers)
         let width = view.width
         let height = view.height
-        return KiraUIFoundation.FoundationView {
-            kind: KiraUIFoundation.FoundationViewKind.HitArea
+        return FoundationView {
+            kind: .HitArea
             key: k
             width: width
             height: height
             disabled: modifiers.disabled
-            interaction: KiraUIFoundation.FoundationInteraction {
+            interaction: FoundationInteraction {
                 onDragMove: action
             }
             children: [move view]
@@ -146,18 +141,18 @@ Widget ScrubLayer(action: (Float, Float) -> Void) {
 Widget ClickRegion(
     key: Int,
     onPress: () -> Void,
-    radius: CornerRadius = CornerRadius.Small,
+    radius: CornerRadius = .Small,
 ) {
     let content: some Widget
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         let k = key
         let press = onPress
         let view = content.lower(context, modifiers)
         let width = view.width
         let height = view.height
-        return KiraUIFoundation.FoundationView {
-            kind: KiraUIFoundation.FoundationViewKind.HitArea
+        return FoundationView {
+            kind: .HitArea
             key: k
             width: width
             height: height
@@ -190,7 +185,7 @@ Widget DragRegion(
 ) {
     let children: [some Widget]
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         let k = key
         let dragStart = onDragStart
         let dragMove = onDragMove
@@ -200,19 +195,19 @@ Widget DragRegion(
         // a few points tall, and a region that hugs whatever it holds gave that
         // one the width of the hairline it draws.
         let content = loweredChildren(context, modifiers, children)
-        var width = KiraUIFoundation.SizeMode.Hug
-        var height = KiraUIFoundation.SizeMode.Hug
+        var width: SizeMode = .Hug
+        var height: SizeMode = .Hug
         if content.count == 1 {
             width = content[0].width
             height = content[0].height
         }
-        return KiraUIFoundation.FoundationView {
-            kind: KiraUIFoundation.FoundationViewKind.HitArea
+        return FoundationView {
+            kind: .HitArea
             key: k
             width: move width
             height: move height
             disabled: modifiers.disabled
-            interaction: KiraUIFoundation.FoundationInteraction {
+            interaction: FoundationInteraction {
                 onDragStart: dragStart
                 onDragMove: dragMove
                 onDragEnd: dragEnd
@@ -234,21 +229,21 @@ Widget DragRegion(
 // same HitArea node, no `backgroundFill`, and a transparent Fill/Fill Surface
 // child so the region has something to size against.
 Widget DismissArea(key: Int, onPress: () -> Void) {
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         let ignored = context.frameCount
         let press = onPress
-        var kids: [KiraUIFoundation.FoundationView] = []
-        kids.append(KiraUIFoundation.FoundationView {
-            kind: KiraUIFoundation.FoundationViewKind.Surface
-            width: KiraUIFoundation.SizeMode.Fill
-            height: KiraUIFoundation.SizeMode.Fill
+        var kids: [FoundationView] = []
+        kids.append(FoundationView {
+            kind: .Surface
+            width: .Fill
+            height: .Fill
             fill: transparentFoundationColor()
         })
-        return KiraUIFoundation.FoundationView {
-            kind: KiraUIFoundation.FoundationViewKind.HitArea
+        return FoundationView {
+            kind: .HitArea
             key: key
-            width: KiraUIFoundation.SizeMode.Fill
-            height: KiraUIFoundation.SizeMode.Fill
+            width: .Fill
+            height: .Fill
             disabled: modifiers.disabled
             onPress: press
             children: move kids
@@ -265,12 +260,12 @@ Widget DismissArea(key: Int, onPress: () -> Void) {
 Widget Expanded(flex: Int) {
     let content: some Widget
 
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         let childModifiers = modifierContextForChildren(modifiers)
-        return KiraUIFoundation.FoundationView {
-            kind: KiraUIFoundation.FoundationViewKind.Expanded
-            width: KiraUIFoundation.SizeMode.Fill
-            height: KiraUIFoundation.SizeMode.Fill
+        return FoundationView {
+            kind: .Expanded
+            width: .Fill
+            height: .Fill
             flex: flex
             children: [content.lower(context, childModifiers)]
         }
@@ -289,13 +284,13 @@ Widget Expanded(flex: Int) {
 Widget GestureTextureView(
     key: Int,
     texture: Int,
-    radius: CornerRadius = CornerRadius.None,
+    radius: CornerRadius = .None,
     onScroll: (Float, Float) -> Void,
     onDragStart: (Float, Float) -> Void,
     onDragMove: (Float, Float) -> Void,
     onDragEnd: (Float, Float) -> Void,
 ) {
-    function lower(context: borrow KiraUIFoundation.FoundationUiContext, modifiers: borrow ModifierContext) -> KiraUIFoundation.FoundationView {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
         let ignored = context.frameCount
         let k = key
         let cornerRadius = cornerRadiusImplementation(radius, modifiers)
@@ -303,28 +298,28 @@ Widget GestureTextureView(
         let dragStart = onDragStart
         let dragMove = onDragMove
         let dragEnd = onDragEnd
-        var kids: [KiraUIFoundation.FoundationView] = []
-        kids.append(KiraUIFoundation.FoundationView {
-            kind: KiraUIFoundation.FoundationViewKind.TextureView
-            width: KiraUIFoundation.SizeMode.Fill
-            height: KiraUIFoundation.SizeMode.Fill
+        var kids: [FoundationView] = []
+        kids.append(FoundationView {
+            kind: .TextureView
+            width: .Fill
+            height: .Fill
             flex: 1
             texture: texture
             textureOpacity: modifiers.opacity
             radius: cornerRadius
         })
-        return KiraUIFoundation.FoundationView {
-            kind: KiraUIFoundation.FoundationViewKind.HitArea
+        return FoundationView {
+            kind: .HitArea
             key: k
-            width: KiraUIFoundation.SizeMode.Fill
-            height: KiraUIFoundation.SizeMode.Fill
+            width: .Fill
+            height: .Fill
             flex: 1
             onScroll: scroll
             // A wheel over the viewport is the viewport's — that is what the
             // gesture surface is for.
             wheel: true
             disabled: modifiers.disabled
-            interaction: KiraUIFoundation.FoundationInteraction {
+            interaction: FoundationInteraction {
                 onDragStart: dragStart
                 onDragMove: dragMove
                 onDragEnd: dragEnd
