@@ -1,0 +1,296 @@
+import Foundation
+import KiraUI
+
+// The default style's tokens.
+//
+// These values used to be literals in `Styles.kira` and are now renditions in a
+// KCoreUI catalog. The point of this file is that moving them changed nothing:
+// every number below is the one the toolkit shipped before the catalog existed,
+// so a regression here is a regression in what the toolkit draws.
+//
+// A catalog stores a channel as 16.16 fixed point, so a value authored in
+// thousandths comes back within one part in 65536 of what was written. That is
+// four decimal places finer than an 8-bit channel can express, and it is why
+// these compare within a tolerance rather than exactly.
+
+function kuiNear(left: Float, right: Float) -> Bool {
+    return abs(left - right) < 0.0001
+}
+
+// Compared channel by channel rather than through one colour parameter. KiraUI
+// declares its own `Color` and the resolved token structs carry another, so a
+// helper taking either would only work on half the cases here.
+function kuiRgba(r: Float, g: Float, b: Float, a: Float, er: Float, eg: Float, eb: Float, ea: Float) -> Bool {
+    return kuiNear(r, er) && kuiNear(g, eg) && kuiNear(b, eb) && kuiNear(a, ea)
+}
+
+function kuiTokens() -> ThemeTokens {
+    return styleThemeTokens(DefaultStyle {})
+}
+
+function kuiStyle() -> Any StyleImplementation {
+    return DefaultStyle {}
+}
+
+// --- Palette ---------------------------------------------------------------
+
+construct KuiThePaletteKeepsItsAuthoredValues() extends Test {
+    test {
+        let palette = kuiStyle().palette
+        return kuiRgba(palette.red.light.r, palette.red.light.g, palette.red.light.b, palette.red.light.a, 1.0, 0.231, 0.188, 1.0)
+            && kuiRgba(palette.red.dark.r, palette.red.dark.g, palette.red.dark.b, palette.red.dark.a, 1.0, 0.271, 0.227, 1.0)
+            && kuiRgba(palette.blue.light.r, palette.blue.light.g, palette.blue.light.b, palette.blue.light.a, 0.0, 0.478, 1.0, 1.0)
+            && kuiRgba(palette.gray.dark.r, palette.gray.dark.g, palette.gray.dark.b, palette.gray.dark.a, 0.557, 0.557, 0.576, 1.0)
+    }
+    expect { let e: Result<Bool, TestFailure> = Result.Ok(true); return e }
+}
+
+// --- Foregrounds -----------------------------------------------------------
+
+construct KuiTheForegroundLadderKeepsItsAuthoredValues() extends Test {
+    test {
+        let foregrounds = kuiStyle().foregrounds
+        return kuiRgba(foregrounds.primary.light.r, foregrounds.primary.light.g, foregrounds.primary.light.b, foregrounds.primary.light.a, 0.08, 0.09, 0.12, 1.0)
+            && kuiRgba(foregrounds.primary.dark.r, foregrounds.primary.dark.g, foregrounds.primary.dark.b, foregrounds.primary.dark.a, 0.95, 0.96, 0.99, 1.0)
+            && kuiRgba(foregrounds.secondary.light.r, foregrounds.secondary.light.g, foregrounds.secondary.light.b, foregrounds.secondary.light.a, 0.38, 0.4, 0.46, 1.0)
+            && kuiRgba(foregrounds.tertiary.light.r, foregrounds.tertiary.light.g, foregrounds.tertiary.light.b, foregrounds.tertiary.light.a, 0.5, 0.51, 0.55, 0.58)
+            && kuiRgba(foregrounds.quaternary.dark.r, foregrounds.quaternary.dark.g, foregrounds.quaternary.dark.b, foregrounds.quaternary.dark.a, 0.58, 0.6, 0.66, 0.34)
+    }
+    expect { let e: Result<Bool, TestFailure> = Result.Ok(true); return e }
+}
+
+// Ink that stays readable on a filled control. Apple names no such colour, so
+// the catalog carries it under a name of the toolkit's own.
+construct KuiTheInverseForegroundSurvivedTheMove() extends Test {
+    test {
+        let foregrounds = kuiStyle().foregrounds
+        return kuiRgba(foregrounds.inverse.light.r, foregrounds.inverse.light.g, foregrounds.inverse.light.b, foregrounds.inverse.light.a, 0.98, 0.98, 1.0, 1.0)
+            && kuiRgba(foregrounds.inverse.dark.r, foregrounds.inverse.dark.g, foregrounds.inverse.dark.b, foregrounds.inverse.dark.a, 0.06, 0.07, 0.1, 1.0)
+    }
+    expect { let e: Result<Bool, TestFailure> = Result.Ok(true); return e }
+}
+
+// --- Backgrounds and fills -------------------------------------------------
+
+construct KuiTheElevationLadderKeepsItsAuthoredValues() extends Test {
+    test {
+        let backgrounds = kuiStyle().backgrounds
+        return kuiRgba(backgrounds.canvas.light.r, backgrounds.canvas.light.g, backgrounds.canvas.light.b, backgrounds.canvas.light.a, 0.95, 0.96, 0.98, 1.0)
+            && kuiRgba(backgrounds.canvas.dark.r, backgrounds.canvas.dark.g, backgrounds.canvas.dark.b, backgrounds.canvas.dark.a, 0.035, 0.04, 0.065, 1.0)
+            && kuiRgba(backgrounds.surface.light.r, backgrounds.surface.light.g, backgrounds.surface.light.b, backgrounds.surface.light.a, 1.0, 1.0, 1.0, 0.92)
+            && kuiRgba(backgrounds.raised.dark.r, backgrounds.raised.dark.g, backgrounds.raised.dark.b, backgrounds.raised.dark.a, 0.12, 0.14, 0.2, 0.96)
+            && kuiRgba(backgrounds.overlay.light.r, backgrounds.overlay.light.g, backgrounds.overlay.light.b, backgrounds.overlay.light.a, 0.96, 0.97, 1.0, 0.88)
+    }
+    expect { let e: Result<Bool, TestFailure> = Result.Ok(true); return e }
+}
+
+construct KuiTheFillsKeepTheirAuthoredValues() extends Test {
+    test {
+        let fills = kuiStyle().fills
+        return kuiRgba(fills.control.light.r, fills.control.light.g, fills.control.light.b, fills.control.light.a, 0.91, 0.93, 0.98, 1.0)
+            && kuiRgba(fills.hover.dark.r, fills.hover.dark.g, fills.hover.dark.b, fills.hover.dark.a, 0.95, 0.96, 0.99, 0.08)
+            && kuiRgba(fills.selection.light.r, fills.selection.light.g, fills.selection.light.b, fills.selection.light.a, 0.2, 0.45, 0.96, 0.22)
+    }
+    expect { let e: Result<Bool, TestFailure> = Result.Ok(true); return e }
+}
+
+// --- Tints -----------------------------------------------------------------
+
+construct KuiTheTintsKeepTheirAuthoredValues() extends Test {
+    test {
+        let tints = kuiStyle().tints
+        return kuiRgba(tints.accent.light.r, tints.accent.light.g, tints.accent.light.b, tints.accent.light.a, 0.2, 0.45, 0.96, 1.0)
+            && kuiRgba(tints.accent.dark.r, tints.accent.dark.g, tints.accent.dark.b, tints.accent.dark.a, 0.43, 0.67, 1.0, 1.0)
+            && kuiRgba(tints.success.light.r, tints.success.light.g, tints.success.light.b, tints.success.light.a, 0.12, 0.58, 0.3, 1.0)
+            && kuiRgba(tints.warning.dark.r, tints.warning.dark.g, tints.warning.dark.b, tints.warning.dark.a, 0.98, 0.75, 0.25, 1.0)
+            && kuiRgba(tints.danger.dark.r, tints.danger.dark.g, tints.danger.dark.b, tints.danger.dark.a, 0.96, 0.31, 0.37, 1.0)
+    }
+    expect { let e: Result<Bool, TestFailure> = Result.Ok(true); return e }
+}
+
+// --- Borders ---------------------------------------------------------------
+
+// A border is a catalog colour and a width the toolkit still owns, so this case
+// checks both halves of that split.
+construct KuiTheBorderLadderKeepsItsColoursAndWidths() extends Test {
+    test {
+        let borders = kuiStyle().borders
+        return kuiRgba(borders.subtle.color.light.r, borders.subtle.color.light.g, borders.subtle.color.light.b, borders.subtle.color.light.a, 0.08, 0.1, 0.16, 0.1)
+            && kuiRgba(borders.standard.color.dark.r, borders.standard.color.dark.g, borders.standard.color.dark.b, borders.standard.color.dark.a, 1.0, 1.0, 1.0, 0.18)
+            && kuiRgba(borders.strong.color.light.r, borders.strong.color.light.g, borders.strong.color.light.b, borders.strong.color.light.a, 0.08, 0.1, 0.16, 0.32)
+            && kuiRgba(borders.focus.color.dark.r, borders.focus.color.dark.g, borders.focus.color.dark.b, borders.focus.color.dark.a, 0.43, 0.67, 1.0, 0.9)
+            && borders.none.width == 0.0
+            && borders.subtle.width == 1.0
+            && borders.standard.width == 1.0
+            && borders.strong.width == 1.5
+            && borders.focus.width == 2.0
+    }
+    expect { let e: Result<Bool, TestFailure> = Result.Ok(true); return e }
+}
+
+// --- Typography ------------------------------------------------------------
+
+function kuiFontIs(font: borrow FontImplementation, size: Float, lineHeight: Float, tracking: Float) -> Bool {
+    return kuiNear(font.size, size) && kuiNear(font.lineHeight, lineHeight) && kuiNear(font.tracking, tracking)
+}
+
+construct KuiTheTextMetricsKeepTheirAuthoredValues() extends Test {
+    test {
+        let typography = kuiStyle().typography
+        return kuiFontIs(typography.body, 15.0, 21.0, 0.0)
+            && kuiFontIs(typography.caption, 12.0, 16.0, 0.2)
+            && kuiFontIs(typography.control, 15.0, 20.0, 0.0)
+            && kuiFontIs(typography.title, 28.0, 34.0, 0.0 - 0.3)
+            && kuiFontIs(typography.footnote, 11.0, 15.0, 0.0)
+            && kuiFontIs(typography.overline, 10.0, 13.0, 0.5)
+            && kuiFontIs(typography.headline, 18.0, 23.0, 0.0)
+            && kuiFontIs(typography.title1, 30.0, 36.0, 0.0 - 0.3)
+            && kuiFontIs(typography.title2, 24.0, 29.0, 0.0 - 0.2)
+            && kuiFontIs(typography.title3, 28.0, 34.0, 0.0 - 0.2)
+    }
+    expect { let e: Result<Bool, TestFailure> = Result.Ok(true); return e }
+}
+
+// Weight survives the trip through the catalog's numeric axis.
+construct KuiTheTextWeightsSurviveTheNumericAxis() extends Test {
+    test {
+        let typography = kuiStyle().typography
+        return typography.body.weight == .Regular
+            && typography.control.weight == .SemiBold
+            && typography.label.weight == .SemiBold
+            && typography.title.weight == .Bold
+            && typography.section.weight == .Bold
+    }
+    expect { let e: Result<Bool, TestFailure> = Result.Ok(true); return e }
+}
+
+// --- Through the theme -----------------------------------------------------
+
+// The resolved tokens a widget actually reads. `styleThemeTokens` is the one
+// place a style becomes tokens, so a value that survives the catalog but is
+// dropped here would still be a regression on screen.
+construct KuiResolvedTokensReachAWidgetUnchanged() extends Test {
+    test {
+        let tokens = kuiTokens()
+        let expectedPrimary = themeAdaptiveColor(kuiStyle().foregrounds.primary, resolvedAppearance(kuiStyle().appearance))
+        return kuiRgba(tokens.foreground.primary.r, tokens.foreground.primary.g, tokens.foreground.primary.b, tokens.foreground.primary.a, expectedPrimary.r, expectedPrimary.g, expectedPrimary.b, expectedPrimary.a)
+            && tokens.border.focus.width == 2.0
+            && kuiNear(tokens.bodySize, 15.0)
+    }
+    expect { let e: Result<Bool, TestFailure> = Result.Ok(true); return e }
+}
+
+// --- The generated tokens and the catalog ----------------------------------
+//
+// `DefaultStyle` reads literals generated from the catalog rather than
+// resolving live, because a field default is evaluated on every construction
+// and a catalog load per token set costs 1.35ms against 6us for literals.
+//
+// These are what keep the two honest. Each resolves the same names live,
+// through the same catalog, and compares. A catalog changed without re-running
+// `kira run tools/tokens` fails here.
+
+function kuiAdaptiveAgrees(generated: borrow AdaptiveColor, resolved: borrow AdaptiveColor) -> Bool {
+    return kuiRgba(generated.light.r, generated.light.g, generated.light.b, generated.light.a,
+            resolved.light.r, resolved.light.g, resolved.light.b, resolved.light.a)
+        && kuiRgba(generated.dark.r, generated.dark.g, generated.dark.b, generated.dark.a,
+            resolved.dark.r, resolved.dark.g, resolved.dark.b, resolved.dark.a)
+}
+
+function kuiFontAgrees(generated: borrow FontImplementation, resolved: borrow FontImplementation) -> Bool {
+    return kuiNear(generated.size, resolved.size)
+        && kuiNear(generated.lineHeight, resolved.lineHeight)
+        && kuiNear(generated.tracking, resolved.tracking)
+        && generated.weight == resolved.weight
+}
+
+construct KuiTheGeneratedPaletteMatchesTheCatalog() extends Test {
+    test {
+        let generated = generatedPaletteTokens()
+        let resolved = catalogPaletteTokens()
+        return kuiAdaptiveAgrees(generated.red, resolved.red)
+            && kuiAdaptiveAgrees(generated.orange, resolved.orange)
+            && kuiAdaptiveAgrees(generated.yellow, resolved.yellow)
+            && kuiAdaptiveAgrees(generated.green, resolved.green)
+            && kuiAdaptiveAgrees(generated.mint, resolved.mint)
+            && kuiAdaptiveAgrees(generated.teal, resolved.teal)
+            && kuiAdaptiveAgrees(generated.cyan, resolved.cyan)
+            && kuiAdaptiveAgrees(generated.blue, resolved.blue)
+            && kuiAdaptiveAgrees(generated.indigo, resolved.indigo)
+            && kuiAdaptiveAgrees(generated.purple, resolved.purple)
+            && kuiAdaptiveAgrees(generated.pink, resolved.pink)
+            && kuiAdaptiveAgrees(generated.brown, resolved.brown)
+            && kuiAdaptiveAgrees(generated.gray, resolved.gray)
+    }
+    expect { let e: Result<Bool, TestFailure> = Result.Ok(true); return e }
+}
+
+construct KuiTheGeneratedColoursMatchTheCatalog() extends Test {
+    test {
+        let foregrounds = generatedForegroundTokens()
+        let resolvedForegrounds = catalogForegroundTokens()
+        let backgrounds = generatedBackgroundTokens()
+        let resolvedBackgrounds = catalogBackgroundTokens()
+        let fills = generatedFillTokens()
+        let resolvedFills = catalogFillTokens()
+        let tints = generatedTintTokens()
+        let resolvedTints = catalogTintTokens()
+        return kuiAdaptiveAgrees(foregrounds.primary, resolvedForegrounds.primary)
+            && kuiAdaptiveAgrees(foregrounds.secondary, resolvedForegrounds.secondary)
+            && kuiAdaptiveAgrees(foregrounds.tertiary, resolvedForegrounds.tertiary)
+            && kuiAdaptiveAgrees(foregrounds.quaternary, resolvedForegrounds.quaternary)
+            && kuiAdaptiveAgrees(foregrounds.inverse, resolvedForegrounds.inverse)
+            && kuiAdaptiveAgrees(backgrounds.canvas, resolvedBackgrounds.canvas)
+            && kuiAdaptiveAgrees(backgrounds.surface, resolvedBackgrounds.surface)
+            && kuiAdaptiveAgrees(backgrounds.raised, resolvedBackgrounds.raised)
+            && kuiAdaptiveAgrees(backgrounds.overlay, resolvedBackgrounds.overlay)
+            && kuiAdaptiveAgrees(fills.control, resolvedFills.control)
+            && kuiAdaptiveAgrees(fills.hover, resolvedFills.hover)
+            && kuiAdaptiveAgrees(fills.selection, resolvedFills.selection)
+            && kuiAdaptiveAgrees(tints.accent, resolvedTints.accent)
+            && kuiAdaptiveAgrees(tints.success, resolvedTints.success)
+            && kuiAdaptiveAgrees(tints.warning, resolvedTints.warning)
+            && kuiAdaptiveAgrees(tints.danger, resolvedTints.danger)
+    }
+    expect { let e: Result<Bool, TestFailure> = Result.Ok(true); return e }
+}
+
+construct KuiTheGeneratedBordersMatchTheCatalog() extends Test {
+    test {
+        let generated = generatedBorderTokens()
+        let resolved = catalogBorderTokens()
+        return kuiAdaptiveAgrees(generated.none.color, resolved.none.color)
+            && kuiAdaptiveAgrees(generated.subtle.color, resolved.subtle.color)
+            && kuiAdaptiveAgrees(generated.standard.color, resolved.standard.color)
+            && kuiAdaptiveAgrees(generated.strong.color, resolved.strong.color)
+            && kuiAdaptiveAgrees(generated.focus.color, resolved.focus.color)
+            && generated.none.width == resolved.none.width
+            && generated.subtle.width == resolved.subtle.width
+            && generated.standard.width == resolved.standard.width
+            && generated.strong.width == resolved.strong.width
+            && generated.focus.width == resolved.focus.width
+    }
+    expect { let e: Result<Bool, TestFailure> = Result.Ok(true); return e }
+}
+
+construct KuiTheGeneratedTextStylesMatchTheCatalog() extends Test {
+    test {
+        let generated = generatedTypographyTokens()
+        let resolved = catalogTypographyTokens()
+        return kuiFontAgrees(generated.caption, resolved.caption)
+            && kuiFontAgrees(generated.body, resolved.body)
+            && kuiFontAgrees(generated.control, resolved.control)
+            && kuiFontAgrees(generated.title, resolved.title)
+            && kuiFontAgrees(generated.bodyEmphasis, resolved.bodyEmphasis)
+            && kuiFontAgrees(generated.subheadline, resolved.subheadline)
+            && kuiFontAgrees(generated.footnote, resolved.footnote)
+            && kuiFontAgrees(generated.overline, resolved.overline)
+            && kuiFontAgrees(generated.label, resolved.label)
+            && kuiFontAgrees(generated.section, resolved.section)
+            && kuiFontAgrees(generated.headline, resolved.headline)
+            && kuiFontAgrees(generated.title1, resolved.title1)
+            && kuiFontAgrees(generated.title2, resolved.title2)
+            && kuiFontAgrees(generated.title3, resolved.title3)
+    }
+    expect { let e: Result<Bool, TestFailure> = Result.Ok(true); return e }
+}

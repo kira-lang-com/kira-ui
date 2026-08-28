@@ -1,0 +1,91 @@
+import Foundation
+import KiraUI
+
+// Resolves the default style's tokens out of the KCoreUI catalog and writes
+// them into `app/CatalogTokens.kira` as literals.
+//
+//     kira run tools/tokens
+//
+// Run from the KiraUI repository root, and re-run whenever the catalog changes.
+//
+// # Why this is generated rather than resolved at run time
+//
+// `DefaultStyle` fills seven token fields, each from its own field default, and
+// a field default is evaluated on every construction. The language has nowhere
+// to keep a parsed catalog between two of them, so resolving live costs a
+// catalog load per token set: measured at 1.35ms per style construction against
+// 6us for literals, and a theme constructs eleven styles.
+//
+// What varies at run time deserves a run-time lookup. The default catalog does
+// not vary at run time — it is compiled into the library — so it is resolved
+// once here, where the cost is paid by whoever changes the catalog rather than
+// by every frame.
+//
+// The catalog stays the single source of truth: nothing below is authored, all
+// of it is read out of `Resources/Default.kcui`. `KuiGeneratedTokensMatchThe
+// Catalog` in the test suite resolves the same names live and compares, so a
+// catalog edited without re-running this is caught rather than shipped.
+
+function generatedPath() -> String {
+    return "app/CatalogTokens.kira"
+}
+
+// A float as a Kira literal.
+//
+// `String` renders a whole float without a point, and `1` is an integer
+// literal, so the point is put back. A negative is written as a subtraction
+// because that is how the rest of this repository spells one.
+function floatLiteral(value: Float) -> String {
+    if value < 0.0 {
+        return "0.0 - " + floatLiteral(0.0 - value)
+    }
+    let text = String(value)
+    if text.indexOf(".") < 0 {
+        return text + ".0"
+    }
+    return text
+}
+
+// Channels rather than a colour parameter: KiraUI declares its own `Color` and
+// Foundation declares another, and a parameter of either name would only accept
+// half the values this walks.
+function colorLiteral(r: Float, g: Float, b: Float, a: Float) -> String {
+    return "Color { r: " + floatLiteral(r)
+        + ", g: " + floatLiteral(g)
+        + ", b: " + floatLiteral(b)
+        + ", a: " + floatLiteral(a) + " }"
+}
+
+function adaptiveLiteral(indent: borrow String, name: borrow String, value: borrow AdaptiveColor) -> String {
+    var text = indent + name + ": AdaptiveColor {\n"
+    text = text + indent + "    light: " + colorLiteral(value.light.r, value.light.g, value.light.b, value.light.a) + "\n"
+    text = text + indent + "    dark: " + colorLiteral(value.dark.r, value.dark.g, value.dark.b, value.dark.a) + "\n"
+    text = text + indent + "}\n"
+    return text
+}
+
+function weightLiteral(weight: borrow FontWeight) -> String {
+    match weight {
+        Regular -> return ".Regular";
+        SemiBold -> return ".SemiBold";
+        Bold -> return ".Bold";
+    }
+}
+
+function fontLiteral(indent: borrow String, name: borrow String, value: borrow FontImplementation) -> String {
+    var text = indent + name + ": FontImplementation {\n"
+    text = text + indent + "    size: " + floatLiteral(value.size) + "\n"
+    text = text + indent + "    weight: " + weightLiteral(value.weight) + "\n"
+    text = text + indent + "    lineHeight: " + floatLiteral(value.lineHeight) + "\n"
+    text = text + indent + "    tracking: " + floatLiteral(value.tracking) + "\n"
+    text = text + indent + "}\n"
+    return text
+}
+
+function borderLiteral(indent: borrow String, name: borrow String, value: borrow BorderImplementation) -> String {
+    var text = indent + name + ": BorderImplementation {\n"
+    text = text + adaptiveLiteral(indent + "    ", "color", value.color)
+    text = text + indent + "    width: " + floatLiteral(value.width) + "\n"
+    text = text + indent + "}\n"
+    return text
+}

@@ -1,0 +1,201 @@
+import Foundation
+import KCoreUI
+
+// Where the default style's values come from.
+//
+// Every colour and every text metric `DefaultStyle` ships is read out of a
+// KCoreUI catalog rather than written as a literal here. Nothing about the
+// `Theme` API changes: a widget still asks the theme for tokens, and a custom
+// style that fills its own tokens still overrides them. What changed is where
+// the numbers live.
+//
+// That is worth the indirection because a token literal is a value one theme
+// can replace and nothing else can. A catalog entry is a value that varies by
+// appearance, by contrast, by anything else in the environment, and that an
+// application can override with a partial blob without touching a line of the
+// toolkit.
+//
+// The catalog is embedded in KCoreUI, so this needs no file, no path and no
+// working directory.
+//
+// Each token function loads the catalog once and reads its whole set from that
+// one load. Loading is a parse of a few thousand bytes and the seven token sets
+// are built when a style is constructed rather than when a frame is drawn, so
+// this is the granularity the toolkit's current shape allows: the language has
+// no place to keep a parsed catalog between two field defaults. When the theme
+// vocabulary is retired, the catalog is loaded once for the application and
+// this file goes with it.
+
+function catalogStack() -> CatalogStack {
+    return catalogStackOf(defaultCatalog())
+}
+
+// The trait vector the toolkit resolves against.
+//
+// Appearance comes through `resolvedAppearance`, which is still the one place
+// the host override and the platform's own answer are reconciled. The rest is
+// what this build can observe; a trait the toolkit cannot yet read stays at its
+// default rather than being guessed.
+function kiraUICatalogEnvironment(appearance: borrow Appearance) -> UIEnvironment {
+    var environment = UIEnvironment()
+    match appearance {
+        Light -> { environment.appearance = .Light }
+        Dark -> { environment.appearance = .Dark }
+    }
+    return environment
+}
+
+// KiraUI declares its own `Color`, distinct from the one a catalog answers
+// with, so the channels are carried across by hand. Two identical declarations
+// are two types, and that is the seam between them.
+function catalogColorAt(stack: borrow CatalogStack, name: borrow String, appearance: borrow Appearance) -> Color {
+    let resolved = resolveColor(stack, name, kiraUICatalogEnvironment(appearance))
+    return Color {
+        r: resolved.r
+        g: resolved.g
+        b: resolved.b
+        a: resolved.a
+    }
+}
+
+// A catalog colour as the adaptive pair the style vocabulary is written in.
+//
+// The pair is what `AdaptiveColor` is, so this is the other seam: above it the
+// toolkit's tokens are unchanged, below it the values are renditions selected
+// by an environment. A catalog resource with more variants than these two still
+// has them; this reads the two the theme vocabulary can hold.
+function catalogAdaptive(stack: borrow CatalogStack, name: borrow String) -> AdaptiveColor {
+    return AdaptiveColor {
+        light: catalogColorAt(stack, name, .Light)
+        dark: catalogColorAt(stack, name, .Dark)
+    }
+}
+
+// A catalog text style as the toolkit's own font shape.
+function catalogFont(stack: borrow CatalogStack, name: borrow String) -> FontImplementation {
+    let resolved = resolveTypography(stack, name, kiraUICatalogEnvironment(.Light))
+    return FontImplementation {
+        size: resolved.value.size
+        weight: catalogFontWeight(resolved.value.weight)
+        lineHeight: resolved.value.lineHeight
+        tracking: resolved.value.tracking
+    }
+}
+
+// The numeric weight axis, which is what every shaper and every platform font
+// API speaks, narrowed to the three weights the toolkit draws.
+function catalogFontWeight(weight: Int) -> FontWeight {
+    if weight >= 700 {
+        return .Bold
+    }
+    if weight >= 600 {
+        return .SemiBold
+    }
+    return .Regular
+}
+
+// A border is a catalog colour and a width the toolkit still owns. The width is
+// a hairline's geometry rather than its appearance, and nothing in the
+// environment changes it.
+function catalogBorder(stack: borrow CatalogStack, name: borrow String, width: Float) -> BorderImplementation {
+    return BorderImplementation {
+        color: catalogAdaptive(stack, name)
+        width: width
+    }
+}
+
+// --- The default style's tokens --------------------------------------------
+
+function catalogPaletteTokens() -> StylePaletteTokens {
+    let stack = catalogStack()
+    return StylePaletteTokens {
+        red: catalogAdaptive(stack, colorSystemRed())
+        orange: catalogAdaptive(stack, colorSystemOrange())
+        yellow: catalogAdaptive(stack, colorSystemYellow())
+        green: catalogAdaptive(stack, colorSystemGreen())
+        mint: catalogAdaptive(stack, colorSystemMint())
+        teal: catalogAdaptive(stack, colorSystemTeal())
+        cyan: catalogAdaptive(stack, colorSystemCyan())
+        blue: catalogAdaptive(stack, colorSystemBlue())
+        indigo: catalogAdaptive(stack, colorSystemIndigo())
+        purple: catalogAdaptive(stack, colorSystemPurple())
+        pink: catalogAdaptive(stack, colorSystemPink())
+        brown: catalogAdaptive(stack, colorSystemBrown())
+        gray: catalogAdaptive(stack, colorSystemGray())
+    }
+}
+
+function catalogForegroundTokens() -> StyleForegroundTokens {
+    let stack = catalogStack()
+    return StyleForegroundTokens {
+        primary: catalogAdaptive(stack, colorLabel())
+        secondary: catalogAdaptive(stack, colorSecondaryLabel())
+        tertiary: catalogAdaptive(stack, colorTertiaryLabel())
+        quaternary: catalogAdaptive(stack, colorQuaternaryLabel())
+        // Ink that stays readable on a filled control. Apple names no such
+        // colour, so the catalog carries it under a name of the toolkit's own
+        // rather than the declared Apple surface growing an entry Apple has not
+        // got.
+        inverse: catalogAdaptive(stack, "inverseLabel")
+    }
+}
+
+function catalogBackgroundTokens() -> StyleBackgroundTokens {
+    let stack = catalogStack()
+    return StyleBackgroundTokens {
+        canvas: catalogAdaptive(stack, colorSystemBackground())
+        surface: catalogAdaptive(stack, colorSecondarySystemBackground())
+        raised: catalogAdaptive(stack, colorTertiarySystemBackground())
+        overlay: catalogAdaptive(stack, colorWindowBackground())
+    }
+}
+
+function catalogFillTokens() -> StyleFillTokens {
+    let stack = catalogStack()
+    return StyleFillTokens {
+        control: catalogAdaptive(stack, colorSystemFill())
+        hover: catalogAdaptive(stack, colorSecondarySystemFill())
+        selection: catalogAdaptive(stack, colorSelection())
+    }
+}
+
+function catalogTintTokens() -> StyleTintTokens {
+    let stack = catalogStack()
+    return StyleTintTokens {
+        accent: catalogAdaptive(stack, colorTint())
+        success: catalogAdaptive(stack, "success")
+        warning: catalogAdaptive(stack, "warning")
+        danger: catalogAdaptive(stack, "danger")
+    }
+}
+
+function catalogBorderTokens() -> StyleBorderTokens {
+    let stack = catalogStack()
+    return StyleBorderTokens {
+        none: catalogBorder(stack, colorSeparator(), 0.0)
+        subtle: catalogBorder(stack, colorSeparator(), 1.0)
+        standard: catalogBorder(stack, "standardBorder", 1.0)
+        strong: catalogBorder(stack, "strongBorder", 1.5)
+        focus: catalogBorder(stack, "focusRing", 2.0)
+    }
+}
+
+function catalogTypographyTokens() -> StyleTypographyTokens {
+    let stack = catalogStack()
+    return StyleTypographyTokens {
+        caption: catalogFont(stack, textCaption())
+        body: catalogFont(stack, textBody())
+        control: catalogFont(stack, "control")
+        title: catalogFont(stack, textTitle())
+        bodyEmphasis: catalogFont(stack, "bodyEmphasis")
+        subheadline: catalogFont(stack, textSubheadline())
+        footnote: catalogFont(stack, textFootnote())
+        overline: catalogFont(stack, "overline")
+        label: catalogFont(stack, "label")
+        section: catalogFont(stack, "section")
+        headline: catalogFont(stack, textHeadline())
+        title1: catalogFont(stack, "title1")
+        title2: catalogFont(stack, textTitle2())
+        title3: catalogFont(stack, textTitle3())
+    }
+}
