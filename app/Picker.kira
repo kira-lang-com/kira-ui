@@ -45,6 +45,19 @@ import KiraUIFoundation
 // that does not.
 construct Label(title: String, systemImage: Symbol = .None) extends Widget {
     function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+        // Across the top of a menu a label STACKS: the glyph over the title,
+        // centred, because the three actions are columns rather than rows. Same
+        // declaration; the environment decides which way it reads.
+        if modifiers.controlPresentation == .MenuAction {
+            let stacked = VStack(spacing: .ExtraSmall, alignment: .Center) {
+                Icon(symbol: systemImage)
+
+                Text(content: title)
+                    .typography(.caption)
+            }
+            .fillWidth()
+            return stacked.lower(context, modifiers)
+        }
         let metrics = resolvedControlMetrics(modifiers)
         var glyph = EmptyView().lower(context, modifiers)
         if systemImage != .None {

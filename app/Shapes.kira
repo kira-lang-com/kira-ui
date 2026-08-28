@@ -25,6 +25,12 @@ enum ContainerShape {
     Radius(CornerRadius)
     Capsule
     Circle
+    // A CONTINUOUS corner: the curvature runs into the straight edges instead of
+    // meeting them where a circular arc's second derivative jumps. It is most of
+    // why a platform menu or a sheet reads as expensive, and it is not a corner
+    // radius that has been rounded harder — it is a different curve. So it is
+    // its own case rather than a flag on `RoundedRect`.
+    Squircle(Float)
 }
 
 // A capsule is a rounded rect whose radius no box can reach, so one number
@@ -40,6 +46,20 @@ function containerShapeRadius(shape: ContainerShape, modifiers: borrow ModifierC
         Radius(style) -> return cornerRadiusImplementation(move style, modifiers);
         Capsule -> return containerShapeUnbounded();
         Circle -> return containerShapeUnbounded();
+        Squircle(value) -> return value;
+    }
+}
+
+// Which corner curve the surface is drawn with. Every shape but the squircle is
+// a circular arc.
+function containerShapeSurfaceShape(shape: borrow ContainerShape) -> FoundationShape {
+    match shape {
+        Squircle(value) -> return foundationShape(.Squircle);
+        Rect -> return foundationShape(.RegularRoundedRect);
+        RoundedRect(value) -> return foundationShape(.RegularRoundedRect);
+        Radius(style) -> return foundationShape(.RegularRoundedRect);
+        Capsule -> return foundationShape(.RegularRoundedRect);
+        Circle -> return foundationShape(.RegularRoundedRect);
     }
 }
 
@@ -74,12 +94,12 @@ construct SurfaceLayer(style: Material, shape: ContainerShape) extends Widget {
             border: selectedBorder
             borderWidth: borderWidth
             radius: containerShapeRadius(shape, modifiers)
-            shape: .RegularRoundedRect
+            shape: containerShapeSurfaceShape(shape)
             material: foundationMaterial(style)
             effects: []
             padding: EdgeInsets {}
             clipContent: true
-            blur: surfaceGlassBlur(style)
+            blur: surfaceGlassBlur(style, modifiers)
             edgeRefraction: 1.0
             glassMaterial: surfaceGlassMaterial(style, modifiers)
             disabled: modifiers.disabled
@@ -96,8 +116,6 @@ construct SurfaceLayer(style: Material, shape: ContainerShape) extends Widget {
 // without repeating the content's size — and what makes a `Panel` unnecessary,
 // because a background shape already fills the box behind the content.
 //
-// `Rectangle` here is the older fixed-size atom (a swatch, a hairline rule) and
-// keeps its own signature; these are the resizable ones.
 construct RoundedRectangle(
     cornerRadius: Float = 0.0,
     style: CornerRadius = .None,
@@ -121,6 +139,15 @@ construct RoundedRectangle(
             radius = cornerRadiusImplementation(style, modifiers)
         }
         return shapeSurface(context, modifiers, radius)
+    }
+}
+
+// The square-cornered one. A swatch, a hairline rule, a band of colour behind a
+// page — sized by `.width(...)` / `.height(...)` / `.fillWidth()` like any other
+// view, and filled by the cascade or by `.fill(...)`.
+construct Rectangle() extends Widget {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+        return shapeSurface(context, modifiers, 0.0)
     }
 }
 
@@ -167,7 +194,7 @@ function shapeSurface(
         effects: []
         padding: EdgeInsets {}
         clipContent: true
-        blur: surfaceGlassBlur(style)
+        blur: surfaceGlassBlur(style, modifiers)
         edgeRefraction: 1.0
         glassMaterial: surfaceGlassMaterial(style, modifiers)
         disabled: modifiers.disabled

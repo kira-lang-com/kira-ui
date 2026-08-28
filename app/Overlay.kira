@@ -1,0 +1,192 @@
+import Foundation
+import KiraGraphics
+import KiraLayout
+import KiraUIFoundation
+
+// Views that float FREE of what declared them.
+//
+// A menu, a submenu, a popover, a dialog. What they have in common is that none
+// of them belong to the box they were written in: a submenu declared on the
+// fourth row of a panel is not four rows tall and does not stop at the panel's
+// edge, and a menu opened near the bottom of a window has to be allowed to stand
+// over everything above it.
+//
+// Nothing in the widget layer could say that. A view is laid out inside its
+// parent, clipped by its parent, and drawn in the order the tree walks — so
+// "over everything, sized to itself, positioned where I say" had no spelling,
+// and the way round it was to expand inline and grow the panel instead. That is
+// a different interaction: it moves what is underneath, it cannot leave the
+// panel, and the thing you opened ends up bounded by the thing you opened it
+// from.
+//
+// # How a view escapes
+//
+// It is HOISTED. During the build an overlay declares itself here instead of
+// lowering in place; the root then puts every one it collected into a
+// canvas-sized stack after the application's own content. From layout's point of
+// view they are simply the last children of the root, which is what buys all
+// three properties at once and needs nothing new underneath:
+//
+//   * measured against the whole canvas rather than the declaring parent's box,
+//     so they are the size they want to be;
+//   * drawn after everything, and outside every clip the declaring parent
+//     pushed, because they are no longer inside it;
+//   * flattened last, and hit regions are picked LAST TO FIRST — so a press over
+//     an overlay reaches the overlay and not the view it is covering.
+//
+// # Where it lands
+//
+// From the press. `foundationPressBounds…` is the rectangle of the region a
+// click fired on, recorded just before the handler runs — so a control that
+// opens something anchors it to ITSELF rather than to the cursor, and does it
+// without any way to read its own resolved frame back. That is the whole reason
+// a submenu can be placed exactly over the row that owns it on the very frame it
+// opens, with no lag and nothing measured twice.
+
+// One floating view: what to draw, and the rectangle it hangs from.
+struct KiraUiOverlay {
+    var view: FoundationView = FoundationView { kind: .Spacer }
+    // The anchor, in canvas coordinates — the bounds of whatever opened this.
+    var anchorX: Float = 0.0
+    var anchorY: Float = 0.0
+    var anchorW: Float = 0.0
+    var anchorH: Float = 0.0
+    // What draws over what. Higher is nearer.
+    //
+    // Presentation ORDER cannot answer this: a card is presented after the
+    // element it contains, because lowering the card is what lowers the
+    // element — so the thing that should be in front is always declared first.
+    // An element in transit is above the surface it is travelling into, and
+    // says so rather than hoping it was hoisted late enough.
+    var z: Int = 0
+}
+
+// The layer a surface floats on.
+function kiraUiOverlayZSurface() -> Int {
+    return 0
+}
+
+// The layer an element in transit flies on: over every surface, including the
+// one it is on its way into.
+function kiraUiOverlayZTransit() -> Int {
+    return 100
+}
+
+struct KiraUiOverlaySink {
+    var overlays: [KiraUiOverlay] = []
+    var collecting: Bool = false
+}
+
+function kiraUiOverlaySinkKey() -> String {
+    return "kiraui.overlay.sink"
+}
+
+function kiraUiOverlaySinkEnsure() {
+    if kiraUiStateSlotHas(kiraUiOverlaySinkKey()) == false {
+        kiraUiStateSlotPut(
+            kiraUiOverlaySinkKey(),
+            nativeUserData(nativeState(KiraUiOverlaySink {}))
+        )
+    }
+    return
+}
+
+// Open collection for the frame about to be built, discarding the last one's.
+// The tree is rebuilt every frame and what floats above it is rebuilt with it.
+function kiraUiOverlayCollect() {
+    kiraUiOverlaySinkEnsure()
+    var sink = nativeRecover<KiraUiOverlaySink>(kiraUiStateSlotGet(kiraUiOverlaySinkKey()))
+    var empty: [KiraUiOverlay] = []
+    sink.overlays = move empty
+    sink.collecting = true
+    return
+}
+
+function kiraUiOverlayStopCollecting() {
+    kiraUiOverlaySinkEnsure()
+    var sink = nativeRecover<KiraUiOverlaySink>(kiraUiStateSlotGet(kiraUiOverlaySinkKey()))
+    sink.collecting = false
+    return
+}
+
+// Hand a lowered view to the overlay layer, to be drawn over everything at the
+// given anchor.
+function kiraUiOverlayPresent(overlay: KiraUiOverlay) {
+    kiraUiOverlaySinkEnsure()
+    var sink = nativeRecover<KiraUiOverlaySink>(kiraUiStateSlotGet(kiraUiOverlaySinkKey()))
+    if sink.collecting == false {
+        // Presented with no frame collecting: there is no root to hoist it to,
+        // so it is dropped rather than held for whichever frame is built next.
+        return
+    }
+    sink.overlays.append(move overlay)
+    return
+}
+
+function kiraUiOverlaysThisFrame() -> [KiraUiOverlay] {
+    kiraUiOverlaySinkEnsure()
+    let sink = nativeRecover<KiraUiOverlaySink>(kiraUiStateSlotGet(kiraUiOverlaySinkKey()))
+    return sink.overlays
+}
+
+// The anchor a control that is opening something should use: the bounds of the
+// region the press landed on, which is the control itself.
+function kiraUiPressAnchor() -> KiraUiOverlay {
+    return KiraUiOverlay {
+        anchorX: foundationPressBoundsX()
+        anchorY: foundationPressBoundsY()
+        anchorW: foundationPressBoundsW()
+        anchorH: foundationPressBoundsH()
+    }
+}
+
+// The application's content with everything that floats stacked over it.
+//
+// Absolute arrangement, because an overlay is placed at a point rather than laid
+// out among siblings: each one is offset to its own anchor and takes its natural
+// size there. The stack fills the canvas, so that offset is in canvas
+// coordinates — the same ones the anchor was recorded in.
+function kiraUiRootWithOverlays(content: FoundationView) -> FoundationView {
+    let floating = kiraUiOverlaysThisFrame()
+    if floating.count == 0 {
+        return content
+    }
+    var layers: [FoundationView] = []
+    layers.append(move content)
+    // By layer, and within a layer in the order they were presented. A stable
+    // sort rather than a general one: two surfaces on the same layer keep the
+    // order they were declared in, which is the only thing a caller can reason
+    // about.
+    var pass = 0
+    while pass <= kiraUiOverlayZTransit() {
+        for index in 0..floating.count {
+            let overlay = floating[index]
+            if overlay.z == pass {
+                layers.append(Frame(
+                    overlay.view,
+                    .Hug,
+                    .Hug,
+                    0,
+                    .TopLeading,
+                    EdgeInsets { leading: overlay.anchorX, top: overlay.anchorY }
+                ))
+            }
+        }
+        pass = pass + kiraUiOverlayZTransit()
+    }
+    // A Frame, which arranges its children as an overlay: each takes the whole
+    // box and they stack in z. The application's content is the first, so
+    // everything hoisted here lands on top of it in declaration order.
+    //
+    // Not clipped and not painted. The point of hoisting a view is that nothing
+    // trims it, and a clip on the layer holding them would put a boundary back
+    // around every one.
+    return FoundationView {
+        kind: .Frame
+        width: .Fill
+        height: .Fill
+        alignment: Alignment.TopLeading
+        padding: EdgeInsets {}
+        children: move layers
+    }
+}

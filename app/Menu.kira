@@ -1,0 +1,830 @@
+import Foundation
+import KiraGraphics
+import KiraLayout
+import KiraUIFoundation
+import KiraUIMotion
+
+// A menu, and the submenus that open inside it.
+//
+//     ContextMenu {
+//         Button("Start Slideshow", systemImage: .PlayRectangle, action: startSlideshow)
+//
+//         Menu("Add To", systemImage: .PhotoOnRectangle) {
+//             Button("Album", action: addToAlbum)
+//             Button("Shared Album", action: addToShared)
+//         }
+//     }
+//
+// # A submenu opens IN the menu, not over it
+//
+// The platform's own submenu does not fly a second panel out to the side. The
+// card it is already in grows downward to hold it, the row that owns it becomes
+// that submenu's header, and everything else in the menu recedes — dimmer, and
+// pulled in from both edges — so the submenu is the only thing at the front.
+// Pressing the header again reverses it.
+//
+// That is also the only version that can be pressed reliably. Every view the
+// foundation draws is a view it PLACED, so a panel drawn outside the layout is
+// a panel a press has to be routed to by hand — which is the same reason
+// `Picker` expands its options under its row rather than floating them.
+//
+// # The submenu is symmetric; the menu behind it is not
+//
+// Measured off a 30fps capture of the platform's own menu, frame by frame, and
+// it is not the shape it looks like. The submenu's own growth runs at very
+// nearly the same rate in both directions — fitted responses of 0.49 opening and
+// 0.48 closing, which is one spring. All of the asymmetry is in what happens
+// BEHIND it.
+//
+// Opening, the menu does not begin receding when the press lands. It HOLDS at
+// full strength for a fifth of a second while the submenu arrives, and only then
+// dims, over about four tenths. That hold is what makes the transition read as
+// deliberate rather than as everything moving at once: the new thing is allowed
+// to arrive before anything is taken away. A spring cannot express it — a spring
+// starts moving immediately — which is why fitting one to those frames leaves an
+// error two orders of magnitude worse than fitting a hold plus a spring.
+//
+// Closing, there is no hold and the menu comes back fast: essentially restored
+// within an eighth of a second, well before the submenu has finished leaving.
+// What you are returning to arrives first.
+//
+// Every number below is that fit, not a preset — see `menuRevealSpring`,
+// `menuRecedeSpring` and `menuRecedeHold`.
+
+// --- measured metrics --------------------------------------------------------
+//
+// From Examples/liquid-glass-menu, where every number was measured off a 3x
+// screenshot of the platform's own menu rather than guessed: 42pt row pitch,
+// 30/28 horizontal insets, a fixed icon column, 16.5pt labels, and separators
+// that are a line plus ten and a half points of air. The example proved the
+// numbers; this is the library finally using them.
+
+// Rows sit on a 42pt pitch — not the form row height, which is a different,
+// denser control.
+function menuRowPitch() -> Float {
+    return 42.0
+}
+
+// The one horizontal inset a menu has: content sits 30pt in from the leading
+// edge and 28pt from the trailing.
+function menuRowLeading() -> Float {
+    return 30.0
+}
+
+function menuRowTrailing() -> Float {
+    return 28.0
+}
+
+// Menu labels are 16.5pt — the reference face renders 3% larger than the
+// platform's at the same nominal size, so matching the point size matches the
+// wrong thing.
+function menuLabelSize() -> Float {
+    return 16.5
+}
+
+// --- placeholder metrics -----------------------------------------------------
+//
+// MEASURED OFF NOTHING YET. These are the shape of the thing, fitted by eye to a
+// 30fps capture of the platform's own menu, and every one of them is expected to
+// move once the frames are measured properly. They are gathered here, named, and
+// used nowhere else so that refining them is editing this block.
+
+// How far the menu behind an open submenu fades. Not to nothing: it stays a
+// legible ghost, because it is still the thing you are going back to.
+function menuRecededOpacity() -> Float {
+    return 0.42
+}
+
+// How far the receding menu is scaled down.
+//
+// A TRANSFORM, and that is the whole point. The menu is not re-laid-out smaller
+// — its rows keep their sizes, their spacing and their wrapping, and what
+// changes is only where their pixels land. Laying it out at a smaller size would
+// reflow the type inside it, re-break any label that wraps, and re-resolve the
+// tree on every frame of the animation; the platform's menu plainly does none of
+// that, because it is the same menu drawn smaller rather than a smaller menu.
+//
+// `.scaleEffect` carries a `MotionDeformation` down the subtree, which the
+// renderer descends with: the space layout gave the menu is exactly the space it
+// still occupies. See `FoundationDeform` — "nothing here touches layout".
+function menuRecedeScale() -> Float {
+    return 0.90
+}
+
+// The corner every menu card takes — the panel and the submenu that opens over
+// it alike. One radius, because they are the same kind of surface: a submenu is
+// a menu, and giving the inner one a corner of its own makes two shapes out of
+// what should read as one material used twice.
+function menuCardRadius() -> Float {
+    return 34.0
+}
+
+function menuSubmenuRadius() -> Float {
+    return menuCardRadius()
+}
+
+// Below this the card is not drawn at all.
+//
+// A submenu does not shrink to nothing. It fades while it is still a panel and
+// is gone before it would be the size of the row it came from — which is what
+// the platform's does, and is also the only size at which this material is
+// trustworthy: a Liquid Glass surface about one row tall renders far brighter
+// live than the same surface does from the interior cache (measured: 254 against
+// 180 on the same geometry). Anything that collapses a glass card to nothing
+// passes through that, and flashes white on the way.
+//
+// So the card leaves from a size the material is exact at. See the note in
+// `Menu` about what stays behind while it does.
+function menuCardFloor() -> Float {
+    return 0.34
+}
+
+// How present the card's material is at a point in its growth.
+//
+// Nothing at the floor, full a little above it: the card is the thing in front,
+// and a panel that spends its life at nine tenths reads as washed out rather
+// than as arriving. Reaching zero AT the floor is what makes the moment it stops
+// being drawn invisible.
+function menuCardOpacity(amount: Float) -> Float {
+    let over = (amount - menuCardFloor()) / (1.0 - menuCardFloor())
+    return min(max(over * 2.2, 0.0), 1.0)
+}
+
+// The submenu's own growth. One spring both ways: the capture puts it at 0.49
+// opening and 0.48 closing, which is the same motion inside the error of reading
+// it off frames.
+function menuRevealSpring(target: Float) -> MotionSpring {
+    return MotionSpring { response: 0.49, damping: 0.90, target: target }
+}
+
+// The menu behind it, dimming. Slow, and it starts late — see `menuRecedeHold`.
+function menuRecedeInSpring(target: Float) -> MotionSpring {
+    return MotionSpring { response: 0.685, damping: 0.90, target: target }
+}
+
+// The menu behind it, coming back. Nothing like the same motion: an eighth of a
+// second, and no hold at all. The thing you are returning to does not wait.
+function menuRecedeOutSpring(target: Float) -> MotionSpring {
+    return MotionSpring { response: 0.19, damping: 0.95, target: target }
+}
+
+// How long the menu holds at full strength before it begins to recede, in
+// seconds. Only on the way in; coming back it starts at once.
+function menuRecedeHold() -> Float {
+    return 0.20
+}
+
+// --- which submenu is open ---------------------------------------------------
+
+// One submenu at a time, as on the platform, and how far the menu behind it has
+// receded.
+//
+// The recession is held HERE rather than on the menu that is receding because it
+// is one motion shared by everything that is not the open submenu. A card that
+// sprang its own would have to be told when a submenu three rows down opened,
+// which is the wiring this avoids.
+struct KiraUiMenuState {
+    // The key of the expanded `Menu`, or 0 when none is.
+    var openKey: Int = 0
+    var recede: MotionSpringState = MotionSpringState {}
+    var receded: Float = 0.0
+    // Seconds still to wait before the recession starts moving. See
+    // `menuRecedeHold`: the menu stands at full strength while the submenu
+    // arrives, and a spring has no way to say that — it leaves the instant it is
+    // retargeted.
+    var holdRemaining: Float = 0.0
+    // The last frame the recession was advanced on. Several cards may read it in
+    // one build and each would otherwise advance it again, integrating the
+    // spring two or three times per frame — which is a transition that runs at
+    // triple speed on exactly the layouts that nest menus.
+    var advancedOn: Int = 0
+}
+
+function kiraUiMenuSlotKey() -> String {
+    return "kiraui.menu"
+}
+
+function kiraUiMenuState() -> KiraUiMenuState {
+    if kiraUiStateSlotHas(kiraUiMenuSlotKey()) == false {
+        kiraUiStateSlotPut(kiraUiMenuSlotKey(), nativeUserData(nativeState(KiraUiMenuState {})))
+    }
+    return nativeRecover<KiraUiMenuState>(kiraUiStateSlotGet(kiraUiMenuSlotKey()))
+}
+
+function kiraUiOpenMenuKey() -> Int {
+    return kiraUiMenuState().openKey
+}
+
+// Points a spring at a new end from wherever it currently is, on a named curve.
+//
+// The sample-then-restart rather than `motionSpringRetarget` is what allows the
+// CURVE to change with the direction: a submenu closed while it is still opening
+// continues from where it is, at the speed it has, but on the closing curve.
+function menuRetarget(state: borrow mut MotionSpringState, target: Float, spring: MotionSpring) {
+    let now = motionSpringSample(state, state.elapsed)
+    var curve = spring
+    if kiraUiReducedMotion() {
+        curve = motionCurveReduced(spring)
+    }
+    let started = motionSpringStart(move curve, now.value, now.velocity)
+    state.spring = started.spring
+    state.origin = started.origin
+    state.velocity = started.velocity
+    state.elapsed = started.elapsed
+    return
+}
+
+// Choosing an item dismisses the menu it was in.
+//
+// A menu is a question, and picking an answer ends it — a submenu that stayed
+// open after its item was chosen would leave the user to close a panel they have
+// already finished with. The action runs first: what it does is the point, and
+// the dismissal is what happens to the menu afterwards.
+function kiraUiMenuChooseFn(action: () -> Void) -> () -> Void {
+    let chosen = action
+    let press: () -> Void = { in
+        chosen()
+        var state = kiraUiMenuState()
+        if state.openKey != 0 {
+            menuRevealRetarget(state.openKey, false)
+            state.openKey = 0
+            menuRetarget(state.recede, 0.0, menuRecedeOutSpring(0.0))
+        }
+        return
+    }
+    return press
+}
+
+// Opens a submenu, or closes it if it is the one already open.
+function kiraUiToggleMenuFn(key: Int) -> () -> Void {
+    let target = key
+    let press: () -> Void = { in
+        var state = kiraUiMenuState()
+        var opening = true
+        // Whichever was open is told to close, whatever happens next.
+        //
+        // `openKey` names one submenu, but each one's growth is its OWN spring —
+        // so a menu that lost the open slot without being retargeted keeps the
+        // value it had and its card stands there for good. Opening a second
+        // submenu left the first floating over the menu permanently, which is
+        // the whole of "panels everywhere": nothing ever told them to leave.
+        if state.openKey != 0 && state.openKey != target {
+            menuRevealRetarget(state.openKey, false)
+        }
+        if state.openKey == target {
+            state.openKey = 0
+            opening = false
+        } else {
+            state.openKey = target
+        }
+        // The menu behind recedes on the trailing curve and returns on the
+        // leading one — the swap described at the top of this file.
+        if opening {
+            menuRetarget(state.recede, 1.0, menuRecedeInSpring(1.0))
+            state.holdRemaining = menuRecedeHold()
+        } else {
+            menuRetarget(state.recede, 0.0, menuRecedeOutSpring(0.0))
+            // No hold coming back. Whatever was still to run of one is dropped,
+            // so a submenu shut during the hold brings the menu straight back
+            // instead of finishing a wait for a dim that never began.
+            state.holdRemaining = 0.0
+        }
+        menuRevealRetarget(target, opening)
+        return
+    }
+    return press
+}
+
+// --- one submenu's own reveal ------------------------------------------------
+
+// How far this submenu's card has grown. Per-menu, because a menu closing while
+// another opens are two motions at once and one value cannot hold both.
+struct KiraUiMenuReveal {
+    var progress: MotionSpringState = MotionSpringState {}
+    var amount: Float = 0.0
+    // Where the row was when it was pressed.
+    //
+    // Captured at the press and kept, because `foundationPressBounds…` describes
+    // the LAST press wherever it landed — read again on any later frame it is
+    // whatever was clicked since, and the card would jump to it. Kept here it is
+    // the rectangle of the row that owns this submenu, for as long as the
+    // submenu is open.
+    var anchorX: Float = 0.0
+    var anchorY: Float = 0.0
+    var anchorW: Float = 0.0
+    var anchorH: Float = 0.0
+}
+
+function menuRevealSlotKey(key: Int) -> String {
+    return kiraUiSlotKey("kiraui.menu.", key)
+}
+
+function menuRevealState(key: Int) -> KiraUiMenuReveal {
+    if kiraUiStateSlotHas(menuRevealSlotKey(key)) == false {
+        kiraUiStateSlotPut(menuRevealSlotKey(key), nativeUserData(nativeState(KiraUiMenuReveal {})))
+    }
+    return nativeRecover<KiraUiMenuReveal>(kiraUiStateSlotGet(menuRevealSlotKey(key)))
+}
+
+// The rectangle this submenu hangs from, and the view slot to fill in.
+function kiraUiMenuAnchor(key: Int) -> KiraUiOverlay {
+    let reveal = menuRevealState(key)
+    return KiraUiOverlay {
+        anchorX: reveal.anchorX
+        anchorY: reveal.anchorY
+        anchorW: reveal.anchorW
+        anchorH: reveal.anchorH
+    }
+}
+
+// How wide the floating card stands: as wide as the row it came out of.
+//
+// Taken from the anchor rather than stated, so the card matches the menu that
+// owns it however wide that menu is, and a second menu at another width needs
+// nothing said here.
+function menuCardWidth(key: Int) -> Float {
+    return menuRevealState(key).anchorW
+}
+
+function menuRevealRetarget(key: Int, opening: Bool) {
+    var reveal = menuRevealState(key)
+    // The row's own bounds, recorded just before this handler ran — but only
+    // when the submenu is opening from FULLY CLOSED.
+    //
+    // The row is in two places depending on this value: in the menu when the
+    // card is shut, and inside the card when it is not. Re-opening while the
+    // card is still on its way out therefore records the row's position INSIDE
+    // the card, which is the anchor plus the card's padding — so the anchor
+    // moves by that much, the card opens lower, and the next re-open moves it
+    // again. Clicking open and shut quickly walks the panel down the screen.
+    //
+    // A submenu that is still visible already knows where it belongs. Only one
+    // that is completely gone has to ask.
+    if opening && reveal.amount <= 0.0 {
+        reveal.anchorX = foundationPressBoundsX()
+        reveal.anchorY = foundationPressBoundsY()
+        reveal.anchorW = foundationPressBoundsW()
+        reveal.anchorH = foundationPressBoundsH()
+    }
+    if opening {
+        menuRetarget(reveal.progress, 1.0, menuRevealSpring(1.0))
+    } else {
+        menuRetarget(reveal.progress, 0.0, menuRevealSpring(0.0))
+    }
+    return
+}
+
+// Advances this submenu's reveal by a frame and answers where it is.
+//
+// Reports to the clock while it is unfinished, which is what keeps the frames
+// coming: an interactive app only rebuilds when something happened, and a
+// spring settling is the one thing that happens while nothing does.
+function menuRevealAdvance(key: Int) -> Float {
+    var reveal = menuRevealState(key)
+    let sample = motionSpringAdvance(reveal.progress, kiraUiClockDelta())
+    reveal.amount = min(max(sample.value, 0.0), 1.0)
+    if motionSpringSettled(reveal.progress, sample, motionSpringEpsilon()) {
+        // Landed exactly. A card left 0.999 open is one drawn a fraction short
+        // of its own height for as long as it is on screen.
+        reveal.amount = min(max(reveal.progress.spring.target, 0.0), 1.0)
+        return reveal.amount
+    }
+    kiraUiClockStillMoving()
+    return reveal.amount
+}
+
+// Advances the shared recession, once per frame however many cards ask.
+function kiraUiMenuRecede(frameCount: Int) -> Float {
+    var state = kiraUiMenuState()
+    if state.advancedOn == frameCount {
+        return state.receded
+    }
+    state.advancedOn = frameCount
+    // Held: the menu stays exactly where it is and the spring's clock does not
+    // start. Reported as still moving, because a hold is part of the transition
+    // and the frames have to keep coming or it would end here.
+    if state.holdRemaining > 0.0 {
+        state.holdRemaining = state.holdRemaining - kiraUiClockDelta()
+        kiraUiClockStillMoving()
+        return state.receded
+    }
+    let sample = motionSpringAdvance(state.recede, kiraUiClockDelta())
+    state.receded = min(max(sample.value, 0.0), 1.0)
+    if motionSpringSettled(state.recede, sample, motionSpringEpsilon()) {
+        state.receded = min(max(state.recede.spring.target, 0.0), 1.0)
+        return state.receded
+    }
+    kiraUiClockStillMoving()
+    return state.receded
+}
+
+// --- a control's presentation inside a menu ----------------------------------
+
+// What `Button` lowers to when the environment says it is in a menu: a row.
+//
+// Full width, the panel's own ink, no fill, and the standard row height — so a
+// run of them reads as a list rather than as a stack of controls. The press
+// region is the whole row, which is what a menu is: you aim at the line, not at
+// the words on it.
+function menuRowView(
+    context: borrow FoundationUiContext,
+    modifiers: borrow ModifierContext,
+    key: Int,
+    press: () -> Void,
+    label: some Widget,
+) -> FoundationView {
+    let chosen = kiraUiMenuChooseFn(move press)
+    // The menu's own type size, stated here so a plain `Button(title:)` in a
+    // menu is set exactly as the platform sets one.
+    let labelContext = modifierContextApply(
+        modifierContextForPresentation(modifiers),
+        modifierDeltaFont(menuLabelSize(), .Regular)
+    )
+    let row = HStack(spacing: .None, alignment: .Center) {
+        FoundationRaw(view: label.lower(context, labelContext))
+
+        Spacer()
+    }
+    .height(menuRowPitch())
+    .fillWidth()
+    let padded = FoundationRaw(view: Frame(
+        row.lower(context, modifiers),
+        .Fill,
+        .Fixed(menuRowPitch()),
+        0,
+        .Leading,
+        EdgeInsets { leading: menuRowLeading(), trailing: menuRowTrailing() }
+    ))
+    let view = padded.lower(context, modifiers)
+    let width = view.width
+    let height = view.height
+    return FoundationView {
+        kind: .HitArea
+        key: key
+        width: width
+        height: height
+        disabled: modifiers.disabled
+        focusable: true
+        onPress: chosen
+        children: [move view]
+    }
+}
+
+// What `Button` lowers to in the group of actions across the top of a menu.
+//
+// An equal COLUMN, its glyph above its title — `.frame(maxWidth: .infinity)` on
+// a `VStack { Image; Text }`. Equal rather than hugging is the whole point: the
+// three stand on thirds of the panel whatever their titles are, so "Duplicate"
+// does not push "Hide" off its share.
+//
+// The label is whatever the caller wrote. A `Label(title:systemImage:)` is the
+// case this is shaped for and it lays itself out along the row, so the group
+// stacks it here instead — see `menuActionLabel`.
+function menuActionView(
+    context: borrow FoundationUiContext,
+    modifiers: borrow ModifierContext,
+    key: Int,
+    press: () -> Void,
+    label: some Widget,
+) -> FoundationView {
+    let chosen = kiraUiMenuChooseFn(move press)
+    let column = VStack(spacing: .ExtraSmall, alignment: .Center) {
+        FoundationRaw(view: label.lower(context, modifierContextForPresentation(modifiers)))
+    }
+    .fillWidth()
+    .padding(length: menuActionPad())
+    let view = column.lower(context, modifiers)
+    let width = view.width
+    let height = view.height
+    return FoundationView {
+        kind: .HitArea
+        key: key
+        width: width
+        height: height
+        disabled: modifiers.disabled
+        focusable: true
+        onPress: chosen
+        children: [move view]
+    }
+}
+
+function menuActionPad() -> Float {
+    return 8.0
+}
+
+// A press region for a menu row, with NO wash of its own.
+//
+// The generic click layer paints a white hover highlight behind whatever it
+// wraps. Under glass that is not a highlight, it is fuel: the wash lands in the
+// backdrop the card captures, the material's dodge layers take it, and an eight
+// percent white comes back out as a solid white bar across the row. Measured on
+// the row under the pointer while a submenu closes — 254 against the 85 the same
+// row reads when the pointer is anywhere else.
+//
+// So a menu row states its own highlight (see `MenuHeader`, and `menuRowView`
+// for the ordinary rows) and takes a press region that draws nothing. This is
+// the same reason `DismissArea` is its own leaf rather than an `.onClick`.
+function menuPressRegion(
+    context: borrow FoundationUiContext,
+    modifiers: borrow ModifierContext,
+    key: Int,
+    press: () -> Void,
+    content: FoundationView,
+) -> FoundationView {
+    let width = content.width
+    let height = content.height
+    return FoundationView {
+        kind: .HitArea
+        key: key
+        width: width
+        height: height
+        disabled: modifiers.disabled
+        focusable: true
+        onPress: press
+        children: [move content]
+    }
+}
+
+// The wash an open row is lit with, at a given strength — the strength folded
+// into the ALPHA rather than applied as an opacity, so it is simply a colour.
+// A NEUTRAL wash, as the platform's is. The lit row in a menu is "this one",
+// not "this one is your accent colour" — the reference's pill is a light grey
+// that reads over the material in either scheme.
+function menuHeaderLightFill(strength: Float) -> Color {
+    return Color { r: 1.0, g: 1.0, b: 1.0, a: 0.16 * strength }
+}
+
+// How far the lit pill stands in from the card's edge.
+function menuPillInset() -> Float {
+    return 6.0
+}
+
+// The corner of the highlight a menu row lights up with. A rounded pill inset in
+// the panel rather than a band across it, which is what the platform draws.
+function menuRowRadius() -> Float {
+    return 10.0
+}
+
+// --- the menu row ------------------------------------------------------------
+
+// How far the chevron has turned, in radians.
+//
+// ONE glyph, turned — not two glyphs swapped at the halfway point. A symbol is
+// rasterized trimmed to its ink, so a chevron pointing right and one pointing
+// down are different widths and different pictures: swapping them changes the
+// shape in a single frame and re-resolves the row around it, which is the
+// padding that appeared and disappeared at each end of the animation.
+//
+// A quarter turn clockwise, following the reveal, so the chevron is wherever the
+// submenu is — including part way, and including on the way back out.
+function menuChevronTurn(amount: Float) -> Float {
+    return 1.5707963267948966 * min(max(amount, 0.0), 1.0)
+}
+
+// The box the chevron is centred in. A turning glyph sweeps its own diagonal, so
+// the box is squared and large enough to hold it at every angle rather than at
+// the two it rests at.
+function menuChevronBox() -> Float {
+    return 14.0
+}
+
+// A submenu's header: the row that owns it, which stays put while the card grows
+// around it and is pressed again to close.
+//
+// While the submenu is open the row is LIT — it is the selected thing, and the
+// one row in the menu that has not receded. The highlight comes up with the same
+// value that grows the card, so the row does not announce itself before there is
+// anything open to announce.
+construct MenuHeader(title: String, systemImage: Symbol, amount: Float, key: Int) extends Widget {
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+        let row = HStack(spacing: .Small, alignment: .Center) {
+            Label(title: title, systemImage: systemImage)
+                .font(size: menuLabelSize())
+
+            Spacer()
+
+            FoundationRaw(view: Frame(
+                Icon(symbol: .ChevronRight)
+                    .imageScale(.Small)
+                    .foregroundColor(.Secondary)
+                    .rotationEffect(menuChevronTurn(amount))
+                    .lower(context, modifiers),
+                .Fixed(menuChevronBox()),
+                .Fixed(menuChevronBox()),
+                0,
+                .Center,
+                EdgeInsets {}
+            ))
+        }
+        .height(menuRowPitch())
+        let inset = FoundationRaw(view: Frame(
+            row.lower(context, modifiers),
+            .Fill,
+            .Fixed(menuRowPitch()),
+            0,
+            .Leading,
+            EdgeInsets { leading: menuRowLeading(), trailing: menuRowTrailing() }
+        ))
+        if amount <= 0.0 {
+            return menuPressRegion(context, modifiers, key, kiraUiToggleMenuFn(key), inset.lower(context, modifiers))
+        }
+        // NO highlight behind the open row yet, and this is a gap rather than a
+        // choice: the platform lights it, and so should this.
+        //
+        // Any filled surface drawn on a row INSIDE a glass card comes out white.
+        // Measured on this row, mid-close, at 238 mean with three quarters of the
+        // band over 250 — for a fill that is a fifth of an alpha of blue, and
+        // identically for the 8% hover wash, for a flat-forced token fill and for
+        // an explicit colour with the strength folded into its alpha. The colour
+        // does not matter, the material does not matter; drawing a fill there at
+        // all is what does it. Until that is fixed a lit row is a white bar, and
+        // no row reads better than a wrong one.
+        return menuPressRegion(context, modifiers, key, kiraUiToggleMenuFn(key), inset.lower(context, modifiers))
+    }
+}
+
+// A submenu.
+//
+// Collapsed it is a row in the menu. Open, that same row is the header of a card
+// floating above the menu — the card closes around the element rather than
+// appearing beneath it. The row is LIFTED into the card rather than copied, so
+// there is one of it: one view, one hit region, one key. What stays behind is
+// its SPACE, so the rows below do not slide up into a gap and back down.
+//
+// # The structure does not change while it animates
+//
+// This is the whole difference between it working and it not. A widget that
+// swaps its shape at either end of a transition — a row here on one frame and
+// inside a card on the next, a placeholder that is the travelling size rather
+// than the resting one — re-resolves layout at exactly the moments the eye is
+// following it, moves its keys, and leaves frames where its press region does
+// not exist. What that produces is padding appearing and disappearing at each
+// end, panels landing in the wrong place, and clicks that turn the chevron and
+// open nothing.
+//
+// So there are exactly two shapes, and the boundary between them is a single
+// value reaching zero:
+//
+//   amount == 0   the row is in the menu, nothing floats
+//   amount  > 0   the row is in the card, the card floats, the menu holds a
+//                 gap of the ROW's natural height — the same height whatever
+//                 the animation is currently doing
+//
+// The row's key is the menu's own key in both, so the press region is one region
+// that never changes identity. The gap is the row's resting height in both, so
+// nothing below it ever moves.
+//
+// The card carries the animation instead: it grows and shrinks and fades, and it
+// is a floating view, so nothing reflows when it does. A closing submenu shrinks
+// away rather than standing at full size until its spring happens to reach zero.
+construct Menu(title: String, systemImage: Symbol = .None) extends Widget {
+    let children: [some Widget]
+
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+        let key = kiraUiTapSeqKey()
+        let amount = menuRevealAdvance(key)
+
+        // Keyed from the menu's own key rather than minted where it is lowered.
+        // Open, this row is built inside the card; closed, in the menu. A minted
+        // key would differ between those two, so the row's press region would
+        // change identity every time it opened — and a region that changes
+        // identity is a press that lands on nothing.
+        let header = MenuHeader(title: title, systemImage: systemImage, amount: amount, key: key)
+
+        // Closed, or so nearly closed that the card is no longer drawn: an
+        // ordinary row in the menu, and nothing floats. The card's material has
+        // already reached zero at this point, so the row coming back here is not
+        // visible as a change.
+        if amount <= menuCardFloor() {
+            return header.lower(context, modifiers)
+        }
+
+        // Open, or on its way in or out: the row is in the card, and the card
+        // floats.
+        let floating = VStack(spacing: .None) {
+            header
+
+            // `.Reveal(amount)` measures the rows at their natural height and
+            // then takes that fraction of it, so they arrive full size from
+            // behind the header the way a drawer slides out rather than the card
+            // zooming and taking the type with it.
+            //
+            // Layout answers how tall the rows came to. Multiplying a row height
+            // by a child count here would be this file guessing at that, and
+            // guessing wrong for any submenu whose rows are not all the same
+            // height.
+            FoundationRaw(view: Frame(
+                VStack(spacing: .None) {
+                    For(item in children) {
+                        item
+                    }
+                }.lower(context, modifierContextForOverlay(modifiers)),
+                .Fill,
+                .Reveal(amount),
+                0,
+                .Top,
+                EdgeInsets {}
+            ))
+        }
+        // No padding of its own: the card is exactly as wide as the rows it came
+        // out of, and its rows are the same rows at the same size. A submenu is
+        // not a smaller or a larger menu — it is the same menu's material,
+        // holding the same kind of row, which is why nothing inside it needs to
+        // be measured differently from what is underneath.
+        .width(menuCardWidth(key))
+        .glassEffect(shape: .Squircle(menuCardRadius()))
+        // The material comes up from nothing rather than the card fading as a
+        // whole: what should arrive is the glass, not a translucent picture of
+        // the finished panel. The rows inside are already handled by the reveal.
+        .opacity(menuCardOpacity(amount))
+
+        // The lit row, drawn ABOVE the card rather than inside it.
+        //
+        // A fill inside this card comes out white, and only inside THIS card: the
+        // identical fill on a row of the menu underneath renders correctly. What
+        // is different is that the submenu's glass stands on the menu's glass,
+        // and a translucent fill inside the upper one is taken by the material
+        // twice. Measured at 238 mean inside, 105 outside, for the same colour.
+        //
+        // So the highlight goes on its own layer over the card, where it is what
+        // it is: a rounded wash on top of a panel, in front of the material
+        // rather than behind it. The overlay layer already orders by z, and an
+        // element in transit already uses the upper one — this is the same idea
+        // for the same reason.
+        var lit = kiraUiMenuAnchor(key)
+        lit.z = kiraUiOverlayZTransit()
+        // Inset from the card, not bleeding to its edges: the pill is a wash ON
+        // the panel, and one that touches the corners reads as a second panel.
+        lit.anchorX = lit.anchorX + menuPillInset()
+        lit.anchorY = lit.anchorY + menuPillInset() * 0.5
+        lit.view = RoundedRectangle(cornerRadius: menuRowRadius())
+            .fill(menuHeaderLightFill(min(max(amount, 0.0), 1.0)))
+            .width(menuCardWidth(key) - menuPillInset() * 2.0)
+            .height(menuRowPitch() - menuPillInset())
+            .lower(context, modifierContextForOverlay(modifiers))
+
+        var presented = kiraUiMenuAnchor(key)
+        presented.z = kiraUiOverlayZSurface()
+        // Lowered out of the menu's own context — the card stands in FRONT of a
+        // menu that is fading itself out, and built under that context it would
+        // inherit the fade meant for what is behind it — and out of its key
+        // sequence, since these rows are built in the middle of the menu's build
+        // but are not part of it. Sharing the main counter shifts the key of
+        // every row declared after this menu the moment it opens.
+        kiraUiTapSeqEnterOverlay()
+        presented.view = floating.lower(context, modifierContextForOverlay(modifiers))
+        kiraUiTapSeqLeaveOverlay()
+        kiraUiOverlayPresent(move presented)
+        kiraUiOverlayPresent(move lit)
+
+        // The row's space, held at its RESTING height — not at whatever height
+        // the animation is passing through. The row itself is in the card above,
+        // at exactly this place.
+        return FoundationView {
+            kind: .Spacer
+            width: .Fill
+            height: .Fixed(menuRowPitch())
+        }
+    }
+}
+
+// --- the card a menu is presented in -----------------------------------------
+
+// The panel a menu's rows sit on.
+//
+// This is what `.contextMenu { … }` will present once the library can present
+// anything; until then an application places it. Either way it is the thing that
+// RECEDES when a submenu inside it opens, which is why the recession is read
+// here rather than pushed down from the menu that caused it.
+construct ContextMenu(width: Float = 250.0) extends Widget {
+    let children: [some Widget]
+
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+        let receded = kiraUiMenuRecede(context.frameCount)
+        // Full ink and full size at rest; a smaller, legible ghost at full
+        // recession.
+        let ink = 1.0 - (1.0 - menuRecededOpacity()) * receded
+        let scale = 1.0 - (1.0 - menuRecedeScale()) * receded
+
+        // The CONTENT recedes, not the card.
+        //
+        // A menu behind an open submenu keeps its material — it is still a panel
+        // standing over the page, and fading the glass lets whatever is behind
+        // the window come through it, so the menu takes on the colour of the
+        // wallpaper instead of going quiet. What recedes is what is written on
+        // it: the labels and glyphs go to a legible ghost while the surface they
+        // are on stays exactly as solid as it was.
+        let rows = VStack(spacing: .None) {
+            For(item in children) {
+                item
+            }
+        }
+        .opacity(ink)
+
+        let card = rows
+            .width(width)
+            .glassEffect(shape: .Squircle(menuCardRadius()))
+            .scaleEffect(scale)
+        return card.lower(context, modifierContextPresenting(modifiers, .MenuRow))
+    }
+}

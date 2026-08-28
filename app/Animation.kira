@@ -1,0 +1,111 @@
+import Foundation
+import KiraGraphics
+import KiraUIFoundation
+
+// The clock a transition runs on.
+//
+// An interactive app only rebuilds when something happened: the runner compares
+// the event count against the last presented frame's and re-flushes the retained
+// batch when they match. That is the right default — a static interface should
+// cost nothing — but a spring settling over half a second happens while NOTHING
+// happens, so under that rule it is handed no frames at all and every transition
+// in the library is a jump cut.
+//
+// So a widget that is mid-transition says so, and the runner asks. `moving` is
+// cleared at the top of each build and set again by whatever advanced and has
+// not settled; `kiraUiClockRunning` is what an app passes as `needsRebuild`.
+// When the last spring settles nothing sets the flag, the next frame is skipped,
+// and the app is back to costing nothing.
+//
+// This is a flag rather than a registry of live animations because a widget
+// already owns its own state — keyed by the same auto-minted key it hit-tests
+// with — and advances it while it lowers. Nothing needs a list of who is moving,
+// only whether ANYONE is.
+struct KiraUiClock {
+    // How long the last presented frame took, in seconds. Read during a build;
+    // written from the frame hook, which is the only place a `RenderFrame` — and
+    // therefore the real elapsed time — is in scope.
+    var delta: Float = 0.0
+    // Whether anything advanced during the last build and has not settled.
+    var moving: Bool = false
+    // Whether transitions should be shortened to a cross-dissolve.
+    //
+    // Every motion entry point takes this and nothing in this stack answers it
+    // yet: the platform query belongs beside the colour scheme in
+    // NativeLibs/Appearance, which reads the same kind of setting from the same
+    // four places. Until it is there an app can set it, so the library is honest
+    // about the seam rather than hardcoding `false` at thirty call sites.
+    var reducedMotion: Bool = false
+}
+
+function kiraUiClockSlotKey() -> String {
+    return "kiraui.clock"
+}
+
+function kiraUiClockState() -> KiraUiClock {
+    if kiraUiStateSlotHas(kiraUiClockSlotKey()) == false {
+        kiraUiStateSlotPut(kiraUiClockSlotKey(), nativeUserData(nativeState(KiraUiClock {})))
+    }
+    return nativeRecover<KiraUiClock>(kiraUiStateSlotGet(kiraUiClockSlotKey()))
+}
+
+// The shortest and longest frame a spring is advanced by.
+//
+// The first frame of a run has no previous frame to have taken any time, and a
+// frame straddling a window drag or a stalled GPU can be arbitrarily long. A
+// spring handed either integrates to somewhere it was never going to be — the
+// long one visibly, as a transition that teleports on the frame after a hitch.
+// Clamping is what makes the motion the same motion on a slow machine.
+function kiraUiClockFloor() -> Float {
+    return 1.0 / 240.0
+}
+
+function kiraUiClockCeiling() -> Float {
+    return 1.0 / 20.0
+}
+
+// Records how long the frame took. The frame hook runs before the UI pass, so
+// what a build reads is this frame's duration and not the previous one's.
+function kiraUiClockTick(frame: borrow KiraGraphics.RenderFrame) {
+    var clock = kiraUiClockState()
+    clock.delta = min(max(foundationFrameDuration(frame), kiraUiClockFloor()), kiraUiClockCeiling())
+    return
+}
+
+// Clears the moving flag. The interactive root calls this once at the top of
+// every build, beside the tap-sequence reset, so the flag describes the build
+// that is about to happen rather than accumulating across all of them.
+function kiraUiClockBeginFrame() {
+    var clock = kiraUiClockState()
+    clock.moving = false
+    return
+}
+
+// The frame delta a transition advances by.
+function kiraUiClockDelta() -> Float {
+    return kiraUiClockState().delta
+}
+
+// "I advanced and I have not finished." Said by a widget while it lowers, which
+// is what keeps the frames coming until it has.
+function kiraUiClockStillMoving() {
+    var clock = kiraUiClockState()
+    clock.moving = true
+    return
+}
+
+// What an interactive app passes as `needsRebuild`.
+function kiraUiClockRunning() -> Bool {
+    return kiraUiClockState().moving
+}
+
+// Whether transitions should be shortened. See `reducedMotion` above.
+function kiraUiReducedMotion() -> Bool {
+    return kiraUiClockState().reducedMotion
+}
+
+function kiraUiSetReducedMotion(value: Bool) {
+    var clock = kiraUiClockState()
+    clock.reducedMotion = value
+    return
+}

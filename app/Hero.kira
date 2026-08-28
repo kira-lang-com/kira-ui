@@ -1,0 +1,248 @@
+import Foundation
+import KiraGraphics
+import KiraLayout
+import KiraUIFoundation
+import KiraUIMotion
+
+// An element that is TRANSPORTED when it changes place.
+//
+//     Label(title: "Adjust Info", systemImage: .InfoCircle)
+//         .matchedGeometryEffect(id: adjustInfo)
+//
+// Declared in one place on one frame and somewhere else on the next, it does not
+// disappear from the first and reappear in the second: the same element flies
+// between them. A row that becomes the header of the card that opened from it, a
+// thumbnail that becomes the photograph it opens into, a tab that becomes the
+// panel it selects — one thing moving, rather than two things cross-fading.
+//
+// This is SwiftUI's `matchedGeometryEffect` and Flutter's `Hero`. The name here
+// is SwiftUI's, since the rest of the vocabulary is.
+//
+// # Why it needs a frame
+//
+// A widget is built before it is placed, so on the frame an element arrives
+// somewhere new NOTHING knows where new is yet — not the element, not the view
+// that now contains it. So the flight cannot begin on that frame, and an
+// implementation that tries either guesses the destination or snaps to it.
+//
+// Instead the element is HELD at the place it last came out, drawn in the
+// overlay so it is unaffected by whatever now encloses it, while layout quietly
+// answers where it was going. The frame after, both rectangles are known and the
+// spring runs between them. The hold is one frame — under twenty milliseconds,
+// and it is the frame on which the alternative would be a jump.
+//
+// # It flies in the overlay
+//
+// Because it is between two parents and belongs to neither. Left in the
+// destination it would be clipped by a card that has not finished growing;
+// left in the source it would be clipped by a menu it has already left. The
+// overlay is bounded by nothing, which is the only place a thing in transit can
+// correctly be drawn.
+
+// One element's journey.
+struct KiraUiHero {
+    // Where it last came out, which is where a flight starts from.
+    var fromX: Float = 0.0
+    var fromY: Float = 0.0
+    var fromW: Float = 0.0
+    var fromH: Float = 0.0
+    // The flight itself. `MotionMove` springs to a new place from wherever the
+    // element currently is, which is what makes an interrupted transport
+    // continue rather than restart — an element sent back while it is still
+    // arriving turns round from where it actually is, at the speed it has.
+    var move: MotionMove = MotionMove {}
+    // The size is travelling too: a row becoming a header changes width as well
+    // as position, and interpolating only the origin would fly the element to
+    // the right place at the wrong size.
+    var width: MotionSpringState = MotionSpringState {}
+    var height: MotionSpringState = MotionSpringState {}
+    var currentW: Float = 0.0
+    var currentH: Float = 0.0
+    var flying: Bool = false
+    // Whether this element has ever been placed. Its first appearance is not a
+    // journey — it has nowhere to have come from, and an element that flies in
+    // from the origin on the frame it is created is the bug this prevents.
+    var placed: Bool = false
+}
+
+function heroSlotKey(id: Int) -> String {
+    return kiraUiSlotKey("kiraui.hero.", id)
+}
+
+function heroState(id: Int) -> KiraUiHero {
+    if kiraUiStateSlotHas(heroSlotKey(id)) == false {
+        kiraUiStateSlotPut(heroSlotKey(id), nativeUserData(nativeState(KiraUiHero {})))
+    }
+    return nativeRecover<KiraUiHero>(kiraUiStateSlotGet(heroSlotKey(id)))
+}
+
+// The hit-region key a hero's view carries, so layout's record of where it came
+// out can be found again by id.
+//
+// Derived from the id rather than minted from the build sequence: a sequence key
+// changes the moment the element is declared somewhere else in the tree, which
+// is precisely the frame a hero needs its identity to survive.
+function heroKey(id: Int) -> Int {
+    return 700000 + id
+}
+
+// The curve an element travels on. Critically damped — a photograph that
+// overshoots the frame it is opening into reads as dropped rather than placed.
+function heroCurve() -> MotionCurveName {
+    return .Reposition
+}
+
+// Advance this hero against where layout says its element now is, and answer the
+// rectangle to draw it at.
+//
+// The whole state machine is here, in the order the frames happen:
+//
+//   * never placed        -> take the rectangle as given; nothing is in transit
+//   * placed, not moved   -> take it as given; the common case, and free
+//   * placed, moved       -> begin a flight from where it was
+//   * flying              -> advance, and report the interpolated rectangle
+function heroAdvance(id: Int, destination: borrow Rect) -> Rect {
+    var hero = heroState(id)
+
+    if hero.placed == false {
+        if destination.width <= 0.0 {
+            // Not laid out yet either. There is nothing to say about where it
+            // is, and the caller draws it in place.
+            return Rect {}
+        }
+        hero.fromX = destination.x
+        hero.fromY = destination.y
+        hero.fromW = destination.width
+        hero.fromH = destination.height
+        hero.currentW = destination.width
+        hero.currentH = destination.height
+        motionMovePlace(hero.move, destination.x, destination.y)
+        hero.placed = true
+        return Rect { x: destination.x, y: destination.y, width: destination.width, height: destination.height }
+    }
+
+    // The destination moved: start, or redirect, a flight toward it.
+    if destination.width > 0.0 {
+        if destination.x != hero.fromX || destination.y != hero.fromY || destination.width != hero.fromW || destination.height != hero.fromH {
+            hero.fromX = destination.x
+            hero.fromY = destination.y
+            hero.fromW = destination.width
+            hero.fromH = destination.height
+            motionMoveTo(hero.move, destination.x, destination.y, heroCurve(), kiraUiReducedMotion())
+            heroSizeTo(hero, destination.width, destination.height)
+            hero.flying = true
+        }
+    }
+
+    if hero.flying == false {
+        return Rect { x: hero.move.currentX, y: hero.move.currentY, width: hero.currentW, height: hero.currentH }
+    }
+
+    let stillMoving = motionMoveAdvance(hero.move, kiraUiClockDelta())
+    let stillSizing = heroSizeAdvance(hero)
+    if stillMoving || stillSizing {
+        kiraUiClockStillMoving()
+    } else {
+        hero.flying = false
+    }
+    return Rect { x: hero.move.currentX, y: hero.move.currentY, width: hero.currentW, height: hero.currentH }
+}
+
+// Points the two extent springs at a new size, from whatever size they are.
+function heroSizeTo(hero: borrow mut KiraUiHero, width: Float, height: Float) {
+    let nowW = motionSpringSample(hero.width, hero.width.elapsed)
+    let nowH = motionSpringSample(hero.height, hero.height.elapsed)
+    var fromW = nowW.value
+    var fromH = nowH.value
+    // The first retarget has no journey behind it to sample, so it starts from
+    // the size the element is currently drawn at rather than from zero.
+    if hero.width.elapsed == 0.0 && nowW.value == 0.0 {
+        fromW = hero.currentW
+        fromH = hero.currentH
+    }
+    let springW = motionCurveFor(heroCurve(), width, kiraUiReducedMotion())
+    let springH = motionCurveFor(heroCurve(), height, kiraUiReducedMotion())
+    hero.width = motionSpringStart(move springW, fromW, nowW.velocity)
+    hero.height = motionSpringStart(move springH, fromH, nowH.velocity)
+    return
+}
+
+function heroSizeAdvance(hero: borrow mut KiraUiHero) -> Bool {
+    let sampleW = motionSpringAdvance(hero.width, kiraUiClockDelta())
+    let sampleH = motionSpringAdvance(hero.height, kiraUiClockDelta())
+    hero.currentW = sampleW.value
+    hero.currentH = sampleH.value
+    let restW = motionSpringSettled(hero.width, sampleW, motionSpringEpsilon())
+    let restH = motionSpringSettled(hero.height, sampleH, motionSpringEpsilon())
+    if restW && restH {
+        hero.currentW = hero.width.spring.target
+        hero.currentH = hero.height.spring.target
+        return false
+    }
+    return true
+}
+
+// Whether this element is currently between two places.
+function kiraUiHeroFlying(id: Int) -> Bool {
+    return heroState(id).flying
+}
+
+// An element that keeps its identity when it changes place.
+//
+// It always lowers with the same key, whatever encloses it, so layout's record
+// of where it came out can be found again by id on the frame after. While it is
+// in transit it is drawn in the overlay at the rectangle the springs report and
+// its slot in the tree is held open at the same size, so neither parent reflows
+// around a hole.
+construct MatchedGeometry(id: Int) extends Widget {
+    let content: some Widget
+
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+        let key = heroKey(id)
+        let placed = foundationGeometryFor(key)
+        let travelling = heroAdvance(id, placed)
+
+        // Only an element IN TRANSIT is outside its parent's visual state. At
+        // rest it is an ordinary view in an ordinary place and takes what
+        // cascades to it — a hero row sitting in a menu that is fading behind an
+        // open submenu fades with the rest of that menu, and one that did not
+        // would be the only row still bright.
+        var childModifiers = modifierContextForChildren(modifiers)
+        if kiraUiHeroFlying(id) {
+            childModifiers = modifierContextForOverlay(modifiers)
+        }
+        let view = content.lower(context, childModifiers)
+
+        // Not in transit, or nothing known about where it is yet: an ordinary
+        // view in an ordinary place, carrying the key that lets it be found.
+        if kiraUiHeroFlying(id) == false {
+            return viewWithKey(move view, key)
+        }
+
+        // In transit. The element is handed to the overlay at the rectangle the
+        // flight is currently at, and what stays behind is its space.
+        var flight = KiraUiOverlay {
+            anchorX: travelling.x
+            anchorY: travelling.y
+            anchorW: travelling.width
+            anchorH: travelling.height
+            z: kiraUiOverlayZTransit()
+        }
+        flight.view = Frame(
+            move view,
+            .Fixed(travelling.width),
+            .Fixed(travelling.height),
+            0,
+            .TopLeading,
+            EdgeInsets {}
+        )
+        kiraUiOverlayPresent(move flight)
+
+        return FoundationView {
+            kind: .Spacer
+            key: key
+            width: .Fixed(travelling.width)
+            height: .Fixed(travelling.height)
+        }
+    }
+}

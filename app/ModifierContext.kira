@@ -4,6 +4,17 @@ import Foundation
 // such as `@Modifier(.Scoped)`. Keep the vocabulary explicit and typed here so
 // the declaration mechanism can migrate to that annotation when the compiler
 // grows it without changing the traversal or widget API.
+// Where a control finds itself, and therefore what it looks like.
+enum ControlPresentation {
+    // A form, a toolbar, a panel: a control with a fill of its own.
+    Standalone
+    // A menu: a full-width row, the panel's ink, no fill.
+    MenuRow
+    // The group of actions across the top of a menu: an equal column, its glyph
+    // above its title.
+    MenuAction
+}
+
 enum ModifierInheritance {
     Inherited
     Scoped
@@ -118,6 +129,12 @@ struct ThemeTokens {
     let tint: TintColors
     let border: BorderTokens
     let glassTint: Color
+    // What a Liquid Glass surface is MADE of, as the style states it. The style
+    // has carried these since it was written; nothing read them, so every glass
+    // surface in the library drew at a level hardcoded in `Surfaces.kira`
+    // regardless of what the theme in effect asked for.
+    let glassLevel: MaterialLevel
+    let glassEdgeLighting: Bool
     let surfaceMaterial: Material
     let cardRadius: Float
     let controlRadius: Float
@@ -204,6 +221,8 @@ function styleThemeTokens(style: Any StyleImplementation) -> ThemeTokens {
             focus: resolvedBorder(borders.focus, appearance)
         }
         glassTint: themeAdaptiveColor(materials.glassTint, appearance)
+        glassLevel: materials.liquidGlass.level
+        glassEdgeLighting: materials.liquidGlass.edgeLighting
         surfaceMaterial: .LayeredGlass
         cardRadius: radii.large
         controlRadius: radii.small
@@ -397,6 +416,7 @@ struct ModifierDelta {
     let disabled: Bool = false
     let hasFocused: Bool = false
     let focused: Bool = false
+    let inMenu: Bool = false
 }
 
 // The resolved context is traversal-local. It is passed by borrow to every
@@ -451,6 +471,18 @@ struct ModifierContext {
     let disabled: Bool = false
     let focused: Bool = false
     let hasFocused: Bool = false
+    // How a control in this subtree presents itself.
+    //
+    // The same `Button(title:action:)` is a filled control in a form, a full
+    // width row in a menu, and one of three equal columns in a menu's action
+    // group at the top. Those are not three widgets — they are one declaration
+    // and three environments, which is exactly how SwiftUI's controls change
+    // shape by where they are put.
+    //
+    // A kind rather than a Bool because there turned out to be three of them the
+    // moment a `ControlGroup` was put in a menu: the group's children are in a
+    // menu and are NOT rows, and a Bool can only say they are or they are not.
+    let controlPresentation: ControlPresentation = .Standalone
 }
 
 function modifierContextApply(
@@ -492,6 +524,113 @@ function modifierContextApply(
         disabled: context.disabled || delta.disabled
         focused: delta.hasFocused ? delta.focused : context.focused
         hasFocused: delta.hasFocused ? true : context.hasFocused
+        // Carried, not defaulted: a `.foregroundColor(...)` inside a menu would
+        // otherwise rebuild the context without it and every control below that
+        // modifier would present itself as though it were not in one.
+        controlPresentation: context.controlPresentation
+    }
+}
+
+// The context something HOISTED is built in.
+//
+// An overlay has left the box it was declared in, so the visual state of that
+// box is no longer its own. Opacity is the one that matters and the one that
+// bites: a menu fading itself out behind an open submenu cascades that fade into
+// every view lowered under it — including the submenu, which is built there and
+// then hoisted away. The card comes out dimmed by the very thing it is supposed
+// to be standing in front of.
+//
+// The theme, the typography and the ink DO carry: an overlay opened from a
+// themed panel is still that panel's overlay, and a popover that lost the font
+// its content was written in would be a worse bug than the one this fixes. What
+// resets is the presenter's own transient state — how faded it currently is —
+// which describes the presenter's box and nothing beyond it.
+function modifierContextForOverlay(context: borrow ModifierContext) -> ModifierContext {
+    let inherited = modifierContextForChildren(context)
+    return ModifierContext {
+        theme: inherited.theme
+        hasTheme: inherited.hasTheme
+        foregroundColor: inherited.foregroundColor
+        hasForegroundColor: inherited.hasForegroundColor
+        material: inherited.material
+        hasMaterial: inherited.hasMaterial
+        fillColor: inherited.fillColor
+        hasFill: inherited.hasFill
+        backgroundStyle: inherited.backgroundStyle
+        hasBackgroundStyle: inherited.hasBackgroundStyle
+        themeBorder: inherited.themeBorder
+        hasThemeBorder: inherited.hasThemeBorder
+        textColor: inherited.textColor
+        hasTextColor: inherited.hasTextColor
+        typography: inherited.typography
+        hasTypography: inherited.hasTypography
+        controlSize: inherited.controlSize
+        hasControlSize: inherited.hasControlSize
+        imageScale: inherited.imageScale
+        hasImageScale: inherited.hasImageScale
+        tint: inherited.tint
+        hasTint: inherited.hasTint
+        contentInset: inherited.contentInset
+        hasContentInset: inherited.hasContentInset
+        contentMargin: inherited.contentMargin
+        hasContentMargin: inherited.hasContentMargin
+        fontSize: inherited.fontSize
+        fontWeight: inherited.fontWeight
+        hasFont: inherited.hasFont
+        // Full strength, whatever the presenter currently is.
+        hasOpacity: false
+        opacity: 1.0
+        disabled: inherited.disabled
+        focused: inherited.focused
+        hasFocused: inherited.hasFocused
+        controlPresentation: inherited.controlPresentation
+    }
+}
+
+// The context a menu's contents are built in. What makes a `Button` inside one
+// present itself as a row, and a `ControlGroup`'s children present themselves as
+// the actions across the top instead.
+function modifierContextPresenting(
+    context: borrow ModifierContext,
+    presentation: ControlPresentation,
+) -> ModifierContext {
+    let inherited = modifierContextForChildren(context)
+    return ModifierContext {
+        theme: inherited.theme
+        hasTheme: inherited.hasTheme
+        foregroundColor: inherited.foregroundColor
+        hasForegroundColor: inherited.hasForegroundColor
+        material: inherited.material
+        hasMaterial: inherited.hasMaterial
+        fillColor: inherited.fillColor
+        hasFill: inherited.hasFill
+        backgroundStyle: inherited.backgroundStyle
+        hasBackgroundStyle: inherited.hasBackgroundStyle
+        themeBorder: inherited.themeBorder
+        hasThemeBorder: inherited.hasThemeBorder
+        textColor: inherited.textColor
+        hasTextColor: inherited.hasTextColor
+        typography: inherited.typography
+        hasTypography: inherited.hasTypography
+        controlSize: inherited.controlSize
+        hasControlSize: inherited.hasControlSize
+        imageScale: inherited.imageScale
+        hasImageScale: inherited.hasImageScale
+        tint: inherited.tint
+        hasTint: inherited.hasTint
+        contentInset: inherited.contentInset
+        hasContentInset: inherited.hasContentInset
+        contentMargin: inherited.contentMargin
+        hasContentMargin: inherited.hasContentMargin
+        fontSize: inherited.fontSize
+        fontWeight: inherited.fontWeight
+        hasFont: inherited.hasFont
+        hasOpacity: inherited.hasOpacity
+        opacity: inherited.opacity
+        disabled: inherited.disabled
+        focused: inherited.focused
+        hasFocused: inherited.hasFocused
+        controlPresentation: presentation
     }
 }
 
@@ -531,6 +670,7 @@ function modifierContextForChildren(context: borrow ModifierContext) -> Modifier
         disabled: context.disabled
         focused: false
         hasFocused: false
+        controlPresentation: context.controlPresentation
     }
 }
 
@@ -574,6 +714,7 @@ function modifierContextForPresentation(context: borrow ModifierContext) -> Modi
         disabled: context.disabled
         focused: false
         hasFocused: false
+        controlPresentation: context.controlPresentation
     }
 }
 

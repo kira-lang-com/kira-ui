@@ -121,7 +121,6 @@ construct WindowButton(
 // extend across neighbouring controls even when its ink is requested smaller.
 construct WindowControlMark(kind: WindowControlGlyph) extends Widget {
     function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let black = Color { r: 0.0 g: 0.0 b: 0.0 a: 0.65 }
         let mark = ZStack(alignment: .Center) {
             if kind == .Close {
                 Text(content: "×")
@@ -129,11 +128,11 @@ construct WindowControlMark(kind: WindowControlGlyph) extends Widget {
                     .foregroundColor(.Black)
             }
             if kind == .Minimize {
-                Rectangle(width: 6.0, height: 1.25, radius: 0.625, fill: black)
+                RoundedRectangle(cornerRadius: 0.625).fill(Color { r: 0.0 g: 0.0 b: 0.0 a: 0.65 }).width(6.0).height(1.25)
             }
             if kind == .Maximize {
-                Rectangle(width: 6.0, height: 1.25, radius: 0.625, fill: black)
-                Rectangle(width: 1.25, height: 6.0, radius: 0.625, fill: black)
+                RoundedRectangle(cornerRadius: 0.625).fill(Color { r: 0.0 g: 0.0 b: 0.0 a: 0.65 }).width(6.0).height(1.25)
+                RoundedRectangle(cornerRadius: 0.625).fill(Color { r: 0.0 g: 0.0 b: 0.0 a: 0.65 }).width(1.25).height(6.0)
             }
         }
         .width(8.0)
@@ -206,6 +205,26 @@ construct ControlGroup(spacing: Spacing = .ExtraSmall) extends Widget {
     let children: [some Widget]
 
     function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+        // In a menu this is the run of actions across the top, which is a
+        // different thing from a capsule of controls in a toolbar: its members
+        // take equal thirds of the panel and carry their glyph above their
+        // title, and the group has no capsule of its own — the menu's card is
+        // already the surface they sit on.
+        if modifiers.controlPresentation == .MenuRow {
+            // The members fill, and a row splits the space between everything
+            // that fills — so thirds come out of the layout rather than being
+            // divided here. `Expanded` would do it too, but it fills on BOTH
+            // axes, and a child that fills contributes nothing to a parent
+            // sizing from its content: the row would hug to nothing and the
+            // group would draw on top of the first menu item.
+            let actions = HStack(spacing: .None, alignment: .Top) {
+                For(item in children) {
+                    item
+                }
+            }
+            .fillWidth()
+            return actions.lower(context, modifierContextPresenting(modifiers, .MenuAction))
+        }
         let metrics = resolvedControlMetrics(modifiers)
         let items = HStack(spacing: spacing, alignment: .Center) {
             For(item in children) {

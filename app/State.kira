@@ -57,3 +57,32 @@ function kiraUiStateSlotPut(key: String, value: RawPtr) {
     stateSlotPut(move key, value)
     return
 }
+
+// The slot a KEYED widget's state lives in: a prefix and the widget's key, as
+// decimal digits.
+//
+// Auto-minted keys are build-sequence numbers, so one widget's state has to be
+// reachable from its key alone — there is nowhere else to put it. The digits are
+// built through the codepoint helper rather than a formatter because a slot key
+// is the one string this layer makes that nothing ever reads back.
+function kiraUiSlotKey(prefix: String, key: Int) -> String {
+    var remaining = key
+    if remaining < 0 {
+        remaining = 0 - remaining
+    }
+    var digitsReversed: [Int] = []
+    if remaining == 0 {
+        digitsReversed.append(48)
+    }
+    while remaining > 0 {
+        digitsReversed.append(48 + (remaining - (remaining / 10) * 10))
+        remaining = remaining / 10
+    }
+    var codes: [Int] = []
+    var index = digitsReversed.count - 1
+    while index >= 0 {
+        codes.append(digitsReversed[index])
+        index = index - 1
+    }
+    return prefix + foundationStringFromCodepoints(codes, 0, codes.count)
+}

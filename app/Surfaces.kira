@@ -11,9 +11,28 @@ import KiraUIFoundation
 
 // --- Glass -------------------------------------------------------------------
 
-function surfaceGlassFrost() -> FoundationFrost {
-    // Use the authored Medium Liquid Glass intensity for every glass container.
-    return .Medium
+// Which of the platform's material steps this style's Liquid Glass is.
+//
+// `MaterialLevel` names four; the foundation's table has six, and the two it
+// adds are the ends — a fully clear step no platform material occupies, and
+// Chrome, which is a different kind of surface rather than a heavier one. So the
+// four map onto the middle of the table and the ends stay reachable only by
+// naming them.
+function surfaceGlassFrostFor(level: borrow MaterialLevel) -> FoundationFrost {
+    match level {
+        Low -> return .Light;
+        Medium -> return .Medium;
+        // Regular, which is what an iOS menu and an inspector are made of.
+        High -> return .High;
+        XHigh -> return .XHigh;
+    }
+}
+
+// The step the THEME asks for, rather than one figure for every glass surface
+// in the library. A style that states `.XHigh` and is drawn at `.Medium` is a
+// style that does not decide what its own material is.
+function surfaceGlassFrost(modifiers: borrow ModifierContext) -> FoundationFrost {
+    return surfaceGlassFrostFor(modifierTokens(modifiers).glassLevel)
 }
 
 // The glass scheme follows the SAME appearance the theme's color tokens resolve
@@ -27,7 +46,7 @@ function surfaceGlassScheme(modifiers: borrow ModifierContext) -> FoundationSche
 }
 
 function surfaceGlassStack(modifiers: borrow ModifierContext) -> FoundationTintStack {
-    return foundationFrostStack(surfaceGlassFrost(), surfaceGlassScheme(modifiers))
+    return foundationFrostStack(surfaceGlassFrost(modifiers), surfaceGlassScheme(modifiers))
 }
 
 function surfaceGlassMaterial(
@@ -59,14 +78,23 @@ function surfaceGlassFill(
     // the captured backdrop. Use the named Foundation stack instead; an explicit
     // `.fill(...)` remains an intentional override.
     if modifiers.hasFill == false && material == .LayeredGlass {
-        return foundationTintFill(surfaceGlassStack(modifiers))
+        // Through the opacity in effect, like every other fill this function can
+        // return. The stack is the material's OWN wash and does not know about
+        // the modifiers around it, so taking it straight left `.opacity(...)` with
+        // no effect on glass at all: a panel asked to fade held full strength for
+        // the whole of its fade and then disappeared on the frame its value ran
+        // out. Anything that opens or closes on glass — a menu, a popover, a
+        // sheet — is that panel.
+        return modifierColor(foundationTintFill(surfaceGlassStack(modifiers)), modifiers)
     }
     return modifierSurfaceFill(foundationColor(move fill), modifiers)
 }
 
-function surfaceGlassBlur(material: borrow Material) -> Float {
+// Derived from the step, so a heavier material is a blurrier one without the
+// two ever being stated apart and drifting.
+function surfaceGlassBlur(material: borrow Material, modifiers: borrow ModifierContext) -> Float {
     match material {
-        LayeredGlass -> return foundationFrostBlur(surfaceGlassFrost());
+        LayeredGlass -> return foundationFrostBlur(surfaceGlassFrost(modifiers));
         Flat -> return 1.0;
         Frosted -> return 1.0;
         WindowBackdrop -> return 1.0;

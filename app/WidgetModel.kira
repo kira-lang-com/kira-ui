@@ -2,6 +2,7 @@ import KiraLayout
 import KiraGraphics
 import Foundation
 import KiraUIFoundation
+import KiraUIMotion
 
 @Derive(Copy)
 struct Color {
@@ -494,6 +495,14 @@ function overlayView(
         flex: foreground.flex
         alignment: .Center
         padding: EdgeInsets {}
+        // The wrapper paints; it does not size. `.background(…)` is a
+        // decoration, so a width or a height stated after it belongs to the
+        // content, and this is what lets `viewWithWidth`/`viewWithHeight` reach
+        // it. Without that, modifier ORDER decided whether a size took effect:
+        // `.background(…).height(h)` sized the wrapper and left the content
+        // hugging inside it, which is a column with no slack to give its
+        // expanding children — every row laid out into no height at all.
+        sizingProxy: true
         children: [stretchedBackground, foreground]
     }
 }
@@ -614,6 +623,7 @@ function viewWithGuideFields(
         material: view.material
         effects: identityEffects(view.effects)
         clipContent: view.clipContent
+        sizingProxy: view.sizingProxy
         content: view.content
         color: view.color
         size: view.size
@@ -679,6 +689,7 @@ function modifierEffects(
 // that caused it.
 function viewCopying(
     view: borrow FoundationView,
+    children: [FoundationView],
     width: SizeMode,
     height: SizeMode,
     radius: Float,
@@ -686,14 +697,17 @@ function viewCopying(
     border: FoundationColor,
     borderWidth: Float,
     padding: EdgeInsets,
+    deform: MotionDeformation,
+    key: Int,
+    rotation: Float,
 ) -> FoundationView {
     return FoundationView {
         kind: view.kind
-        key: view.key
+        key: key
         guides: identityGuides(view.guides)
         guideLeading: view.guideLeading
         guideTrailing: view.guideTrailing
-        children: identityChildren(view.children)
+        children: move children
         width: width
         height: height
         flex: view.flex
@@ -746,84 +760,286 @@ function viewCopying(
         blur: view.blur
         glassMaterial: view.glassMaterial
         edgeRefraction: view.edgeRefraction
+        // The motion a view is carrying. Restating a view field by field means
+        // every field, and these four were missing: a `.width(...)` applied
+        // after a `.scaleEffect(...)` rebuilt the view without its deformation
+        // and the transform silently vanished — the modifier order deciding
+        // whether the animation happened at all.
+        deform: deform
+        rotation: rotation
+        glow: view.glow
+        morph: view.morph
+        morphBlend: view.morphBlend
     }
+}
+
+function viewWithDeform(view: FoundationView, scaleX: Float, scaleY: Float) -> FoundationView {
+    let scaled = MotionDeformation {
+        x: view.deform.x
+        y: view.deform.y
+        // Multiplied into whatever the view already carries, not replacing it: a
+        // control being pressed inside a panel that is receding is doing both,
+        // and the two are independent.
+        scaleX: view.deform.scaleX * scaleX
+        scaleY: view.deform.scaleY * scaleY
+        pressScale: view.deform.pressScale
+        intensity: view.deform.intensity
+    }
+    return viewCopying(
+        view,
+        identityChildren(view.children),
+        view.width,
+        view.height,
+        view.radius,
+        view.shape,
+        view.border,
+        view.borderWidth,
+        view.padding,
+        move scaled,
+        view.key,
+        view.rotation
+    )
+}
+
+function viewWithRotation(view: FoundationView, radians: Float) -> FoundationView {
+    return viewCopying(
+        view,
+        identityChildren(view.children),
+        view.width,
+        view.height,
+        view.radius,
+        view.shape,
+        view.border,
+        view.borderWidth,
+        view.padding,
+        view.deform,
+        view.key,
+        view.rotation + radians
+    )
+}
+
+// The same view under a different key.
+//
+// A key is a view's IDENTITY — what the retained tree reconciles by, what a hit
+// region is found by, and what layout records its rectangle under. A view that
+// has to be recognisable in a place it has never been before (see `Hero.kira`)
+// is one that has to carry a key of its own choosing rather than the one its
+// position in the build happened to mint.
+function viewWithKey(view: FoundationView, key: Int) -> FoundationView {
+    return viewCopying(
+        view,
+        identityChildren(view.children),
+        view.width,
+        view.height,
+        view.radius,
+        view.shape,
+        view.border,
+        view.borderWidth,
+        view.padding,
+        view.deform,
+        key,
+        view.rotation
+    )
 }
 
 function viewWithSurfaceRadius(view: FoundationView, radius: Float) -> FoundationView {
     return viewCopying(
         view,
+        identityChildren(view.children),
         view.width,
         view.height,
         move radius,
         view.shape,
         view.border,
         view.borderWidth,
-        view.padding
+        view.padding,
+        view.deform,
+        view.key,
+        view.rotation
     )
 }
 
 function viewWithSurfaceShape(view: FoundationView, shape: SurfaceShape) -> FoundationView {
     return viewCopying(
         view,
+        identityChildren(view.children),
         view.width,
         view.height,
         view.radius,
         foundationShape(move shape),
         view.border,
         view.borderWidth,
-        view.padding
+        view.padding,
+        view.deform,
+        view.key,
+        view.rotation
     )
 }
 
 function viewWithSurfaceBorder(view: FoundationView, color: FoundationColor, width: Float) -> FoundationView {
     return viewCopying(
         view,
+        identityChildren(view.children),
         view.width,
         view.height,
         view.radius,
         view.shape,
         move color,
         move width,
-        view.padding
+        view.padding,
+        view.deform,
+        view.key,
+        view.rotation
     )
 }
 
+// Whether a view would USE more room on one axis, or merely sit in it.
+//
+// A stack with a filling child on its own axis has somewhere to put slack: the
+// child takes it. Everything else — a label, an icon, a stack of hugging rows —
+// has an size of its own and is ALIGNED inside a larger box rather than
+// stretched to it, which is what a background sized past its content should
+// leave alone.
+function viewTakesSlack(view: borrow FoundationView, vertical: Bool) -> Bool {
+    if view.sizingProxy && view.children.count > 0 {
+        return viewTakesSlack(view.children[view.children.count - 1], vertical)
+    }
+    if vertical {
+        if view.kind != .Column {
+            return false
+        }
+    } else {
+        if view.kind != .Row {
+            return false
+        }
+    }
+    for index in 0..view.children.count {
+        if vertical {
+            if sizeModeKind(view.children[index].height) == 2 {
+                return true
+            }
+        } else {
+            if sizeModeKind(view.children[index].width) == 2 {
+                return true
+            }
+        }
+    }
+    return false
+}
+
+// The children of a painting wrapper, with the content (the LAST child, behind
+// which the background is drawn) taking the same size the wrapper was just
+// given. Recursive through `viewWithWidth`/`viewWithHeight`, so stacked
+// decorations — a background under an overlay under a border — all pass the
+// size along to what they decorate.
+function proxyChildrenWithWidth(children: [FoundationView], width: SizeMode) -> [FoundationView] {
+    var out: [FoundationView] = []
+    var index = 0
+    while index < children.count {
+        if index == children.count - 1 {
+            out.append(viewWithWidth(children[index], copy width))
+        } else {
+            out.append(children[index])
+        }
+        index = index + 1
+    }
+    return move out
+}
+
+function proxyChildrenWithHeight(children: [FoundationView], height: SizeMode) -> [FoundationView] {
+    var out: [FoundationView] = []
+    var index = 0
+    while index < children.count {
+        if index == children.count - 1 {
+            out.append(viewWithHeight(children[index], copy height))
+        } else {
+            out.append(children[index])
+        }
+        index = index + 1
+    }
+    return move out
+}
+
 function viewWithWidth(view: FoundationView, width: SizeMode) -> FoundationView {
+    if view.sizingProxy && view.children.count > 0 && viewTakesSlack(view, false) {
+        return viewCopying(
+            view,
+            proxyChildrenWithWidth(identityChildren(view.children), copy width),
+            move width,
+            view.height,
+            view.radius,
+            view.shape,
+            view.border,
+            view.borderWidth,
+            view.padding,
+            view.deform,
+            view.key,
+            view.rotation
+        )
+    }
     return viewCopying(
         view,
+        identityChildren(view.children),
         move width,
         view.height,
         view.radius,
         view.shape,
         view.border,
         view.borderWidth,
-        view.padding
+        view.padding,
+        view.deform,
+        view.key,
+        view.rotation
     )
 }
 
 function viewWithHeight(view: FoundationView, height: SizeMode) -> FoundationView {
+    if view.sizingProxy && view.children.count > 0 && viewTakesSlack(view, true) {
+        return viewCopying(
+            view,
+            proxyChildrenWithHeight(identityChildren(view.children), copy height),
+            view.width,
+            move height,
+            view.radius,
+            view.shape,
+            view.border,
+            view.borderWidth,
+            view.padding,
+            view.deform,
+            view.key,
+            view.rotation
+        )
+    }
     return viewCopying(
         view,
+        identityChildren(view.children),
         view.width,
         move height,
         view.radius,
         view.shape,
         view.border,
         view.borderWidth,
-        view.padding
+        view.padding,
+        view.deform,
+        view.key,
+        view.rotation
     )
 }
 
 function viewWithSurfacePadding(view: FoundationView, length: Float) -> FoundationView {
     return viewCopying(
         view,
+        identityChildren(view.children),
         view.width,
         view.height,
         view.radius,
         view.shape,
         view.border,
         view.borderWidth,
-        uniformInsets(length)
+        uniformInsets(length),
+        view.deform,
+        view.key,
+        view.rotation
     )
 }
 
@@ -836,13 +1052,17 @@ function viewWithContentMargins(view: FoundationView, inset: Float) -> Foundatio
     }
     return viewCopying(
         view,
+        identityChildren(view.children),
         view.width,
         view.height,
         view.radius,
         view.shape,
         view.border,
         view.borderWidth,
-        move margins
+        move margins,
+        view.deform,
+        view.key,
+        view.rotation
     )
 }
 
@@ -1053,6 +1273,18 @@ construct Button(
         let k = kiraUiTapSeqKey()
         let press = action
         let tokens = modifierTokens(modifiers)
+        // In a menu a button is a ROW: its label the full width of the panel,
+        // its ink the panel's, and no fill of its own. A menu of filled controls
+        // is a menu that reads as a toolbar, and the fill is also what the
+        // highlight under the pointer has to sit on top of.
+        //
+        // Same widget, same declaration — the environment decides, which is what
+        // lets a menu's contents be written with the ordinary `Button`.
+        match modifiers.controlPresentation {
+            MenuRow -> return menuRowView(context, modifiers, k, move press, label);
+            MenuAction -> return menuActionView(context, modifiers, k, move press, label);
+            Standalone -> {}
+        }
         var buttonFill = foundationColor(tokens.fill.control)
         match role {
             Normal -> {}
@@ -1673,6 +1905,39 @@ construct OpacityLayer(value: Float) extends Widget {
     }
 }
 
+// `.scaleEffect(...)`: the subtree drawn larger or smaller than it was laid out.
+//
+// A DEFORMATION rather than a resize, which is the whole distinction. The view
+// keeps exactly the space layout gave it and only its pixels move, so scaling a
+// row inside a menu cannot reflow the menu — and the transform descends, so the
+// row's label and glyph go with it instead of being scaled one by one.
+//
+// It scales about the subtree's own centre. Any other pivot is a scale plus a
+// translation, and `FoundationDeform` folds the two together anyway.
+// `.rotationEffect(...)`: the subtree's leaves drawn turned about their centres.
+//
+// Drawing state, so a turning glyph keeps the space layout gave it and cannot
+// reflow the row it is in — which is the whole reason a chevron can be animated
+// at all. A chevron that resized its row as it turned would move every label
+// beside it, and that is what swapping one glyph for another did.
+construct RotationLayer(radians: Float) extends Widget {
+    let content: some Widget
+
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+        let childModifiers = modifierContextForChildren(modifiers)
+        return viewWithRotation(content.lower(context, childModifiers), radians)
+    }
+}
+
+construct ScaleLayer(value: Float) extends Widget {
+    let content: some Widget
+
+    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+        let childModifiers = modifierContextForChildren(modifiers)
+        return viewWithDeform(content.lower(context, childModifiers), value, value)
+    }
+}
+
 construct MinHeightLayer(value: Float) extends Widget {
     let content: some Widget
 
@@ -1810,6 +2075,28 @@ construct Divider(
             guideTag(followsLeading),
             guideTag(followsTrailing)
         )
+        // In a menu a divider is a GROUP BOUNDARY, and that is more than a line.
+        // Measured off the platform's menu (Examples/liquid-glass-menu): rows
+        // inside a group sit on a 42pt pitch, rows either side of a separator on
+        // 64 — so the separator is a 1pt rule with about ten points of air above
+        // and below it, inset 24pt from each edge rather than running edge to
+        // edge. A menu that draws only the line reads as a table with hairlines
+        // in it, which is exactly what this read as before the branch.
+        if modifiers.controlPresentation == .MenuRow {
+            return Frame(
+                move following,
+                .Fill,
+                .Hug,
+                0,
+                .Leading,
+                EdgeInsets {
+                    leading: 24.0
+                    trailing: 24.0
+                    top: 10.5
+                    bottom: 10.5
+                }
+            )
+        }
         return Frame(
             move following,
             .Fill,

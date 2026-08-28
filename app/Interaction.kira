@@ -24,6 +24,21 @@ import KiraUIFoundation
 // for semantic edTapKey-style keys, so auto keys never alias a decodable key.
 struct KiraUiTapSeq {
     var next: Int = 0
+    // The counter for content being lowered into an OVERLAY, and whether we are
+    // currently in one.
+    //
+    // A hoisted view is built in the middle of the main build but does not
+    // belong to it, and its children would otherwise draw from the same
+    // sequence — so opening a submenu with three rows in it shifts the key of
+    // every row declared after it by three. The retained tree reconciles by key
+    // and hit regions are found by key, so what that produces is a menu where
+    // presses land on the row above or below the one under the finger, and only
+    // after something has been opened once.
+    //
+    // A separate band keeps the main sequence identical whether an overlay is
+    // open or not, which is the property that makes the keys stable.
+    var overlayNext: Int = 0
+    var inOverlay: Bool = false
 }
 
 function kiraUiTapSeqSlotKey() -> String {
@@ -38,6 +53,8 @@ function kiraUiTapSeqReset() {
     }
     var seq = nativeRecover<KiraUiTapSeq>(kiraUiStateSlotGet(kiraUiTapSeqSlotKey()))
     seq.next = 0
+    seq.overlayNext = 0
+    seq.inOverlay = false
     return
 }
 
@@ -47,8 +64,33 @@ function kiraUiTapSeqKey() -> Int {
         kiraUiStateSlotPut(kiraUiTapSeqSlotKey(), nativeUserData(nativeState(KiraUiTapSeq {})))
     }
     var seq = nativeRecover<KiraUiTapSeq>(kiraUiStateSlotGet(kiraUiTapSeqSlotKey()))
+    if seq.inOverlay {
+        seq.overlayNext = seq.overlayNext + 1
+        return 800000 + seq.overlayNext
+    }
     seq.next = seq.next + 1
     return 600000 + seq.next
+}
+
+// Draw keys from the overlay band until told otherwise. Everything lowered for a
+// hoisted view sits between these two, so the main sequence carries on afterward
+// exactly where it left off.
+function kiraUiTapSeqEnterOverlay() {
+    if kiraUiStateSlotHas(kiraUiTapSeqSlotKey()) == false {
+        kiraUiStateSlotPut(kiraUiTapSeqSlotKey(), nativeUserData(nativeState(KiraUiTapSeq {})))
+    }
+    var seq = nativeRecover<KiraUiTapSeq>(kiraUiStateSlotGet(kiraUiTapSeqSlotKey()))
+    seq.inOverlay = true
+    return
+}
+
+function kiraUiTapSeqLeaveOverlay() {
+    if kiraUiStateSlotHas(kiraUiTapSeqSlotKey()) == false {
+        return
+    }
+    var seq = nativeRecover<KiraUiTapSeq>(kiraUiStateSlotGet(kiraUiTapSeqSlotKey()))
+    seq.inOverlay = false
+    return
 }
 
 // Default hover highlight painted behind a Tappable while the pointer is over it:

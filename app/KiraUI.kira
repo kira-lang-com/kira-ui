@@ -41,6 +41,11 @@ function RunWidgetInteractiveApp(
     let hostEngineFrame: borrow (borrow mut KiraGraphics.RenderFrame) -> Void = engineFrame
     let windowAwareEngineFrame: (borrow mut KiraGraphics.RenderFrame) -> Void = { frame in
         kiraUiConsumeWindowCommand(frame)
+        // Before the host's own hook, so a host that ticks a simulation and a
+        // widget that is mid-transition are advanced by the SAME frame's
+        // duration rather than by two readings of the clock taken either side
+        // of the host's work.
+        kiraUiClockTick(frame)
         hostEngineFrame(frame)
         return
     }
@@ -52,20 +57,27 @@ function RunWidgetInteractiveApp(
         // gets. The application does not have to know that — it happens here,
         // once, for every interactive app.
         kiraUiTapSeqReset()
+        // Cleared here and set again by whatever is still in motion as it
+        // lowers, so `needsRebuild` below describes this build.
+        kiraUiClockBeginFrame()
         // Surface targets are collected around the whole build, not around a
         // split view's columns, because an application that renders into
         // textures may have no window furniture at all: a component with no
         // window still has regions, and they are declared wherever they are.
         kiraUiSurfaceCollect()
+        // Anything that floats declares itself while the tree is built and is
+        // hoisted onto the root below, after the application's own content.
+        kiraUiOverlayCollect()
         let build: borrow () -> KiraUIApp = rootBuilder
         let app = build()
         let root = app.content
         let lowered = root.lower(context, ModifierContext {})
         kiraUiSurfaceStopCollecting()
-        return lowered
+        kiraUiOverlayStopCollecting()
+        return kiraUiRootWithOverlays(move lowered)
     },
         engineFrame: windowAwareEngineFrame,
-        needsRebuild: foundationNoContinuousRebuild,
+        needsRebuild: kiraUiClockRunning,
         showFpsOverlay: showFpsOverlay,
         showGraphicsHud: false,
         rebuildOnResize: rebuildOnResize,
@@ -126,15 +138,22 @@ function RunKiraApp(app: borrow () -> KiraUIApp) {
     let build: borrow () -> KiraUIApp = app
     RunFoundationInteractiveApp("Kira UI", 1280, 720, { context in
         kiraUiTapSeqReset()
+        // Cleared here and set again by whatever is still in motion as it
+        // lowers, so `needsRebuild` below describes this build.
+        kiraUiClockBeginFrame()
         kiraUiSurfaceCollect()
+        // Anything that floats declares itself while the tree is built and is
+        // hoisted onto the root below, after the application's own content.
+        kiraUiOverlayCollect()
         let made = build()
         let root = made.content
         let lowered = root.lower(context, ModifierContext {})
         kiraUiSurfaceStopCollecting()
-        return lowered
+        kiraUiOverlayStopCollecting()
+        return kiraUiRootWithOverlays(move lowered)
     },
         engineFrame: kiraUiWindowEngineFrame,
-        needsRebuild: foundationNoContinuousRebuild,
+        needsRebuild: kiraUiClockRunning,
         showFpsOverlay: true,
         showGraphicsHud: false,
         rebuildOnResize: true,
@@ -149,5 +168,6 @@ function RunKiraApp(app: borrow () -> KiraUIApp) {
 
 function kiraUiWindowEngineFrame(frame: borrow mut KiraGraphics.RenderFrame) {
     kiraUiConsumeWindowCommand(frame)
+    kiraUiClockTick(frame)
     return
 }
