@@ -15,20 +15,34 @@ import KCoreUI
 // application can override with a partial blob without touching a line of the
 // toolkit.
 //
-// The catalog is embedded in KCoreUI, so this needs no file, no path and no
-// working directory.
-//
-// Each token function loads the catalog once and reads its whole set from that
-// one load. Loading is a parse of a few thousand bytes and the seven token sets
-// are built when a style is constructed rather than when a frame is drawn, so
-// this is the granularity the toolkit's current shape allows: the language has
-// no place to keep a parsed catalog between two field defaults. When the theme
-// vocabulary is retired, the catalog is loaded once for the application and
-// this file goes with it.
+// KiraUI ships the blob as its own package asset. The parsed stack below is a
+// module constant, so every style reads the same catalog rather than reparsing
+// it for each eager token group.
 
-function catalogStack() -> CatalogStack {
-    return catalogStackOf(defaultCatalog())
+// The catalog in effect, read from disk.
+//
+// A file read and a parse per call, which is once per token set while the theme
+// vocabulary still builds its tokens eagerly in field defaults. A program that
+// draws frames loads a catalog once and keeps the `UIResources` it builds from
+// it; that is where this is going, and what retires the eager token sets.
+function loadKiraUICatalogStack() -> CatalogStack {
+    attempt {
+        let catalog = try loadDefaultCatalog()
+        return catalogStackOf(catalog)
+    } handle {
+        NotKira { return CatalogStack() }
+        UnsupportedVersion { return CatalogStack() }
+        TruncatedHeader { return CatalogStack() }
+        TruncatedTable { return CatalogStack() }
+        OffsetOutOfRange { return CatalogStack() }
+        NamesUnsorted { return CatalogStack() }
+        ConstraintsUnsorted { return CatalogStack() }
+        DuplicateRendition { return CatalogStack() }
+        ReservedTraitValue { return CatalogStack() }
+    }
 }
+
+let kiraUICatalogStack = loadKiraUICatalogStack()
 
 // The trait vector the toolkit resolves against.
 //
@@ -107,95 +121,88 @@ function catalogBorder(stack: borrow CatalogStack, name: borrow String, width: F
 // --- The default style's tokens --------------------------------------------
 
 function catalogPaletteTokens() -> StylePaletteTokens {
-    let stack = catalogStack()
     return StylePaletteTokens {
-        red: catalogAdaptive(stack, colorSystemRed())
-        orange: catalogAdaptive(stack, colorSystemOrange())
-        yellow: catalogAdaptive(stack, colorSystemYellow())
-        green: catalogAdaptive(stack, colorSystemGreen())
-        mint: catalogAdaptive(stack, colorSystemMint())
-        teal: catalogAdaptive(stack, colorSystemTeal())
-        cyan: catalogAdaptive(stack, colorSystemCyan())
-        blue: catalogAdaptive(stack, colorSystemBlue())
-        indigo: catalogAdaptive(stack, colorSystemIndigo())
-        purple: catalogAdaptive(stack, colorSystemPurple())
-        pink: catalogAdaptive(stack, colorSystemPink())
-        brown: catalogAdaptive(stack, colorSystemBrown())
-        gray: catalogAdaptive(stack, colorSystemGray())
+        red: catalogAdaptive(kiraUICatalogStack, colorSystemRed())
+        orange: catalogAdaptive(kiraUICatalogStack, colorSystemOrange())
+        yellow: catalogAdaptive(kiraUICatalogStack, colorSystemYellow())
+        green: catalogAdaptive(kiraUICatalogStack, colorSystemGreen())
+        mint: catalogAdaptive(kiraUICatalogStack, colorSystemMint())
+        teal: catalogAdaptive(kiraUICatalogStack, colorSystemTeal())
+        cyan: catalogAdaptive(kiraUICatalogStack, colorSystemCyan())
+        blue: catalogAdaptive(kiraUICatalogStack, colorSystemBlue())
+        indigo: catalogAdaptive(kiraUICatalogStack, colorSystemIndigo())
+        purple: catalogAdaptive(kiraUICatalogStack, colorSystemPurple())
+        pink: catalogAdaptive(kiraUICatalogStack, colorSystemPink())
+        brown: catalogAdaptive(kiraUICatalogStack, colorSystemBrown())
+        gray: catalogAdaptive(kiraUICatalogStack, colorSystemGray())
     }
 }
 
 function catalogForegroundTokens() -> StyleForegroundTokens {
-    let stack = catalogStack()
     return StyleForegroundTokens {
-        primary: catalogAdaptive(stack, colorLabel())
-        secondary: catalogAdaptive(stack, colorSecondaryLabel())
-        tertiary: catalogAdaptive(stack, colorTertiaryLabel())
-        quaternary: catalogAdaptive(stack, colorQuaternaryLabel())
+        primary: catalogAdaptive(kiraUICatalogStack, colorLabel())
+        secondary: catalogAdaptive(kiraUICatalogStack, colorSecondaryLabel())
+        tertiary: catalogAdaptive(kiraUICatalogStack, colorTertiaryLabel())
+        quaternary: catalogAdaptive(kiraUICatalogStack, colorQuaternaryLabel())
         // Ink that stays readable on a filled control. Apple names no such
         // colour, so the catalog carries it under a name of the toolkit's own
         // rather than the declared Apple surface growing an entry Apple has not
         // got.
-        inverse: catalogAdaptive(stack, "inverseLabel")
+        inverse: catalogAdaptive(kiraUICatalogStack, "inverseLabel")
     }
 }
 
 function catalogBackgroundTokens() -> StyleBackgroundTokens {
-    let stack = catalogStack()
     return StyleBackgroundTokens {
-        canvas: catalogAdaptive(stack, colorSystemBackground())
-        surface: catalogAdaptive(stack, colorSecondarySystemBackground())
-        raised: catalogAdaptive(stack, colorTertiarySystemBackground())
-        overlay: catalogAdaptive(stack, colorWindowBackground())
+        canvas: catalogAdaptive(kiraUICatalogStack, colorSystemBackground())
+        surface: catalogAdaptive(kiraUICatalogStack, colorSecondarySystemBackground())
+        raised: catalogAdaptive(kiraUICatalogStack, colorTertiarySystemBackground())
+        overlay: catalogAdaptive(kiraUICatalogStack, colorWindowBackground())
     }
 }
 
 function catalogFillTokens() -> StyleFillTokens {
-    let stack = catalogStack()
     return StyleFillTokens {
-        control: catalogAdaptive(stack, colorSystemFill())
-        hover: catalogAdaptive(stack, colorSecondarySystemFill())
-        selection: catalogAdaptive(stack, colorSelection())
+        control: catalogAdaptive(kiraUICatalogStack, colorSystemFill())
+        hover: catalogAdaptive(kiraUICatalogStack, colorSecondarySystemFill())
+        selection: catalogAdaptive(kiraUICatalogStack, colorSelection())
     }
 }
 
 function catalogTintTokens() -> StyleTintTokens {
-    let stack = catalogStack()
     return StyleTintTokens {
-        accent: catalogAdaptive(stack, colorTint())
-        success: catalogAdaptive(stack, "success")
-        warning: catalogAdaptive(stack, "warning")
-        danger: catalogAdaptive(stack, "danger")
+        accent: catalogAdaptive(kiraUICatalogStack, colorTint())
+        success: catalogAdaptive(kiraUICatalogStack, "success")
+        warning: catalogAdaptive(kiraUICatalogStack, "warning")
+        danger: catalogAdaptive(kiraUICatalogStack, "danger")
     }
 }
 
 function catalogBorderTokens() -> StyleBorderTokens {
-    let stack = catalogStack()
     return StyleBorderTokens {
-        none: catalogBorder(stack, colorSeparator(), 0.0)
-        subtle: catalogBorder(stack, colorSeparator(), 1.0)
-        standard: catalogBorder(stack, "standardBorder", 1.0)
-        strong: catalogBorder(stack, "strongBorder", 1.5)
-        focus: catalogBorder(stack, "focusRing", 2.0)
+        none: catalogBorder(kiraUICatalogStack, colorSeparator(), 0.0)
+        subtle: catalogBorder(kiraUICatalogStack, colorSeparator(), 1.0)
+        standard: catalogBorder(kiraUICatalogStack, "standardBorder", 1.0)
+        strong: catalogBorder(kiraUICatalogStack, "strongBorder", 1.5)
+        focus: catalogBorder(kiraUICatalogStack, "focusRing", 2.0)
     }
 }
 
 function catalogTypographyTokens() -> StyleTypographyTokens {
-    let stack = catalogStack()
     return StyleTypographyTokens {
-        caption: catalogFont(stack, textCaption())
-        body: catalogFont(stack, textBody())
-        control: catalogFont(stack, "control")
-        title: catalogFont(stack, textTitle())
-        bodyEmphasis: catalogFont(stack, "bodyEmphasis")
-        subheadline: catalogFont(stack, textSubheadline())
-        footnote: catalogFont(stack, textFootnote())
-        overline: catalogFont(stack, "overline")
-        label: catalogFont(stack, "label")
-        section: catalogFont(stack, "section")
-        headline: catalogFont(stack, textHeadline())
-        title1: catalogFont(stack, "title1")
-        title2: catalogFont(stack, textTitle2())
-        title3: catalogFont(stack, textTitle3())
+        caption: catalogFont(kiraUICatalogStack, textCaption())
+        body: catalogFont(kiraUICatalogStack, textBody())
+        control: catalogFont(kiraUICatalogStack, "control")
+        title: catalogFont(kiraUICatalogStack, textTitle())
+        bodyEmphasis: catalogFont(kiraUICatalogStack, "bodyEmphasis")
+        subheadline: catalogFont(kiraUICatalogStack, textSubheadline())
+        footnote: catalogFont(kiraUICatalogStack, textFootnote())
+        overline: catalogFont(kiraUICatalogStack, "overline")
+        label: catalogFont(kiraUICatalogStack, "label")
+        section: catalogFont(kiraUICatalogStack, "section")
+        headline: catalogFont(kiraUICatalogStack, textHeadline())
+        title1: catalogFont(kiraUICatalogStack, "title1")
+        title2: catalogFont(kiraUICatalogStack, textTitle2())
+        title3: catalogFont(kiraUICatalogStack, textTitle3())
     }
 }
