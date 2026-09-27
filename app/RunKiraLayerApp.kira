@@ -1,0 +1,179 @@
+import KiraGraphics
+import KiraLayout
+import Foundation
+import KCoreAnimation
+
+// The retained run loop: a window that reconciles a description tree each time
+// state changes and lets the compositor animate the difference.
+//
+// This is the new spine beside `RunFoundationInteractiveApp`. Where that one
+// builds a `FoundationView` every frame and walks it, this one builds the widget
+// tree, lowers it to a `CALayerDescription`, lays that out against the window,
+// and reconciles it into the retained `CALayerTree`. Reconciliation is what
+// makes a state change ANIMATE: the same layers are still there, so a changed
+// property moves from where it was rather than snapping.
+//
+// The chain is `describe` -> `caLayoutTree` -> `caReconcile` -> advance ->
+// `caCompositorEncode` -> present, and hit testing reads the same retained tree
+// the frame was drawn from.
+
+// The state a running retained app carries between frames: the compositor and
+// its retained tree, the batch that owns the glyph atlas and pipelines, and the
+// input the window has forwarded.
+struct KiraLayerAppState {
+    var stateScope: U64 = U64(0)
+    var compositor: Compositor = Compositor {}
+    var batch: UiBatch
+    var batchReady: Bool = false
+    var frameCount: Int = 0
+    var ui: FoundationUiContext = FoundationUiContext {}
+    var transparent: Bool = false
+}
+
+function kiraLayerViewport(frame: borrow RenderFrame, fallbackWidth: Int, fallbackHeight: Int) -> Size {
+    var width = frame.viewportWidth()
+    var height = frame.viewportHeight()
+    if width <= 0.0 {
+        width = intAsFloat(value: fallbackWidth)
+    }
+    if height <= 0.0 {
+        height = intAsFloat(value: fallbackHeight)
+    }
+    let renderScale = foundationRenderScale(frame.backingScale())
+    if renderScale > 0.0 {
+        width = intAsFloat(value: frame.drawableWidth()) / renderScale
+        height = intAsFloat(value: frame.drawableHeight()) / renderScale
+    }
+    if width <= 0.0 || height <= 0.0 {
+        return Size { width: 1280.0, height: 720.0 }
+    }
+    return Size { width: width, height: height }
+}
+
+// Forward a pointer event into the retained input state: what the window points
+// at is decided against the tree the last frame drew, exactly as a window's own
+// runner decides it.
+function kiraLayerDispatch(userData: RawPtr, x: Float, y: Float, pressed: Bool) {
+    var state = nativeRecover<KiraLayerAppState>(userData)
+    state.ui.pointerX = x
+    state.ui.pointerY = y
+    let hit = caHitTestTree(state.compositor.tree, x, y)
+    if hit.hit {
+        state.ui.hoveredKey = hit.hitKey
+        if pressed {
+            state.ui.pressedKey = hit.hitKey
+            state.ui.clickedKey = hit.hitKey
+            // The press runs the action the pressed key was bound to during the
+            // last rebuild's `describe`.
+            kiraUiLayerActionInvoke(hit.hitKey)
+        }
+    } else {
+        state.ui.hoveredKey = 0
+    }
+    state.ui.eventCount = state.ui.eventCount + 1
+    foundationWriteInputSnapshot(state.ui)
+    return
+}
+
+function RunKiraLayerApp(
+    title: String,
+    width: Int,
+    height: Int,
+    rootBuilder: borrow () -> Any Widget,
+    transparent: Bool = false,
+    // Host hook run first every frame, before the UI pass — where an engine
+    // ticks its simulation and renders its offscreen viewport for a TextureView
+    // to show this same frame. Default is a no-op.
+    engineFrame: borrow (borrow mut RenderFrame) -> Void = kiraUiNoopEngineFrame,
+) {
+    let previousStateScope = stateScopeCurrent()
+    let layerStateScope = stateScopeCreate()
+    stateScopeEnter(layerStateScope)
+    let runtimeStorage = nativeState(KiraLayerAppState {
+        stateScope: layerStateScope,
+        batch: UiBatch { storage: nativeState(UiBatchState {
+            engine: nullPointer(),
+            face: nullPointer(),
+            contentsPtr: nullPointer(),
+            atlasPixels: nullPointer()
+        }) },
+        transparent: transparent
+    })
+    let runtimeUser = nativeUserDataBorrow(runtimeStorage)
+
+    var app = GraphicsApplication {
+        title: title,
+        width: width,
+        height: height,
+        sampleCount: 1,
+        transparent: transparent,
+        backend: graphicsDefaultBackend()
+    }
+
+    app.onEvent { event in
+        if event.kind == .PointerMoved {
+            kiraLayerDispatch(runtimeUser, event.pointerX, event.pointerY, false)
+        }
+        if event.kind == .PointerDown {
+            kiraLayerDispatch(runtimeUser, event.pointerX, event.pointerY, true)
+        }
+        return
+    }
+
+    app.onFrame { frame in
+        // Engine-first: the host's simulation and offscreen passes complete
+        // before any UI work, so a TextureView composites this frame's output.
+        let hostFrame: borrow (borrow mut RenderFrame) -> Void = engineFrame
+        hostFrame(frame)
+        var state = nativeRecover<KiraLayerAppState>(frame.userData)
+        let viewport = kiraLayerViewport(frame, width, height)
+        state.ui.viewport = viewport
+        state.ui.frameCount = state.frameCount
+        let renderScale = foundationRenderScale(frame.backingScale())
+        let graphics = foundationFrameGraphics(frame)
+        if !state.batchReady {
+            state.batch = UiBatch { storage: createBatch(graphics) }
+            state.batchReady = true
+        }
+
+        // Build the widget tree, lower it to a description, lay it out against the
+        // window, and reconcile it into the retained tree. On the first frame the
+        // reconcile mounts every layer without animating; after that a changed
+        // property animates from where it was.
+        // A fresh action table for this rebuild: `describe` binds each hittable
+        // layer's press action under its key as it produces the description.
+        kiraUiLayerActionsReset()
+        let build: borrow () -> Any Widget = rootBuilder
+        let widgetContext = buildContext(state.ui)
+        var described = build().describe(widgetContext, ModifierContext {})
+        caLayoutTree(described, viewport.width, viewport.height)
+        let mount = state.frameCount == 0
+        if mount {
+            let ignored = caReconcileImmediate(state.compositor.tree, described)
+        } else {
+            let ignored = caReconcile(state.compositor.tree, described)
+        }
+
+        let ignoredAdvance = caCompositorAdvance(state.compositor, frame)
+        let ignoredEncode = caCompositorEncode(
+            state.compositor,
+            frame,
+            graphics,
+            state.batch,
+            viewport.width,
+            viewport.height,
+            renderScale,
+            state.transparent
+        )
+        let page = foundationPageFor(state.transparent)
+        state.batch.presentBatch(frame, graphics, page.r, page.g, page.b, page.a)
+        state.frameCount = state.frameCount + 1
+        state.ui.clickedKey = 0
+        return
+    }
+
+    app.run(runtimeUser)
+    stateSlotReset()
+    stateScopeEnter(previousStateScope)
+    return
+}

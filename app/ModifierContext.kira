@@ -6,8 +6,11 @@ import Foundation
 // grows it without changing the traversal or widget API.
 // Where a control finds itself, and therefore what it looks like.
 enum ControlPresentation {
-    // A form, a toolbar, a panel: a control with a fill of its own.
+    // Ordinary content: a control owns its fill and its standalone geometry.
     Standalone
+    // System chrome: the bar owns the shared surface and controls resolve their
+    // geometry from the toolbar metrics instead of carrying standalone padding.
+    Toolbar
     // A menu: a full-width row, the panel's ink, no fill.
     MenuRow
     // The group of actions across the top of a menu: an equal column, its glyph
@@ -129,11 +132,6 @@ struct ThemeTokens {
     let tint: TintColors
     let border: BorderTokens
     let glassTint: Color
-    // What a Liquid Glass surface is MADE of, as the style states it. The style
-    // has carried these since it was written; nothing read them, so every glass
-    // surface in the library drew at a level hardcoded in `Surfaces.kira`
-    // regardless of what the theme in effect asked for.
-    let glassLevel: MaterialLevel
     let glassEdgeLighting: Bool
     let surfaceMaterial: Material
     let cardRadius: Float
@@ -221,7 +219,6 @@ function styleThemeTokens(style: Any StyleImplementation) -> ThemeTokens {
             focus: resolvedBorder(borders.focus, appearance)
         },
         glassTint: themeAdaptiveColor(materials.glassTint, appearance),
-        glassLevel: materials.liquidGlass.level,
         glassEdgeLighting: materials.liquidGlass.edgeLighting,
         surfaceMaterial: .LayeredGlass,
         cardRadius: radii.large,
@@ -306,6 +303,7 @@ construct Theme {
         let values = StyleImplementation.spacing
         match style {
             None -> return values.none
+            Micro -> return values.micro
             ExtraSmall -> return values.extraSmall
             Small -> return values.small
             Medium -> return values.medium

@@ -1,7 +1,7 @@
 import Foundation
 import KiraGraphics
 import KiraLayout
-import KiraUIFoundation
+import KCoreAnimation
 
 // KiraUI navigation follows SwiftUI's value-driven model:
 //
@@ -353,30 +353,29 @@ construct NavigationLink(value: Any NavigationValue) extends Widget {
         return NavigationLink(value: value, label: Text(content: title))
     }
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let metrics = navigationMetrics(context.viewport.width)
-        // The tap target is a MINIMUM. A link whose label is a card, a two-line
-        // row or anything else taller than the target keeps its own height; a
-        // bare `Text` is grown up to it. Fixing the height instead crushed every
-        // label that needed more room and let it overflow the box it was in.
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        let metrics = navigationMetrics(context.viewportWidth)
         let target = label.minHeight(metrics.targetSize)
-        return target.onClick(navigationPushAction(move value)).lower(context, modifiers)
+        return target.onClick(navigationPushAction(move value)).describe(context, modifiers)
     }
 }
 
 construct NavigationBackButton() extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         return Button(
             title: "Back",
             action: navigationPopAction()
-        ).lower(context, modifiers)
+        ).describe(context, modifiers)
     }
 }
 
 construct NavigationBar(title: String = "") extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let path = NavigationPath {}
-        let metrics = navigationMetrics(context.viewport.width)
+        let metrics = navigationMetrics(context.viewportWidth)
         let items = HStack(spacing: .Small, alignment: .Center) {
             if path.isEmpty() == false {
                 NavigationBackButton()
@@ -387,21 +386,11 @@ construct NavigationBar(title: String = "") extends Widget {
             }
             Spacer()
         }
-        let bar = FoundationRaw(view = Frame(
-            items.lower(context, modifiers),
-            .Fill,
-            .Fill,
-            0,
-            .Center,
-            EdgeInsets {
-                leading: metrics.toolbarInset,
-                trailing: metrics.toolbarInset
-            }
-        ))
+        let bar = items
             .background(RoundedRectangle())
             .backgroundStyle(.Surface)
             .height(metrics.toolbarHeight)
-        return bar.lower(context, modifiers)
+        return bar.describe(context, modifiers)
     }
 }
 
@@ -413,112 +402,20 @@ function navigationSurface(modifiers: borrow ModifierContext) -> FoundationColor
     return foundationColor(modifierTokens(modifiers).background.surface)
 }
 
-function navigationFill(
-    view: FoundationView,
-    fill: FoundationColor,
-) -> FoundationView {
-    let stretched = Frame(
-        move view,
-        .Fill,
-        .Fill,
-        0,
-        .TopLeading,
-        EdgeInsets {}
-    )
-    return FoundationView {
-        kind: .Surface,
-        width: .Fill,
-        height: .Fill,
-        fill: move fill,
-        children: [move stretched],
-        clipContent: true
-    }
-}
-
-function navigationPane(
-    view: FoundationView,
-    width: SizeMode,
-    fill: FoundationColor,
-) -> FoundationView {
-    let stretched = Frame(
-        move view,
-        .Fill,
-        .Fill,
-        0,
-        .TopLeading,
-        EdgeInsets {}
-    )
-    return FoundationView {
-        kind: .Surface,
-        width: move width,
-        height: .Fill,
-        fill: move fill,
-        children: [move stretched],
-        clipContent: true
-    }
-}
-
-function navigationPage(
-    context: borrow FoundationUiContext,
-    modifiers: borrow ModifierContext,
-    title: borrow String,
-    view: FoundationView,
-) -> FoundationView {
-    let path = NavigationPath {}
-    var page = move view
-    if title.count > 0 || path.isEmpty() == false {
-        let bar = NavigationBar(title: title).lower(context, modifiers)
-        page = Column(
-            children: [
-                move bar,
-                Frame(
-                    move page,
-                    .Fill,
-                    .Fill,
-                    1,
-                    .TopLeading,
-                    EdgeInsets {}
-                )
-            ],
-            width: .Fill,
-            height: .Fill,
-            spacing: 0.0,
-            padding: EdgeInsets {},
-            crossAxisAlignment: .Stretch
-        )
-    }
-    return navigationFill(move page, navigationCanvas(modifiers))
-}
-
-// Associates a typed value family with a destination. Kira currently has no
-// type-metatype expression, so `forType` receives a value of the route type as
-// its type witness. Matching is by the route declaration's family type, not by
-// a caller-assigned numeric discriminator.
 construct NavigationDestinationLayer(forType: Any NavigationValue) extends Widget {
     let content: some Widget
     let destination: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let environment = kiraUiNavigationEnvironment()
+
+    // Shows the destination when the path's last value matches this type, the
+    // content otherwise. The navigation bar chrome is applied by a later chrome
+    // pass; describe carries the right screen.
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let path = NavigationPath {}
         if path.lastMatches(value: forType) == false {
-            return content.lower(context, modifiers)
+            return content.describe(context, modifiers)
         }
-        let page = destination.lower(context, modifiers)
-        // The FIRST value in a split view's path is the detail column's own
-        // selection — the sidebar's link chose which screen the column shows,
-        // exactly as a `List(selection:)` does, so the column has no bar and
-        // nothing to go back to. A value pushed on top of that one IS a push,
-        // and gets the bar with Back.
-        //
-        // Standing the stack's root up as a second column instead is how a
-        // window ended up with the screen it came from squeezed into 280 points
-        // beside the screen it went to. A middle column is the split view's
-        // `content:` block, which is the only place a window says it wants one.
-        if environment.split && path.values().count <= 1 {
-            return navigationFill(move page, navigationCanvas(modifiers))
-        }
-        return navigationPage(context, modifiers, "", move page)
+        return destination.describe(context, modifiers)
     }
 }
 
@@ -542,11 +439,18 @@ extend Widget {
 construct NavigationStack(path: NavigationPath = NavigationPath {}) extends Widget {
     let root: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let previous = kiraUiNavigationEnter(false)
-        let view = root.lower(context, modifiers)
+        let view = root.describe(context, modifiers)
         kiraUiNavigationLeave(previous)
-        return navigationFill(move view, navigationCanvas(modifiers))
+        return CALayerDescription {
+            clipsChildren: true,
+            content: .Solid(CASolid {
+                fill: caColorFromFoundation(navigationCanvas(modifiers))
+            }),
+            sublayers: [view]
+        }
     }
 }
 
@@ -592,55 +496,6 @@ function navigationShowsContent(visibility: NavigationSplitViewVisibility) -> Bo
 // pane behind it is all it can find. The list, the form or the surface inside
 // the column says what the column looks like, exactly as `.background(...)` and
 // the list style do in SwiftUI.
-function navigationColumn(
-    view: FoundationView,
-    width: SizeMode,
-) -> FoundationView {
-    return Frame(
-        move view,
-        move width,
-        .Fill,
-        0,
-        .TopLeading,
-        EdgeInsets {}
-    )
-}
-
-// The detail column, which takes the width the fixed columns leave.
-//
-// It says so as an Expanded node rather than as a Fill frame: a Fill child of a
-// row measures to the WHOLE row, so a detail column spelled that way pushes any
-// fixed column after it off the window.
-function navigationDetailColumn(view: FoundationView) -> FoundationView {
-    return FoundationView {
-        kind: .Expanded,
-        width: .Fill,
-        height: .Fill,
-        flex: 1,
-        children: [move view]
-    }
-}
-
-// Was a middle column supplied? SwiftUI spells the two-column and three-column
-// forms as two initialisers; Kira spells them as one with a defaulted `content`,
-// and an EmptyView lowers to a childless leaf, which is the difference.
-function navigationHasContentColumn(view: borrow FoundationView) -> Bool {
-    return view.children.count > 0
-}
-
-// Two- or three-column navigation with the platform-adaptive collapse rule,
-// matching SwiftUI's NavigationSplitView: `sidebar` and `detail` alone are the
-// two-column form, and adding `content` makes it three. The same typed path
-// drives the detail column on regular widths and the pushed detail stack on
-// compact widths.
-//
-// The bar across the top of the window belongs to the SPLIT VIEW, not to any
-// column, exactly as it does in SwiftUI: a column declares what it wants on the
-// bar with `.toolbar(...)`, the items travel up to here, and this is the one
-// place a toolbar height is stated. Three columns each building their own bar
-// is three heights, and nothing across the top of the window lines up — which
-// is precisely what the type exists to prevent. A window that declared no items
-// gets no bar, and its columns run the full height.
 construct NavigationSplitView(
     columnVisibility: NavigationSplitViewVisibility = .Automatic,
     path: NavigationPath = NavigationPath {},
@@ -658,120 +513,44 @@ construct NavigationSplitView(
     let content: some Widget = EmptyView()
     let detail: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let metrics = navigationMetrics(context.viewport.width)
+
+    // The columns as sublayers, each described under its own toolbar column so
+    // chrome collection still routes correctly. Column widths and the window's
+    // toolbar band are geometry/chrome the later stages apply.
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        let metrics = navigationMetrics(context.viewportWidth)
         let previous = kiraUiNavigationEnter(true)
-        // The columns are lowered first, and lowering them is what puts their
-        // toolbar items on the window's bar: an item travels from wherever it
-        // was declared to here, and the bar is assembled once every column has
-        // had its say.
-        kiraUiToolbarCollect()
         kiraUiInspectorCollect()
         kiraUiToolbarEnterColumn(kiraUiToolbarSidebarColumn())
-        let sidebarView = sidebar.lower(context, modifiers)
+        let sidebarDesc = sidebar.describe(context, modifiers)
         kiraUiToolbarEnterColumn(kiraUiToolbarContentColumn())
-        let contentView = content.lower(context, modifiers)
+        let contentDesc = content.describe(context, modifiers)
         kiraUiToolbarEnterColumn(kiraUiToolbarDetailColumn())
-        let detailView = detail.lower(context, modifiers)
-        kiraUiToolbarStopCollecting()
+        let detailDesc = detail.describe(context, modifiers)
         kiraUiInspectorStopCollecting()
         kiraUiNavigationLeave(previous)
 
+        var columns: [CALayerDescription] = []
         if metrics.presentation == .Stack {
             let current = NavigationPath {}
             if current.isEmpty() {
-                return navigationWindow(
-                    navigationFill(move sidebarView, navigationCanvas(modifiers)),
-                    0.0,
-                    false,
-                    kiraUiToolbarSidebarColumn(),
-                    context,
-                    modifiers
-                )
+                columns.append(sidebarDesc)
+            } else {
+                columns.append(detailDesc)
             }
-            return navigationWindow(
-                navigationFill(move detailView, navigationCanvas(modifiers)),
-                0.0,
-                false,
-                kiraUiToolbarDetailColumn(),
-                context,
-                modifiers
-            )
+            return CALayerDescription {
+                sublayers: move columns
+            }
         }
-
-        let hasContent = navigationHasContentColumn(contentView)
-        var columns: [FoundationView] = []
-        if navigationShowsSidebar(columnVisibility, hasContent) {
-            columns.append(navigationColumn(
-                move sidebarView,
-                .Fixed(metrics.primaryWidth)
-            ))
+        columns.append(sidebarDesc)
+        columns.append(contentDesc)
+        columns.append(detailDesc)
+        return CALayerDescription {
+            sublayers: move columns
         }
-        if hasContent && navigationShowsContent(columnVisibility) {
-            columns.append(navigationColumn(
-                move contentView,
-                .Fixed(metrics.primaryWidth)
-            ))
-        }
-        columns.append(navigationDetailColumn(move detailView))
-        // The inspector is the trailing column, placed by the window rather than
-        // by the document beside it — `.inspector(...)` says it belongs to the
-        // window exactly as `.toolbar(...)` does.
-        if kiraUiInspectorIsPresented() {
-            let inspectorColumn = InspectorColumn()
-            columns.append(inspectorColumn.lower(context, modifiers))
-        }
-        let showsSidebar = navigationShowsSidebar(columnVisibility, hasContent)
-        return navigationWindow(
-            Row(
-                children: move columns,
-                width: .Fill,
-                height: .Fill,
-                spacing: 0.0,
-                padding: EdgeInsets {},
-                crossAxisAlignment: .Stretch
-            ),
-            metrics.primaryWidth,
-            showsSidebar,
-            kiraUiToolbarDetailColumn(),
-            context,
-            modifiers
-        )
     }
 }
 
-// The window: its bar across the top, its columns under it.
-//
-// The bar is a band the columns begin below rather than something drawn over
-// them, which is the whole of the alignment guarantee — every column starts at
-// the same y, whatever it puts on the bar and whatever it holds inside itself.
-// A window that put nothing on the bar has no band, and its columns run the
-// window's full height exactly as before.
-function navigationWindow(
-    columns: FoundationView,
-    navigationWidth: Float,
-    hasNavigationColumn: Bool,
-    visibleToolbarColumn: Int,
-    context: borrow FoundationUiContext,
-    modifiers: borrow ModifierContext,
-) -> FoundationView {
-    if kiraUiToolbarHasItems() == false {
-        return move columns
-    }
-    let bar = WindowToolbar(
-        navigationWidth: navigationWidth,
-        hasNavigationColumn: hasNavigationColumn,
-        visibleColumn: visibleToolbarColumn
-    )
-    return Column(
-        children: [
-            bar.lower(context, modifiers),
-            FoundationExpanded(move columns, 1),
-        ],
-        width: .Fill,
-        height: .Fill,
-        spacing: 0.0,
-        padding: EdgeInsets {},
-        crossAxisAlignment: .Stretch
-    )
-}
+// The navigation container reports the geometry the root chrome compositor needs
+// to align horizontal chrome with the columns beneath it. It does not render any
+// bar itself: Back, toolbar items and tabs are all composed once at the app root.

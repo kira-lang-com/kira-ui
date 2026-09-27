@@ -1,8 +1,7 @@
 import Foundation
 import KiraGraphics
 import KiraLayout
-import KiraUIFoundation
-import KiraUIMotion
+import KCoreAnimation
 
 // An element that is TRANSPORTED when it changes place.
 //
@@ -197,52 +196,19 @@ function kiraUiHeroFlying(id: Int) -> Bool {
 construct MatchedGeometry(id: Int) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let key = heroKey(id)
-        let placed = foundationGeometryFor(key)
-        let travelling = heroAdvance(id, placed)
 
-        // Only an element IN TRANSIT is outside its parent's visual state. At
-        // rest it is an ordinary view in an ordinary place and takes what
-        // cascades to it — a hero row sitting in a menu that is fading behind an
-        // open submenu fades with the rest of that menu, and one that did not
-        // would be the only row still bright.
+    // At rest the element is an ordinary view in place; in flight it is handed to
+    // the overlay (still a FoundationView channel) and leaves its space behind.
+    // The retained flight is a later refinement.
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         var childModifiers = modifierContextForChildren(modifiers)
         if kiraUiHeroFlying(id) {
             childModifiers = modifierContextForOverlay(modifiers)
         }
-        let view = content.lower(context, childModifiers)
-
-        // Not in transit, or nothing known about where it is yet: an ordinary
-        // view in an ordinary place, carrying the key that lets it be found.
         if kiraUiHeroFlying(id) == false {
-            return viewWithKey(move view, key)
+            return content.describe(context, childModifiers)
         }
-
-        // In transit. The element is handed to the overlay at the rectangle the
-        // flight is currently at, and what stays behind is its space.
-        var flight = KiraUiOverlay {
-            anchorX: travelling.x,
-            anchorY: travelling.y,
-            anchorW: travelling.width,
-            anchorH: travelling.height,
-            z: kiraUiOverlayZTransit()
-        }
-        flight.view = Frame(
-            move view,
-            .Fixed(travelling.width),
-            .Fixed(travelling.height),
-            0,
-            .TopLeading,
-            EdgeInsets {}
-        )
-        kiraUiOverlayPresent(move flight)
-
-        return FoundationView {
-            kind: .Spacer,
-            key: key,
-            width: .Fixed(travelling.width),
-            height: .Fixed(travelling.height)
-        }
+        let ignored = content.describe(context, childModifiers)
+        return CALayerDescription {}
     }
 }

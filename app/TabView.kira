@@ -1,0 +1,164 @@
+import Foundation
+import KiraGraphics
+import KiraLayout
+import KCoreAnimation
+
+// Top-level application destinations. Tabs declare navigation meaning; the
+// chrome compositor decides whether those destinations are shown along the
+// bottom edge or in a vertical system rail.
+
+struct KiraUiTabSelectionState {
+    var selection: Int = 0
+}
+
+struct KiraUiTabEnvironment {
+    var key: Int = 0
+    var nextIndex: Int = 0
+    var active: Bool = false
+}
+
+function kiraUiTabEnvironmentKey() -> String {
+    return "kiraui.tab.environment"
+}
+
+function kiraUiTabEnvironment() -> KiraUiTabEnvironment {
+    if kiraUiStateSlotHas(kiraUiTabEnvironmentKey()) == false {
+        kiraUiStateSlotPut(
+            kiraUiTabEnvironmentKey(),
+            nativeUserData(nativeState(KiraUiTabEnvironment {}))
+        )
+    }
+    return nativeRecover<KiraUiTabEnvironment>(
+        kiraUiStateSlotGet(kiraUiTabEnvironmentKey())
+    )
+}
+
+function kiraUiTabEnter(key: Int) -> KiraUiTabEnvironment {
+    let previous = kiraUiTabEnvironment()
+    var current = nativeRecover<KiraUiTabEnvironment>(
+        kiraUiStateSlotGet(kiraUiTabEnvironmentKey())
+    )
+    current.key = key
+    current.nextIndex = 0
+    current.active = true
+    return previous
+}
+
+function kiraUiTabLeave(previous: borrow KiraUiTabEnvironment) {
+    var current = nativeRecover<KiraUiTabEnvironment>(
+        kiraUiStateSlotGet(kiraUiTabEnvironmentKey())
+    )
+    current.key = previous.key
+    current.nextIndex = previous.nextIndex
+    current.active = previous.active
+    return
+}
+
+function kiraUiTabNextIndex() -> Int {
+    var current = nativeRecover<KiraUiTabEnvironment>(
+        kiraUiStateSlotGet(kiraUiTabEnvironmentKey())
+    )
+    let index = current.nextIndex
+    current.nextIndex = current.nextIndex + 1
+    return index
+}
+
+function kiraUiTabChromeKey(tabViewKey: Int, index: Int) -> Int {
+    return 0 - 1000000 - tabViewKey * 1024 - index
+}
+
+function kiraUiTabSelectionKey(key: Int) -> String {
+    return kiraUiSlotKey("kiraui.tab.selection.", key)
+}
+
+function kiraUiTabEnsure(key: Int, initialSelection: Int) {
+    let slot = kiraUiTabSelectionKey(key)
+    if kiraUiStateSlotHas(copy slot) == false {
+        kiraUiStateSlotPut(
+            move slot,
+            nativeUserData(nativeState(KiraUiTabSelectionState {
+                selection: initialSelection
+            }))
+        )
+    }
+    return
+}
+
+function kiraUiTabSelection(key: Int) -> Int {
+    kiraUiTabEnsure(key, 0)
+    let state = nativeRecover<KiraUiTabSelectionState>(
+        kiraUiStateSlotGet(kiraUiTabSelectionKey(key))
+    )
+    return state.selection
+}
+
+function kiraUiTabSetSelection(key: Int, selection: Int) {
+    kiraUiTabEnsure(key, selection)
+    var state = nativeRecover<KiraUiTabSelectionState>(
+        kiraUiStateSlotGet(kiraUiTabSelectionKey(key))
+    )
+    state.selection = selection
+    return
+}
+
+function kiraUiTabSelectFn(key: Int, selection: Int) -> () -> Void {
+    let tabKey = key
+    let selected = selection
+    let press: () -> Void = { in
+        kiraUiTabSetSelection(tabKey, selected)
+        return
+    }
+    return press
+}
+
+function kiraUiTabInk(selected: Bool) -> PrimaryColor {
+    if selected {
+        return .Accent
+    }
+    return .Secondary
+}
+
+construct Tab(
+    title: String,
+    systemImage: Symbol,
+    value: Int,
+) extends Widget {
+    let content: some Widget
+
+
+    // The selected tab's content joins the retained tree. The tab-bar chrome was
+    // built into the legacy FoundationView chrome sink, which the retained runner
+    // does not read; retained tab chrome is a later stage.
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        let ignored = title
+        let environment = kiraUiTabEnvironment()
+        if environment.active == false {
+            return content.describe(context, modifiers)
+        }
+        let selected = kiraUiTabSelection(environment.key) == value
+        let tabIndex = kiraUiTabNextIndex()
+        let ignoredKey = kiraUiTabChromeKey(environment.key, tabIndex)
+        if selected {
+            return content.describe(context, modifiers)
+        }
+        return CALayerDescription {}
+    }
+}
+
+construct TabView(initialSelection: Int = 0) extends Widget {
+    let children: [some Widget]
+
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        let key = kiraUiTapSeqKey()
+        kiraUiTabEnsure(key, initialSelection)
+        let previous = kiraUiTabEnter(key)
+        let content = ZStack(alignment: .TopLeading) {
+            For(tab in children) {
+                tab
+            }
+        }.fillWidth().fillHeight().describe(context, modifiers)
+        kiraUiTabLeave(previous)
+        return content
+    }
+}

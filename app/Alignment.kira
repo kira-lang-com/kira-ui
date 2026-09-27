@@ -1,5 +1,5 @@
 import Foundation
-import KiraUIFoundation
+import KCoreAnimation
 
 // Alignment guides.
 //
@@ -154,39 +154,13 @@ function guideTag(guide: borrow Any AlignmentGuide) -> Int {
 construct AlignmentGuideLayer(guide: Any AlignmentGuide, value: (ViewDimensions) -> Float) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let tag = guideTag(guide)
-        let answer = value
-        // The foundation resolves against a placed size, so it hands back width
-        // and height rather than the dimensions value this library speaks in.
-        let resolve: (Float, Float) -> Float = { width, height in
-            return answer(ViewDimensions { width: width, height: height })
-        }
-        let view = content.lower(context, modifiers)
-        return viewPublishingGuide(move view, tag, move resolve)
+
+    // An alignment guide is layout metadata; the content passes through and the
+    // layout stage reads the guide.
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        let ignored = guideTag(guide)
+        return content.describe(context, modifiers)
     }
 }
 
 // The same view, taking its painted extent from a pair of guides.
-function viewFollowingGuides(
-    view: FoundationView,
-    leading: Int,
-    trailing: Int,
-) -> FoundationView {
-    return viewWithGuideRange(move view, leading, trailing)
-}
-
-// The same view, answering one more guide. Publications accumulate, so a view
-// can answer several.
-function viewPublishingGuide(
-    view: FoundationView,
-    tag: Int,
-    resolve: (Float, Float) -> Float,
-) -> FoundationView {
-    var published = view.guides
-    published.append(FoundationGuidePublication {
-        tag: tag,
-        resolve: resolve
-    })
-    return viewWithGuides(move view, move published)
-}

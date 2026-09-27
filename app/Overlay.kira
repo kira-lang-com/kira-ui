@@ -1,7 +1,7 @@
 import Foundation
 import KiraGraphics
 import KiraLayout
-import KiraUIFoundation
+import KCoreAnimation
 
 // Views that float FREE of what declared them.
 //
@@ -45,7 +45,6 @@ import KiraUIFoundation
 
 // One floating view: what to draw, and the rectangle it hangs from.
 struct KiraUiOverlay {
-    var view: FoundationView = FoundationView { kind: .Spacer }
     // The anchor, in canvas coordinates — the bounds of whatever opened this.
     var anchorX: Float = 0.0
     var anchorY: Float = 0.0
@@ -146,47 +145,3 @@ function kiraUiPressAnchor() -> KiraUiOverlay {
 // out among siblings: each one is offset to its own anchor and takes its natural
 // size there. The stack fills the canvas, so that offset is in canvas
 // coordinates — the same ones the anchor was recorded in.
-function kiraUiRootWithOverlays(content: FoundationView) -> FoundationView {
-    let floating = kiraUiOverlaysThisFrame()
-    if floating.count == 0 {
-        return content
-    }
-    var layers: [FoundationView] = []
-    layers.append(move content)
-    // By layer, and within a layer in the order they were presented. A stable
-    // sort rather than a general one: two surfaces on the same layer keep the
-    // order they were declared in, which is the only thing a caller can reason
-    // about.
-    var pass = 0
-    while pass <= kiraUiOverlayZTransit() {
-        for index in 0..floating.count {
-            let overlay = floating[index]
-            if overlay.z == pass {
-                layers.append(Frame(
-                    overlay.view,
-                    .Hug,
-                    .Hug,
-                    0,
-                    .TopLeading,
-                    EdgeInsets { leading: overlay.anchorX, top: overlay.anchorY }
-                ))
-            }
-        }
-        pass = pass + kiraUiOverlayZTransit()
-    }
-    // A Frame, which arranges its children as an overlay: each takes the whole
-    // box and they stack in z. The application's content is the first, so
-    // everything hoisted here lands on top of it in declaration order.
-    //
-    // Not clipped and not painted. The point of hoisting a view is that nothing
-    // trims it, and a clip on the layer holding them would put a boundary back
-    // around every one.
-    return FoundationView {
-        kind: .Frame,
-        width: .Fill,
-        height: .Fill,
-        alignment: Alignment.TopLeading,
-        padding: EdgeInsets {},
-        children: move layers
-    }
-}

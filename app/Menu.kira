@@ -1,8 +1,7 @@
 import Foundation
 import KiraGraphics
 import KiraLayout
-import KiraUIFoundation
-import KiraUIMotion
+import KCoreAnimation
 
 // A menu, and the submenus that open inside it.
 //
@@ -59,27 +58,23 @@ import KiraUIMotion
 // that are a line plus ten and a half points of air. The example proved the
 // numbers; this is the library finally using them.
 
-// Rows sit on a 42pt pitch — not the form row height, which is a different,
-// denser control.
-function menuRowPitch() -> Float {
-    return 42.0
+// Menu geometry resolves through the active control-size table. The regular
+// defaults are the measured 42/30/28/16.5 values from the reference capture,
+// while Mini/Small/Large are theme-owned variants in Metrics.kira.
+function menuRowPitch(modifiers: borrow ModifierContext) -> Float {
+    return resolvedControlMetrics(modifiers).menuRowHeight
 }
 
-// The one horizontal inset a menu has: content sits 30pt in from the leading
-// edge and 28pt from the trailing.
-function menuRowLeading() -> Float {
-    return 30.0
+function menuRowLeading(modifiers: borrow ModifierContext) -> Float {
+    return resolvedControlMetrics(modifiers).menuLeadingInset
 }
 
-function menuRowTrailing() -> Float {
-    return 28.0
+function menuRowTrailing(modifiers: borrow ModifierContext) -> Float {
+    return resolvedControlMetrics(modifiers).menuTrailingInset
 }
 
-// Menu labels are 16.5pt — the reference face renders 3% larger than the
-// platform's at the same nominal size, so matching the point size matches the
-// wrong thing.
-function menuLabelSize() -> Float {
-    return 16.5
+function menuLabelSize(modifiers: borrow ModifierContext) -> Float {
+    return resolvedControlMetrics(modifiers).menuLabelSize
 }
 
 // --- placeholder metrics -----------------------------------------------------
@@ -112,15 +107,10 @@ function menuRecedeScale() -> Float {
 }
 
 // The corner every menu card takes — the panel and the submenu that opens over
-// it alike. One radius, because they are the same kind of surface: a submenu is
-// a menu, and giving the inner one a corner of its own makes two shapes out of
-// what should read as one material used twice.
-function menuCardRadius() -> Float {
-    return 34.0
-}
-
-function menuSubmenuRadius() -> Float {
-    return menuCardRadius()
+// it alike. It is part of menu presentation geometry, so it resolves through the
+// active metric table rather than living as a private literal here.
+function menuCardRadius(modifiers: borrow ModifierContext) -> Float {
+    return resolvedControlMetrics(modifiers).menuCardRadius
 }
 
 // Below this the card is not drawn at all.
@@ -426,90 +416,8 @@ function kiraUiMenuRecede(frameCount: Int) -> Float {
 // run of them reads as a list rather than as a stack of controls. The press
 // region is the whole row, which is what a menu is: you aim at the line, not at
 // the words on it.
-function menuRowView(
-    context: borrow FoundationUiContext,
-    modifiers: borrow ModifierContext,
-    key: Int,
-    press: () -> Void,
-    label: some Widget,
-) -> FoundationView {
-    let chosen = kiraUiMenuChooseFn(move press)
-    // The menu's own type size, stated here so a plain `Button(title:)` in a
-    // menu is set exactly as the platform sets one.
-    let labelContext = modifierContextApply(
-        modifierContextForPresentation(modifiers),
-        modifierDeltaFont(menuLabelSize(), .Regular)
-    )
-    let row = HStack(spacing: .None, alignment: .Center) {
-        FoundationRaw(view: label.lower(context, labelContext))
-
-        Spacer()
-    }
-    .height(menuRowPitch())
-    .fillWidth()
-    let padded = FoundationRaw(view: Frame(
-        row.lower(context, modifiers),
-        .Fill,
-        .Fixed(menuRowPitch()),
-        0,
-        .Leading,
-        EdgeInsets { leading: menuRowLeading(), trailing: menuRowTrailing() }
-    ))
-    let view = padded.lower(context, modifiers)
-    let width = view.width
-    let height = view.height
-    return FoundationView {
-        kind: .HitArea,
-        key: key,
-        width: width,
-        height: height,
-        disabled: modifiers.disabled,
-        focusable: true,
-        onPress: chosen,
-        children: [move view]
-    }
-}
-
-// What `Button` lowers to in the group of actions across the top of a menu.
-//
-// An equal COLUMN, its glyph above its title — `.frame(maxWidth: .infinity)` on
-// a `VStack { Image; Text }`. Equal rather than hugging is the whole point: the
-// three stand on thirds of the panel whatever their titles are, so "Duplicate"
-// does not push "Hide" off its share.
-//
-// The label is whatever the caller wrote. A `Label(title:systemImage:)` is the
-// case this is shaped for and it lays itself out along the row, so the group
-// stacks it here instead — see `menuActionLabel`.
-function menuActionView(
-    context: borrow FoundationUiContext,
-    modifiers: borrow ModifierContext,
-    key: Int,
-    press: () -> Void,
-    label: some Widget,
-) -> FoundationView {
-    let chosen = kiraUiMenuChooseFn(move press)
-    let column = VStack(spacing: .ExtraSmall, alignment: .Center) {
-        FoundationRaw(view: label.lower(context, modifierContextForPresentation(modifiers)))
-    }
-    .fillWidth()
-    .padding(length: menuActionPad())
-    let view = column.lower(context, modifiers)
-    let width = view.width
-    let height = view.height
-    return FoundationView {
-        kind: .HitArea,
-        key: key,
-        width: width,
-        height: height,
-        disabled: modifiers.disabled,
-        focusable: true,
-        onPress: chosen,
-        children: [move view]
-    }
-}
-
-function menuActionPad() -> Float {
-    return 8.0
+function menuActionPad(modifiers: borrow ModifierContext) -> Float {
+    return resolvedControlMetrics(modifiers).menuActionPadding
 }
 
 // A press region for a menu row, with NO wash of its own.
@@ -524,45 +432,19 @@ function menuActionPad() -> Float {
 // So a menu row states its own highlight (see `MenuHeader`, and `menuRowView`
 // for the ordinary rows) and takes a press region that draws nothing. This is
 // the same reason `DismissArea` is its own leaf rather than an `.onClick`.
-function menuPressRegion(
-    context: borrow FoundationUiContext,
-    modifiers: borrow ModifierContext,
-    key: Int,
-    press: () -> Void,
-    content: FoundationView,
-) -> FoundationView {
-    let width = content.width
-    let height = content.height
-    return FoundationView {
-        kind: .HitArea,
-        key: key,
-        width: width,
-        height: height,
-        disabled: modifiers.disabled,
-        focusable: true,
-        onPress: press,
-        children: [move content]
-    }
-}
-
-// The wash an open row is lit with, at a given strength — the strength folded
-// into the ALPHA rather than applied as an opacity, so it is simply a colour.
-// A NEUTRAL wash, as the platform's is. The lit row in a menu is "this one",
-// not "this one is your accent colour" — the reference's pill is a light grey
-// that reads over the material in either scheme.
 function menuHeaderLightFill(strength: Float) -> Color {
     return Color { r: 1.0, g: 1.0, b: 1.0, a: 0.16 * strength }
 }
 
 // How far the lit pill stands in from the card's edge.
-function menuPillInset() -> Float {
-    return 6.0
+function menuPillInset(modifiers: borrow ModifierContext) -> Float {
+    return resolvedControlMetrics(modifiers).menuPillInset
 }
 
 // The corner of the highlight a menu row lights up with. A rounded pill inset in
 // the panel rather than a band across it, which is what the platform draws.
-function menuRowRadius() -> Float {
-    return 10.0
+function menuRowRadius(modifiers: borrow ModifierContext) -> Float {
+    return resolvedControlMetrics(modifiers).menuRowRadius
 }
 
 // --- the menu row ------------------------------------------------------------
@@ -584,8 +466,8 @@ function menuChevronTurn(amount: Float) -> Float {
 // The box the chevron is centred in. A turning glyph sweeps its own diagonal, so
 // the box is squared and large enough to hold it at every angle rather than at
 // the two it rests at.
-function menuChevronBox() -> Float {
-    return 14.0
+function menuChevronBox(modifiers: borrow ModifierContext) -> Float {
+    return resolvedControlMetrics(modifiers).menuChevronBox
 }
 
 // A submenu's header: the row that owns it, which stays put while the card grows
@@ -596,50 +478,28 @@ function menuChevronBox() -> Float {
 // value that grows the card, so the row does not announce itself before there is
 // anything open to announce.
 construct MenuHeader(title: String, systemImage: Symbol, amount: Float, key: Int) extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    // The header row as a hittable layer: label, spacer and the disclosure
+    // chevron. The row framing and press wash are geometry/input the later
+    // stages apply.
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let row = HStack(spacing: .Small, alignment: .Center) {
             Label(title: title, systemImage: systemImage)
-                .font(size: menuLabelSize())
+                .font(size: menuLabelSize(modifiers))
 
             Spacer()
 
-            FoundationRaw(view: Frame(
-                Icon(symbol: .ChevronRight)
-                    .imageScale(.Small)
-                    .foregroundColor(.Secondary)
-                    .rotationEffect(menuChevronTurn(amount))
-                    .lower(context, modifiers),
-                .Fixed(menuChevronBox()),
-                .Fixed(menuChevronBox()),
-                0,
-                .Center,
-                EdgeInsets {}
-            ))
+            Icon(symbol: .ChevronRight)
+                .imageScale(.Small)
+                .foregroundColor(.Secondary)
+                .rotationEffect(menuChevronTurn(amount))
         }
-        .height(menuRowPitch())
-        let inset = FoundationRaw(view: Frame(
-            row.lower(context, modifiers),
-            .Fill,
-            .Fixed(menuRowPitch()),
-            0,
-            .Leading,
-            EdgeInsets { leading: menuRowLeading(), trailing: menuRowTrailing() }
-        ))
-        if amount <= 0.0 {
-            return menuPressRegion(context, modifiers, key, kiraUiToggleMenuFn(key), inset.lower(context, modifiers))
+        .height(menuRowPitch(modifiers))
+        return CALayerDescription {
+            hittable: true,
+            hitKey: key,
+            sublayers: [row.describe(context, modifiers)]
         }
-        // NO highlight behind the open row yet, and this is a gap rather than a
-        // choice: the platform lights it, and so should this.
-        //
-        // Any filled surface drawn on a row INSIDE a glass card comes out white.
-        // Measured on this row, mid-close, at 238 mean with three quarters of the
-        // band over 250 — for a fill that is a fifth of an alpha of blue, and
-        // identically for the 8% hover wash, for a flat-forced token fill and for
-        // an explicit colour with the strength folded into its alpha. The colour
-        // does not matter, the material does not matter; drawing a fill there at
-        // all is what does it. Until that is fixed a lit row is a white bar, and
-        // no row reads better than a wrong one.
-        return menuPressRegion(context, modifiers, key, kiraUiToggleMenuFn(key), inset.lower(context, modifiers))
     }
 }
 
@@ -680,110 +540,36 @@ construct MenuHeader(title: String, systemImage: Symbol, amount: Float, key: Int
 construct Menu(title: String, systemImage: Symbol = .None) extends Widget {
     let children: [some Widget]
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    // The submenu's card and lit pill are presented through the overlay side
+    // channel, which still holds FoundationViews, so describe keeps the legacy
+    // overlay presentation and contributes the row's resting space to the
+    // retained tree — the header itself when closed.
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let key = kiraUiTapSeqKey()
         let amount = menuRevealAdvance(key)
-
-        // Keyed from the menu's own key rather than minted where it is lowered.
-        // Open, this row is built inside the card; closed, in the menu. A minted
-        // key would differ between those two, so the row's press region would
-        // change identity every time it opened — and a region that changes
-        // identity is a press that lands on nothing.
         let header = MenuHeader(title: title, systemImage: systemImage, amount: amount, key: key)
-
-        // Closed, or so nearly closed that the card is no longer drawn: an
-        // ordinary row in the menu, and nothing floats. The card's material has
-        // already reached zero at this point, so the row coming back here is not
-        // visible as a change.
         if amount <= menuCardFloor() {
-            return header.lower(context, modifiers)
+            return header.describe(context, modifiers)
         }
-
-        // Open, or on its way in or out: the row is in the card, and the card
-        // floats.
-        let floating = VStack(spacing: .None) {
-            header
-
-            // `.Reveal(amount)` measures the rows at their natural height and
-            // then takes that fraction of it, so they arrive full size from
-            // behind the header the way a drawer slides out rather than the card
-            // zooming and taking the type with it.
-            //
-            // Layout answers how tall the rows came to. Multiplying a row height
-            // by a child count here would be this file guessing at that, and
-            // guessing wrong for any submenu whose rows are not all the same
-            // height.
-            FoundationRaw(view: Frame(
-                VStack(spacing: .None) {
-                    For(item in children) {
-                        item
-                    }
-                }.lower(context, modifierContextForOverlay(modifiers)),
-                .Fill,
-                .Reveal(amount),
-                0,
-                .Top,
-                EdgeInsets {}
-            ))
+        // Open: the header plus the submenu's items, as a column. The floating
+        // glass card and lit pill were presented through the legacy FoundationView
+        // overlay sink, which the retained runner does not read; the retained
+        // overlay/glass presentation is a later stage, so describe carries the
+        // expanded content inline for now.
+        let ignored = menuCardWidth(key)
+        var subs: [CALayerDescription] = []
+        subs.append(header.describe(context, modifiers))
+        let overlayModifiers = modifierContextForOverlay(modifiers)
+        for item in children {
+            subs.append(item.describe(context, overlayModifiers))
         }
-        // No padding of its own: the card is exactly as wide as the rows it came
-        // out of, and its rows are the same rows at the same size. A submenu is
-        // not a smaller or a larger menu — it is the same menu's material,
-        // holding the same kind of row, which is why nothing inside it needs to
-        // be measured differently from what is underneath.
-        .width(menuCardWidth(key))
-        .glassEffect(shape: .Squircle(menuCardRadius()))
-        // The material comes up from nothing rather than the card fading as a
-        // whole: what should arrive is the glass, not a translucent picture of
-        // the finished panel. The rows inside are already handled by the reveal.
-        .opacity(menuCardOpacity(amount))
-
-        // The lit row, drawn ABOVE the card rather than inside it.
-        //
-        // A fill inside this card comes out white, and only inside THIS card: the
-        // identical fill on a row of the menu underneath renders correctly. What
-        // is different is that the submenu's glass stands on the menu's glass,
-        // and a translucent fill inside the upper one is taken by the material
-        // twice. Measured at 238 mean inside, 105 outside, for the same colour.
-        //
-        // So the highlight goes on its own layer over the card, where it is what
-        // it is: a rounded wash on top of a panel, in front of the material
-        // rather than behind it. The overlay layer already orders by z, and an
-        // element in transit already uses the upper one — this is the same idea
-        // for the same reason.
-        var lit = kiraUiMenuAnchor(key)
-        lit.z = kiraUiOverlayZTransit()
-        // Inset from the card, not bleeding to its edges: the pill is a wash ON
-        // the panel, and one that touches the corners reads as a second panel.
-        lit.anchorX = lit.anchorX + menuPillInset()
-        lit.anchorY = lit.anchorY + menuPillInset() * 0.5
-        lit.view = RoundedRectangle(cornerRadius: menuRowRadius())
-            .fill(menuHeaderLightFill(min(max(amount, 0.0), 1.0)))
-            .width(menuCardWidth(key) - menuPillInset() * 2.0)
-            .height(menuRowPitch() - menuPillInset())
-            .lower(context, modifierContextForOverlay(modifiers))
-
-        var presented = kiraUiMenuAnchor(key)
-        presented.z = kiraUiOverlayZSurface()
-        // Lowered out of the menu's own context — the card stands in FRONT of a
-        // menu that is fading itself out, and built under that context it would
-        // inherit the fade meant for what is behind it — and out of its key
-        // sequence, since these rows are built in the middle of the menu's build
-        // but are not part of it. Sharing the main counter shifts the key of
-        // every row declared after this menu the moment it opens.
-        kiraUiTapSeqEnterOverlay()
-        presented.view = floating.lower(context, modifierContextForOverlay(modifiers))
-        kiraUiTapSeqLeaveOverlay()
-        kiraUiOverlayPresent(move presented)
-        kiraUiOverlayPresent(move lit)
-
-        // The row's space, held at its RESTING height — not at whatever height
-        // the animation is passing through. The row itself is in the card above,
-        // at exactly this place.
-        return FoundationView {
-            kind: .Spacer,
-            width: .Fill,
-            height: .Fixed(menuRowPitch())
+        return CALayerDescription {
+            layout: CALayoutIntent {
+                axis: .Column,
+                heightFill: false
+            },
+            sublayers: move subs
         }
     }
 }
@@ -796,24 +582,14 @@ construct Menu(title: String, systemImage: Symbol = .None) extends Widget {
 // anything; until then an application places it. Either way it is the thing that
 // RECEDES when a submenu inside it opens, which is why the recession is read
 // here rather than pushed down from the menu that caused it.
-construct ContextMenu(width: Float = 250.0) extends Widget {
+construct ContextMenu(width: Float = 0.0) extends Widget {
     let children: [some Widget]
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let receded = kiraUiMenuRecede(context.frameCount)
-        // Full ink and full size at rest; a smaller, legible ghost at full
-        // recession.
         let ink = 1.0 - (1.0 - menuRecededOpacity()) * receded
         let scale = 1.0 - (1.0 - menuRecedeScale()) * receded
-
-        // The CONTENT recedes, not the card.
-        //
-        // A menu behind an open submenu keeps its material — it is still a panel
-        // standing over the page, and fading the glass lets whatever is behind
-        // the window come through it, so the menu takes on the colour of the
-        // wallpaper instead of going quiet. What recedes is what is written on
-        // it: the labels and glyphs go to a legible ghost while the surface they
-        // are on stays exactly as solid as it was.
         let rows = VStack(spacing: .None) {
             For(item in children) {
                 item
@@ -821,10 +597,14 @@ construct ContextMenu(width: Float = 250.0) extends Widget {
         }
         .opacity(ink)
 
+        var resolvedWidth = width
+        if resolvedWidth <= 0.0 {
+            resolvedWidth = resolvedControlMetrics(modifiers).menuCardWidth
+        }
         let card = rows
-            .width(width)
-            .glassEffect(shape: .Squircle(menuCardRadius()))
+            .width(resolvedWidth)
+            .glassEffect(shape: .Squircle(menuCardRadius(modifiers)))
             .scaleEffect(scale)
-        return card.lower(context, modifierContextPresenting(modifiers, .MenuRow))
+        return card.describe(context, modifierContextPresenting(modifiers, .MenuRow))
     }
 }

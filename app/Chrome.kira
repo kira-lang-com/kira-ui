@@ -1,7 +1,7 @@
 import Foundation
 import KiraGraphics
 import KiraLayout
-import KiraUIFoundation
+import KCoreAnimation
 
 // Window chrome: the source list beside the document, and the boxes a chrome
 // glyph sits in.
@@ -27,13 +27,11 @@ enum WindowControlGlyph {
 }
 
 construct WindowControls(spacing: Spacing = .ExtraSmall) extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         if graphicsUsesWaylandClientWindowControls() == false {
-            return EmptyView().lower(context, modifiers)
+            return CALayerDescription {}
         }
-        // macOS reveals all three marks when the pointer enters any one of the
-        // traffic lights. Mint the stable hit keys here so every button can see
-        // the group's hover state before it lowers.
         let closeKey = kiraUiTapSeqKey()
         let minimizeKey = kiraUiTapSeqKey()
         let maximizeKey = kiraUiTapSeqKey()
@@ -66,7 +64,7 @@ construct WindowControls(spacing: Spacing = .ExtraSmall) extends Widget {
             )
         }
         .hugWidth()
-        return controls.lower(context, modifiers)
+        return controls.describe(context, modifiers)
     }
 }
 
@@ -77,11 +75,9 @@ construct WindowButton(
     revealGlyph: Bool,
     action: () -> Void,
 ) extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let metrics = resolvedControlMetrics(modifiers)
-        // The painted traffic light stays platform-sized; the transparent box
-        // around it is four points larger so acquiring a tiny dot does not
-        // require pixel-perfect aim.
         let hitSize = metrics.windowButton + 4.0
         let face = ZStack(alignment: .Center) {
             Circle()
@@ -95,23 +91,11 @@ construct WindowButton(
         }
         .width(hitSize)
         .height(hitSize)
-        let lowered = face.lower(context, modifiers)
-        let press = action
-        return FoundationView {
-            kind: .HitArea,
-            key: key,
-            width: lowered.width,
-            height: lowered.height,
-            // A HitArea's zero value is an opaque fill. Window controls paint
-            // their own coloured face, so the acquisition box must be
-            // explicitly transparent or it covers the hover glyphs it owns.
-            backgroundFill: transparentFoundationColor(),
-            radius: hitSize / 2.0,
-            disabled: modifiers.disabled,
-            focusable: true,
-            autofocus: modifiers.hasFocused && modifiers.focused,
-            onPress: press,
-            children: [move lowered]
+        return CALayerDescription {
+            hittable: !modifiers.disabled,
+            hitKey: key,
+            cornerRadius: hitSize / 2.0,
+            sublayers: [face.describe(context, modifiers)]
         }
     }
 }
@@ -120,7 +104,8 @@ construct WindowButton(
 // inside a twelve-point face, and a library icon's text-sized layout box can
 // extend across neighbouring controls even when its ink is requested smaller.
 construct WindowControlMark(kind: WindowControlGlyph) extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let mark = ZStack(alignment: .Center) {
             if kind == .Close {
                 Text(content: "×")
@@ -137,7 +122,7 @@ construct WindowControlMark(kind: WindowControlGlyph) extends Widget {
         }
         .width(8.0)
         .height(8.0)
-        return mark.lower(context, modifiers)
+        return mark.describe(context, modifiers)
     }
 }
 
@@ -152,15 +137,10 @@ construct WindowControlMark(kind: WindowControlGlyph) extends Widget {
 construct CenteredContent() extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        return Frame(
-            content.lower(context, modifiers),
-            .Fill,
-            .Fill,
-            0,
-            .Center,
-            EdgeInsets {}
-        )
+
+    // Centring is geometry the layout stage applies; the content passes through.
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        return content.describe(context, modifiers)
     }
 }
 
@@ -169,16 +149,17 @@ construct CenteredContent() extends Widget {
 construct ControlSlot(active: Bool = false, radius: CornerRadius = .Small) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let metrics = resolvedControlMetrics(modifiers)
         let slot = CenteredContent() {
             content
         }
         .background(RoundedRectangle(radius: radius))
         .backgroundStyle(controlSlotSurface(active))
-        .width(metrics.buttonWidth)
-        .height(metrics.height)
-        return slot.lower(context, modifiers)
+        .width(metrics.buttonSize)
+        .height(metrics.buttonSize)
+        return slot.describe(context, modifiers)
     }
 }
 
@@ -204,47 +185,29 @@ function controlStateInk(active: Bool) -> PrimaryColor {
 construct ControlGroup(spacing: Spacing = .ExtraSmall) extends Widget {
     let children: [some Widget]
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        // In a menu this is the run of actions across the top, which is a
-        // different thing from a capsule of controls in a toolbar: its members
-        // take equal thirds of the panel and carry their glyph above their
-        // title, and the group has no capsule of its own — the menu's card is
-        // already the surface they sit on.
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         if modifiers.controlPresentation == .MenuRow {
-            // The members fill, and a row splits the space between everything
-            // that fills — so thirds come out of the layout rather than being
-            // divided here. `Expanded` would do it too, but it fills on BOTH
-            // axes, and a child that fills contributes nothing to a parent
-            // sizing from its content: the row would hug to nothing and the
-            // group would draw on top of the first menu item.
             let actions = HStack(spacing: .None, alignment: .Top) {
                 For(item in children) {
                     item
                 }
             }
             .fillWidth()
-            return actions.lower(context, modifierContextPresenting(modifiers, .MenuAction))
+            return actions.describe(context, modifierContextPresenting(modifiers, .MenuAction))
         }
-        let metrics = resolvedControlMetrics(modifiers)
         let items = HStack(spacing: spacing, alignment: .Center) {
             For(item in children) {
                 item
             }
         }
         .hugWidth()
-        let group = FoundationRaw(view: Frame(
-            items.lower(context, modifiers),
-            .Hug,
-            .Hug,
-            0,
-            .Center,
-            uniformInsets(metrics.toggleInset)
-        ))
-        .background(Capsule())
-        .backgroundStyle(.Control)
-        .hugWidth()
-        .hugHeight()
-        return group.lower(context, modifiers)
+        let group = items
+            .background(Capsule())
+            .backgroundStyle(.Control)
+            .hugWidth()
+            .hugHeight()
+        return group.describe(context, modifiers)
     }
 }
 
@@ -271,7 +234,8 @@ construct Inspector(
 ) extends Widget {
     let children: [some Widget]
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let metrics = resolvedControlMetrics(modifiers)
         let panel = Form(spacing: spacing) {
             For(section in children) {
@@ -285,7 +249,7 @@ construct Inspector(
         .material(material)
         .width(metrics.inspectorWidth)
         .fillHeight()
-        return panel.lower(context, modifiers)
+        return panel.describe(context, modifiers)
     }
 }
 
@@ -302,13 +266,9 @@ construct ListRow(
 ) extends Widget {
     let children: [some Widget]
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let metrics = resolvedControlMetrics(modifiers)
-        // The row FILLS its list rather than hugging its content, and holds it
-        // against the leading edge. A Spacer of its own would be one the caller
-        // cannot see: a row that ends with `Spacer()` and a trailing count would
-        // then have two of them, and the two would split the slack between them
-        // — which is how a right-hand count ends up in the middle of the row.
         let content = HStack(spacing: spacing, alignment: .Center) {
             if level > 0 {
                 FixedGap(width: intAsFloat(value: level) * metrics.listIndent, height: 1.0)
@@ -318,38 +278,11 @@ construct ListRow(
                 item
             }
         }
-        // The row's CONTENT starts at the column's margin, like everything else in
-        // the column — the bar above it, the header over the list. The selection
-        // band is what is inset instead: it is held off the column's edge by half
-        // that margin, so a selected row reads as a pill inside the column rather
-        // than as a stripe across it, and the text inside it does not move when it
-        // becomes selected.
-        let margin = resolvedContentMargin(modifiers)
-        let bandInset = margin / 2.0
-        let band = FoundationRaw(view: Frame(
-            content.lower(context, listRowModifiers(modifiers, selected)),
-            .Fill,
-            .Fixed(metrics.listRowHeight),
-            0,
-            .Leading,
-            EdgeInsets {
-                leading: margin - bandInset,
-                trailing: margin - bandInset
-            }
-        ))
-        .background(BackgroundFill(style: listRowSurface(selected), radius: .Small))
-        let row = FoundationRaw(view: Frame(
-            band.lower(context, modifiers),
-            .Fill,
-            .Hug,
-            0,
-            .Leading,
-            EdgeInsets {
-                leading: bandInset,
-                trailing: bandInset
-            }
-        ))
-        return row.lower(context, modifiers)
+        // The selection band is the row's own surface; insets and row height are
+        // geometry the layout stage applies.
+        let band = content
+            .background(BackgroundFill(style: listRowSurface(selected), radius: .Small))
+        return band.describe(context, listRowModifiers(modifiers, selected))
     }
 }
 

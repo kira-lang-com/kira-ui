@@ -1,7 +1,7 @@
 import KiraGraphics
 import KiraLayout
 import Foundation
-import KiraUIFoundation
+import KCoreAnimation
 
 // The layout and shape primitives everything else is built from: the three
 // stacks, a fixed gap, a rectangle, and the two ways a vector reaches the
@@ -99,29 +99,11 @@ function indices(count: Int) -> [Int] {
     return out
 }
 
-// Adopts an already-built low-level FoundationView into the Widget family, so an
-// existing hand-lowered helper drops straight into a `For(...)` content block
-// without rewriting its body: `FoundationRaw(view = …)`.
-construct FoundationRaw(view: FoundationView) extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let ignored = context.frameCount
-        return view
-    }
-}
-
-// Nothing, with a place in the tree — SwiftUI's `EmptyView`. It is what a widget
-// argument defaults to when the caller supplies no view: a section without a
-// footer draws no footer, rather than the container having to carry a flag for
-// each optional slot.
 construct EmptyView() extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let ignored = context.frameCount
-        return FoundationView {
-            kind: .Surface,
-            width: .Fixed(0.0),
-            height: .Fixed(0.0),
-            fill: transparentFoundationColor()
-        }
+        return CALayerDescription {}
     }
 }
 
@@ -155,15 +137,16 @@ construct HStack(
 ) extends Widget {
     let children: [some Widget]
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        return Row(
-            children: loweredChildren(context, modifiers, children),
-            width: .Fill,
-            height: .Hug,
-            spacing: stackSpacing(spacing, spacingLength, modifiers),
-            padding: EdgeInsets {},
-            crossAxisAlignment: foundationVerticalAlignment(alignment)
-        )
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        return CALayerDescription {
+            layout: CALayoutIntent {
+                axis: .Row,
+                spacing: stackSpacing(spacing, spacingLength, modifiers),
+                heightFill: false
+            },
+            sublayers: describedChildren(context, modifiers, children)
+        }
     }
 }
 
@@ -176,15 +159,16 @@ construct VStack(
 ) extends Widget {
     let children: [some Widget]
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        return Column(
-            children: loweredChildren(context, modifiers, children),
-            width: .Fill,
-            height: .Hug,
-            spacing: stackSpacing(spacing, spacingLength, modifiers),
-            padding: EdgeInsets {},
-            crossAxisAlignment: foundationHorizontalAlignment(alignment)
-        )
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        return CALayerDescription {
+            layout: CALayoutIntent {
+                axis: .Column,
+                spacing: stackSpacing(spacing, spacingLength, modifiers),
+                heightFill: false
+            },
+            sublayers: describedChildren(context, modifiers, children)
+        }
     }
 }
 
@@ -193,14 +177,12 @@ construct VStack(
 construct ZStack(alignment: StackAlignment = .Center) extends Widget {
     let children: [some Widget]
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        return FoundationView {
-            kind: .Frame,
-            width: .Fill,
-            height: .Fill,
-            alignment: foundationAlignment(alignment),
-            padding: EdgeInsets {},
-            children: loweredChildren(context, modifiers, children)
+
+    // Overlay stack: children share the frame's bounds. Placement within the
+    // frame by `alignment` is layout's job; describe carries the stack order.
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        return CALayerDescription {
+            sublayers: describedChildren(context, modifiers, children)
         }
     }
 }
@@ -210,13 +192,17 @@ construct ZStack(alignment: StackAlignment = .Center) extends Widget {
 // A fixed-size, paint-free box: deterministic spacing inside stacks, where the
 // flexing Spacer would absorb leftover space instead.
 construct FixedGap(width: Float, height: Float) extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    // A paint-free box of a fixed extent.
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let ignored = context.frameCount
-        return FoundationView {
-            kind: .Surface,
-            width: .Fixed(width),
-            height: .Fixed(height),
-            fill: transparentFoundationColor()
+        return CALayerDescription {
+            layout: CALayoutIntent {
+                widthFill: false,
+                heightFill: false,
+                fixedWidth: width,
+                fixedHeight: height
+            }
         }
     }
 }
@@ -234,9 +220,10 @@ construct FixedGap(width: Float, height: Float) extends Widget {
 // names the glyph's size RELATIVE to the size class in effect, and
 // `.foregroundColor(...)` names its ink exactly as it does a run of text's.
 construct Icon(symbol: Symbol) extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let ignored = context.frameCount
-        return iconView(
+        return iconDescription(
             symbolImplementation(symbol, modifiers),
             iconScaleSize(modifiers.imageScale, modifiers),
             modifiers
@@ -256,13 +243,14 @@ construct Icon(symbol: Symbol) extends Widget {
 // `svg` is SVG text (the subset the foundation's rasterizer reads: paths
 // including arcs, circle / rect / line / polyline / polygon, fill and stroke).
 construct Artwork(svg: String, scale: IconScale = .Medium, points: Float = -1.0) extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let ignored = context.frameCount
         var size = iconScaleSize(scale, modifiers)
         if points >= 0.0 {
             size = points
         }
-        return iconView(svg, size, modifiers)
+        return iconDescription(svg, size, modifiers)
     }
 }
 
@@ -274,89 +262,28 @@ function iconInkAspect(svg: borrow String) -> Float {
     return foundationIconInkAspect(svg)
 }
 
-// How much of its own box a symbol's drawing covers, and the share above which
-// it counts as drawn SOLID rather than stroked. An outline leaves most of its
-// box empty; a filled shape does not.
-function iconInkDensity(svg: borrow String) -> Float {
-    return foundationIconInkDensity(svg)
-}
-
-function iconSolidDensity() -> Float {
-    return 0.4
-}
-
-function iconView(
+function iconDescription(
     svg: String,
     size: Float,
     modifiers: borrow ModifierContext,
-) -> FoundationView {
+) -> CALayerDescription {
+    let ignored = size
     var ink = modifierColor(foundationColor(modifierTokens(modifiers).foreground.primary), modifiers)
     if modifiers.hasForegroundColor {
         ink = modifierColor(modifierPrimaryColor(modifiers.foregroundColor, modifiers), modifiers)
     }
-    // A glyph is ink, so it answers the same explicit override a run of text
-    // does. `.foregroundColor(...)` names a role and is what application code
-    // should reach for; `.textColor(...)` is the escape hatch for artwork whose
-    // colour is the document's rather than the theme's — a gizmo's axis, a
-    // swatch — and an icon that ignored it had no way to be one of those.
     if modifiers.hasTextColor {
         ink = modifierColor(foundationColor(modifiers.textColor), modifiers)
     }
-    // The box IS the ink: `size` is the band the glyph's drawing fills, and the
-    // width follows from the shape of that drawing. There is no canvas margin
-    // left in it, so the glyph starts where a letter starts and its bottom is
-    // the line a letter sits on — the two things that made a symbol beside a
-    // word look like a picture placed near it.
-    let aspect = iconInkAspect(svg)
-    var growth = 0.0
-    // Only a STROKED symbol is thickened. A solid one — a cursor, a filled
-    // marker — has no stems to match against the type beside it, and growing it
-    // just swells the shape until it reads as a blob.
-    if iconInkDensity(svg) < iconSolidDensity() {
-        growth = iconWeightGrowth(size, modifiers)
-    }
-    return FoundationView {
-        kind: .Icon,
-        content: move svg,
-        color: move ink,
-        size: size,
-        iconWidth: size * aspect,
-        baseline: size,
-        weightGrowth: growth
+    return CALayerDescription {
+        content: .Icon(CAIcon {
+            svg: move svg,
+            tint: caColorFromFoundation(ink),
+            weightGrowth: 0.0
+        })
     }
 }
 
-// How much heavier than drawn this glyph is.
-//
-// The symbol library is one weight — a hairline outline — and the type around it
-// is not. Beside a semibold headline, an unthickened symbol is a different,
-// lighter object standing near the words rather than a character in the same
-// run: the stems say one thing and the outline says another, and no amount of
-// aligning it fixes that. So the artwork is grown outward until its stroke
-// matches the stems it stands with.
-//
-// The library's stroke is 16 of its 256 units. A regular face's stem is about a
-// twelfth of the cap band, and a heavier one thickens roughly with its weight —
-// the difference, halved (growth applies to both sides of a stroke), is what the
-// glyph has to gain.
-function iconWeightGrowth(band: Float, modifiers: borrow ModifierContext) -> Float {
-    let drawn = band * 0.0625
-    let wanted = iconCapBand(modifiers) * iconStemRatio(iconTypeWeight(modifiers))
-    if wanted <= drawn {
-        return 0.0
-    }
-    return (wanted - drawn) / 2.0
-}
-
-// A stem, as a fraction of the cap band, at a given weight.
-//
-// 400 is the face's regular cut, and at that weight the answer is what the
-// library already draws — a regular symbol beside regular words needs no
-// thickening at all. Heavier cuts thicken faster than their weight number does,
-// which is why the slope is steeper than one.
-function iconStemRatio(weight: Float) -> Float {
-    return 0.09 * (1.0 + 1.7 * (weight / 400.0 - 1.0))
-}
 
 // The weight the words beside the glyph are set at, so the band is measured on
 // the type actually in effect.

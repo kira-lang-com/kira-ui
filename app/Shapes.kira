@@ -1,6 +1,6 @@
 import KiraGraphics
 import Foundation
-import KiraUIFoundation
+import KCoreAnimation
 import KiraLayout
 
 // The shape a container is drawn in, stated AT THE POINT OF USE:
@@ -36,7 +36,7 @@ enum ContainerShape {
 // A capsule is a rounded rect whose radius no box can reach, so one number
 // answers for both and the renderer needs no separate case.
 function containerShapeUnbounded() -> Float {
-    return 9999.0
+    return infinity
 }
 
 function containerShapeRadius(shape: ContainerShape, modifiers: borrow ModifierContext) -> Float {
@@ -70,41 +70,57 @@ function containerShapeSurfaceShape(shape: borrow ContainerShape) -> FoundationS
 construct SurfaceLayer(style: Material, shape: ContainerShape) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let childModifiers = modifierContextForChildren(modifiers)
-        let view = content.lower(context, childModifiers)
-        let width = view.width
-        let height = view.height
-        let fallbackFill = foundationColor(modifierTokens(modifiers).background.surface)
-        var selectedBorder = modifierSurfaceBorder(transparentFoundationColor(), modifiers)
+
+    // A material surface wrapping the content: a filled, clipping layer with the
+    // content as its sublayer. Liquid Glass describes a `CAContent.Glass` layer —
+    // the compositor captures the backdrop behind it, blurs it and refracts it
+    // through the surface; every other material fills flat.
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        let radius = containerShapeRadius(shape, modifiers)
+        if style == .LayeredGlass {
+            return CALayerDescription {
+                cornerRadius: radius,
+                clipsChildren: true,
+                capturesBackdrop: true,
+                content: .Glass(CAGlass {
+                    blur: 1.0,
+                    edgeRefraction: 1.0,
+                    tint: caColorFromFoundation(modifierTokens(modifiers).glassTint),
+                    material: CAGlassMaterial {},
+                    shapeKind: surfaceLayerGlassShapeKind(shape)
+                }),
+                sublayers: [content.describe(context, modifierContextForChildren(modifiers))]
+            }
+        }
         var borderWidth = 1.0
         if modifiers.hasThemeBorder == false {
             borderWidth = 0.0
         }
-        // Liquid Glass draws its own edge; a token border on top of it reads as
-        // a hairline seam around the material.
-        if style == .LayeredGlass {
-            selectedBorder = transparentFoundationColor()
+        return CALayerDescription {
+            cornerRadius: radius,
+            clipsChildren: true,
+            capturesBackdrop: false,
+            content: .Solid(CASolid {
+                fill: caColorFromFoundation(surfaceGlassFill(Color {}, style, modifiers)),
+                border: caColorFromFoundation(modifierSurfaceBorder(transparentFoundationColor(), modifiers)),
+                borderWidth: borderWidth,
+                cornerRadius: radius
+            }),
+            sublayers: [content.describe(context, modifierContextForChildren(modifiers))]
         }
-        return FoundationView {
-            kind: .Surface,
-            width: width,
-            height: height,
-            fill: surfaceGlassFill(Color {}, style, modifiers),
-            border: selectedBorder,
-            borderWidth: borderWidth,
-            radius: containerShapeRadius(shape, modifiers),
-            shape: containerShapeSurfaceShape(shape),
-            material: foundationMaterial(style),
-            effects: [],
-            padding: EdgeInsets {},
-            clipContent: true,
-            blur: surfaceGlassBlur(style, modifiers),
-            edgeRefraction: 1.0,
-            glassMaterial: surfaceGlassMaterial(style, modifiers),
-            disabled: modifiers.disabled,
-            children: [move view]
-        }
+    }
+}
+
+// A continuous superellipse corner draws as shape kind 1 (the platform menu /
+// control corner); every other container shape is a circular-arc rounded rect.
+function surfaceLayerGlassShapeKind(shape: borrow ContainerShape) -> Int {
+    match shape {
+        Squircle(value) -> return 1
+        Rect -> return 0
+        RoundedRect(value) -> return 0
+        Radius(style) -> return 0
+        Capsule -> return 0
+        Circle -> return 0
     }
 }
 
@@ -133,12 +149,13 @@ construct RoundedRectangle(
         return RoundedRectangle(cornerRadius: 0.0, style: radius, followsTheme: true)
     }
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         var radius = cornerRadius
         if followsTheme {
             radius = cornerRadiusImplementation(style, modifiers)
         }
-        return shapeSurface(context, modifiers, radius)
+        return shapeDescription(context, modifiers, radius, 0)
     }
 }
 
@@ -146,14 +163,16 @@ construct RoundedRectangle(
 // page — sized by `.width(...)` / `.height(...)` / `.fillWidth()` like any other
 // view, and filled by the cascade or by `.fill(...)`.
 construct Rectangle() extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        return shapeSurface(context, modifiers, 0.0)
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        return shapeDescription(context, modifiers, 0.0, 0)
     }
 }
 
 construct Capsule() extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        return shapeSurface(context, modifiers, containerShapeUnbounded())
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        return shapeDescription(context, modifiers, containerShapeUnbounded(), 0)
     }
 }
 
@@ -161,11 +180,12 @@ construct Capsule() extends Widget {
 // picks the material, `.backgroundStyle` / `.foregroundColor` the flat fill,
 // `.themeBorder` the edge. A shape does not name its own colour, exactly as
 // SwiftUI's does not — `.fill(...)` and the cascade decide.
-function shapeSurface(
-    context: borrow FoundationUiContext,
+function shapeDescription(
+    context: borrow BuildContext,
     modifiers: borrow ModifierContext,
     radius: Float,
-) -> FoundationView {
+    shapeKind: Int,
+) -> CALayerDescription {
     let ignored = context.frameCount
     var style: Material = .Flat
     if modifiers.hasMaterial {
@@ -176,28 +196,18 @@ function shapeSurface(
     if modifiers.hasThemeBorder == false {
         borderWidth = 0.0
     }
-    // Liquid Glass draws its own edge; a token border on top of it reads as a
-    // hairline seam around the material.
     if style == .LayeredGlass {
         border = transparentFoundationColor()
     }
-    return FoundationView {
-        kind: .Surface,
-        width: .Fill,
-        height: .Fill,
-        fill: surfaceGlassFill(Color {}, style, modifiers),
-        border: border,
-        borderWidth: borderWidth,
-        radius: radius,
-        shape: .RegularRoundedRect,
-        material: foundationMaterial(style),
-        effects: [],
-        padding: EdgeInsets {},
-        clipContent: true,
-        blur: surfaceGlassBlur(style, modifiers),
-        edgeRefraction: 1.0,
-        glassMaterial: surfaceGlassMaterial(style, modifiers),
-        disabled: modifiers.disabled
+    return CALayerDescription {
+        cornerRadius: radius,
+        content: .Solid(CASolid {
+            fill: caColorFromFoundation(surfaceGlassFill(Color {}, style, modifiers)),
+            border: caColorFromFoundation(border),
+            borderWidth: borderWidth,
+            cornerRadius: radius,
+            shapeKind: shapeKind
+        })
     }
 }
 
@@ -206,10 +216,23 @@ function shapeSurface(
 construct PaddingLayer(length: Float) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let view = content.lower(context, modifierContextForChildren(modifiers))
-        let width = view.width
-        let height = view.height
-        return Frame(move view, move width, move height, 0, .Center, uniformInsets(length))
+
+    // A wrapper that holds the child off its edges by one length on every side.
+    // The child fills the inner box; the wrapper takes the child's own fill/hug.
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        let described = content.describe(context, modifierContextForChildren(modifiers))
+        let fillsWidth = described.layout.widthFill
+        let fillsHeight = described.layout.heightFill
+        return CALayerDescription {
+            layout: CALayoutIntent {
+                widthFill: fillsWidth,
+                heightFill: fillsHeight,
+                paddingLeading: length,
+                paddingTop: length,
+                paddingTrailing: length,
+                paddingBottom: length
+            },
+            sublayers: [described]
+        }
     }
 }

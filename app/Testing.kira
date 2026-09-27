@@ -1,63 +1,73 @@
 import Foundation
-import KiraUIFoundation
+import KCoreAnimation
 
-// Inspecting a lowered widget tree, for a test that has no window.
+// Inspecting a described widget tree, for a test that has no window.
 //
 // A headless gate wants to ask what a widget tree came out as — does it say
-// "DEFEATED", how many painted surfaces does it have — and lowering is the only
+// "DEFEATED", how many painted surfaces does it have — and describing it is the
 // way to find out, because a widget's own value carries the intent and not the
-// result. Doing that at the call site meant an app naming
-// `FoundationView` and its view kinds, which is the one package
-// an app is not supposed to see: KiraUI and KiraGraphics are the whole surface.
-//
-// So the lowered tree is a value KiraUI hands out and answers questions about,
-// and the foundation stays behind it.
+// result. So the described tree is a value KiraUI hands out and answers
+// questions about, over KCoreAnimation's `CALayerDescription`.
 
 struct LoweredWidgetTree {
-    var view: FoundationView
+    var view: CALayerDescription
 }
 
-// Lower `root` the way an app's frame would, with a fresh context and no
-// inherited modifiers.
+// Describe `root` the way a frame would, with a fresh context and no inherited
+// modifiers.
 function lowerWidgetForTest(root: Any Widget) -> LoweredWidgetTree {
-    let context = FoundationUiContext {}
+    let widgetContext = buildContext(FoundationUiContext {})
     return LoweredWidgetTree {
-        view: root.lower(context, ModifierContext {})
+        view: root.describe(widgetContext, ModifierContext {})
     }
 }
 
-function loweredViewContainsText(view: borrow FoundationView, wanted: borrow String) -> Bool {
-    if view.kind == .Text {
-        if view.content == wanted {
+function describedContainsText(view: borrow CALayerDescription, wanted: borrow String) -> Bool {
+    match view.content {
+        Text(run) -> {
+            if run.content == wanted {
+                return true
+            }
+        }
+        Empty -> {}
+        Solid(s) -> {}
+        Texture(x) -> {}
+        Icon(i) -> {}
+        Glass(g) -> {}
+        Gradient(g) -> {}
+    }
+    for i in 0..view.sublayers.count {
+        if describedContainsText(view.sublayers[i], wanted) {
             return true
         }
     }
-        for i in 0..view.children.count {
-        if loweredViewContainsText(view.children[i], wanted) {
-            return true
-        }
-            }
     return false
 }
 
 // Whether any text node in the tree reads exactly `wanted`.
 function loweredTreeContainsText(tree: borrow LoweredWidgetTree, wanted: borrow String) -> Bool {
-    return loweredViewContainsText(tree.view, wanted)
+    return describedContainsText(tree.view, wanted)
 }
 
-function loweredViewSurfaceCount(view: borrow FoundationView) -> Int {
+function describedSurfaceCount(view: borrow CALayerDescription) -> Int {
     var count = 0
-    if view.kind == .Surface {
-        count = 1
+    match view.content {
+        Solid(s) -> { count = 1 }
+        Glass(g) -> { count = 1 }
+        Gradient(g) -> { count = 1 }
+        Empty -> {}
+        Text(t) -> {}
+        Texture(x) -> {}
+        Icon(i) -> {}
     }
-        for i in 0..view.children.count {
-        count = count + loweredViewSurfaceCount(view.children[i])
-            }
+    for i in 0..view.sublayers.count {
+        count = count + describedSurfaceCount(view.sublayers[i])
+    }
     return count
 }
 
 // How many painted surfaces the tree holds — what a test counts to say a panel
 // was built rather than skipped.
 function loweredTreeSurfaceCount(tree: borrow LoweredWidgetTree) -> Int {
-    return loweredViewSurfaceCount(tree.view)
+    return describedSurfaceCount(tree.view)
 }

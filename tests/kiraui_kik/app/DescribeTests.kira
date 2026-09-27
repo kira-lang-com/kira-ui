@@ -1,0 +1,141 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// The retained-tree spine: a widget's `describe()` produces the
+// `CALayerDescription` the compositor reconciles into its `CALayerTree`.
+//
+// These prove the shape of that output rather than any pixel: a container hands
+// down its children, a leaf carries content, a modifier sets a layer property,
+// and the whole thing reconciles into a real retained tree. A regression here is
+// a widget that stopped contributing to the retained tree.
+
+function kuiDescribe(root: Any Widget) -> CALayerDescription {
+    let widgetContext = buildContext(FoundationUiContext {})
+    return root.describe(widgetContext, ModifierContext {})
+}
+
+// A stack hands each child down as a sublayer.
+construct KuiAStackDescribesEachChild() extends Test {
+    test {
+        let described = kuiDescribe(VStack(spacing: .None) {
+            Text(content: "A")
+
+            Text(content: "B")
+
+            Text(content: "C")
+        })
+        return described.sublayers.count
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok(3)
+        return expected
+    }
+}
+
+// A run of text carries `.Text` content.
+construct KuiTextDescribesAsTextContent() extends Test {
+    test {
+        let described = kuiDescribe(Text(content: "Hello"))
+        var out = 0
+        match described.content {
+            Text(run) -> {
+                if run.content == "Hello" {
+                    out = 1
+                }
+            }
+            Empty -> { out = 0 }
+            Solid(s) -> { out = 0 }
+            Texture(x) -> { out = 0 }
+            Icon(i) -> { out = 0 }
+            Glass(g) -> { out = 0 }
+            Gradient(g) -> { out = 0 }
+        }
+        return out
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok(1)
+        return expected
+    }
+}
+
+// `.opacity(...)` sets the layer's opacity rather than wrapping a node.
+construct KuiOpacityDescribesAsLayerOpacity() extends Test {
+    test {
+        let described = kuiDescribe(Text(content: "X").opacity(0.5))
+        var out = 0
+        if abs(described.opacity - 0.5) < 0.0001 {
+            out = 1
+        }
+        return out
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok(1)
+        return expected
+    }
+}
+
+// Layout stacks a column's children top to bottom: the second sits below the
+// first, and both took a real height.
+construct KuiLayoutStacksAColumn() extends Test {
+    test {
+        var root = kuiDescribe(VStack(spacing: .None) {
+            Text(content: "First")
+
+            Text(content: "Second")
+        })
+        caLayoutTree(root, 320.0, 480.0)
+        var out = 0
+        if root.sublayers.count == 2 {
+            let top = root.sublayers[0]
+            let below = root.sublayers[1]
+            if below.position.y > top.position.y && top.size.height > 0.0 {
+                out = 1
+            }
+        }
+        return out
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok(1)
+        return expected
+    }
+}
+
+// A fixed-size layer takes its fixed extent, not the offered one.
+construct KuiLayoutHonorsFixedSize() extends Test {
+    test {
+        var root = kuiDescribe(Rectangle().width(40.0).height(24.0))
+        caLayoutTree(root, 320.0, 480.0)
+        var out = 0
+        if abs(root.size.width - 40.0) < 0.0001 && abs(root.size.height - 24.0) < 0.0001 {
+            out = 1
+        }
+        return out
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok(1)
+        return expected
+    }
+}
+
+// The whole thing reconciles into a retained tree with a real root layer.
+construct KuiADescriptionReconcilesIntoATree() extends Test {
+    test {
+        let described = kuiDescribe(VStack(spacing: .None) {
+            Text(content: "A")
+
+            Text(content: "B")
+        })
+        var tree = caLayerTree()
+        let rootId = caReconcile(tree, described)
+        var out = 0
+        if rootId != caNoLayer() {
+            out = 1
+        }
+        return out
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok(1)
+        return expected
+    }
+}

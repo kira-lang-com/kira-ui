@@ -1,7 +1,7 @@
 import Foundation
 import KiraGraphics
 import KiraLayout
-import KiraUIFoundation
+import KCoreAnimation
 
 // Content taller than the room it has.
 //
@@ -27,51 +27,15 @@ import KiraUIFoundation
 construct ScrollView(key: Int) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let key = key
-        let wheel: (Float, Float) -> Void = { dx, dy in
-            foundationScrollBy(key, 0.0 - dy * kiraUiScrollStep())
-            return
-        }
-        let window = FoundationView {
-            kind: .Surface,
-            key: key,
-            width: .Fill,
-            height: .Fill,
-            fill: transparentFoundationColor(),
-            clipContent: true,
-            scrolls: true,
-            // The content is measured at its OWN height, not at the window's:
-            // a child stretched to the window is a child that never overflows
-            // it, and a scroll view whose content always fits scrolls nothing.
-            children: [Frame(
-                content.lower(context, modifierContextForChildren(modifiers)),
-                .Fill,
-                .Hug,
-                0,
-                .TopLeading,
-                EdgeInsets {}
-            )]
-        }
-        // The region says it scrolls, so a wheel turn over a row inside it
-        // arrives here rather than at the row: `scrolls` on the hit region is
-        // what a wheel looks for, and `scrolls` on the window below is what
-        // layout moves.
-        return FoundationView {
-            kind: .HitArea,
-            key: key,
-            width: .Fill,
-            height: .Fill,
-            onScroll: wheel,
-            wheel: true,
-            children: [move window]
+
+    // A clipping, hittable window over the content; the scroll offset is applied
+    // by the input/layout stage that reads the region's key.
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        return CALayerDescription {
+            hittable: true,
+            hitKey: key,
+            clipsChildren: true,
+            sublayers: [content.describe(context, modifierContextForChildren(modifiers))]
         }
     }
-}
-
-// How far one notch of the wheel moves the content. A notch is a line, and a
-// line is about a row: three of them per notch is what every platform's list
-// moves.
-function kiraUiScrollStep() -> Float {
-    return 48.0
 }

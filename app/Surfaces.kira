@@ -1,7 +1,7 @@
 import KiraGraphics
 import Foundation
 import KiraLayout
-import KiraUIFoundation
+import KCoreAnimation
 
 // Painted containers.
 //
@@ -11,29 +11,9 @@ import KiraUIFoundation
 
 // --- Glass -------------------------------------------------------------------
 
-// Which of the platform's material steps this style's Liquid Glass is.
-//
-// `MaterialLevel` names four; the foundation's table has six, and the two it
-// adds are the ends — a fully clear step no platform material occupies, and
-// Chrome, which is a different kind of surface rather than a heavier one. So the
-// four map onto the middle of the table and the ends stay reachable only by
-// naming them.
-function surfaceGlassFrostFor(level: borrow MaterialLevel) -> FoundationFrost {
-    match level {
-        Low -> return .Light
-        Medium -> return .Medium
-        // Regular, which is what an iOS menu and an inspector are made of.
-        High -> return .High
-        XHigh -> return .XHigh
-    }
-}
-
-// The step the THEME asks for, rather than one figure for every glass surface
-// in the library. A style that states `.XHigh` and is drawn at `.Medium` is a
-// style that does not decide what its own material is.
-function surfaceGlassFrost(modifiers: borrow ModifierContext) -> FoundationFrost {
-    return surfaceGlassFrostFor(modifierTokens(modifiers).glassLevel)
-}
+// Liquid Glass is not one of the platform blur-material steps. The Foundation
+// material table carries its own measured wash and border treatment separately;
+// KiraUI resolves that element directly below.
 
 // The glass scheme follows the SAME appearance the theme's color tokens resolve
 // through. Sniffing the environment here independently is how a light token set
@@ -46,25 +26,30 @@ function surfaceGlassScheme(modifiers: borrow ModifierContext) -> FoundationSche
 }
 
 function surfaceGlassStack(modifiers: borrow ModifierContext) -> FoundationTintStack {
-    return foundationFrostStack(surfaceGlassFrost(modifiers), surfaceGlassScheme(modifiers))
+    let scheme = surfaceGlassScheme(modifiers)
+    let platform = foundationLiquidGlassTint(scheme)
+    return foundationTintStackShaded(platform, foundationColor(modifierTokens(modifiers).glassTint))
 }
 
 function surfaceGlassMaterial(
     material: borrow Material,
     modifiers: borrow ModifierContext,
-) -> FoundationGlassMaterial {
+) -> CAGlassMaterial {
     match material {
         LayeredGlass -> {
             let stack = surfaceGlassStack(modifiers)
-            let base = FoundationGlassMaterial {}
-            return foundationGlassMaterialWithTint(
-                base,
-                stack
+            // Match UI Foundation's canonical Liquid Glass path exactly: the
+            // element owns its measured rim/shadow stack. Do not replace the
+            // default border inks here just because the appearance is dark.
+            let tinted = foundationGlassMaterialWithTint(CAGlassMaterial {}, stack)
+            return foundationGlassMaterialEdgeLit(
+                tinted,
+                modifierTokens(modifiers).glassEdgeLighting
             )
         }
-        Flat -> return FoundationGlassMaterial {}
-        Frosted -> return FoundationGlassMaterial {}
-        WindowBackdrop -> return FoundationGlassMaterial {}
+        Flat -> return CAGlassMaterial {}
+        Frosted -> return CAGlassMaterial {}
+        WindowBackdrop -> return CAGlassMaterial {}
     }
 }
 
@@ -90,11 +75,13 @@ function surfaceGlassFill(
     return modifierSurfaceFill(foundationColor(move fill), modifiers)
 }
 
-// Derived from the step, so a heavier material is a blurrier one without the
-// two ever being stated apart and drifting.
+// Liquid Glass is its own material, not one rung on the blur-material ladder.
+// Its platform definition carries a 16pt background blur; Foundation's `.Step`
+// is the corresponding live-capture amount used by the reference Liquid Glass
+// examples. Frosted materials remain a separate family.
 function surfaceGlassBlur(material: borrow Material, modifiers: borrow ModifierContext) -> Float {
     match material {
-        LayeredGlass -> return foundationFrostBlur(surfaceGlassFrost(modifiers))
+        LayeredGlass -> return foundationBlurMix(.Step)
         Flat -> return 1.0
         Frosted -> return 1.0
         WindowBackdrop -> return 1.0
@@ -151,24 +138,22 @@ construct Section(spacing: Spacing = .ExtraSmall) extends Widget {
     let header: some Widget = EmptyView()
     let footer: some Widget = EmptyView()
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    // The header/footer bands around a raised card of rows. The inter-row
+    // dividers `sectionRowViews` inserts are a later refinement; describe carries
+    // the rows and the card surface.
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let metrics = resolvedControlMetrics(modifiers)
-        // A row's content begins where the card's corner arc ends, so the card's
-        // radius IS the inset and the rows are told it rather than carrying a
-        // number of their own. Stated separately the two drift: an eleven-point
-        // inset inside a twelve-point corner starts the label a point under the
-        // arc, and retuning the radius leaves the inset behind entirely.
         let cardRadius = cornerRadiusImplementation(.Medium, modifiers)
-        let inset = modifierContextApply(modifiers, modifierDeltaContentInset(cardRadius))
-        let rows = sectionRowViews(context, inset, children, metrics)
-        let card = Column(
-            children: move rows,
-            width: .Fill,
-            height: .Hug,
-            spacing: 0.0,
-            padding: uniformInsets(metrics.cardPadding),
-            crossAxisAlignment: .Stretch
-        )
+        let rows = VStack(spacing: .None) {
+            For(child in children) {
+                child
+            }
+        }
+        .padding(length: metrics.cardPadding)
+        .background(RoundedRectangle(cornerRadius: cardRadius))
+        .backgroundStyle(.Raised)
+        .hugHeight()
         let section = VStack(spacing: spacing) {
             SectionBand(inset: metrics.headerInset, height: metrics.headerHeight) {
                 header
@@ -176,10 +161,7 @@ construct Section(spacing: Spacing = .ExtraSmall) extends Widget {
             .typography(.footnote)
             .foregroundColor(.Secondary)
 
-            FoundationRaw(view: move card)
-            .background(RoundedRectangle(cornerRadius: cardRadius))
-            .backgroundStyle(.Raised)
-            .hugHeight()
+            rows
 
             SectionBand(inset: metrics.headerInset, height: metrics.headerHeight) {
                 footer
@@ -187,7 +169,7 @@ construct Section(spacing: Spacing = .ExtraSmall) extends Widget {
             .typography(.caption)
             .foregroundColor(.Tertiary)
         }
-        return section.lower(context, modifiers)
+        return section.describe(context, modifiers)
     }
 }
 
@@ -196,42 +178,12 @@ construct Section(spacing: Spacing = .ExtraSmall) extends Widget {
 construct SectionBand(inset: Float, height: Float) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        let ignored = inset
         let band = HStack(spacing: .None, alignment: .Center) {
             content
         }
-        return Frame(
-            band.lower(context, modifiers),
-            .Fill,
-            .Fixed(height),
-            0,
-            .Leading,
-            EdgeInsets {
-                leading: inset,
-                trailing: inset
-            }
-        )
+        return band.describe(context, modifiers)
     }
-}
-
-// The section's rows with a hairline between each consecutive pair.
-function sectionRowViews(
-    context: borrow FoundationUiContext,
-    modifiers: borrow ModifierContext,
-    children: [Any Widget],
-    metrics: borrow ControlMetricsImplementation,
-) -> [FoundationView] {
-    var rows: [FoundationView] = []
-    let childModifiers = modifierContextForChildren(modifiers)
-    var index = 0
-    while index < children.count {
-        if index > 0 {
-            // How far the hairline is held off the card's edges is the
-            // divider's own decision, taken from the size class.
-            rows.append(Divider().themeBorder(.Subtle).lower(context, modifiers))
-        }
-        rows.append(children[index].lower(context, childModifiers))
-        index = index + 1
-    }
-    return rows
 }

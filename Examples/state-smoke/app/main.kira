@@ -1,4 +1,4 @@
-import KiraUIFoundation
+import KCoreAnimation
 import KiraUI
 
 construct Panel {
@@ -32,6 +32,34 @@ construct StateLabel() extends Widget {
     }
 }
 
+function ssText(view: borrow CALayerDescription) -> String {
+    var out = ""
+    match view.content {
+        Text(run) -> { out = run.content }
+        Empty -> {}
+        Solid(s) -> {}
+        Texture(x) -> {}
+        Icon(i) -> {}
+        Glass(g) -> {}
+        Gradient(g) -> {}
+    }
+    return out
+}
+
+function ssTextureHandle(view: borrow CALayerDescription) -> Int {
+    var out = 0 - 1
+    match view.content {
+        Texture(tex) -> { out = tex.handle.raw }
+        Empty -> {}
+        Solid(s) -> {}
+        Text(t) -> {}
+        Icon(i) -> {}
+        Glass(g) -> {}
+        Gradient(g) -> {}
+    }
+    return out
+}
+
 @Main
 function main() {
     if is_State_propertyWrapper() {
@@ -53,14 +81,14 @@ function main() {
     // @State read inside a real Widget `body` builder: the lowered foundation view carries the
     // CURRENT state value, and a state write shows up on the next lower (the interactive loop's
     // per-frame rebuild).
-    let context = KiraUIFoundation.FoundationUiContext {}
-    let before = StateLabel().lower(context, ModifierContext {})
-    if before.content == "from-state" {
+    let context = buildContext(FoundationUiContext {})
+    let before = StateLabel().describe(context, ModifierContext {})
+    if ssText(before) == "from-state" {
         print("widget-body-reads-state")
     }
     __pw_StateLabel_set_label("relowered")
-    let after = StateLabel().lower(context, ModifierContext {})
-    if after.content == "relowered" {
+    let after = StateLabel().describe(context, ModifierContext {})
+    if ssText(after) == "relowered" {
         print("widget-body-sees-state-write")
     }
     if viewportLowerSurface() {
@@ -70,26 +98,18 @@ function main() {
 
 // Compile-surface check: the Viewport widget lowers to a foundation TextureView leaf.
 function viewportLowerSurface() -> Bool {
-    let context = KiraUIFoundation.FoundationUiContext {}
-    let lowered = TextureViewport(texture: 7).lower(context, ModifierContext {})
-    return lowered.texture == 7
+    let context = buildContext(FoundationUiContext {})
+    let lowered = TextureViewport(texture: TextureHandle(7)).describe(context, ModifierContext {})
+    return ssTextureHandle(lowered) == 7
 }
 
 // Compile-surface check: the interactive runner lowers widgets per frame. Never called here
 // (headless smoke); referencing it keeps the closure/lowering path checked.
 function interactiveRunnerSurface() {
-    RunWidgetInteractiveApp(
-        title: "unused",
-        width: 640,
-        height: 480,
-        rootBuilder: { in
-            return KiraUIApp(
-                name: "unused",
-                content: AppSurface {
-                    Text("hi")
-                }
-            )
+    RunKiraWindowApp("unused", 640, 480, { in
+        return AppSurface {
+            Text("hi")
         }
-    )
+    })
     return
 }
