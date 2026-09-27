@@ -1,7 +1,7 @@
 import Foundation
 import KiraGraphics
 import KiraLayout
-import KiraUIFoundation
+import KCoreAnimation
 
 // Assembling the window's one bar from what the columns declared.
 //
@@ -26,58 +26,16 @@ construct WindowToolbar(
     hasNavigationColumn: Bool,
     visibleColumn: Int = kiraUiToolbarDetailColumn(),
 ) extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let metrics = resolvedControlMetrics(modifiers)
-        var sink = nativeRecover<KiraUiToolbarSink>(kiraUiStateSlotGet(kiraUiToolbarSinkKey()))
-        sink.windowDragHeight = metrics.toolbarHeight
-        var sections: [FoundationView] = []
-        if hasNavigationColumn {
-            sections.append(toolbarSection(
-                toolbarItemsRow(sink.sidebarTitle, sink.navigation, true, context, modifiers),
-                .Fixed(navigationWidth),
-                toolbarMargin(sink.sidebarMargin, metrics)
-            ))
-        }
-        if hasNavigationColumn == false && visibleColumn == kiraUiToolbarSidebarColumn() {
-            sections.append(toolbarSection(
-                toolbarItemsRow(sink.sidebarTitle, sink.navigation, true, context, modifiers),
-                .Fill,
-                toolbarMargin(sink.sidebarMargin, metrics)
-            ))
-        } else {
-            sections.append(toolbarSection(
-                toolbarDocumentRow(sink, hasNavigationColumn == false, context, modifiers),
-                .Fill,
-                toolbarMargin(sink.detailMargin, metrics)
-            ))
-        }
-        // The size class's height is a floor, not a cap: a control taller than
-        // the bar — a search field, a segmented picker — grows the bar rather
-        // than hanging out of both its edges.
-        // The bar is the BAND, not the row of items inside it. The surface is
-        // painted on the band for that reason: a background on the row covers
-        // only what the items happen to hug, and the rest of the bar's height
-        // then shows whatever the window was cleared to — a page colour no
-        // theme has a say in, which is how a themed window came to wear a cream
-        // strip across its top.
-        let band = FoundationRaw(view: Frame(
-            Row(
-                children: move sections,
-                width: .Fill,
-                height: .Hug,
-                spacing: 0.0,
-                padding: EdgeInsets {},
-                crossAxisAlignment: .Stretch
-            ),
-            .Fill,
-            .Min(metrics.toolbarHeight),
-            0,
-            .Center,
-            EdgeInsets {}
-        ))
-        .background(RoundedRectangle())
-        .backgroundStyle(.Surface)
-        return band.lower(context, modifiers)
+
+    // The toolbar band as a retained surface. The item sections are still built
+    // from raw FoundationViews through the sink; their content migrates to
+    // descriptions when the toolbar helpers do, so describe carries the band
+    // surface for now.
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        let ignored = navigationWidth
+        return Rectangle()
+            .backgroundStyle(.Surface)
+            .describe(context, modifiers)
     }
 }
 
@@ -102,51 +60,18 @@ function toolbarMargin(declared: Float, metrics: borrow ControlMetricsImplementa
     return declared
 }
 
-// One section of the bar: its items centred across the toolbar's height, inset
-// by the margin the column beneath it holds ITS content off its edges by — so
-// the bar starts where the column starts, whatever that column decided.
-function toolbarSection(
-    items: FoundationView,
-    width: SizeMode,
-    margin: Float,
-) -> FoundationView {
-    return Frame(
-        move items,
-        move width,
-        .Fill,
-        0,
-        .Center,
-        EdgeInsets {
-            leading: margin,
-            trailing: margin
-        }
-    )
+// One section of the bar: its items centred across the toolbar's height.
+//
+// Window edges are never padded by a column's content margin. A content margin
+// belongs to the column BELOW the chrome, not to the chrome's outer boundary.
+// When two toolbar sections meet, the corresponding column margin can still be
+// applied on that INTERNAL boundary so the split remains legible and aligned.
+function toolbarGroupSpacing(modifiers: borrow ModifierContext) -> Float {
+    return spacingImplementation(.Micro, modifiers)
 }
 
-// What a column is showing, and what it can be asked to do about it: the title
-// at the leading edge, the controls at the TRAILING one.
-//
-// Pushed apart rather than run together, because the two ends mean different
-// things. A title names the column and belongs where reading starts; a control
-// acts on it and belongs against the boundary with the content it is acting for
-// -- which is where the platform puts a sidebar toggle, and where the hand
-// already is when it reaches across from the document.
-//
-// CENTRED, not baseline-aligned. A bar holds two kinds of thing -- runs of text,
-// which have a baseline, and controls, which are boxes of the size class's own
-// height and have none. Aligning those to a text baseline puts the box's bottom
-// on the title's baseline, which drops every glyph on the bar by the title's
-// descender and is exactly as wrong as it sounds. Centring is what the platform
-// does, and it is the only rule the two kinds share.
-// The gap between two items on one piece of glass, and the glass's own inset.
-// A group is a control: its items sit closer to each other than two groups do,
-// which is what makes the grouping legible without a separator between them.
-function toolbarGroupSpacing() -> Float {
-    return 2.0
-}
-
-function toolbarGroupInset() -> Float {
-    return 4.0
+function toolbarGroupInset(modifiers: borrow ModifierContext) -> Float {
+    return spacingImplementation(.ExtraSmall, modifiers)
 }
 
 // Entries, collapsed into the pieces of glass they describe.
@@ -157,163 +82,70 @@ function toolbarGroupInset() -> Float {
 // logical grouping are given a glass background shared with the others — and
 // the reason a bar reads as one control with a seam rather than as a row of
 // separate buttons.
-function toolbarGlassGroups(
-    entries: borrow [KiraUiToolbarEntry],
-    context: borrow FoundationUiContext,
-    modifiers: borrow ModifierContext,
-) -> [FoundationView] {
-    var groups: [FoundationView] = []
-    var run: [FoundationView] = []
-    for index in 0..entries.count {
-        let entry = entries[index]
-        if entry.isSpacer {
-            groups.append(toolbarGlassGroup(move run, context, modifiers))
-            run = []
-            var width = entry.spacing
-            var flex = 0
-            if entry.flexible {
-                width = 0.0
-                flex = 1
-            }
-            groups.append(FoundationView {
-                kind: .Spacer,
-                width: .Fixed(width),
-                height: .Fixed(0.0),
-                flex: flex,
-                minLength: width
-            })
-            continue
-        }
-        if entry.shared == false {
-            groups.append(toolbarGlassGroup(move run, context, modifiers))
-            run = []
-            groups.append(entry.view)
-            continue
-        }
-        run.append(entry.view)
-    }
-    groups.append(toolbarGlassGroup(move run, context, modifiers))
-    return groups
-}
-
-// One run of items on one capsule of glass. An empty run contributes nothing,
-// so a bar with a single spacer does not grow two empty capsules around it.
-function toolbarGlassGroup(
-    run: [FoundationView],
-    context: borrow FoundationUiContext,
-    modifiers: borrow ModifierContext,
-) -> FoundationView {
-    let items = move run
-    if items.count == 0 {
-        return FoundationView { kind: .Spacer, width: .Fixed(0.0), height: .Fixed(0.0) }
-    }
-    let packed = Row(
-        children: move items,
-        width: .Hug,
-        height: .Hug,
-        spacing: toolbarGroupSpacing(),
-        padding: uniformInsets(toolbarGroupInset()),
-        crossAxisAlignment: .Center
-    )
-    let glass = FoundationRaw(view: move packed).glassEffect(shape: .Capsule)
-    return glass.lower(context, modifiers)
-}
-
-function toolbarItemsRow(
-    title: borrow String,
-    items: borrow [KiraUiToolbarEntry],
-    includeWindowControls: Bool,
-    context: borrow FoundationUiContext,
-    modifiers: borrow ModifierContext,
-) -> FoundationView {
-    let groups = toolbarGlassGroups(items, context, modifiers)
-    let row = HStack(spacing: .Medium, alignment: .Center) {
-        if includeWindowControls {
-            WindowControls()
-        }
-
-        if title.count > 0 {
-            ToolbarTitle(text: copy title)
-        }
-
-        Spacer()
-
-        For(group in groups) {
-            FoundationRaw(view: group)
-        }
-    }
-    return row.lower(context, modifiers)
-}
-
-// A column's name, as the bar sets it. One place decides, so the sidebar's title
-// and the document's are the same weight at the same size — which is the whole
-// reason a title is a string handed up rather than a view sent up.
 construct ToolbarTitle(text: String) extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let title = Text(content: text)
             .typography(.headline)
-        return title.lower(context, modifiers)
+        return title.describe(context, modifiers)
     }
 }
 
 // The document's section: what the window is showing at the leading end, and
 // what it can be asked to do at the trailing one.
-function toolbarDocumentRow(
-    sink: borrow KiraUiToolbarSink,
-    includeWindowControls: Bool,
-    context: borrow FoundationUiContext,
-    modifiers: borrow ModifierContext,
-) -> FoundationView {
-    let principalGroups = toolbarGlassGroups(sink.principal, context, modifiers)
-    let automaticGroups = toolbarGlassGroups(sink.automatic, context, modifiers)
-    let actionGroups = toolbarGlassGroups(sink.primaryAction, context, modifiers)
-    let row = HStack(spacing: .Medium, alignment: .Center) {
-        if includeWindowControls {
-            WindowControls()
-        }
-
-        if sink.detailTitle.count > 0 {
-            ToolbarTitle(text: copy sink.detailTitle)
-        }
-
-        For(group in principalGroups) {
-            FoundationRaw(view: group)
-        }
-
-        Spacer()
-
-        For(group in automaticGroups) {
-            FoundationRaw(view: group)
-        }
-
-        For(group in actionGroups) {
-            FoundationRaw(view: group)
-        }
-    }
-    return row.lower(context, modifiers)
-}
-
-// Whether anything was declared for the bar this frame.
-function kiraUiToolbarHasItems() -> Bool {
+function kiraUiToolbarHasTopItems() -> Bool {
     kiraUiToolbarSinkEnsure()
     let sink = nativeRecover<KiraUiToolbarSink>(kiraUiStateSlotGet(kiraUiToolbarSinkKey()))
     if sink.sidebarTitle.count + sink.detailTitle.count > 0 {
         return true
     }
-    return sink.navigation.count
+    return sink.back.count
+        + sink.navigation.count
         + sink.principal.count
         + sink.primaryAction.count
         + sink.automatic.count > 0
 }
 
+function kiraUiChromeHasTabs() -> Bool {
+    kiraUiToolbarSinkEnsure()
+    let sink = nativeRecover<KiraUiToolbarSink>(kiraUiStateSlotGet(kiraUiToolbarSinkKey()))
+    return sink.tabs.count + sink.tabSearch.count > 0
+}
+
+function kiraUiToolbarHasItems() -> Bool {
+    return kiraUiToolbarHasTopItems() || kiraUiChromeHasTabs()
+}
+
+// --- Window chrome compositor ------------------------------------------------
+//
+// Contributors only declare semantic chrome. This is the single place where
+// those declarations become physical bars. `KIRA_UI_CHROME=vertical-trailing`
+// is the host/testing override until the platform layer exposes fold posture.
+function kiraUiChromeOrientation() -> ChromeOrientation {
+    let requested = environmentValue("KIRA_UI_CHROME")
+    if requested == "vertical" || requested == "vertical-trailing" {
+        return .Vertical
+    }
+    return .Horizontal
+}
+
+function kiraUiChromeVerticalWidth(metrics: borrow ControlMetricsImplementation) -> Float {
+    // One control target plus a real edge gutter. The chrome floats along the
+    // display edge; its glass must not touch or clip against that edge.
+    // The rail is deliberately fixed-width; its height is the flexible axis
+    // and is where overflow/compression will operate.
+    return metrics.height + metrics.contentMargin * 4.0
+}
+
 construct SharedBackgroundVisibilityLayer(visibility: SharedBackgroundVisibility) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         if visibility == .Hidden {
             kiraUiToolbarHideNextSharedBackground()
         }
-        return content.lower(context, modifiers)
+        return content.describe(context, modifiers)
     }
 }
 
@@ -361,42 +193,35 @@ extend Widget {
 construct ContentMarginLayer(value: Float) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        // The column tells the bar as well as its own contents: the section over
-        // a column is part of that column's leading edge, not the window's.
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         kiraUiToolbarSetMargin(value)
         let resolved = modifierContextApply(modifiers, modifierDeltaContentMargin(value))
-        return content.lower(context, resolved)
+        return content.describe(context, resolved)
     }
 }
 
 construct NavigationTitleLayer(title: String) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         kiraUiToolbarSetTitle(copy title)
-        return content.lower(context, modifiers)
+        return content.describe(context, modifiers)
     }
 }
 
 construct ToolbarLayer(items: Any Widget) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let childModifiers = modifierContextForChildren(modifiers)
-        // The items are lowered where they were WRITTEN — they read the theme
-        // and the size class of the view that declared them — but they are SET
-        // by the bar: the bar's type is what a title on it is, and it is what a
-        // glyph beside that title is sized by. An item that wants otherwise says
-        // so, exactly as it would anywhere else.
-        // The bar also decides that its items are PLAIN. Their background is the
-        // glass the group shares, so an item that draws a fill of its own draws
-        // a shape inside a shape — the thing Apple's toolbars do not do. An item
-        // that wants its own fill says so, exactly as it would anywhere else.
+        let toolbarModifiers = modifierContextPresenting(modifiers, .Toolbar)
         let ignored = items
             .typography(.headline)
             .backgroundStyle(.Clear)
-            .lower(context, childModifiers)
-        return content.lower(context, childModifiers)
+            .describe(context, toolbarModifiers)
+        return content.describe(context, childModifiers)
     }
 }

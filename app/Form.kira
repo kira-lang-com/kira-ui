@@ -1,7 +1,7 @@
 import Foundation
 import KiraGraphics
 import KiraLayout
-import KiraUIFoundation
+import KCoreAnimation
 
 // Forms: the inspector vocabulary.
 //
@@ -37,21 +37,15 @@ import KiraUIFoundation
 construct Form(spacing: Spacing = .Large) extends Widget {
     let children: [some Widget]
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let metrics = resolvedControlMetrics(modifiers)
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        let ignored = resolvedControlMetrics(modifiers).formInset
         let column = VStack(spacing: spacing) {
             For(section in children) {
                 section
             }
         }
-        return Frame(
-            column.lower(context, modifiers),
-            .Fill,
-            .Fill,
-            0,
-            .TopLeading,
-            uniformInsets(metrics.formInset)
-        )
+        return column.describe(context, modifiers)
     }
 }
 
@@ -73,12 +67,10 @@ construct LabeledContent(
 ) extends Widget {
     let children: [some Widget]
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let metrics = resolvedControlMetrics(modifiers)
         let row = HStack(spacing: .None, alignment: .Center) {
-            // The label owns its glyph and its title together, and the hairline
-            // under the row reads where its title begins. Neither names a
-            // number, so moving the glyph column moves the hairline with it.
             Label(title: label, systemImage: symbol)
                 .foregroundColor(rowLabelInk(active))
                 .alignmentGuide(ListRowSeparatorLeading()) { dimensions in
@@ -95,17 +87,7 @@ construct LabeledContent(
             }
             .hugWidth()
         }
-        return Frame(
-            row.lower(context, modifiers),
-            .Fill,
-            .Hug,
-            0,
-            .Center,
-            EdgeInsets {
-                leading: rowInset(metrics, modifiers),
-                trailing: rowInset(metrics, modifiers)
-            }
-        )
+        return row.describe(context, modifiers)
     }
 }
 
@@ -150,8 +132,8 @@ function rowGlyphInk(active: Bool) -> PrimaryColor {
 // `.disabled(...)`. A field with neither is a readout, and it looks like one
 // without being told to.
 construct ValueField(text: String, unit: String = "") extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let metrics = resolvedControlMetrics(modifiers)
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let tokens = modifierTokens(modifiers)
         let content = HStack(spacing: .ExtraSmall, alignment: .Center) {
             Spacer()
@@ -166,32 +148,16 @@ construct ValueField(text: String, unit: String = "") extends Widget {
                     .foregroundColor(fieldUnitInk(modifiers.disabled))
             }
         }
-        let box = Frame(
-            content.lower(context, modifiers),
-            .Fill,
-            .Fill,
-            0,
-            .Center,
-            EdgeInsets {
-                leading: metrics.fieldInset,
-                trailing: metrics.fieldInset
-            }
-        )
-        return Surface(
-            children: [move box],
-            width: .Fixed(metrics.fieldWidth),
-            height: .Fixed(metrics.height),
-            flex: 0,
-            fill: modifierSurfaceFill(foundationColor(tokens.fill.control), modifiers),
-            border: transparentFoundationColor(),
-            borderWidth: 0.0,
-            radius: cornerRadiusImplementation(.Small, modifiers),
-            shape: .RegularRoundedRect,
-            material: .Flat,
-            effects: [],
-            padding: EdgeInsets {},
-            clipContent: true
-        )
+        let radius = cornerRadiusImplementation(.Small, modifiers)
+        return CALayerDescription {
+            cornerRadius: radius,
+            clipsChildren: true,
+            content: .Solid(CASolid {
+                fill: caColorFromFoundation(modifierSurfaceFill(foundationColor(tokens.fill.control), modifiers)),
+                cornerRadius: radius
+            }),
+            sublayers: [content.describe(context, modifiers)]
+        }
     }
 }
 
@@ -213,7 +179,8 @@ construct ValueField(text: String, unit: String = "") extends Widget {
 // for. It carries no unit, which is the other half of that split: a unit
 // belongs beside a number nobody is typing over.
 construct NumberField(key: Int, text: String, onSubmit: () -> Void) extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let metrics = resolvedControlMetrics(modifiers)
         let field = TextField(
             key: key,
@@ -225,7 +192,7 @@ construct NumberField(key: Int, text: String, onSubmit: () -> Void) extends Widg
         )
             .typography(.label)
             .focused(fieldTakesFocus(modifiers))
-        return field.lower(context, modifiers)
+        return field.describe(context, modifiers)
     }
 }
 
@@ -241,11 +208,12 @@ function fieldTakesFocus(modifiers: borrow ModifierContext) -> Bool {
 // fields runs along, a unit outside the fill. Quieter than a label and set at
 // the same size as a unit inside a field.
 construct FieldCaption(text: String) extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let caption = Text(content: text)
             .typography(.footnote)
             .foregroundColor(fieldUnitInk(modifiers.disabled))
-        return caption.lower(context, modifiers)
+        return caption.describe(context, modifiers)
     }
 }
 
@@ -270,7 +238,8 @@ function fieldUnitInk(disabled: Bool) -> PrimaryColor {
 // edge is the scale. Both axes run 0...1, and `.onScrub(...)` reports both at
 // once.
 construct XYPad(x: Float, y: Float) extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let pad = ZStack(alignment: .TopLeading) {
             PadFace()
 
@@ -278,7 +247,7 @@ construct XYPad(x: Float, y: Float) extends Widget {
         }
         .hugWidth()
         .hugHeight()
-        return pad.lower(context, modifiers)
+        return pad.describe(context, modifiers)
     }
 }
 
@@ -294,11 +263,9 @@ function padGuideCount(metrics: borrow ControlMetricsImplementation) -> Int {
 }
 
 construct PadFace() extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let metrics = resolvedControlMetrics(modifiers)
-        // The guide and the ruler are RULES, not separators: they mark a scale
-        // inside the pad rather than divide two things, so they are drawn as
-        // hairline rectangles and do not take the divider's insets with them.
         let face = ZStack(alignment: .Center) {
                 VStack(spacing: .ExtraSmall, alignment: .Center) {
                     For(dash in indices(padGuideCount(metrics))) {
@@ -313,12 +280,13 @@ construct PadFace() extends Widget {
         .backgroundStyle(.Control)
         .width(metrics.padWidth)
         .height(metrics.padHeight)
-        return face.lower(context, modifiers)
+        return face.describe(context, modifiers)
     }
 }
 
 construct PadRuler() extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let metrics = resolvedControlMetrics(modifiers)
         let pitch = spacingImplementation(.Small, modifiers)
         let ruler = VStack(spacing: .None) {
@@ -333,12 +301,13 @@ construct PadRuler() extends Widget {
             .inset(horizontal: .ExtraSmall, vertical: .ExtraSmall)
         }
         .fillHeight()
-        return ruler.lower(context, modifiers)
+        return ruler.describe(context, modifiers)
     }
 }
 
 construct PadKnob(x: Float, y: Float) extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let metrics = resolvedControlMetrics(modifiers)
         let knob = VStack(spacing: .None) {
             FixedGap(width: 1.0, height: y * (metrics.padHeight - metrics.padKnob))
@@ -354,6 +323,6 @@ construct PadKnob(x: Float, y: Float) extends Widget {
             .hugWidth()
         }
         .hugWidth()
-        return knob.lower(context, modifiers)
+        return knob.describe(context, modifiers)
     }
 }

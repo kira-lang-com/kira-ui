@@ -1,0 +1,211 @@
+import Foundation
+import KCoreAnimation
+
+// Layout for the retained description tree.
+//
+// The compositor draws whatever `position`/`size` a layer carries; this is what
+// puts them there. It reads the `CALayoutIntent` each widget's `describe()`
+// recorded — an axis, a sizing mode, spacing, padding, a flex weight — and
+// resolves the tree against an offered size, exactly as a stack-based layout
+// does: measure what each subtree wants, then place each one in the space it is
+// given.
+//
+// Two passes. `caMeasure` walks bottom-up and answers how large a subtree wants
+// to be when nothing forces its size. `caPlace` walks top-down, deciding each
+// layer's final box from the size offered to it and handing each child the box
+// it gets. Kept apart because a fill child's size is the parent's to give and a
+// hug parent's size is the children's to report — one pass cannot know both at
+// the node it is on.
+
+// What a subtree wants along each axis when it is neither filled nor fixed.
+function caMeasure(node: borrow CALayerDescription) -> Size {
+    let intent = node.layout
+
+    // A fixed or intrinsic extent answers directly; otherwise the extent is what
+    // the content or the arrangement of the sublayers comes to.
+    var contentWidth = intent.intrinsicWidth
+    var contentHeight = intent.intrinsicHeight
+
+    match intent.axis {
+        None -> {
+            // A wrapper or overlay wants the largest of what it holds.
+            var maxW = 0.0
+            var maxH = 0.0
+            for i in 0..node.sublayers.count {
+                let child = caMeasure(node.sublayers[i])
+                if child.width > maxW {
+                    maxW = child.width
+                }
+                if child.height > maxH {
+                    maxH = child.height
+                }
+            }
+            if maxW > contentWidth {
+                contentWidth = maxW
+            }
+            if maxH > contentHeight {
+                contentHeight = maxH
+            }
+        }
+        Row -> {
+            var sum = 0.0
+            var maxH = 0.0
+            for i in 0..node.sublayers.count {
+                let child = caMeasure(node.sublayers[i])
+                sum = sum + child.width
+                if child.height > maxH {
+                    maxH = child.height
+                }
+            }
+            if node.sublayers.count > 1 {
+                sum = sum + intent.spacing * Float(node.sublayers.count - 1)
+            }
+            contentWidth = sum
+            contentHeight = maxH
+        }
+        Column -> {
+            var sum = 0.0
+            var maxW = 0.0
+            for i in 0..node.sublayers.count {
+                let child = caMeasure(node.sublayers[i])
+                sum = sum + child.height
+                if child.width > maxW {
+                    maxW = child.width
+                }
+            }
+            if node.sublayers.count > 1 {
+                sum = sum + intent.spacing * Float(node.sublayers.count - 1)
+            }
+            contentWidth = maxW
+            contentHeight = sum
+        }
+    }
+
+    var wantW = contentWidth + intent.paddingLeading + intent.paddingTrailing
+    var wantH = contentHeight + intent.paddingTop + intent.paddingBottom
+    if intent.fixedWidth >= 0.0 {
+        wantW = intent.fixedWidth
+    }
+    if intent.fixedHeight >= 0.0 {
+        wantH = intent.fixedHeight
+    }
+    return Size { width: wantW, height: wantH }
+}
+
+// This layer's own size given the space offered to it: fixed wins, then fill
+// takes the offer, then it hugs what it measured.
+function caResolvedExtent(intent: borrow CALayoutIntent, measured: Float, offered: Float, fixed: Float, fill: Bool) -> Float {
+    if fixed >= 0.0 {
+        return fixed
+    }
+    if fill {
+        return offered
+    }
+    return measured
+}
+
+// Place `node` in a box of the offered size and lay its sublayers out inside it.
+function caPlace(node: borrow mut CALayerDescription, offeredWidth: Float, offeredHeight: Float) {
+    let intent = node.layout
+    let measured = caMeasure(node)
+    let width = caResolvedExtent(intent, measured.width, offeredWidth, intent.fixedWidth, intent.widthFill)
+    let height = caResolvedExtent(intent, measured.height, offeredHeight, intent.fixedHeight, intent.heightFill)
+    node.size = Size { width: width, height: height }
+
+    let innerX = intent.paddingLeading
+    let innerY = intent.paddingTop
+    let innerW = width - intent.paddingLeading - intent.paddingTrailing
+    let innerH = height - intent.paddingTop - intent.paddingBottom
+
+    match intent.axis {
+        None -> {
+            // Every sublayer shares the inner box.
+            for i in 0..node.sublayers.count {
+                caPlace(node.sublayers[i], innerW, innerH)
+                node.sublayers[i].position = Point { x: innerX, y: innerY }
+            }
+        }
+        Row -> {
+            caPlaceStack(node, innerX, innerY, innerW, innerH, true)
+        }
+        Column -> {
+            caPlaceStack(node, innerX, innerY, innerW, innerH, false)
+        }
+    }
+}
+
+// A run of sublayers along one axis: fixed-size ones take what they measured,
+// flex ones split the remainder, and each is placed at the running offset.
+function caPlaceStack(
+    node: borrow mut CALayerDescription,
+    originX: Float,
+    originY: Float,
+    innerWidth: Float,
+    innerHeight: Float,
+    horizontal: Bool,
+) {
+    let count = node.sublayers.count
+    if count == 0 {
+        return
+    }
+    let spacing = node.layout.spacing
+    var mainOffered = innerHeight
+    if horizontal {
+        mainOffered = innerWidth
+    }
+
+    // The main-axis extent the non-flex children want, and the total flex weight
+    // sharing what is left.
+    var fixedMain = 0.0
+    var flexTotal = 0
+    for i in 0..count {
+        if node.sublayers[i].layout.flex > 0 {
+            flexTotal = flexTotal + node.sublayers[i].layout.flex
+        } else {
+            let m = caMeasure(node.sublayers[i])
+            if horizontal {
+                fixedMain = fixedMain + m.width
+            } else {
+                fixedMain = fixedMain + m.height
+            }
+        }
+    }
+    var gaps = 0.0
+    if count > 1 {
+        gaps = spacing * Float(count - 1)
+    }
+    var leftover = mainOffered - fixedMain - gaps
+    if leftover < 0.0 {
+        leftover = 0.0
+    }
+
+    var cursor = 0.0
+    for i in 0..count {
+        let childIntent = node.sublayers[i].layout
+        var mainSize = 0.0
+        if childIntent.flex > 0 && flexTotal > 0 {
+            mainSize = leftover * Float(childIntent.flex) / Float(flexTotal)
+        } else {
+            let m = caMeasure(node.sublayers[i])
+            if horizontal {
+                mainSize = m.width
+            } else {
+                mainSize = m.height
+            }
+        }
+        if horizontal {
+            caPlace(node.sublayers[i], mainSize, innerHeight)
+            node.sublayers[i].position = Point { x: originX + cursor, y: originY }
+        } else {
+            caPlace(node.sublayers[i], innerWidth, mainSize)
+            node.sublayers[i].position = Point { x: originX, y: originY + cursor }
+        }
+        cursor = cursor + mainSize + spacing
+    }
+}
+
+// Lay a whole tree out against a window of the given size, ready to reconcile.
+function caLayoutTree(root: borrow mut CALayerDescription, width: Float, height: Float) {
+    caPlace(root, width, height)
+    root.position = Point { x: 0.0, y: 0.0 }
+}

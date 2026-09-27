@@ -1,7 +1,7 @@
 import Foundation
 import KiraGraphics
 import KiraLayout
-import KiraUIFoundation
+import KCoreAnimation
 
 // Rendering part of a view into a texture somebody else composites.
 //
@@ -129,21 +129,17 @@ function kiraUiSurfaceTargetCount() -> Int {
 construct TextureTarget(handle: Int, zLevel: Int = 0) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        // The viewport is the canvas this process was given, so a target that
-        // fills its parent reports the parent's extent. A target's exact
-        // rectangle is settled by layout after this returns, which is why the
-        // sink carries the extent the region was BUILT against and the
-        // compositor is told the placement separately.
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         kiraUiSurfaceDeclare(KiraUiSurfaceTarget {
             handle: handle,
             zLevel: zLevel,
             x: 0.0,
             y: 0.0,
-            width: context.viewport.width,
-            height: context.viewport.height
+            width: context.viewportWidth,
+            height: context.viewportHeight
         })
-        return content.lower(context, modifiers)
+        return content.describe(context, modifiers)
     }
 }
 
@@ -154,16 +150,17 @@ construct TextureTarget(handle: Int, zLevel: Int = 0) extends Widget {
 // `.toolbar(...)` items travel to the one bar -- and it covers the whole canvas
 // because a floating thing is not confined to the region that opened it.
 construct OverlayTarget(handle: Int) extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         kiraUiSurfaceDeclare(KiraUiSurfaceTarget {
             handle: handle,
             zLevel: kiraUiOverlayZLevel(),
             x: 0.0,
             y: 0.0,
-            width: context.viewport.width,
-            height: context.viewport.height
+            width: context.viewportWidth,
+            height: context.viewportHeight
         })
-        return EmptyView().lower(context, modifiers)
+        return CALayerDescription {}
     }
 }
 

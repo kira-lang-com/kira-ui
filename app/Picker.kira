@@ -1,7 +1,7 @@
 import Foundation
 import KiraGraphics
 import KiraLayout
-import KiraUIFoundation
+import KCoreAnimation
 
 // SwiftUI's `Label` and `Picker`, in KiraUI's value-and-callback shape.
 //
@@ -44,10 +44,10 @@ import KiraUIFoundation
 // difference between a label that restyles itself with the platform and one
 // that does not.
 construct Label(title: String, systemImage: Symbol = .None) extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        // Across the top of a menu a label STACKS: the glyph over the title,
-        // centred, because the three actions are columns rather than rows. Same
-        // declaration; the environment decides which way it reads.
+
+    // Menu action: glyph over title. Otherwise a glyph beside the title. The
+    // fixed gutter framing is geometry the layout stage applies.
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         if modifiers.controlPresentation == .MenuAction {
             let stacked = VStack(spacing: .ExtraSmall, alignment: .Center) {
                 Icon(symbol: systemImage)
@@ -56,46 +56,18 @@ construct Label(title: String, systemImage: Symbol = .None) extends Widget {
                     .typography(.caption)
             }
             .fillWidth()
-            return stacked.lower(context, modifiers)
+            return stacked.describe(context, modifiers)
         }
-        let metrics = resolvedControlMetrics(modifiers)
-        var glyph = EmptyView().lower(context, modifiers)
-        if systemImage != .None {
-            glyph = Icon(symbol: systemImage)
-                .foregroundColor(.Secondary)
-                .lower(context, modifiers)
-        }
-        // Centred in the column, not against its leading edge. Glyphs differ in
-        // width — a chevron is narrow, a folder is wide — so aligning them to an
-        // edge lines up their BOXES and leaves their ink ragged. Centring lines
-        // up what the eye actually reads, which is why every platform column of
-        // icons is centred.
-        // The column stands the label's FULL height and centres the glyph in it,
-        // so the glyph is centred against the row rather than against its own
-        // box. Hugging the glyph instead centres it against itself, which is no
-        // centring at all — it just sits wherever the glyph happens to be tall.
-        let column = Frame(
-            move glyph,
-            .Fixed(metrics.gutter),
-            .Fill,
-            0,
-            .Center,
-            EdgeInsets {}
-        )
-        let label = HStack(spacing: .None, alignment: .Stretch) {
-            FoundationRaw(view: move column)
+        let label = HStack(spacing: .Small, alignment: .Center) {
+            if systemImage != .None {
+                Icon(symbol: systemImage)
+                    .foregroundColor(.Secondary)
+            }
 
-            FoundationRaw(view: Frame(
-                Text(content: title).lower(context, modifiers),
-                .Hug,
-                .Fill,
-                0,
-                .Leading,
-                EdgeInsets {}
-            ))
+            Text(content: title)
         }
         .hugWidth()
-        return label.lower(context, modifiers)
+        return label.describe(context, modifiers)
     }
 }
 
@@ -169,7 +141,8 @@ function kiraUiPickerNoop(index: Int) {
 
 // The value side: the current option and the chevron that opens the list.
 construct PickerValue(key: Int, options: [String], selection: Int) extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let value = HStack(spacing: .ExtraSmall, alignment: .Center) {
             Text(content: kiraUiPickerLabel(options, selection))
 
@@ -179,12 +152,13 @@ construct PickerValue(key: Int, options: [String], selection: Int) extends Widge
         }
         .hugWidth()
         .onClick(kiraUiPickerToggleFn(key))
-        return value.lower(context, modifiers)
+        return value.describe(context, modifiers)
     }
 }
 
 construct PickerList(options: [String], selection: Int, onSelect: (Int) -> Void) extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let metrics = resolvedControlMetrics(modifiers)
         let list = VStack(spacing: .None) {
                     For(index in indices(options.count)) {
@@ -204,7 +178,7 @@ construct PickerList(options: [String], selection: Int, onSelect: (Int) -> Void)
         .backgroundStyle(.Overlay)
         .themeBorder(.Subtle)
         .hugHeight()
-        return list.lower(context, modifiers)
+        return list.describe(context, modifiers)
     }
 }
 
@@ -217,7 +191,8 @@ construct Picker(
     selection: Int,
     onSelect: (Int) -> Void = kiraUiPickerNoop,
 ) extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let key = kiraUiTapSeqKey()
         let open = kiraUiOpenPickerKey() == key
         let picker = VStack(spacing: .ExtraSmall) {
@@ -228,6 +203,6 @@ construct Picker(
             }
         }
         .hugWidth()
-        return picker.lower(context, modifiers)
+        return picker.describe(context, modifiers)
     }
 }

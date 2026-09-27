@@ -1,0 +1,78 @@
+import Foundation
+import KCoreAnimation
+
+// The press actions for a described frame, keyed by hit key.
+//
+// A `CALayerDescription` carries a `hitKey` but not the closure to run when that
+// key is pressed — a closure is not a value the compositor's model tree should
+// hold. So a widget's `describe()` registers its action here under the same key
+// it put on the layer, and the runner, having hit-tested the retained tree to a
+// key, looks the action up and runs it. Reset at the start of every rebuild, so
+// the table only ever holds this frame's actions.
+
+function kiraUiLayerNoop() {
+    return
+}
+
+struct KiraUiLayerActionEntry {
+    var key: Int = 0
+    var action: () -> Void = kiraUiLayerNoop
+}
+
+struct KiraUiLayerActionSink {
+    var entries: [KiraUiLayerActionEntry] = []
+}
+
+function kiraUiLayerActionSinkKey() -> String {
+    return "kiraui.layer.actions"
+}
+
+function kiraUiLayerActionSinkEnsure() {
+    if kiraUiStateSlotHas(kiraUiLayerActionSinkKey()) == false {
+        kiraUiStateSlotPut(
+            kiraUiLayerActionSinkKey(),
+            nativeUserData(nativeState(KiraUiLayerActionSink {}))
+        )
+    }
+    return
+}
+
+// Start a fresh frame's action table.
+function kiraUiLayerActionsReset() {
+    kiraUiLayerActionSinkEnsure()
+    var sink = nativeRecover<KiraUiLayerActionSink>(kiraUiStateSlotGet(kiraUiLayerActionSinkKey()))
+    var empty: [KiraUiLayerActionEntry] = []
+    sink.entries = move empty
+    return
+}
+
+// Bind a press action to the hit key a `describe()` put on its layer.
+function kiraUiLayerActionRegister(key: Int, action: () -> Void) {
+    if key == 0 {
+        return
+    }
+    kiraUiLayerActionSinkEnsure()
+    var sink = nativeRecover<KiraUiLayerActionSink>(kiraUiStateSlotGet(kiraUiLayerActionSinkKey()))
+    sink.entries.append(KiraUiLayerActionEntry {
+        key: key,
+        action: action
+    })
+    return
+}
+
+// Run the action bound to a key, if any. The runner calls this with the key a
+// press hit-tested to.
+function kiraUiLayerActionInvoke(key: Int) {
+    if key == 0 {
+        return
+    }
+    kiraUiLayerActionSinkEnsure()
+    let sink = nativeRecover<KiraUiLayerActionSink>(kiraUiStateSlotGet(kiraUiLayerActionSinkKey()))
+    for index in 0..sink.entries.count {
+        if sink.entries[index].key == key {
+            sink.entries[index].action()
+            return
+        }
+    }
+    return
+}

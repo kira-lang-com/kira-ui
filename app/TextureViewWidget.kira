@@ -1,6 +1,6 @@
 import KiraLayout
 import Foundation
-import KiraUIFoundation
+import KCoreAnimation
 
 // An external KiraGraphics texture, shown inside the widget tree.
 //
@@ -12,18 +12,21 @@ import KiraUIFoundation
 // that samples them, rather than by drawing one view over another at an opacity.
 // That is what makes swiping between two components' surfaces cheap: the window
 // holds both textures already, and moving between them costs one number.
-construct TextureViewport(texture: Int, secondary: Int = 0, transition: Float = 0.0) extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+construct TextureViewport(
+    texture: TextureHandle,
+    secondary: TextureHandle = TextureHandle(0),
+    transition: Float = 0.0,
+) extends Widget {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let ignored = context.frameCount
-        return TextureView(
-            texture: texture,
-            width: .Fill,
-            height: .Fill,
-            flex: 1,
-            opacity: modifiers.opacity,
-            radius: 0.0,
-            secondaryTexture: secondary,
-            transition: transition
-        )
+        return CALayerDescription {
+            content: .Texture(CATexture {
+                handle: texture,
+                secondaryHandle: secondary,
+                transition: transition,
+                opacity: modifiers.opacity
+            })
+        }
     }
 }

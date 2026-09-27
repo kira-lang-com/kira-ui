@@ -1,6 +1,6 @@
 import Foundation
 import KiraGraphics
-import KiraUIFoundation
+import KCoreAnimation
 
 
 // Interactive widget app: `rootBuilder` runs EVERY frame, so widgets rebuilt from it observe
@@ -12,81 +12,6 @@ import KiraUIFoundation
 // `Any Widget` today; the app struct stores the existential widget value instead.
 function kiraUiNoopEngineFrame(frame: borrow mut KiraGraphics.RenderFrame) {
     let ignored = frame.backend
-    return
-}
-
-function RunWidgetInteractiveApp(
-    title: String,
-    width: Int,
-    height: Int,
-    rootBuilder: borrow () -> KiraUIApp,
-    // Host hook: runs first every frame, before the UI pass — where a hosting engine ticks
-    // and renders its offscreen viewport texture (shown via TextureViewport).
-    engineFrame: borrow (borrow mut KiraGraphics.RenderFrame) -> Void = kiraUiNoopEngineFrame,
-    showFpsOverlay: Bool = true,
-    // See RunFoundationInteractiveApp: fixed-structure hosts (editor chrome) pass
-    // false so resize-only frames skip the widget rebuild and reconcile.
-    rebuildOnResize: Bool = true,
-    // A window the desktop shows through: everything the widget tree does not
-    // paint is a hole rather than a page, so a floating panel is the shape of
-    // what it draws. Nothing in the tree changes — a widget cannot tell.
-    transparent: Bool = false,
-    // How opaque the whole window is composited, before its content.
-    opacity: Float = 1.0,
-    // Launch-time harness — capture, quit-after, input scripts — as a value
-    // rather than environment variables. Passed straight through to the
-    // foundation runner; default is unconfigured (environment as before).
-    harness: KiraGraphics.HarnessConfig = KiraGraphics.HarnessConfig {},
-) {
-    let hostEngineFrame: borrow (borrow mut KiraGraphics.RenderFrame) -> Void = engineFrame
-    let windowAwareEngineFrame: (borrow mut KiraGraphics.RenderFrame) -> Void = { frame in
-        kiraUiConsumeWindowCommand(frame)
-        // Before the host's own hook, so a host that ticks a simulation and a
-        // widget that is mid-transition are advanced by the SAME frame's
-        // duration rather than by two readings of the clock taken either side
-        // of the host's work.
-        kiraUiClockTick(frame)
-        hostEngineFrame(frame)
-        return
-    }
-    RunFoundationInteractiveApp(move title, width, height, { context in
-        // Auto-minted hit-area keys are build-sequence numbers, so the counter
-        // starts over with every build: a tree whose keys drift frame to frame
-        // is a tree the foundation reconciles as new regions every frame, and a
-        // press landing on a region that no longer exists is a click nobody
-        // gets. The application does not have to know that — it happens here,
-        // once, for every interactive app.
-        kiraUiTapSeqReset()
-        // Cleared here and set again by whatever is still in motion as it
-        // lowers, so `needsRebuild` below describes this build.
-        kiraUiClockBeginFrame()
-        // Surface targets are collected around the whole build, not around a
-        // split view's columns, because an application that renders into
-        // textures may have no window furniture at all: a component with no
-        // window still has regions, and they are declared wherever they are.
-        kiraUiSurfaceCollect()
-        // Anything that floats declares itself while the tree is built and is
-        // hoisted onto the root below, after the application's own content.
-        kiraUiOverlayCollect()
-        let build: borrow () -> KiraUIApp = rootBuilder
-        let app = build()
-        let root = app.content
-        let lowered = root.lower(context, ModifierContext {})
-        kiraUiSurfaceStopCollecting()
-        kiraUiOverlayStopCollecting()
-        return kiraUiRootWithOverlays(move lowered)
-    },
-        engineFrame: windowAwareEngineFrame,
-        needsRebuild: kiraUiClockRunning,
-        showFpsOverlay: showFpsOverlay,
-        showGraphicsHud: false,
-        rebuildOnResize: rebuildOnResize,
-        windowMode: .Windowed,
-        transparent: transparent,
-        opacity: opacity,
-        harness: move harness,
-        windowDragRegion: kiraUiToolbarWindowDragRegion
-    )
     return
 }
 
@@ -115,55 +40,6 @@ function kiraUiStringToCodepoints(content: borrow String) -> [Int] {
 // contribute nothing, so a caret range never has to be clamped first.
 function kiraUiStringFromCodepoints(codes: borrow [Int], start: Int, end: Int) -> String {
     return foundationStringFromCodepoints(codes, start, end)
-}
-
-// Runs a KiraUI app, interactively.
-//
-// The block is a BUILDER, and it runs every frame — which is what makes the app
-// respond to anything. A tree lowered once is a picture: `@State` lives in the
-// ambient slot store, so a press that changes it changes nothing on screen until
-// the widgets are built again from the new value. Lowering is `@Consuming`, so
-// "again" means a fresh tree, so it means a builder rather than a value.
-//
-//     RunKiraApp {
-//         KiraUIApp(
-//             name: "Workspace",
-//             content: WorkspaceHome().theme(Opacity())
-//         )
-//     }
-//
-// The brace is a zero-parameter closure — no `in` — because the parameter is a
-// function type and that is what a brace means in that position.
-function RunKiraApp(app: borrow () -> KiraUIApp) {
-    let build: borrow () -> KiraUIApp = app
-    RunFoundationInteractiveApp("Kira UI", 1280, 720, { context in
-        kiraUiTapSeqReset()
-        // Cleared here and set again by whatever is still in motion as it
-        // lowers, so `needsRebuild` below describes this build.
-        kiraUiClockBeginFrame()
-        kiraUiSurfaceCollect()
-        // Anything that floats declares itself while the tree is built and is
-        // hoisted onto the root below, after the application's own content.
-        kiraUiOverlayCollect()
-        let made = build()
-        let root = made.content
-        let lowered = root.lower(context, ModifierContext {})
-        kiraUiSurfaceStopCollecting()
-        kiraUiOverlayStopCollecting()
-        return kiraUiRootWithOverlays(move lowered)
-    },
-        engineFrame: kiraUiWindowEngineFrame,
-        needsRebuild: kiraUiClockRunning,
-        showFpsOverlay: true,
-        showGraphicsHud: false,
-        rebuildOnResize: true,
-        windowMode: .Windowed,
-        transparent: false,
-        opacity: 1.0,
-        harness: KiraGraphics.HarnessConfig {},
-        windowDragRegion: kiraUiToolbarWindowDragRegion
-    )
-    return
 }
 
 function kiraUiWindowEngineFrame(frame: borrow mut KiraGraphics.RenderFrame) {

@@ -1,16 +1,7 @@
 import KiraLayout
 import KiraGraphics
 import Foundation
-import KiraUIFoundation
-import KiraUIMotion
-
-@Derive(Copy)
-struct Color {
-    let r: Float = 0.0
-    let g: Float = 0.0
-    let b: Float = 0.0
-    let a: Float = 1.0
-}
+import KCoreAnimation
 
 // Design tools quote colors in 8-bit sRGB channels, so authoring a token set
 // means writing that conversion somewhere. It belongs here once rather than in
@@ -228,21 +219,20 @@ enum FontWeight {
     Bold
 }
 
-struct KiraUIApp {
-    let name: String
-    let content: Any Widget
-}
-
 construct Widget {
     @Required let body: Any Widget
 
-    // Consuming: lowering a widget consumes the node (Rust `self` receiver).
-    // Wrapper widgets expand `body` (which consumes self and partial-moves the
-    // content channels out); leaf widgets drain their children arrays element
-    // by element. The whole tree is single-owner and freed exactly once.
+    // Emit the retained-tree description this widget reconciles into.
+    //
+    // The sole lowering: a widget produces the `CALayerDescription` the
+    // compositor reconciles into its retained `CALayerTree`, so a rebuild sets
+    // properties on layers that were already there and every change animates.
+    // Content leaves emit their content; containers emit sublayers; modifier
+    // layers mutate the description their child produced. Consuming: a widget
+    // tree is single-owner and produces its description once.
     @Consuming
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        return body.lower(context, modifiers)
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        return self.body.describe(context, modifiers)
     }
 }
 
@@ -460,63 +450,32 @@ function cardEffects(material: borrow Material) -> [FoundationEffect] {
     }
 }
 
-function loweredChildren(
-    context: borrow FoundationUiContext,
+// Each child's description, under the same inherited modifier context a child
+// receives.
+// under the same inherited modifier context a lowered child receives.
+function describedChildren(
+    context: borrow BuildContext,
     modifiers: borrow ModifierContext,
     widgets: [Any Widget],
-) -> [FoundationView] {
-    var children: [FoundationView] = []
+) -> [CALayerDescription] {
+    var children: [CALayerDescription] = []
     let childModifiers = modifierContextForChildren(modifiers)
-    var index = 0
-    while index < widgets.count {
-        children.append(widgets[index].lower(context, childModifiers))
-        index = index + 1
+    for widget in widgets {
+        children.append(widget.describe(context, childModifiers))
     }
     return children
 }
 
-function overlayView(
-    background: FoundationView,
-    foreground: FoundationView,
-) -> FoundationView {
-    let stretchedBackground = FoundationView {
-        kind: .Frame,
-        width: .Fill,
-        height: .Fill,
-        alignment: .Center,
-        padding: EdgeInsets {},
-        children: [background]
-    }
-
-    return FoundationView {
-        kind: .Frame,
-        width: foreground.width,
-        height: foreground.height,
-        flex: foreground.flex,
-        alignment: .Center,
-        padding: EdgeInsets {},
-        // The wrapper paints; it does not size. `.background(…)` is a
-        // decoration, so a width or a height stated after it belongs to the
-        // content, and this is what lets `viewWithWidth`/`viewWithHeight` reach
-        // it. Without that, modifier ORDER decided whether a size took effect:
-        // `.background(…).height(h)` sized the wrapper and left the content
-        // hugging inside it, which is a column with no slack to give its
-        // expanding children — every row laid out into no height at all.
-        sizingProxy: true,
-        children: [stretchedBackground, foreground]
-    }
-}
-
-function lerp(a: Float, b: Float, t: Float) -> Float {
+function uiLerp(a: Float, b: Float, t: Float) -> Float {
     return a + (b - a) * t
 }
 
 function lerpColor(start: borrow Color, end: borrow Color, t: Float) -> Color {
     return Color {
-        r: lerp(start.r, end.r, t),
-        g: lerp(start.g, end.g, t),
-        b: lerp(start.b, end.b, t),
-        a: lerp(start.a, end.a, t)
+        r: uiLerp(start.r, end.r, t),
+        g: uiLerp(start.g, end.g, t),
+        b: uiLerp(start.b, end.b, t),
+        a: uiLerp(start.a, end.a, t)
     }
 }
 
@@ -548,106 +507,8 @@ function effectWithOpacity(effect: borrow FoundationEffect, opacity: Float) -> F
 // surface shape. Their children are transferred unchanged; semantic modifiers
 // are consumed before lowering and never walk a completed descendant tree.
 
-function identityChildren(children: [FoundationView]) -> [FoundationView] {
-    return children
-}
-
 function identityEffects(effects: [FoundationEffect]) -> [FoundationEffect] {
     return effects
-}
-
-function identityGuides(
-    guides: [FoundationGuidePublication],
-) -> [FoundationGuidePublication] {
-    return guides
-}
-
-// The same view, answering one more guide, and the same view reading two.
-//
-// Every `viewWith…` helper below rebuilds the view field by field, so anything a
-// modifier attached earlier has to be carried through each of them or it is
-// dropped without a word. That is why the guide fields are restated in all of
-// them rather than left to a default.
-function viewWithGuides(
-    view: FoundationView,
-    guides: [FoundationGuidePublication],
-) -> FoundationView {
-    return viewWithGuideFields(move view, move guides, -1, -1)
-}
-
-// The same view, taking its painted extent from a pair of guides.
-function viewWithGuideRange(
-    view: FoundationView,
-    leading: Int,
-    trailing: Int,
-) -> FoundationView {
-    let carried = identityGuides(view.guides)
-    return viewWithGuideFields(move view, move carried, leading, trailing)
-}
-
-// One rebuild for both guide edits. `leading`/`trailing` of -1 keep what the
-// view already had, so publishing a guide never clears the ones it reads.
-function viewWithGuideFields(
-    view: FoundationView,
-    guides: [FoundationGuidePublication],
-    leading: Int,
-    trailing: Int,
-) -> FoundationView {
-    var readsLeading = view.guideLeading
-    var readsTrailing = view.guideTrailing
-    if leading >= 0 {
-        readsLeading = leading
-    }
-    if trailing >= 0 {
-        readsTrailing = trailing
-    }
-    return FoundationView {
-        kind: view.kind,
-        key: view.key,
-        guides: move guides,
-        guideLeading: readsLeading,
-        guideTrailing: readsTrailing,
-        children: identityChildren(view.children),
-        width: view.width,
-        height: view.height,
-        flex: view.flex,
-        gap: view.gap,
-        padding: view.padding,
-        crossAxisAlignment: view.crossAxisAlignment,
-        alignment: view.alignment,
-        fill: view.fill,
-        border: view.border,
-        borderWidth: view.borderWidth,
-        radius: view.radius,
-        shape: view.shape,
-        material: view.material,
-        effects: identityEffects(view.effects),
-        clipContent: view.clipContent,
-        sizingProxy: view.sizingProxy,
-        content: view.content,
-        color: view.color,
-        size: view.size,
-        inkLeft: view.inkLeft,
-        inkRight: view.inkRight,
-        inkTop: view.inkTop,
-        inkBottom: view.inkBottom,
-        lineHeight: view.lineHeight,
-        weight: view.weight,
-        disabled: view.disabled,
-        focusable: view.focusable,
-        autofocus: view.autofocus,
-        onPress: view.onPress,
-        onTextInput: view.onTextInput,
-        onTextCodepoint: view.onTextCodepoint,
-        onBackspace: view.onBackspace,
-        onSubmit: view.onSubmit,
-        onKey: view.onKey,
-        onScroll: view.onScroll,
-        minLength: view.minLength,
-        interaction: view.interaction,
-        texture: view.texture,
-        textureOpacity: view.textureOpacity
-    }
 }
 
 function modifierColor(
@@ -665,10 +526,8 @@ function modifierEffects(
         return effects
     }
     var adjusted: [FoundationEffect] = []
-    var index = 0
-    while index < effects.count {
-        adjusted.append(effectWithOpacity(effects[index], modifiers.opacity))
-        index = index + 1
+    for effect in effects {
+        adjusted.append(effectWithOpacity(effect, modifiers.opacity))
     }
     return adjusted
 }
@@ -687,438 +546,69 @@ function modifierEffects(
 // colour, glass lost its material and its blur, a scroll region lost the fact
 // that it scrolls. All the same bug, and none of them visible in the modifier
 // that caused it.
-function viewCopying(
-    view: borrow FoundationView,
-    children: [FoundationView],
-    width: SizeMode,
-    height: SizeMode,
-    radius: Float,
-    shape: FoundationShape,
-    border: FoundationColor,
-    borderWidth: Float,
-    padding: EdgeInsets,
-    deform: MotionDeformation,
-    key: Int,
-    rotation: Float,
-) -> FoundationView {
-    return FoundationView {
-        kind: view.kind,
-        key: key,
-        guides: identityGuides(view.guides),
-        guideLeading: view.guideLeading,
-        guideTrailing: view.guideTrailing,
-        children: move children,
-        width: width,
-        height: height,
-        flex: view.flex,
-        gap: view.gap,
-        padding: padding,
-        crossAxisAlignment: view.crossAxisAlignment,
-        alignment: view.alignment,
-        fill: view.fill,
-        border: border,
-        borderWidth: borderWidth,
-        fillEnd: view.fillEnd,
-        gradient: view.gradient,
-        radius: radius,
-        backgroundFill: view.backgroundFill,
-        shape: shape,
-        material: view.material,
-        effects: identityEffects(view.effects),
-        clipContent: view.clipContent,
-        content: view.content,
-        color: view.color,
-        size: view.size,
-        inkLeft: view.inkLeft,
-        inkRight: view.inkRight,
-        inkTop: view.inkTop,
-        inkBottom: view.inkBottom,
-        lineHeight: view.lineHeight,
-        weight: view.weight,
-        baseline: view.baseline,
-        iconWidth: view.iconWidth,
-        weightGrowth: view.weightGrowth,
-        disabled: view.disabled,
-        focusable: view.focusable,
-        autofocus: view.autofocus,
-        onPress: view.onPress,
-        onTextInput: view.onTextInput,
-        onTextCodepoint: view.onTextCodepoint,
-        onBackspace: view.onBackspace,
-        onSubmit: view.onSubmit,
-        onKey: view.onKey,
-        onScroll: view.onScroll,
-        scrolls: view.scrolls,
-        wheel: view.wheel,
-        minLength: view.minLength,
-        interaction: view.interaction,
-        texture: view.texture,
-        textureOpacity: view.textureOpacity,
-        secondaryTexture: view.secondaryTexture,
-        textureTransition: view.textureTransition,
-        adaptiveInk: view.adaptiveInk,
-        blur: view.blur,
-        glassMaterial: view.glassMaterial,
-        edgeRefraction: view.edgeRefraction,
-        // The motion a view is carrying. Restating a view field by field means
-        // every field, and these four were missing: a `.width(...)` applied
-        // after a `.scaleEffect(...)` rebuilt the view without its deformation
-        // and the transform silently vanished — the modifier order deciding
-        // whether the animation happened at all.
-        deform: deform,
-        rotation: rotation,
-        glow: view.glow,
-        morph: view.morph,
-        morphBlend: view.morphBlend
-    }
-}
-
-function viewWithDeform(view: FoundationView, scaleX: Float, scaleY: Float) -> FoundationView {
-    let scaled = MotionDeformation {
-        x: view.deform.x,
-        y: view.deform.y,
-        // Multiplied into whatever the view already carries, not replacing it: a
-        // control being pressed inside a panel that is receding is doing both,
-        // and the two are independent.
-        scaleX: view.deform.scaleX * scaleX,
-        scaleY: view.deform.scaleY * scaleY,
-        pressScale: view.deform.pressScale,
-        intensity: view.deform.intensity
-    }
-    return viewCopying(
-        view,
-        identityChildren(view.children),
-        view.width,
-        view.height,
-        view.radius,
-        view.shape,
-        view.border,
-        view.borderWidth,
-        view.padding,
-        move scaled,
-        view.key,
-        view.rotation
-    )
-}
-
-function viewWithRotation(view: FoundationView, radians: Float) -> FoundationView {
-    return viewCopying(
-        view,
-        identityChildren(view.children),
-        view.width,
-        view.height,
-        view.radius,
-        view.shape,
-        view.border,
-        view.borderWidth,
-        view.padding,
-        view.deform,
-        view.key,
-        view.rotation + radians
-    )
-}
-
-// The same view under a different key.
-//
-// A key is a view's IDENTITY — what the retained tree reconciles by, what a hit
-// region is found by, and what layout records its rectangle under. A view that
-// has to be recognisable in a place it has never been before (see `Hero.kira`)
-// is one that has to carry a key of its own choosing rather than the one its
-// position in the build happened to mint.
-function viewWithKey(view: FoundationView, key: Int) -> FoundationView {
-    return viewCopying(
-        view,
-        identityChildren(view.children),
-        view.width,
-        view.height,
-        view.radius,
-        view.shape,
-        view.border,
-        view.borderWidth,
-        view.padding,
-        view.deform,
-        key,
-        view.rotation
-    )
-}
-
-function viewWithSurfaceRadius(view: FoundationView, radius: Float) -> FoundationView {
-    return viewCopying(
-        view,
-        identityChildren(view.children),
-        view.width,
-        view.height,
-        move radius,
-        view.shape,
-        view.border,
-        view.borderWidth,
-        view.padding,
-        view.deform,
-        view.key,
-        view.rotation
-    )
-}
-
-function viewWithSurfaceShape(view: FoundationView, shape: SurfaceShape) -> FoundationView {
-    return viewCopying(
-        view,
-        identityChildren(view.children),
-        view.width,
-        view.height,
-        view.radius,
-        foundationShape(move shape),
-        view.border,
-        view.borderWidth,
-        view.padding,
-        view.deform,
-        view.key,
-        view.rotation
-    )
-}
-
-function viewWithSurfaceBorder(view: FoundationView, color: FoundationColor, width: Float) -> FoundationView {
-    return viewCopying(
-        view,
-        identityChildren(view.children),
-        view.width,
-        view.height,
-        view.radius,
-        view.shape,
-        move color,
-        move width,
-        view.padding,
-        view.deform,
-        view.key,
-        view.rotation
-    )
-}
-
-// Whether a view would USE more room on one axis, or merely sit in it.
-//
-// A stack with a filling child on its own axis has somewhere to put slack: the
-// child takes it. Everything else — a label, an icon, a stack of hugging rows —
-// has an size of its own and is ALIGNED inside a larger box rather than
-// stretched to it, which is what a background sized past its content should
-// leave alone.
-function viewTakesSlack(view: borrow FoundationView, vertical: Bool) -> Bool {
-    if view.sizingProxy && view.children.count > 0 {
-        return viewTakesSlack(view.children[view.children.count - 1], vertical)
-    }
-    if vertical {
-        if view.kind != .Column {
-            return false
-        }
-    } else {
-        if view.kind != .Row {
-            return false
-        }
-    }
-    for index in 0..view.children.count {
-        if vertical {
-            if sizeModeKind(view.children[index].height) == 2 {
-                return true
-            }
-        } else {
-            if sizeModeKind(view.children[index].width) == 2 {
-                return true
-            }
-        }
-    }
-    return false
-}
-
-// The children of a painting wrapper, with the content (the LAST child, behind
-// which the background is drawn) taking the same size the wrapper was just
-// given. Recursive through `viewWithWidth`/`viewWithHeight`, so stacked
-// decorations — a background under an overlay under a border — all pass the
-// size along to what they decorate.
-function proxyChildrenWithWidth(children: [FoundationView], width: SizeMode) -> [FoundationView] {
-    var out: [FoundationView] = []
-    var index = 0
-    while index < children.count {
-        if index == children.count - 1 {
-            out.append(viewWithWidth(children[index], copy width))
-        } else {
-            out.append(children[index])
-        }
-        index = index + 1
-    }
-    return move out
-}
-
-function proxyChildrenWithHeight(children: [FoundationView], height: SizeMode) -> [FoundationView] {
-    var out: [FoundationView] = []
-    var index = 0
-    while index < children.count {
-        if index == children.count - 1 {
-            out.append(viewWithHeight(children[index], copy height))
-        } else {
-            out.append(children[index])
-        }
-        index = index + 1
-    }
-    return move out
-}
-
-function viewWithWidth(view: FoundationView, width: SizeMode) -> FoundationView {
-    if view.sizingProxy && view.children.count > 0 && viewTakesSlack(view, false) {
-        return viewCopying(
-            view,
-            proxyChildrenWithWidth(identityChildren(view.children), copy width),
-            move width,
-            view.height,
-            view.radius,
-            view.shape,
-            view.border,
-            view.borderWidth,
-            view.padding,
-            view.deform,
-            view.key,
-            view.rotation
-        )
-    }
-    return viewCopying(
-        view,
-        identityChildren(view.children),
-        move width,
-        view.height,
-        view.radius,
-        view.shape,
-        view.border,
-        view.borderWidth,
-        view.padding,
-        view.deform,
-        view.key,
-        view.rotation
-    )
-}
-
-function viewWithHeight(view: FoundationView, height: SizeMode) -> FoundationView {
-    if view.sizingProxy && view.children.count > 0 && viewTakesSlack(view, true) {
-        return viewCopying(
-            view,
-            proxyChildrenWithHeight(identityChildren(view.children), copy height),
-            view.width,
-            move height,
-            view.radius,
-            view.shape,
-            view.border,
-            view.borderWidth,
-            view.padding,
-            view.deform,
-            view.key,
-            view.rotation
-        )
-    }
-    return viewCopying(
-        view,
-        identityChildren(view.children),
-        view.width,
-        move height,
-        view.radius,
-        view.shape,
-        view.border,
-        view.borderWidth,
-        view.padding,
-        view.deform,
-        view.key,
-        view.rotation
-    )
-}
-
-function viewWithSurfacePadding(view: FoundationView, length: Float) -> FoundationView {
-    return viewCopying(
-        view,
-        identityChildren(view.children),
-        view.width,
-        view.height,
-        view.radius,
-        view.shape,
-        view.border,
-        view.borderWidth,
-        uniformInsets(length),
-        view.deform,
-        view.key,
-        view.rotation
-    )
-}
-
-function viewWithContentMargins(view: FoundationView, inset: Float) -> FoundationView {
-    let margins = EdgeInsets {
-        top: view.padding.top + inset,
-        trailing: view.padding.trailing + inset,
-        bottom: view.padding.bottom + inset,
-        leading: view.padding.leading + inset
-    }
-    return viewCopying(
-        view,
-        identityChildren(view.children),
-        view.width,
-        view.height,
-        view.radius,
-        view.shape,
-        view.border,
-        view.borderWidth,
-        move margins,
-        view.deform,
-        view.key,
-        view.rotation
-    )
-}
-
 construct SurfacePaddingLayer(value: Float) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let childModifiers = modifierContextForChildren(modifiers)
-        return viewWithSurfacePadding(content.lower(context, childModifiers), value)
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        return content.describe(context, modifierContextForChildren(modifiers))
     }
 }
 
 construct ContentMarginsLayer(value: ContentMargins) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let childModifiers = modifierContextForChildren(modifiers)
-        let view = content.lower(context, childModifiers)
-        let inset = contentMarginsInset(move value)
-        return viewWithContentMargins(move view, inset)
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        return content.describe(context, modifierContextForChildren(modifiers))
     }
 }
 
 construct WidthLayer(value: Float) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let childModifiers = modifierContextForChildren(modifiers)
-        return viewWithWidth(content.lower(context, childModifiers), .Fixed(value))
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        var described = content.describe(context, modifierContextForChildren(modifiers))
+        described.layout.fixedWidth = value
+        described.layout.widthFill = false
+        return described
     }
 }
 
 construct FillWidthLayer() extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let childModifiers = modifierContextForChildren(modifiers)
-        return viewWithWidth(content.lower(context, childModifiers), .Fill)
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        var described = content.describe(context, modifierContextForChildren(modifiers))
+        described.layout.widthFill = true
+        described.layout.fixedWidth = -1.0
+        return described
     }
 }
 
 construct FillHeightLayer() extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let childModifiers = modifierContextForChildren(modifiers)
-        return viewWithHeight(content.lower(context, childModifiers), .Fill)
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        var described = content.describe(context, modifierContextForChildren(modifiers))
+        described.layout.heightFill = true
+        described.layout.fixedHeight = -1.0
+        return described
     }
 }
 
 construct HeightLayer(value: Float) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let childModifiers = modifierContextForChildren(modifiers)
-        return viewWithHeight(content.lower(context, childModifiers), .Fixed(value))
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        var described = content.describe(context, modifierContextForChildren(modifiers))
+        described.layout.fixedHeight = value
+        described.layout.heightFill = false
+        return described
     }
 }
 
@@ -1141,18 +631,22 @@ function scaledTypography(
 construct HugWidthLayer() extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let childModifiers = modifierContextForChildren(modifiers)
-        return viewWithWidth(content.lower(context, childModifiers), .Hug)
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        var described = content.describe(context, modifierContextForChildren(modifiers))
+        described.layout.widthFill = false
+        return described
     }
 }
 
 construct HugHeightLayer() extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let childModifiers = modifierContextForChildren(modifiers)
-        return viewWithHeight(content.lower(context, childModifiers), .Hug)
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        var described = content.describe(context, modifierContextForChildren(modifiers))
+        described.layout.heightFill = false
+        return described
     }
 }
 
@@ -1185,10 +679,10 @@ function spacingImplementation(
 }
 
 construct Text(content: String) extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let ignored = context.frameCount
         var textSize = 16.0
-        var textLineHeight = 0.0
         var textWeight = 400.0
         if modifiers.hasFont {
             textSize = modifiers.fontSize
@@ -1196,35 +690,30 @@ construct Text(content: String) extends Widget {
         } else if modifiers.hasTypography {
             let selected = typographyImplementation(modifiers.typography, modifiers)
             textSize = selected.size
-            textLineHeight = selected.lineHeight
             textWeight = foundationFontWeight(selected.weight)
         } else {
-            // Through the same resolution every named role goes through, so an
-            // unstyled run is scaled by the size class like everything else.
-            // Reading `tokens.bodySize` directly is how a row label stayed at
-            // full size inside a `.Small` panel while the header beside it
-            // shrank.
             let selected = typographyImplementation(.body, modifiers)
             textSize = selected.size
-            // Weight before metrics: a run's line height and ink are measured
-            // from the weight it will be DRAWN in, so resolving the weight after
-            // measuring hands layout the regular cut's numbers for a semibold
-            // run.
             textWeight = foundationFontWeight(selected.weight)
-            textLineHeight = foundationTextRunLineHeight(size: textSize, weight: textWeight)
         }
-        return FoundationView {
-            kind: .Text,
-            content: content,
-            color: modifierColor(modifierTextColor(modifiers), modifiers),
-            size: textSize,
-            inkLeft: foundationTextRunInkLeft(content: content, size: textSize, weight: textWeight),
-            inkRight: foundationTextRunInkRight(content: content, size: textSize, weight: textWeight),
-            inkTop: foundationTextRunInkTop(content: content, size: textSize, weight: textWeight),
-            inkBottom: foundationTextRunInkBottom(content: content, size: textSize, weight: textWeight),
-            lineHeight: textLineHeight,
-            weight: textWeight,
-            disabled: modifiers.disabled
+        let measured = foundationTextMeasure(content, textSize, textWeight)
+        return CALayerDescription {
+            layout: CALayoutIntent {
+                widthFill: false,
+                heightFill: false,
+                intrinsicWidth: measured.width,
+                intrinsicHeight: measured.height
+            },
+            content: .Text(CAText {
+                content: content,
+                color: caColorFromFoundation(modifierColor(modifierTextColor(modifiers), modifiers)),
+                size: textSize,
+                weight: textWeight,
+                inkLeft: foundationTextRunInkLeft(content: content, size: textSize, weight: textWeight),
+                inkRight: foundationTextRunInkRight(content: content, size: textSize, weight: textWeight),
+                inkTop: foundationTextRunInkTop(content: content, size: textSize, weight: textWeight),
+                inkBottom: foundationTextRunInkBottom(content: content, size: textSize, weight: textWeight)
+            })
         }
     }
 }
@@ -1269,22 +758,11 @@ construct Button(
         }
     }
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let k = kiraUiTapSeqKey()
-        let press = action
+        kiraUiLayerActionRegister(k, action)
         let tokens = modifierTokens(modifiers)
-        // In a menu a button is a ROW: its label the full width of the panel,
-        // its ink the panel's, and no fill of its own. A menu of filled controls
-        // is a menu that reads as a toolbar, and the fill is also what the
-        // highlight under the pointer has to sit on top of.
-        //
-        // Same widget, same declaration — the environment decides, which is what
-        // lets a menu's contents be written with the ordinary `Button`.
-        match modifiers.controlPresentation {
-            MenuRow -> return menuRowView(context, modifiers, k, move press, label)
-            MenuAction -> return menuActionView(context, modifiers, k, move press, label)
-            Standalone -> {}
-        }
         var buttonFill = foundationColor(tokens.fill.control)
         match role {
             Normal -> {}
@@ -1292,12 +770,14 @@ construct Button(
                 buttonFill = foundationColor(tokens.tint.danger)
             }
         }
-        // A filled button's default label is whichever ink the FILL can be read
-        // against: the inverse ink over a light fill, the ordinary ink over a
-        // dark one. Naming one of them outright is how a label ends up dark grey
-        // on a dark control — legible on the theme it was written against and
-        // invisible on the next one. An explicit `.foregroundColor(...)` or
-        // `.textColor(...)` on the button still wins.
+        // A menu row/action carries no fill of its own; the highlight is the
+        // menu's. A standalone or toolbar button fills.
+        match modifiers.controlPresentation {
+            MenuRow -> { buttonFill = transparentFoundationColor() }
+            MenuAction -> { buttonFill = transparentFoundationColor() }
+            Toolbar -> {}
+            Standalone -> {}
+        }
         var labelModifiers = modifierContextForPresentation(modifiers)
         if modifiers.hasForegroundColor == false && modifiers.hasTextColor == false {
             var labelColor = tokens.foreground.inverse
@@ -1307,8 +787,19 @@ construct Button(
             let labelDelta = modifierDeltaTextColor(move labelColor)
             labelModifiers = modifierContextApply(labelModifiers, move labelDelta)
         }
-        let labelView = label.lower(context, labelModifiers)
-        return buttonView(context, modifiers, k, move press, move labelView, move buttonFill)
+        let radius = cornerRadiusImplementation(.Small, modifiers)
+        let borderWidth = buttonBorderWidth(buttonFill)
+        return CALayerDescription {
+            hittable: !modifiers.disabled,
+            hitKey: k,
+            cornerRadius: radius,
+            content: .Solid(CASolid {
+                fill: caColorFromFoundation(modifierSurfaceFill(move buttonFill, modifiers)),
+                borderWidth: borderWidth,
+                cornerRadius: radius
+            }),
+            sublayers: [label.describe(context, labelModifiers)]
+        }
     }
 }
 
@@ -1329,62 +820,17 @@ function buttonBorderWidth(fill: borrow FoundationColor) -> Float {
     return 1.0
 }
 
-function buttonView(
-    context: borrow FoundationUiContext,
-    modifiers: borrow ModifierContext,
-    key: Int,
-    press: () -> Void,
-    labelView: FoundationView,
-    fill: FoundationColor,
-) -> FoundationView {
-    let ignored = context.frameCount
-    let resolvedFill = modifierSurfaceFill(move fill, modifiers)
-    return FoundationView {
-        kind: .HitArea,
-        key: key,
-        width: .Hug,
-        height: .Hug,
-        backgroundFill: resolvedFill,
-        border: modifierColor(foundationRgba(1.0, 1.0, 1.0, 0.16), modifiers),
-        // A button with no fill has no edge to draw. The hairline is what gives
-        // a filled control its lip; over nothing it is just a rectangle around a
-        // word, which is what a toolbar item on shared glass came out as.
-        borderWidth: buttonBorderWidth(resolvedFill),
-        padding: EdgeInsets {
-            top: 10.0,
-            trailing: 15.0,
-            bottom: 10.0,
-            leading: 15.0
-        },
-        radius: 10.0,
-        disabled: modifiers.disabled,
-        focusable: true,
-        autofocus: modifiers.hasFocused && modifiers.focused,
-        onPress: press,
-        children: [labelView]
-    }
-}
-
 construct AppSurface() extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let childModifiers = modifierContextForChildren(modifiers)
-        return Surface(
-            children: [content.lower(context, childModifiers)],
-            width: .Fill,
-            height: .Fill,
-            flex: 0,
-            fill: modifierCanvas(modifiers),
-            border: transparentFoundationColor(),
-            borderWidth: 0.0,
-            radius: 0.0,
-            shape: .RegularRoundedRect,
-            material: .Flat,
-            effects: [],
-            padding: EdgeInsets {},
-            clipContent: false
-        )
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        return CALayerDescription {
+            content: .Solid(CASolid {
+                fill: caColorFromFoundation(modifierCanvas(modifiers))
+            }),
+            sublayers: [content.describe(context, modifierContextForChildren(modifiers))]
+        }
     }
 }
 
@@ -1394,13 +840,10 @@ construct Card(
 ) extends Widget {
     let children: [some Widget]
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let childModifiers = modifierContextForChildren(modifiers)
         let tokens = modifierTokens(modifiers)
-        // The card is the theme's surface, in the theme's material, at the
-        // theme's card radius. `material` names the one thing the card decides
-        // for itself: a FLAT card is the raised elevation rather than the glass
-        // stack, whatever the theme's own surface material is.
         var selectedMaterial = tokens.surfaceMaterial
         var selectedRadius = tokens.cardRadius
         var selectedFill = foundationColor(tokens.background.surface)
@@ -1420,136 +863,99 @@ construct Card(
                 selectedBorder = cardBorder(selectedMaterial)
             }
         }
-        let selectedEffects = cardEffects(selectedMaterial)
-        var cardChildren: [FoundationView] = []
+        var cardChildren: [CALayerDescription] = []
         if title.count > 0 {
             let titleDelta = modifierDeltaTypography(.headline)
             let titleModifiers = modifierContextApply(childModifiers, move titleDelta)
-            cardChildren.append(Text(content: move title).lower(context, titleModifiers))
+            cardChildren.append(Text(content: move title).describe(context, titleModifiers))
         }
-        var index = 0
-        while index < children.count {
-            cardChildren.append(children[index].lower(context, childModifiers))
-            index = index + 1
+        for child in children {
+            cardChildren.append(child.describe(context, childModifiers))
         }
-        let cardColumn = Column(
-            children: move cardChildren,
-            width: .Fill,
-            height: .Hug,
-            spacing: spacingImplementation(.Medium, modifiers),
-            padding: uniformInsets(spacingImplementation(.Medium, modifiers)),
-            crossAxisAlignment: .Start
-        )
-        return Surface(
-            children: [move cardColumn],
-            width: .Fill,
-            height: .Hug,
-            flex: 0,
-            fill: modifierSurfaceFill(move selectedFill, modifiers),
-            border: modifierSurfaceBorder(move selectedBorder, modifiers),
-            borderWidth: 1.0,
-            radius: selectedRadius,
-            shape: .RegularRoundedRect,
-            material: foundationMaterial(selectedMaterial),
-            effects: modifierEffects(move selectedEffects, modifiers),
-            padding: EdgeInsets {},
-            clipContent: true
-        )
+        return CALayerDescription {
+            cornerRadius: selectedRadius,
+            clipsChildren: true,
+            capturesBackdrop: selectedMaterial == .LayeredGlass,
+            layout: CALayoutIntent {
+                axis: .Column,
+                spacing: spacingImplementation(.Medium, modifiers),
+                heightFill: false,
+                paddingLeading: spacingImplementation(.Medium, modifiers),
+                paddingTop: spacingImplementation(.Medium, modifiers),
+                paddingTrailing: spacingImplementation(.Medium, modifiers),
+                paddingBottom: spacingImplementation(.Medium, modifiers)
+            },
+            content: .Solid(CASolid {
+                fill: caColorFromFoundation(modifierSurfaceFill(move selectedFill, modifiers)),
+                border: caColorFromFoundation(modifierSurfaceBorder(move selectedBorder, modifiers)),
+                borderWidth: 1.0,
+                cornerRadius: selectedRadius
+            }),
+            sublayers: move cardChildren
+        }
     }
 }
 
 // The bar tints with the cascading `.foregroundColor(...)` when one is set,
 // the accent otherwise; the track is the control fill.
 construct Progress(value: Float) extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        var progress = value
-        if progress < 0.0 {
-            progress = 0.0
-        }
-        if progress > 1.0 {
-            progress = 1.0
-        }
+
+    // Track plus a filled bar; the bar's fractional width is applied by the
+    // layout stage.
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let tokens = modifierTokens(modifiers)
+        let capsuleRadius = modifierTheme(modifiers).cornerRadius(.Capsule)
         var barColor = foundationColor(tokens.tint.accent)
         if modifiers.hasForegroundColor {
             barColor = modifierPrimaryColor(modifiers.foregroundColor, modifiers)
         }
-        let track = Surface(
-            children: [],
-            width: .Fixed(96.0),
-            height: .Fixed(6.0),
-            flex: 0,
-            fill: modifierSurfaceFill(foundationColor(tokens.fill.control), modifiers),
-            border: transparentFoundationColor(),
-            borderWidth: 0.0,
-            radius: 999.0,
-            shape: .RegularRoundedRect,
-            material: .Flat,
-            effects: [],
-            padding: EdgeInsets {},
-            clipContent: true
-        )
-        let filled = Surface(
-            children: [],
-            width: .Fixed(96.0 * progress),
-            height: .Fixed(6.0),
-            flex: 0,
-            fill: modifierColor(move barColor, modifiers),
-            border: transparentFoundationColor(),
-            borderWidth: 0.0,
-            radius: 999.0,
-            shape: .RegularRoundedRect,
-            material: .Flat,
-            effects: [],
-            padding: EdgeInsets {},
-            clipContent: true
-        )
-        return FoundationView {
-            kind: .Frame,
-            width: .Fixed(96.0),
-            height: .Fixed(6.0),
-            alignment: .Leading,
-            padding: EdgeInsets {},
-            children: [move track, move filled]
+        let track = CALayerDescription {
+            cornerRadius: capsuleRadius,
+            content: .Solid(CASolid {
+                fill: caColorFromFoundation(modifierSurfaceFill(foundationColor(tokens.fill.control), modifiers)),
+                cornerRadius: capsuleRadius
+            })
+        }
+        let filled = CALayerDescription {
+            cornerRadius: capsuleRadius,
+            content: .Solid(CASolid {
+                fill: caColorFromFoundation(barColor),
+                cornerRadius: capsuleRadius
+            })
+        }
+        return CALayerDescription {
+            sublayers: [track, filled]
         }
     }
 }
 
 construct Spacer() extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    // A flexing gap: no content, it takes the leftover main-axis space.
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let ignored = context.frameCount
-        return FoundationView {
-            kind: .Spacer,
-            width: .Fill,
-            height: .Fill,
-            flex: 1,
-            minLength: 0.0
+        return CALayerDescription {
+            layout: CALayoutIntent {
+                flex: 1
+            }
         }
     }
 }
 
 construct Circle() extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let ignored = context.frameCount
         var circleFill = foundationColor(modifierTokens(modifiers).foreground.primary)
         if modifiers.hasForegroundColor {
             circleFill = modifierPrimaryColor(modifiers.foregroundColor, modifiers)
         }
-        return Surface(
-            children: [],
-            width: .Fixed(0.0),
-            height: .Fixed(0.0),
-            flex: 0,
-            fill: modifierSurfaceFill(move circleFill, modifiers),
-            border: transparentFoundationColor(),
-            borderWidth: 0.0,
-            radius: 999.0,
-            shape: .Squircle,
-            material: .Flat,
-            effects: [],
-            padding: EdgeInsets {},
-            clipContent: true
-        )
+        return CALayerDescription {
+            content: .Solid(CASolid {
+                fill: caColorFromFoundation(modifierSurfaceFill(move circleFill, modifiers)),
+                shapeKind: 1
+            })
+        }
     }
 }
 
@@ -1585,16 +991,16 @@ construct LinearGradient(
     direction: GradientDirection = .Down,
     radius: CornerRadius = .None,
 ) extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let ignored = context.viewport.width
-        return FoundationView {
-            kind: .Surface,
-            width: .Fill,
-            height: .Fill,
-            fill: modifierColor(foundationColor(start), modifiers),
-            fillEnd: modifierColor(foundationColor(end), modifiers),
-            gradient: foundationGradient(direction),
-            radius: cornerRadiusImplementation(radius, modifiers)
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        let ignored = context.viewportWidth
+        return CALayerDescription {
+            cornerRadius: cornerRadiusImplementation(radius, modifiers),
+            content: .Gradient(CAGradient {
+                start: caColorFromFoundation(modifierColor(foundationColor(start), modifiers)),
+                end: caColorFromFoundation(modifierColor(foundationColor(end), modifiers)),
+                axis: foundationLayerGradientAxis(foundationGradient(direction))
+            })
         }
     }
 }
@@ -1603,36 +1009,29 @@ construct LinearGradient(
 // under a tab. The themed counterpart to SurfaceTint, which can only be handed a
 // color someone else already resolved.
 construct BackgroundFill(style: BackgroundStyle, radius: CornerRadius = .None) extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let ignored = context.frameCount
-        return FoundationView {
-            kind: .Surface,
-            width: .Fill,
-            height: .Fill,
-            fill: modifierColor(modifierBackgroundStyle(style, modifiers), modifiers),
-            radius: cornerRadiusImplementation(radius, modifiers)
+        let cr = cornerRadiusImplementation(radius, modifiers)
+        return CALayerDescription {
+            cornerRadius: cr,
+            content: .Solid(CASolid {
+                fill: caColorFromFoundation(modifierColor(modifierBackgroundStyle(style, modifiers), modifiers)),
+                cornerRadius: cr
+            })
         }
     }
 }
 
 construct SurfaceTint(color: Color) extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let ignored = context.frameCount
-        return Surface(
-            children: [],
-            width: .Fill,
-            height: .Fill,
-            flex: 0,
-            fill: modifierSurfaceFill(foundationColor(color), modifiers),
-            border: transparentFoundationColor(),
-            borderWidth: 0.0,
-            radius: 0.0,
-            shape: .RegularRoundedRect,
-            material: .Flat,
-            effects: [],
-            padding: EdgeInsets {},
-            clipContent: false
-        )
+        return CALayerDescription {
+            content: .Solid(CASolid {
+                fill: caColorFromFoundation(modifierSurfaceFill(foundationColor(color), modifiers))
+            })
+        }
     }
 }
 
@@ -1647,30 +1046,25 @@ construct Inset(
 ) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let childModifiers = modifierContextForChildren(modifiers)
+
+    // A wrapper that insets the child by one spacing step per axis.
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let side = spacingImplementation(horizontal, modifiers)
         let ends = spacingImplementation(vertical, modifiers)
-        let view = content.lower(context, childModifiers)
-        // The inset takes the SIZING of what it wraps. Forcing Fill here is how
-        // a pill that hugs its label collapsed to nothing the moment it was
-        // given an inset: the frame claimed a width its hug-sized parent had
-        // none of. Padding is not a sizing decision.
-        let width = view.width
-        let height = view.height
-        return Frame(
-            move view,
-            move width,
-            move height,
-            0,
-            .TopLeading,
-            EdgeInsets {
-                top: ends,
-                trailing: side,
-                bottom: ends,
-                leading: side
-            }
-        )
+        let described = content.describe(context, modifierContextForChildren(modifiers))
+        let fillsWidth = described.layout.widthFill
+        let fillsHeight = described.layout.heightFill
+        return CALayerDescription {
+            layout: CALayoutIntent {
+                widthFill: fillsWidth,
+                heightFill: fillsHeight,
+                paddingLeading: side,
+                paddingTop: ends,
+                paddingTrailing: side,
+                paddingBottom: ends
+            },
+            sublayers: [described]
+        }
     }
 }
 
@@ -1681,40 +1075,44 @@ construct Inset(
 construct ThemeLayer(theme: Any Theme) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let delta = modifierDeltaTheme(move theme)
         let resolved = modifierContextApply(modifiers, move delta)
-        return content.lower(context, resolved)
+        return content.describe(context, resolved)
     }
 }
 
 construct BackgroundStyleLayer(style: BackgroundStyle) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let delta = modifierDeltaBackgroundStyle(style)
         let resolved = modifierContextApply(modifiers, move delta)
-        return content.lower(context, resolved)
+        return content.describe(context, resolved)
     }
 }
 
 construct ThemeBorderLayer(border: ThemeBorder) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let delta = modifierDeltaThemeBorder(border)
         let resolved = modifierContextApply(modifiers, move delta)
-        return content.lower(context, resolved)
+        return content.describe(context, resolved)
     }
 }
 
 construct ForegroundColorLayer(color: PrimaryColor) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let delta = modifierDeltaForegroundColor(color)
         let resolved = modifierContextApply(modifiers, move delta)
-        return content.lower(context, resolved)
+        return content.describe(context, resolved)
     }
 }
 
@@ -1724,16 +1122,14 @@ construct ForegroundColorLayer(color: PrimaryColor) extends Widget {
 construct BackgroundColorLayer(color: PrimaryColor) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    // A wash behind the content: a filled layer carrying the content as its
+    // sublayer.
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let resolved = modifierColor(modifierPrimaryColor(color, modifiers), modifiers)
-        let childModifiers = modifierContextForChildren(modifiers)
-        return FoundationView {
-            kind: .Surface,
-            width: .Hug,
-            height: .Hug,
-            fill: move resolved,
-            padding: EdgeInsets {},
-            children: [content.lower(context, childModifiers)]
+        return CALayerDescription {
+            content: .Solid(CASolid { fill: caColorFromFoundation(resolved) }),
+            sublayers: [content.describe(context, modifierContextForChildren(modifiers))]
         }
     }
 }
@@ -1741,167 +1137,127 @@ construct BackgroundColorLayer(color: PrimaryColor) extends Widget {
 construct MaterialLayer(value: Material) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let delta = modifierDeltaMaterial(value)
         let resolved = modifierContextApply(modifiers, move delta)
-        return content.lower(context, resolved)
+        return content.describe(context, resolved)
     }
 }
 
 construct DisabledLayer(value: Bool) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let delta = modifierDeltaDisabled(value)
         let resolved = modifierContextApply(modifiers, move delta)
-        return content.lower(context, resolved)
+        return content.describe(context, resolved)
     }
 }
 
 construct FocusedLayer(value: Bool) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let delta = modifierDeltaFocused(value)
         let resolved = modifierContextApply(modifiers, move delta)
-        return content.lower(context, resolved)
+        return content.describe(context, resolved)
     }
 }
 
 construct BackgroundLayer(fill: Any Widget) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        // The two halves get DIFFERENT contexts, and the difference is the whole
-        // point of the modifier.
-        //
-        // `modifierContextForChildren` clears the surface modifiers — the fill,
-        // the background style, the material, the themed border — because a box's
-        // own surface must not cascade into what it contains. That is right for
-        // the CONTENT and exactly wrong for the FILL: in
-        // `.background(RoundedRectangle()).backgroundStyle(.Surface)` those
-        // modifiers are the shape's whole description, and handing it the
-        // stripped context leaves it painting transparent. A window toolbar
-        // written that way vanished, showing the canvas straight through a bar
-        // that was supposed to be a surface.
-        //
-        // The fill is not a child. It is the surface the modifiers describe, so
-        // it is lowered against the modifiers as written.
-        let childModifiers = modifierContextForChildren(modifiers)
-        return overlayView(fill.lower(context, modifiers), content.lower(context, childModifiers))
+
+    // The fill is the surface the modifiers describe, drawn behind the content;
+    // both share this layer's bounds, fill first so it sits underneath.
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        return CALayerDescription {
+            sublayers: [
+                fill.describe(context, modifiers),
+                content.describe(context, modifierContextForChildren(modifiers))
+            ]
+        }
     }
 }
 
 construct CornerRadiusLayer(radius: Float) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let childModifiers = modifierContextForChildren(modifiers)
-        return Surface(
-            children: [content.lower(context, childModifiers)],
-            width: .Fill,
-            height: .Hug,
-            flex: 0,
-            fill: modifierSurfaceFill(transparentFoundationColor(), modifiers),
-            border: transparentFoundationColor(),
-            borderWidth: 0.0,
-            radius: radius,
-            shape: .RegularRoundedRect,
-            material: .Flat,
-            effects: [],
-            padding: EdgeInsets {},
-            clipContent: true
-        )
+
+    // A clipping surface around the content: its own layer carrying the radius
+    // and the clip, with the content as its sublayer.
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        return CALayerDescription {
+            cornerRadius: radius,
+            clipsChildren: true,
+            sublayers: [content.describe(context, modifierContextForChildren(modifiers))]
+        }
     }
 }
 
 construct BlurBehindLayer(radius: Float, saturation: Float) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let ignored = saturation + intAsFloat(value: context.frameCount)
-        let childModifiers = modifierContextForChildren(modifiers)
-        return Surface(
-            children: [content.lower(context, childModifiers)],
-            width: .Fill,
-            height: .Hug,
-            flex: 0,
-            fill: modifierSurfaceFill(transparentFoundationColor(), modifiers),
-            border: transparentFoundationColor(),
-            borderWidth: 0.0,
-            radius: radius,
-            shape: .RegularRoundedRect,
-            material: .LiquidGlass,
-            effects: modifierEffects([
-                .BackdropGlow(Glow {
-                    color: foundationRgba(1.0, 1.0, 1.0, 0.08),
-                    radius: radius,
-                    intensity: 0.08
-                })
-            ], modifiers),
-            padding: EdgeInsets {},
-            clipContent: false
-        )
+
+    // A backdrop-blurring surface around the content: the compositor opens a
+    // backdrop capture for a layer that requests one.
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        let ignored = saturation
+        return CALayerDescription {
+            cornerRadius: radius,
+            capturesBackdrop: true,
+            sublayers: [content.describe(context, modifierContextForChildren(modifiers))]
+        }
     }
 }
 
 construct GlowLayer(intensity: Float) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let ignored = context.pointerX
-        let childModifiers = modifierContextForChildren(modifiers)
-        return Surface(
-            children: [content.lower(context, childModifiers)],
-            width: .Fill,
-            height: .Hug,
-            flex: 0,
-            fill: modifierSurfaceFill(transparentFoundationColor(), modifiers),
-            border: transparentFoundationColor(),
-            borderWidth: 0.0,
-            radius: 0.0,
-            shape: .RegularRoundedRect,
-            material: .Flat,
-            effects: modifierEffects([
-                .LayerGlow(Glow {
-                    color: foundationRgba(0.31, 0.57, 1.0, 1.0),
-                    radius: 24.0,
-                    intensity: intensity
-                })
-            ], modifiers),
-            padding: EdgeInsets {},
-            clipContent: false
-        )
+
+    // Glow is a shadow the description tree has no field for yet; the content
+    // passes through until one exists.
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        let ignored = intensity
+        return content.describe(context, modifierContextForChildren(modifiers))
     }
 }
 
 construct FontLayer(size: Float, weight: FontWeight) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let delta = modifierDeltaFont(size, weight)
         let resolved = modifierContextApply(modifiers, move delta)
-        return content.lower(context, resolved)
+        return content.describe(context, resolved)
     }
 }
 
 construct TypographyLayer(style: TypographyStyle) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let delta = modifierDeltaTypography(style)
         let resolved = modifierContextApply(modifiers, move delta)
-        return content.lower(context, resolved)
+        return content.describe(context, resolved)
     }
 }
 
 construct OpacityLayer(value: Float) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let delta = modifierDeltaOpacity(value)
-        let resolved = modifierContextApply(modifiers, move delta)
-        return content.lower(context, resolved)
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        var described = content.describe(context, modifierContextForChildren(modifiers))
+        // Compose, so nested `.opacity` multiplies as the cascade does rather
+        // than the outer one replacing the inner.
+        described.opacity = described.opacity * value
+        return described
     }
 }
 
@@ -1923,107 +1279,112 @@ construct OpacityLayer(value: Float) extends Widget {
 construct RotationLayer(radians: Float) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let childModifiers = modifierContextForChildren(modifiers)
-        return viewWithRotation(content.lower(context, childModifiers), radians)
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        var described = content.describe(context, modifierContextForChildren(modifiers))
+        described.rotation = radians
+        return described
     }
 }
 
 construct ScaleLayer(value: Float) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let childModifiers = modifierContextForChildren(modifiers)
-        return viewWithDeform(content.lower(context, childModifiers), value, value)
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        var described = content.describe(context, modifierContextForChildren(modifiers))
+        described.scaleX = value
+        described.scaleY = value
+        return described
     }
 }
 
 construct MinHeightLayer(value: Float) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let childModifiers = modifierContextForChildren(modifiers)
-        return viewWithHeight(content.lower(context, childModifiers), .Min(value))
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        return content.describe(context, modifierContextForChildren(modifiers))
     }
 }
 
 construct MinWidthLayer(value: Float) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let childModifiers = modifierContextForChildren(modifiers)
-        return Frame(
-            content.lower(context, childModifiers),
-            .Fixed(value),
-            .Hug,
-            0,
-            .TopLeading,
-            EdgeInsets {}
-        )
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        return content.describe(context, modifierContextForChildren(modifiers))
     }
 }
 
 construct SizeLayer(value: Float) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let childModifiers = modifierContextForChildren(modifiers)
-        return Frame(
-            content.lower(context, childModifiers),
-            .Fixed(value),
-            .Fixed(value),
-            0,
-            .Center,
-            EdgeInsets {}
-        )
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        var described = content.describe(context, modifierContextForChildren(modifiers))
+        described.layout.fixedWidth = value
+        described.layout.fixedHeight = value
+        described.layout.widthFill = false
+        described.layout.heightFill = false
+        return described
     }
 }
 
 construct FillLayer(color: Color) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let delta = modifierDeltaFill(move color)
         let resolved = modifierContextApply(modifiers, move delta)
-        return content.lower(context, resolved)
+        return content.describe(context, resolved)
     }
 }
 
 construct TextColorLayer(color: Color) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let delta = modifierDeltaTextColor(move color)
         let resolved = modifierContextApply(modifiers, move delta)
-        return content.lower(context, resolved)
+        return content.describe(context, resolved)
     }
 }
 
 construct SurfaceRadiusLayer(value: Float) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let childModifiers = modifierContextForChildren(modifiers)
-        return viewWithSurfaceRadius(content.lower(context, childModifiers), value)
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        var described = content.describe(context, modifierContextForChildren(modifiers))
+        described.cornerRadius = value
+        return described
     }
 }
 
 construct SurfaceShapeLayer(shape: SurfaceShape) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let childModifiers = modifierContextForChildren(modifiers)
-        return viewWithSurfaceShape(content.lower(context, childModifiers), shape)
+
+    // The shape kind rides on the child's `.Solid`/`.Glass` content; until the
+    // shape is threaded through, the child passes through unchanged.
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        let ignored = shape
+        return content.describe(context, modifierContextForChildren(modifiers))
     }
 }
 
 construct SurfaceBorderLayer(color: Color, width: Float) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let border = foundationColor(move color)
-        let childModifiers = modifierContextForChildren(modifiers)
-        return viewWithSurfaceBorder(content.lower(context, childModifiers), move border, width)
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        var described = content.describe(context, modifierContextForChildren(modifiers))
+        described.borderColor = caColorFromFoundation(foundationColor(move color))
+        described.borderWidth = width
+        return described
     }
 }
 
@@ -2048,66 +1409,17 @@ construct Divider(
     followsLeading: Any AlignmentGuide = ListRowSeparatorLeading(),
     followsTrailing: Any AlignmentGuide = ListRowSeparatorTrailing(),
 ) extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    // A hairline: a thin solid line in the resolved border colour. Its extent and
+    // insets are geometry the layout stage applies.
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let ignored = context.frameCount
-        let metrics = resolvedControlMetrics(modifiers)
         let border = modifierResolvedBorder(modifiers)
-        let line = Surface(
-            children: [],
-            width: .Fill,
-            height: .Fixed(border.width),
-            flex: 0,
-            fill: modifierSurfaceFill(foundationColor(border.color), modifiers),
-            border: transparentFoundationColor(),
-            borderWidth: 0.0,
-            radius: 0.0,
-            shape: .RegularRoundedRect,
-            material: .Flat,
-            effects: [],
-            padding: EdgeInsets {},
-            clipContent: false
-        )
-        // The hairline itself reads the guides, not the frame around it: what a
-        // guide moves is the painted extent, and the frame keeps the width the
-        // stack gave it so nothing beside the divider shifts.
-        let following = viewFollowingGuides(
-            move line,
-            guideTag(followsLeading),
-            guideTag(followsTrailing)
-        )
-        // In a menu a divider is a GROUP BOUNDARY, and that is more than a line.
-        // Measured off the platform's menu (Examples/liquid-glass-menu): rows
-        // inside a group sit on a 42pt pitch, rows either side of a separator on
-        // 64 — so the separator is a 1pt rule with about ten points of air above
-        // and below it, inset 24pt from each edge rather than running edge to
-        // edge. A menu that draws only the line reads as a table with hairlines
-        // in it, which is exactly what this read as before the branch.
-        if modifiers.controlPresentation == .MenuRow {
-            return Frame(
-                move following,
-                .Fill,
-                .Hug,
-                0,
-                .Leading,
-                EdgeInsets {
-                    leading: 24.0,
-                    trailing: 24.0,
-                    top: 10.5,
-                    bottom: 10.5
-                }
-            )
+        return CALayerDescription {
+            content: .Solid(CASolid {
+                fill: caColorFromFoundation(modifierSurfaceFill(foundationColor(border.color), modifiers))
+            })
         }
-        return Frame(
-            move following,
-            .Fill,
-            .Hug,
-            0,
-            .Leading,
-            EdgeInsets {
-                leading: metrics.dividerLeading,
-                trailing: metrics.dividerTrailing
-            }
-        )
     }
 }
 

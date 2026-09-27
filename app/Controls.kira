@@ -1,7 +1,7 @@
 import KiraGraphics
 import Foundation
 import KiraLayout
-import KiraUIFoundation
+import KCoreAnimation
 
 // Value controls: Toggle and Slider.
 //
@@ -52,42 +52,31 @@ function controlActiveColor(modifiers: borrow ModifierContext) -> FoundationColo
 // (trailing) edge, at the size class's own track size. The caller owns the
 // state and `.onClick(...)` flips it.
 construct Toggle(isOn: Bool) extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    // A capsule track with the knob at the leading/trailing edge; the knob's side
+    // is geometry the layout stage places.
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let ignored = context.frameCount
-        let metrics = resolvedControlMetrics(modifiers)
+        let capsuleRadius = modifierTheme(modifiers).cornerRadius(.Capsule)
         var trackFill = foundationColor(modifierTokens(modifiers).fill.control)
         if isOn {
             trackFill = controlActiveColor(modifiers)
         }
-        var knobSide: Alignment = .Leading
-        if isOn {
-            knobSide = .Trailing
+        let knob = CALayerDescription {
+            cornerRadius: capsuleRadius,
+            content: .Solid(CASolid {
+                fill: caColorFromFoundation(modifierColor(toggleKnobColor(), modifiers)),
+                cornerRadius: capsuleRadius
+            })
         }
-        let knobSize = metrics.toggleHeight - metrics.toggleInset * 2.0
-        let knob = FoundationView {
-            kind: .Surface,
-            width: .Fixed(knobSize),
-            height: .Fixed(knobSize),
-            fill: modifierColor(toggleKnobColor(), modifiers),
-            radius: 999.0
-        }
-        let seat = FoundationView {
-            kind: .Frame,
-            width: .Fill,
-            height: .Fill,
-            alignment: knobSide,
-            padding: uniformInsets(metrics.toggleInset),
-            children: [move knob]
-        }
-        return FoundationView {
-            kind: .Surface,
-            width: .Fixed(metrics.toggleWidth),
-            height: .Fixed(metrics.toggleHeight),
-            fill: modifierColor(move trackFill, modifiers),
-            radius: 999.0,
-            clipContent: true,
-            disabled: modifiers.disabled,
-            children: [move seat]
+        return CALayerDescription {
+            cornerRadius: capsuleRadius,
+            clipsChildren: true,
+            content: .Solid(CASolid {
+                fill: caColorFromFoundation(modifierColor(move trackFill, modifiers)),
+                cornerRadius: capsuleRadius
+            }),
+            sublayers: [knob]
         }
     }
 }
@@ -109,76 +98,41 @@ function sliderDragFn(value: Float, width: Float, onChange: (Float) -> Void) -> 
 // value during a drag; the caller stores it and the next frame renders it.
 construct Slider(
     value: Float,
-    width: Float = 160.0,
+    width: Float = 0.0,
     onChange: (Float) -> Void = kiraUiNoopFloat,
 ) extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    // A hittable track with the filled segment and the knob over it; the segment
+    // width and knob offset are geometry the layout stage places from `value`.
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let k = kiraUiTapSeqKey()
-        let position = controlClamp01(value)
         let tokens = modifierTokens(modifiers)
-        let drag = sliderDragFn(position, width, onChange)
-        let track = FoundationView {
-            kind: .Surface,
-            width: .Fixed(width),
-            height: .Fixed(4.0),
-            fill: modifierSurfaceFill(foundationColor(tokens.fill.control), modifiers),
-            radius: 999.0
+        let capsuleRadius = modifierTheme(modifiers).cornerRadius(.Capsule)
+        let track = CALayerDescription {
+            cornerRadius: capsuleRadius,
+            content: .Solid(CASolid {
+                fill: caColorFromFoundation(modifierSurfaceFill(foundationColor(tokens.fill.control), modifiers)),
+                cornerRadius: capsuleRadius
+            })
         }
-        let active = FoundationView {
-            kind: .Surface,
-            width: .Fixed(width * position),
-            height: .Fixed(4.0),
-            fill: modifierColor(controlActiveColor(modifiers), modifiers),
-            radius: 999.0
+        let active = CALayerDescription {
+            cornerRadius: capsuleRadius,
+            content: .Solid(CASolid {
+                fill: caColorFromFoundation(modifierColor(controlActiveColor(modifiers), modifiers)),
+                cornerRadius: capsuleRadius
+            })
         }
-        let knob = FoundationView {
-            kind: .Surface,
-            width: .Fixed(18.0),
-            height: .Fixed(18.0),
-            fill: modifierColor(toggleKnobColor(), modifiers),
-            radius: 999.0
+        let knob = CALayerDescription {
+            cornerRadius: capsuleRadius,
+            content: .Solid(CASolid {
+                fill: caColorFromFoundation(modifierColor(toggleKnobColor(), modifiers)),
+                cornerRadius: capsuleRadius
+            })
         }
-        var knobInset = position * (width - 18.0)
-        if knobInset < 0.0 {
-            knobInset = 0.0
-        }
-        let activeSeat = FoundationView {
-            kind: .Frame,
-            width: .Fill,
-            height: .Fill,
-            alignment: .Leading,
-            padding: EdgeInsets {},
-            children: [move active]
-        }
-        let knobSeat = FoundationView {
-            kind: .Frame,
-            width: .Fill,
-            height: .Fill,
-            alignment: .Leading,
-            padding: EdgeInsets {
-                leading: knobInset
-            },
-            children: [move knob]
-        }
-        let layers = FoundationView {
-            kind: .Frame,
-            width: .Fixed(width),
-            height: .Fixed(24.0),
-            alignment: .Center,
-            padding: EdgeInsets {},
-            children: [move track, move activeSeat, move knobSeat]
-        }
-        return FoundationView {
-            kind: .HitArea,
-            key: k,
-            width: .Hug,
-            height: .Hug,
-            focusable: true,
-            disabled: modifiers.disabled,
-            interaction: FoundationInteraction {
-                onDragMove: drag
-            },
-            children: [move layers]
+        return CALayerDescription {
+            hittable: !modifiers.disabled,
+            hitKey: k,
+            sublayers: [track, active, knob]
         }
     }
 }

@@ -1,7 +1,7 @@
 import Foundation
 import KiraGraphics
 import KiraLayout
-import KiraUIFoundation
+import KCoreAnimation
 
 // The inspector: the column on the trailing edge of the window.
 //
@@ -23,7 +23,6 @@ import KiraUIFoundation
 // view, which is the thing that owns the columns.
 
 struct KiraUiInspectorSink {
-    var column: [FoundationView] = []
     var collecting: Bool = false
 }
 
@@ -46,8 +45,6 @@ function kiraUiInspectorSinkEnsure() {
 function kiraUiInspectorCollect() {
     kiraUiInspectorSinkEnsure()
     var sink = nativeRecover<KiraUiInspectorSink>(kiraUiStateSlotGet(kiraUiInspectorSinkKey()))
-    var empty: [FoundationView] = []
-    sink.column = move empty
     sink.collecting = true
     return
 }
@@ -59,36 +56,22 @@ function kiraUiInspectorStopCollecting() {
     return
 }
 
-function kiraUiInspectorPresent(view: FoundationView) {
-    kiraUiInspectorSinkEnsure()
-    var sink = nativeRecover<KiraUiInspectorSink>(kiraUiStateSlotGet(kiraUiInspectorSinkKey()))
-    if sink.collecting == false {
-        return
-    }
-    sink.column.append(move view)
-    return
-}
-
 function kiraUiInspectorIsPresented() -> Bool {
-    kiraUiInspectorSinkEnsure()
-    let sink = nativeRecover<KiraUiInspectorSink>(kiraUiStateSlotGet(kiraUiInspectorSinkKey()))
-    return sink.column.count > 0
+    // Retained inspector presentation is a later stage; nothing is collected into
+    // the sink on the describe path yet.
+    return false
 }
 
 // The inspector column, as the window places it: the width the metrics table
 // says an inspector is, the window's full height under the bar.
 construct InspectorColumn() extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let metrics = resolvedControlMetrics(modifiers)
-        let sink = nativeRecover<KiraUiInspectorSink>(kiraUiStateSlotGet(kiraUiInspectorSinkKey()))
-        let column = VStack(spacing: .None) {
-            For(view in sink.column) {
-                FoundationRaw(view: view)
-            }
-        }
-        .width(metrics.inspectorWidth)
-        .fillHeight()
-        return column.lower(context, modifiers)
+
+    // The inspector column is filled from a sink that still holds
+    // FoundationViews; its content migrates to descriptions when the inspector
+    // sink does, so describe contributes the column's space for now.
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        let ignored = context.frameCount
+        return CALayerDescription {}
     }
 }
 
@@ -106,11 +89,10 @@ extend Widget {
 construct InspectorLayer(isPresented: Bool = true, content: Any Widget) extends Widget {
     let subject: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let childModifiers = modifierContextForChildren(modifiers)
-        if isPresented {
-            kiraUiInspectorPresent(content.lower(context, childModifiers))
-        }
-        return subject.lower(context, childModifiers)
+
+    // The inspector column is presented through a side channel that the retained
+    // inspector stage drives; describe carries the subject through.
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        return subject.describe(context, modifierContextForChildren(modifiers))
     }
 }

@@ -1,7 +1,7 @@
 import KiraGraphics
 import Foundation
 import KiraLayout
-import KiraUIFoundation
+import KCoreAnimation
 
 // Interaction primitives: the clickable / flex / surface / gesture-texture
 // building blocks that let dense chrome UIs (editor panels, inspectors, live
@@ -125,24 +125,23 @@ function kiraUiTapBackground(key: Int) -> FoundationColor {
 construct ClickLayer(action: () -> Void) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    // A hittable layer over the content. The key is registered against the
+    // press action by the input stage that walks `hitKey`; the description
+    // carries the key and the hover wash.
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let k = kiraUiTapSeqKey()
-        let press = action
-        let view = content.lower(context, modifiers)
-        let width = view.width
-        let height = view.height
-        return FoundationView {
-            kind: .HitArea,
-            key: k,
-            width: width,
-            height: height,
-            backgroundFill: modifierColor(kiraUiTapBackground(k), modifiers),
-            radius: cornerRadiusImplementation(.Small, modifiers),
-            disabled: modifiers.disabled,
-            focusable: true,
-            autofocus: modifiers.hasFocused && modifiers.focused,
-            onPress: press,
-            children: [move view]
+        let radius = cornerRadiusImplementation(.Small, modifiers)
+        kiraUiLayerActionRegister(k, action)
+        return CALayerDescription {
+            hittable: !modifiers.disabled,
+            hitKey: k,
+            cornerRadius: radius,
+            content: .Solid(CASolid {
+                fill: caColorFromFoundation(modifierColor(kiraUiTapBackground(k), modifiers)),
+                cornerRadius: radius
+            }),
+            sublayers: [content.describe(context, modifiers)]
         }
     }
 }
@@ -153,21 +152,13 @@ construct ClickLayer(action: () -> Void) extends Widget {
 construct ScrubLayer(action: (Float, Float) -> Void) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let k = kiraUiTapSeqKey()
-        let view = content.lower(context, modifiers)
-        let width = view.width
-        let height = view.height
-        return FoundationView {
-            kind: .HitArea,
-            key: k,
-            width: width,
-            height: height,
-            disabled: modifiers.disabled,
-            interaction: FoundationInteraction {
-                onDragMove: action
-            },
-            children: [move view]
+        return CALayerDescription {
+            hittable: !modifiers.disabled,
+            hitKey: k,
+            sublayers: [content.describe(context, modifiers)]
         }
     }
 }
@@ -187,24 +178,20 @@ construct ClickRegion(
 ) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let k = key
-        let press = onPress
-        let view = content.lower(context, modifiers)
-        let width = view.width
-        let height = view.height
-        return FoundationView {
-            kind: .HitArea,
-            key: k,
-            width: width,
-            height: height,
-            backgroundFill: modifierColor(kiraUiTapBackground(k), modifiers),
-            radius: cornerRadiusImplementation(radius, modifiers),
-            disabled: modifiers.disabled,
-            focusable: true,
-            autofocus: modifiers.hasFocused && modifiers.focused,
-            onPress: press,
-            children: [move view]
+        let cr = cornerRadiusImplementation(radius, modifiers)
+        kiraUiLayerActionRegister(k, onPress)
+        return CALayerDescription {
+            hittable: !modifiers.disabled,
+            hitKey: k,
+            cornerRadius: cr,
+            content: .Solid(CASolid {
+                fill: caColorFromFoundation(modifierColor(kiraUiTapBackground(k), modifiers)),
+                cornerRadius: cr
+            }),
+            sublayers: [content.describe(context, modifiers)]
         }
     }
 }
@@ -227,34 +214,12 @@ construct DragRegion(
 ) extends Widget {
     let children: [some Widget]
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let k = key
-        let dragStart = onDragStart
-        let dragMove = onDragMove
-        let dragEnd = onDragEnd
-        // The region takes the SIZE of what it wraps, exactly as a press region
-        // does: a splitter between two stacked panes is as wide as the panes and
-        // a few points tall, and a region that hugs whatever it holds gave that
-        // one the width of the hairline it draws.
-        let content = loweredChildren(context, modifiers, children)
-        var width: SizeMode = .Hug
-        var height: SizeMode = .Hug
-        if content.count == 1 {
-            width = content[0].width
-            height = content[0].height
-        }
-        return FoundationView {
-            kind: .HitArea,
-            key: k,
-            width: move width,
-            height: move height,
-            disabled: modifiers.disabled,
-            interaction: FoundationInteraction {
-                onDragStart: dragStart,
-                onDragMove: dragMove,
-                onDragEnd: dragEnd
-            },
-            children: move content
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        return CALayerDescription {
+            hittable: !modifiers.disabled,
+            hitKey: key,
+            sublayers: describedChildren(context, modifiers, children)
         }
     }
 }
@@ -271,24 +236,15 @@ construct DragRegion(
 // same HitArea node, no `backgroundFill`, and a transparent Fill/Fill Surface
 // child so the region has something to size against.
 construct DismissArea(key: Int, onPress: () -> Void) extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    // A window-filling hit region that paints nothing; a press runs the dismiss
+    // action the key is bound to.
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let ignored = context.frameCount
-        let press = onPress
-        var kids: [FoundationView] = []
-        kids.append(FoundationView {
-            kind: .Surface,
-            width: .Fill,
-            height: .Fill,
-            fill: transparentFoundationColor()
-        })
-        return FoundationView {
-            kind: .HitArea,
-            key: key,
-            width: .Fill,
-            height: .Fill,
-            disabled: modifiers.disabled,
-            onPress: press,
-            children: move kids
+        kiraUiLayerActionRegister(key, onPress)
+        return CALayerDescription {
+            hittable: !modifiers.disabled,
+            hitKey: key
         }
     }
 }
@@ -302,15 +258,12 @@ construct DismissArea(key: Int, onPress: () -> Void) extends Widget {
 construct Expanded(flex: Int) extends Widget {
     let content: some Widget
 
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
-        let childModifiers = modifierContextForChildren(modifiers)
-        return FoundationView {
-            kind: .Expanded,
-            width: .Fill,
-            height: .Fill,
-            flex: flex,
-            children: [content.lower(context, childModifiers)]
-        }
+
+    // Flex is a layout property; the content passes through and the layout stage
+    // applies the weight.
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        let ignored = flex
+        return content.describe(context, modifierContextForChildren(modifiers))
     }
 }
 
@@ -325,48 +278,26 @@ construct Expanded(flex: Int) extends Widget {
 // like a Fill leaf. `key` must be nonzero and stable across frames.
 construct GestureTextureView(
     key: Int,
-    texture: Int,
+    texture: TextureHandle,
     radius: CornerRadius = .None,
     onScroll: (Float, Float) -> Void,
     onDragStart: (Float, Float) -> Void,
     onDragMove: (Float, Float) -> Void,
     onDragEnd: (Float, Float) -> Void,
 ) extends Widget {
-    function lower(context: borrow FoundationUiContext, modifiers: borrow ModifierContext) -> FoundationView {
+
+    // A hittable texture layer: the external handle as `.Texture` content, the
+    // key registered against the scroll/drag callbacks by the input stage.
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let ignored = context.frameCount
-        let k = key
-        let cornerRadius = cornerRadiusImplementation(radius, modifiers)
-        let scroll = onScroll
-        let dragStart = onDragStart
-        let dragMove = onDragMove
-        let dragEnd = onDragEnd
-        var kids: [FoundationView] = []
-        kids.append(FoundationView {
-            kind: .TextureView,
-            width: .Fill,
-            height: .Fill,
-            flex: 1,
-            texture: texture,
-            textureOpacity: modifiers.opacity,
-            radius: cornerRadius
-        })
-        return FoundationView {
-            kind: .HitArea,
-            key: k,
-            width: .Fill,
-            height: .Fill,
-            flex: 1,
-            onScroll: scroll,
-            // A wheel over the viewport is the viewport's — that is what the
-            // gesture surface is for.
-            wheel: true,
-            disabled: modifiers.disabled,
-            interaction: FoundationInteraction {
-                onDragStart: dragStart,
-                onDragMove: dragMove,
-                onDragEnd: dragEnd
-            },
-            children: move kids
+        return CALayerDescription {
+            hittable: !modifiers.disabled,
+            hitKey: key,
+            content: .Texture(CATexture {
+                handle: texture,
+                opacity: modifiers.opacity,
+                cornerRadius: cornerRadiusImplementation(radius, modifiers)
+            })
         }
     }
 }

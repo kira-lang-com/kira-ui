@@ -1,3 +1,5 @@
+import Foundation
+
 // KiraUI's canonical style vocabulary. An application fills the tokens once,
 // and component style values are construct-backed updates of the same
 // implementation.
@@ -94,6 +96,7 @@ struct StyleCornerRadiusTokens {
 
 struct StyleSpacingTokens {
     let none: Float
+    let micro: Float
     let extraSmall: Float
     let small: Float
     let medium: Float
@@ -132,6 +135,7 @@ enum TypographyStyle {
 
 enum Spacing {
     None
+    Micro
     ExtraSmall
     Small
     Medium
@@ -247,9 +251,11 @@ struct FrostedMaterialImplementation {
 }
 
 struct LiquidGlassMaterialImplementation {
-    let level: MaterialLevel
+    // Liquid Glass is its own material family. It is not an ultrathin/thin/
+    // regular/thick blur-material rung, so there is deliberately no `level`.
+    // The platform element owns its wash, blur and border stack; a theme may
+    // still opt out of its edge treatment or shade the material via `glassTint`.
     let edgeLighting: Bool
-    let material: MaterialLevel = .XHigh
 }
 
 // The wash a glass surface shades itself with belongs to the material, so it
@@ -259,7 +265,7 @@ struct StyleMaterialTokens {
     let liquidGlass: LiquidGlassMaterialImplementation
     let glassTint: AdaptiveColor = AdaptiveColor {
         light: Color { r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
-        dark: Color { r: 0.72, g: 0.78, b: 0.92, a: 1.0 }
+        dark: Color { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
     }
 }
 
@@ -302,13 +308,14 @@ function defaultStyleCornerRadiusTokens() -> StyleCornerRadiusTokens {
         medium: 12.0,
         large: 18.0,
         extraLarge: 24.0,
-        capsule: 999.0
+        capsule: infinity
     }
 }
 
 function defaultStyleSpacingTokens() -> StyleSpacingTokens {
     return StyleSpacingTokens {
         none: 0.0,
+        micro: 2.0,
         extraSmall: 4.0,
         small: 8.0,
         medium: 12.0,
@@ -330,7 +337,6 @@ function defaultStyleMaterialTokens() -> StyleMaterialTokens {
     return StyleMaterialTokens {
         frosted: FrostedMaterialImplementation { level: .Medium },
         liquidGlass: LiquidGlassMaterialImplementation {
-            level: .XHigh,
             edgeLighting: true
         }
     }
@@ -358,9 +364,8 @@ construct StyleImplementation {
     // no appearance preference.
     let appearance: Appearance = .Dark
     // The grouped token is the canonical source; this flattened member is the
-    // component-override surface used by `liquidGlass.material: ...`.
+    // component-override surface for Liquid Glass behavior.
     let liquidGlass: LiquidGlassMaterialImplementation = LiquidGlassMaterialImplementation {
-        level: .XHigh,
         edgeLighting: true
     }
     let additionalEffect: [ShadowEffect] = []
