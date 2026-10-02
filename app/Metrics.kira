@@ -99,6 +99,20 @@ struct ControlMetricsImplementation {
     let menuPillInset: Float = 6.0
     let menuRowRadius: Float = 10.0
     let menuChevronBox: Float = 14.0
+    // The glyphs a menu draws, by their em (see `iconScaleSize`), measured off
+    // the platform's menu: a row's glyph is centred in a fixed column with a gap
+    // before its title (30 + 22 + 14 puts the title 66pt in), an action's glyph
+    // stands larger than the caption under it, and the disclosure chevron is a
+    // small mark rather than a glyph at the title's size.
+    let menuIconColumn: Float = 22.0
+    let menuIconGap: Float = 14.0
+    let menuActionIconSize: Float = 21.0
+    // The actions across the top stand in their own air: more above the glyphs
+    // than below the captions, with the caption a clear step under its glyph.
+    let menuActionsTopInset: Float = 18.0
+    let menuActionsBottomInset: Float = 10.0
+    let menuActionSpacing: Float = 8.0
+    let menuChevronSize: Float = 11.0
     // One wheel notch. This is interaction geometry, so it scales with the
     // region rather than ScrollView carrying one platform constant forever.
     let scrollStep: Float = 48.0
@@ -186,6 +200,13 @@ struct StyleMetricTokens {
         menuPillInset: 4.5,
         menuRowRadius: 8.0,
         menuChevronBox: 11.0,
+        menuIconColumn: 16.8,
+        menuIconGap: 10.7,
+        menuActionIconSize: 16.0,
+        menuActionsTopInset: 13.7,
+        menuActionsBottomInset: 7.6,
+        menuActionSpacing: 6.1,
+        menuChevronSize: 8.4,
         scrollStep: 36.0,
         padWidth: 128.0,
         padHeight: 68.0,
@@ -237,6 +258,13 @@ struct StyleMetricTokens {
         menuPillInset: 5.0,
         menuRowRadius: 9.0,
         menuChevronBox: 12.0,
+        menuIconColumn: 18.9,
+        menuIconGap: 12.0,
+        menuActionIconSize: 18.0,
+        menuActionsTopInset: 15.4,
+        menuActionsBottomInset: 8.6,
+        menuActionSpacing: 6.9,
+        menuChevronSize: 9.4,
         scrollStep: 42.0,
         padWidth: 148.0,
         padHeight: 84.0,
@@ -289,6 +317,13 @@ struct StyleMetricTokens {
         menuPillInset: 7.0,
         menuRowRadius: 12.0,
         menuChevronBox: 16.0,
+        menuIconColumn: 26.2,
+        menuIconGap: 16.7,
+        menuActionIconSize: 25.0,
+        menuActionsTopInset: 21.4,
+        menuActionsBottomInset: 11.9,
+        menuActionSpacing: 9.5,
+        menuChevronSize: 13.1,
         scrollStep: 56.0,
         padWidth: 196.0,
         padHeight: 112.0,
@@ -338,29 +373,18 @@ function resolvedControlMetrics(modifiers: borrow ModifierContext) -> ControlMet
     return controlMetricsImplementation(modifiers.controlSize, modifiers)
 }
 
-// How large a glyph is drawn here: by the CAP HEIGHT of the type it stands in,
-// the way a symbol is on the platform.
+// How large a glyph is drawn here: on the EM of the type it stands in, the way
+// a symbol is on the platform.
 //
-// A symbol is a character in the run beside it. What makes it look like one is
-// that its ink runs from the cap line to the baseline — exactly the band a
-// capital letter occupies — so the glyph and the words are the same object at
-// the same size, not a picture placed near some text.
-//
-// Cap height, not point size: a font's point size is its whole line box,
-// ascender to descender, and a glyph drawn that tall stands above the capitals
-// and hangs below the baseline. The size class used to answer this out of its
-// own table, which is how a 14-point glyph ended up beside 17-point type — a
-// size class is not a font size, and no arithmetic between the two tables makes
-// one track the other. There is no icon size in the metrics table any more.
-// The BAND a glyph's ink is asked to fill. What box that takes is the symbol's
-// own business — its artwork sits inside its canvas differently from the next
-// one's — and `iconView` asks it (see `iconBoxForBand`).
+// A symbol is a character in the run beside it, and like a character it is
+// drawn on the font's em box rather than fitted to a band. Each glyph's ink is
+// as tall as its artwork draws it on that em — `play.rectangle` squat,
+// `photo.on.rectangle` tall; the platform's menu renders the two 69 and 83
+// device pixels high at one size. Fitting every glyph's INK to the cap band made
+// them one height, and all of them small: the platform's row glyph is 17.3pt of
+// ink beside 12.3pt capitals.
 function iconScaleSize(scale: IconScale, modifiers: borrow ModifierContext) -> Float {
-    let band = iconCapBand(modifiers)
-    if band <= 0.0 {
-        return iconScaleFactor(scale) * iconTypeSize(modifiers)
-    }
-    return iconScaleFactor(scale) * band
+    return iconScaleFactor(scale) * iconTypeSize(modifiers)
 }
 
 // The cap band of the type in effect, measured from the face: `H` reaches the

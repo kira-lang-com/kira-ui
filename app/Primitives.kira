@@ -103,7 +103,31 @@ construct EmptyView() extends Widget {
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let ignored = context.frameCount
-        return CALayerDescription {}
+        return CALayerDescription {
+            layout: CALayoutIntent {
+                fixedWidth: 0.0,
+                fixedHeight: 0.0
+            }
+        }
+    }
+}
+
+// Whether a layer is an `EmptyView`'s: nothing drawn, nothing held, no room
+// taken. A stack leaves such a layer out altogether, the spacing around it
+// included, as SwiftUI's stacks leave out an `EmptyView` — so a slot left at
+// its default really is absent rather than a gap.
+function describesNothing(layer: borrow CALayerDescription) -> Bool {
+    if layer.sublayers.count > 0 || layer.layout.fixedWidth != 0.0 || layer.layout.fixedHeight != 0.0 {
+        return false
+    }
+    match layer.content {
+        Empty -> return true
+        Text(t) -> return false
+        Solid(s) -> return false
+        Icon(i) -> return false
+        Glass(g) -> return false
+        Gradient(r) -> return false
+        Texture(x) -> return false
     }
 }
 
@@ -143,7 +167,8 @@ construct HStack(
             layout: CALayoutIntent {
                 axis: .Row,
                 spacing: stackSpacing(spacing, spacingLength, modifiers),
-                heightFill: false
+                heightFill: false,
+                alignment: Point { x: 0.0, y: verticalAlignmentUnit(alignment) }
             },
             sublayers: describedChildren(context, modifiers, children)
         }
@@ -165,7 +190,8 @@ construct VStack(
             layout: CALayoutIntent {
                 axis: .Column,
                 spacing: stackSpacing(spacing, spacingLength, modifiers),
-                heightFill: false
+                heightFill: false,
+                alignment: Point { x: horizontalAlignmentUnit(alignment), y: 0.0 }
             },
             sublayers: describedChildren(context, modifiers, children)
         }
@@ -178,12 +204,53 @@ construct ZStack(alignment: StackAlignment = .Center) extends Widget {
     let children: [some Widget]
 
 
-    // Overlay stack: children share the frame's bounds. Placement within the
-    // frame by `alignment` is layout's job; describe carries the stack order.
+    // Overlay stack: children share the frame's bounds, in stack order, each
+    // placed within it by `alignment`.
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         return CALayerDescription {
+            layout: CALayoutIntent {
+                alignment: stackAlignmentUnitPoint(alignment)
+            },
             sublayers: describedChildren(context, modifiers, children)
         }
+    }
+}
+
+// Where a row's alignment puts a shorter child, as a fraction of the leftover
+// height. A first-text-baseline row centres until layout reads ink metrics.
+function verticalAlignmentUnit(alignment: VerticalAlignment) -> Float {
+    match alignment {
+        Top -> return 0.0
+        Center -> return 0.5
+        Bottom -> return 1.0
+        Stretch -> return 0.0
+        FirstTextBaseline -> return 0.5
+    }
+}
+
+// Where a column's alignment puts a narrower child, as a fraction of the
+// leftover width.
+function horizontalAlignmentUnit(alignment: HorizontalAlignment) -> Float {
+    match alignment {
+        Leading -> return 0.0
+        Center -> return 0.5
+        Trailing -> return 1.0
+        Stretch -> return 0.0
+    }
+}
+
+// Where an alignment puts a child in its box, as the unit point layout reads.
+function stackAlignmentUnitPoint(alignment: StackAlignment) -> Point {
+    match alignment {
+        TopLeading -> return Point { x: 0.0, y: 0.0 }
+        Top -> return Point { x: 0.5, y: 0.0 }
+        TopTrailing -> return Point { x: 1.0, y: 0.0 }
+        Leading -> return Point { x: 0.0, y: 0.5 }
+        Center -> return Point { x: 0.5, y: 0.5 }
+        Trailing -> return Point { x: 1.0, y: 0.5 }
+        BottomLeading -> return Point { x: 0.0, y: 1.0 }
+        Bottom -> return Point { x: 0.5, y: 1.0 }
+        BottomTrailing -> return Point { x: 1.0, y: 1.0 }
     }
 }
 
@@ -223,11 +290,25 @@ construct Icon(symbol: Symbol) extends Widget {
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let ignored = context.frameCount
-        return iconDescription(
-            symbolImplementation(symbol, modifiers),
-            iconScaleSize(modifiers.imageScale, modifiers),
-            modifiers
-        )
+        // On the bar a symbol is set at the bar's own size and weight, not
+        // those of the type beside it — a toolbar's glyphs and its labels are
+        // two sizes — and inked vibrant, into the glass it stands on.
+        if modifiers.controlPresentation == .Toolbar {
+            let points = iconScaleFactor(modifiers.imageScale) * windowChromeMetrics.symbolSize
+            var ink = vibrantLabel(modifiers)
+            if modifiers.hasForegroundColor || modifiers.hasTextColor {
+                ink = VibrantInk { color: caColorFromFoundation(iconInk(modifiers)) }
+            }
+            return iconLayer(
+                symbolImplementation(symbol, modifiers),
+                symbolEm(points),
+                ink,
+                symbolWeightGrowth(points, windowChromeMetrics.symbolWeight),
+            )
+        }
+        // Everywhere else a symbol is the size SF's would be beside the same
+        // type.
+        return iconDescription(symbolImplementation(symbol, modifiers), symbolEm(iconScaleSize(modifiers.imageScale, modifiers)), modifiers)
     }
 }
 
@@ -262,12 +343,40 @@ function iconInkAspect(svg: borrow String) -> Float {
     return foundationIconInkAspect(svg)
 }
 
+// How much of its own box a symbol's drawing covers, and the share above which
+// it counts as drawn SOLID rather than stroked. An outline leaves most of its
+// box empty; a filled shape does not.
+function iconInkDensity(svg: borrow String) -> Float {
+    return foundationIconInkDensity(svg)
+}
+
+function iconSolidDensity() -> Float {
+    return 0.4
+}
+
 function iconDescription(
     svg: String,
     size: Float,
     modifiers: borrow ModifierContext,
 ) -> CALayerDescription {
-    let ignored = size
+    var growth = 0.0
+    // Only a STROKED symbol is thickened. A solid one — a cursor, a filled
+    // marker — has no stems to match against the type beside it, and growing it
+    // just swells the shape until it reads as a blob.
+    if iconInkDensity(svg) < iconSolidDensity() {
+        growth = iconWeightGrowth(size, modifiers)
+    }
+    return iconLayer(move svg, size, VibrantInk { color: caColorFromFoundation(iconInk(modifiers)) }, growth)
+}
+
+// The colour a glyph is inked in.
+//
+// A glyph is ink, so it answers the same explicit override a run of text does.
+// `.foregroundColor(...)` names a role and is what application code should
+// reach for; `.textColor(...)` is the escape hatch for artwork whose colour is
+// the document's rather than the theme's — a gizmo's axis, a swatch — and an
+// icon that ignored it had no way to be one of those.
+function iconInk(modifiers: borrow ModifierContext) -> FoundationColor {
     var ink = modifierColor(foundationColor(modifierTokens(modifiers).foreground.primary), modifiers)
     if modifiers.hasForegroundColor {
         ink = modifierColor(modifierPrimaryColor(modifiers.foregroundColor, modifiers), modifiers)
@@ -275,13 +384,80 @@ function iconDescription(
     if modifiers.hasTextColor {
         ink = modifierColor(foundationColor(modifiers.textColor), modifiers)
     }
-    return CALayerDescription {
+    return ink
+}
+
+// A glyph `size` em tall, inked with `ink` and grown `growth` points heavier
+// than drawn.
+function iconLayer(
+    svg: String,
+    size: Float,
+    ink: borrow VibrantInk,
+    growth: Float,
+) -> CALayerDescription {
+    // `size` is the glyph's EM. A symbol is rasterized trimmed to its ink, so
+    // the ink layer is the share of the em this glyph's drawing occupies — the
+    // library's shared canvas makes that knowable — and it stands centred in an
+    // em-tall box, so glyphs of different shapes share a centre line and the
+    // words beside or below them share a baseline.
+    let inkHeight = size * (foundationIconInkBottom(svg) - foundationIconInkTop(svg))
+    let inkWidth = inkHeight * iconInkAspect(svg)
+    let glyph = CALayerDescription {
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            intrinsicWidth: inkWidth,
+            intrinsicHeight: inkHeight
+        },
         content: .Icon(CAIcon {
             svg: move svg,
-            tint: caColorFromFoundation(ink),
-            weightGrowth: 0.0
+            tint: ink.color,
+            weightGrowth: growth,
+            blend: ink.blend
         })
     }
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            intrinsicWidth: inkWidth,
+            fixedHeight: size,
+            alignment: Point { x: 0.5, y: 0.5 }
+        },
+        sublayers: [glyph]
+    }
+}
+
+// How much heavier than drawn this glyph is.
+//
+// The symbol library is one weight — a hairline outline — and the type around it
+// is not. Beside a semibold headline, an unthickened symbol is a different,
+// lighter object standing near the words rather than a character in the same
+// run: the stems say one thing and the outline says another, and no amount of
+// aligning it fixes that. So the artwork is grown outward until its stroke
+// matches the stems it stands with.
+//
+// The library's stroke is 16 of its 256 units. A regular face's stem is about a
+// twelfth of the cap band, and a heavier one thickens roughly with its weight —
+// the difference, halved (growth applies to both sides of a stroke), is what the
+// glyph has to gain.
+function iconWeightGrowth(band: Float, modifiers: borrow ModifierContext) -> Float {
+    let drawn = band * 0.0625
+    let wanted = iconCapBand(modifiers) * iconStemRatio(iconTypeWeight(modifiers))
+    if wanted <= drawn {
+        return 0.0
+    }
+    return (wanted - drawn) / 2.0
+}
+
+// A stem, as a fraction of the cap band, at a given weight.
+//
+// 400 is the face's regular cut, and at that weight the answer is what the
+// library already draws — a regular symbol beside regular words needs no
+// thickening at all. Heavier cuts thicken faster than their weight number does,
+// which is why the slope is steeper than one.
+function iconStemRatio(weight: Float) -> Float {
+    return 0.09 * (1.0 + 1.7 * (weight / 400.0 - 1.0))
 }
 
 

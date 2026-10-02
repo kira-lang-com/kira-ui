@@ -33,19 +33,20 @@ import KCoreAnimation
 
 // --- Form --------------------------------------------------------------------
 
-// The sections of a property panel, inset from the surface they sit on.
-construct Form(spacing: Spacing = .Large) extends Widget {
+// The sections of a form, which on iPad is a list in the inset grouped style:
+// each section a header over a card of rows over a footer, down one readable
+// column on the grouped canvas.
+construct Form() extends Widget {
     let children: [some Widget]
 
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let ignored = resolvedControlMetrics(modifiers).formInset
-        let column = VStack(spacing: spacing) {
+        let list = InsetGroupedList() {
             For(section in children) {
                 section
             }
         }
-        return column.describe(context, modifiers)
+        return list.describe(context, modifiers)
     }
 }
 
@@ -69,6 +70,25 @@ construct LabeledContent(
 
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        // In a grouped list the row's height is the list's, and what the row
+        // holds on the right is its value, in the secondary ink.
+        if modifiers.controlPresentation == .InsetGrouped {
+            let groupedRow = HStack(spacing: .None, alignment: .Center, spacingLength: listMetrics.accessorySpacing) {
+                Label(title: label, systemImage: symbol)
+                    .foregroundColor(rowLabelInk(active))
+
+                Spacer()
+
+                HStack(spacing: spacing, alignment: .Center) {
+                    For(control in children) {
+                        control
+                    }
+                }
+                .hugWidth()
+                .foregroundColor(.Secondary)
+            }
+            return groupedRow.describe(context, modifiers)
+        }
         let metrics = resolvedControlMetrics(modifiers)
         let row = HStack(spacing: .None, alignment: .Center) {
             Label(title: label, systemImage: symbol)

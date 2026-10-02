@@ -143,6 +143,43 @@ construct Section(spacing: Spacing = .ExtraSmall) extends Widget {
     // dividers `sectionRowViews` inserts are a later refinement; describe carries
     // the rows and the card surface.
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        // In a sidebar the section is its title over its rows, on the column's
+        // glass: no card, no footer.
+        if modifiers.controlPresentation == .Sidebar {
+            let sidebarSection = VStack(spacing: .None) {
+                SidebarSectionHeader() {
+                    header
+                }
+
+                For(child in children) {
+                    child
+                }
+            }
+            return sidebarSection.describe(context, modifiers)
+        }
+        // In an inset grouped list the section is a header over a card of rows
+        // over a footer, laid out the list's way.
+        if modifiers.controlPresentation == .InsetGrouped {
+            let face = modifierTheme(modifiers).typography(.title2)
+            let headerLayer = header
+                .font(size: face.size, weight: .Bold)
+                .foregroundColor(.Primary)
+                .describe(context, modifiers)
+            let footerLayer = footer
+                .typography(.footnote)
+                .foregroundColor(.Secondary)
+                .describe(context, modifiers)
+            let rowModifiers = modifierContextApply(modifiers, modifierDeltaTypography(.body))
+            var rows: [CALayerDescription] = []
+            for child in children {
+                let row = child.describe(context, rowModifiers)
+                if !describesNothing(row) {
+                    let separated = rows.count > 0
+                    rows.append(insetGroupedRow(move row, separated, modifiers))
+                }
+            }
+            return insetGroupedSection(move rows, move headerLayer, move footerLayer, modifiers)
+        }
         let metrics = resolvedControlMetrics(modifiers)
         let cardRadius = cornerRadiusImplementation(.Medium, modifiers)
         let rows = VStack(spacing: .None) {

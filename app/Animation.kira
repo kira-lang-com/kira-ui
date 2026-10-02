@@ -42,10 +42,19 @@ function kiraUiClockSlotKey() -> String {
     return "kiraui.clock"
 }
 
-function kiraUiClockState() -> KiraUiClock {
+// The clock's slot, made the first time it is asked for. A writer recovers the
+// clock in place after this: a recovered value handed back out of a function is
+// a copy, and what was written to it would be lost.
+function kiraUiClockEnsure() {
     if kiraUiStateSlotHas(kiraUiClockSlotKey()) == false {
         kiraUiStateSlotPut(kiraUiClockSlotKey(), nativeUserData(nativeState(KiraUiClock {})))
     }
+    return
+}
+
+// The clock as it stands, to read.
+function kiraUiClockState() -> KiraUiClock {
+    kiraUiClockEnsure()
     return nativeRecover<KiraUiClock>(kiraUiStateSlotGet(kiraUiClockSlotKey()))
 }
 
@@ -67,7 +76,8 @@ function kiraUiClockCeiling() -> Float {
 // Records how long the frame took. The frame hook runs before the UI pass, so
 // what a build reads is this frame's duration and not the previous one's.
 function kiraUiClockTick(frame: borrow KiraGraphics.RenderFrame) {
-    var clock = kiraUiClockState()
+    kiraUiClockEnsure()
+    var clock = nativeRecover<KiraUiClock>(kiraUiStateSlotGet(kiraUiClockSlotKey()))
     clock.delta = min(max(foundationFrameDuration(frame), kiraUiClockFloor()), kiraUiClockCeiling())
     return
 }
@@ -76,7 +86,8 @@ function kiraUiClockTick(frame: borrow KiraGraphics.RenderFrame) {
 // every build, beside the tap-sequence reset, so the flag describes the build
 // that is about to happen rather than accumulating across all of them.
 function kiraUiClockBeginFrame() {
-    var clock = kiraUiClockState()
+    kiraUiClockEnsure()
+    var clock = nativeRecover<KiraUiClock>(kiraUiStateSlotGet(kiraUiClockSlotKey()))
     clock.moving = false
     return
 }
@@ -89,7 +100,8 @@ function kiraUiClockDelta() -> Float {
 // "I advanced and I have not finished." Said by a widget while it lowers, which
 // is what keeps the frames coming until it has.
 function kiraUiClockStillMoving() {
-    var clock = kiraUiClockState()
+    kiraUiClockEnsure()
+    var clock = nativeRecover<KiraUiClock>(kiraUiStateSlotGet(kiraUiClockSlotKey()))
     clock.moving = true
     return
 }
@@ -105,7 +117,8 @@ function kiraUiReducedMotion() -> Bool {
 }
 
 function kiraUiSetReducedMotion(value: Bool) {
-    var clock = kiraUiClockState()
+    kiraUiClockEnsure()
+    var clock = nativeRecover<KiraUiClock>(kiraUiStateSlotGet(kiraUiClockSlotKey()))
     clock.reducedMotion = value
     return
 }

@@ -28,6 +28,14 @@ struct KiraLayerAppState {
     var frameCount: Int = 0
     var ui: FoundationUiContext = FoundationUiContext {}
     var transparent: Bool = false
+    // The interactive surface the held press landed on, where it landed in the
+    // window and in the surface's own coordinates, and the surface's size. The
+    // pointer's place on the surface is the second moved by however far the
+    // pointer has gone from the first.
+    var pressSurface: Int = 0
+    var pressWindow: Point = Point {}
+    var pressLocal: Point = Point {}
+    var pressSize: Size = Size {}
 }
 
 function kiraLayerViewport(frame: borrow RenderFrame, fallbackWidth: Int, fallbackHeight: Int) -> Size {
@@ -53,26 +61,48 @@ function kiraLayerViewport(frame: borrow RenderFrame, fallbackWidth: Int, fallba
 // Forward a pointer event into the retained input state: what the window points
 // at is decided against the tree the last frame drew, exactly as a window's own
 // runner decides it.
-function kiraLayerDispatch(userData: RawPtr, x: Float, y: Float, pressed: Bool) {
+//
+// A press is the platform's: going down on a control holds it, and the control
+// acts when the pointer comes back up ON it. Sliding off before letting go
+// cancels, which is how a press is taken back.
+function kiraLayerDispatch(userData: RawPtr, x: Float, y: Float, kind: AppEventKind) {
     var state = nativeRecover<KiraLayerAppState>(userData)
     state.ui.pointerX = x
     state.ui.pointerY = y
     let hit = caHitTestTree(state.compositor.tree, x, y)
-    if hit.hit {
-        state.ui.hoveredKey = hit.hitKey
-        if pressed {
-            state.ui.pressedKey = hit.hitKey
-            state.ui.clickedKey = hit.hitKey
-            // The press runs the action the pressed key was bound to during the
-            // last rebuild's `describe`.
-            kiraUiLayerActionInvoke(hit.hitKey)
+    state.ui.hoveredKey = hit.hit ? hit.hitKey : 0
+    if kind == .PointerDown {
+        state.ui.pressedKey = state.ui.hoveredKey
+        state.pressSurface = hit.surfaceKey
+        state.pressWindow = Point { x: x, y: y }
+        state.pressLocal = Point { x: hit.surfaceX, y: hit.surfaceY }
+        state.pressSize = Size { width: hit.surfaceWidth, height: hit.surfaceHeight }
+    }
+    if kind == .PointerUp {
+        let released = state.ui.pressedKey
+        state.ui.pressedKey = 0
+        state.pressSurface = 0
+        if released != 0 && released == state.ui.hoveredKey {
+            state.ui.clickedKey = released
+            // The release runs the action the pressed key was bound to during
+            // the last rebuild's `describe`.
+            kiraUiLayerActionInvoke(released)
         }
-    } else {
-        state.ui.hoveredKey = 0
     }
     state.ui.eventCount = state.ui.eventCount + 1
     foundationWriteInputSnapshot(state.ui)
     return
+}
+
+// Whether a press at this point moves the window: it is on the chrome's band and
+// on none of the controls drawn there, decided against the tree the last frame
+// drew, as a press on a control is.
+function kiraLayerWindowDragRegion(userData: RawPtr, x: Float, y: Float) -> Bool {
+    if !kiraUiToolbarWindowDragRegion(x, y) {
+        return false
+    }
+    let state = nativeRecover<KiraLayerAppState>(userData)
+    return !caHitTestTree(state.compositor.tree, x, y).hit
 }
 
 function RunKiraLayerApp(
@@ -107,15 +137,18 @@ function RunKiraLayerApp(
         height: height,
         sampleCount: 1,
         transparent: transparent,
+        // An opaque window is a document window: its title and toolbar share
+        // one band the content runs under, and KiraUI draws what sits on it.
+        titlebar: transparent ? .Standard : .Unified,
+        windowDragRegion: { x, y in
+            return kiraLayerWindowDragRegion(runtimeUser, x, y)
+        },
         backend: graphicsDefaultBackend()
     }
 
     app.onEvent { event in
-        if event.kind == .PointerMoved {
-            kiraLayerDispatch(runtimeUser, event.pointerX, event.pointerY, false)
-        }
-        if event.kind == .PointerDown {
-            kiraLayerDispatch(runtimeUser, event.pointerX, event.pointerY, true)
+        if event.kind == .PointerMoved || event.kind == .PointerDown || event.kind == .PointerUp {
+            kiraLayerDispatch(runtimeUser, event.pointerX, event.pointerY, event.kind)
         }
         return
     }
@@ -142,10 +175,34 @@ function RunKiraLayerApp(
         // property animates from where it was.
         // A fresh action table for this rebuild: `describe` binds each hittable
         // layer's press action under its key as it produces the description.
+        // The keys restart with it, so a control draws under the key it had
+        // last frame -- the key the pointer found it by.
         kiraUiLayerActionsReset()
+        kiraUiTapSeqReset()
+        // What this frame took, for whatever springs advance while it lowers.
+        kiraUiClockTick(frame)
+        kiraUiClockBeginFrame()
         let build: borrow () -> Any Widget = rootBuilder
-        let widgetContext = buildContext(state.ui)
-        var described = build().describe(widgetContext, ModifierContext {})
+        var widgetContext = buildContext(state.ui)
+        widgetContext.heldKey = state.pressSurface
+        widgetContext.heldPoint = Point {
+            x: state.pressLocal.x + state.ui.pointerX - state.pressWindow.x,
+            y: state.pressLocal.y + state.ui.pointerY - state.pressWindow.y
+        }
+        widgetContext.heldSize = state.pressSize
+        var described = CALayerDescription {}
+        if state.transparent {
+            described = build().describe(widgetContext, ModifierContext {})
+        } else {
+            // A window with chrome: the tree declares its title and toolbar items
+            // while it lowers, and the chrome is drawn from them over the content,
+            // which is laid out against the band the chrome leaves.
+            widgetContext.safeArea.top = windowChromeMetrics.toolbarHeight
+            kiraUiToolbarCollect()
+            let content = build().describe(widgetContext, ModifierContext {})
+            kiraUiToolbarStopCollecting()
+            described = windowDescription(move content, widgetContext, ModifierContext {})
+        }
         caLayoutTree(described, viewport.width, viewport.height)
         let mount = state.frameCount == 0
         if mount {

@@ -16,6 +16,14 @@ enum ControlPresentation {
     // The group of actions across the top of a menu: an equal column, its glyph
     // above its title.
     MenuAction
+    // A list in the sidebar style: a section is its title over its rows, a link
+    // is a row that carries the selection band, and a label sets its glyph in
+    // the accent.
+    Sidebar
+    // A list in the inset grouped style, which is what a `Form` is: a section
+    // is a header over a card of rows over a footer, a link is a row that
+    // drills in, and a button is a row set in the accent.
+    InsetGrouped
 }
 
 enum ModifierInheritance {
@@ -270,6 +278,7 @@ construct Theme {
             title1 -> return values.title1
             title2 -> return values.title2
             title3 -> return values.title3
+            largeTitle -> return values.largeTitle
         }
     }
 
@@ -415,6 +424,8 @@ struct ModifierDelta {
     let hasFocused: Bool = false
     let focused: Bool = false
     let inMenu: Bool = false
+    let hasListStyle: Bool = false
+    let listStyle: ListStyle = .Automatic
 }
 
 // The resolved context is traversal-local. It is passed by borrow to every
@@ -477,6 +488,10 @@ struct ModifierContext {
     // and three environments, which is exactly how SwiftUI's controls change
     // shape by where they are put.
     //
+    // How a `List` in this subtree is drawn. An environment value, like the
+    // theme: the split view states it for its sidebar column and `.listStyle`
+    // restates it anywhere below.
+    let listStyle: ListStyle = .Automatic
     // A kind rather than a Bool because there turned out to be three of them the
     // moment a `ControlGroup` was put in a menu: the group's children are in a
     // menu and are NOT rows, and a Bool can only say they are or they are not.
@@ -522,6 +537,7 @@ function modifierContextApply(
         disabled: context.disabled || delta.disabled,
         focused: delta.hasFocused ? delta.focused : context.focused,
         hasFocused: delta.hasFocused ? true : context.hasFocused,
+        listStyle: delta.hasListStyle ? delta.listStyle : context.listStyle,
         // Carried, not defaulted: a `.foregroundColor(...)` inside a menu would
         // otherwise rebuild the context without it and every control below that
         // modifier would present itself as though it were not in one.
@@ -581,6 +597,7 @@ function modifierContextForOverlay(context: borrow ModifierContext) -> ModifierC
         disabled: inherited.disabled,
         focused: inherited.focused,
         hasFocused: inherited.hasFocused,
+        listStyle: inherited.listStyle,
         controlPresentation: inherited.controlPresentation
     }
 }
@@ -628,6 +645,7 @@ function modifierContextPresenting(
         disabled: inherited.disabled,
         focused: inherited.focused,
         hasFocused: inherited.hasFocused,
+        listStyle: inherited.listStyle,
         controlPresentation: presentation
     }
 }
@@ -668,6 +686,7 @@ function modifierContextForChildren(context: borrow ModifierContext) -> Modifier
         disabled: context.disabled,
         focused: false,
         hasFocused: false,
+        listStyle: context.listStyle,
         controlPresentation: context.controlPresentation
     }
 }
@@ -712,6 +731,7 @@ function modifierContextForPresentation(context: borrow ModifierContext) -> Modi
         disabled: context.disabled,
         focused: false,
         hasFocused: false,
+        listStyle: context.listStyle,
         controlPresentation: context.controlPresentation
     }
 }
@@ -790,6 +810,13 @@ function modifierDeltaContentMargin(length: Float) -> ModifierDelta {
     return ModifierDelta {
         hasContentMargin: true,
         contentMargin: length
+    }
+}
+
+function modifierDeltaListStyle(style: ListStyle) -> ModifierDelta {
+    return ModifierDelta {
+        hasListStyle: true,
+        listStyle: style
     }
 }
 

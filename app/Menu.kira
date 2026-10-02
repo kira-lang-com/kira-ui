@@ -410,12 +410,71 @@ function kiraUiMenuRecede(frameCount: Int) -> Float {
 
 // --- a control's presentation inside a menu ----------------------------------
 
-// What `Button` lowers to when the environment says it is in a menu: a row.
+// What `Button` describes when the environment says it is in a menu: a row.
 //
 // Full width, the panel's own ink, no fill, and the standard row height — so a
 // run of them reads as a list rather than as a stack of controls. The press
 // region is the whole row, which is what a menu is: you aim at the line, not at
 // the words on it.
+function menuRowDescription(
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+    key: Int,
+    label: some Widget,
+) -> CALayerDescription {
+    // The menu's own type size, stated here so a plain `Button(title:)` in a
+    // menu is set exactly as the platform sets one.
+    let labelModifiers = modifierContextApply(
+        modifierContextForPresentation(modifiers),
+        modifierDeltaFont(menuLabelSize(modifiers), .Regular)
+    )
+    // A one-line row stands at the menu's pitch with its line centred; a title
+    // that wraps keeps that same air above and below and the row grows.
+    let pitch = menuRowPitch(modifiers)
+    let air = max((pitch - foundationTextLineBox(menuLabelSize(modifiers), foundationFontWeight(.Regular))) / 2.0, 0.0)
+    return CALayerDescription {
+        hittable: !modifiers.disabled,
+        hitKey: key,
+        layout: CALayoutIntent {
+            axis: .Row,
+            heightFill: false,
+            minHeight: pitch,
+            paddingLeading: menuRowLeading(modifiers),
+            paddingTrailing: menuRowTrailing(modifiers),
+            paddingTop: air,
+            paddingBottom: air,
+            alignment: Point { x: 0.0, y: 0.5 }
+        },
+        sublayers: [label.describe(context, labelModifiers)]
+    }
+}
+
+// What `Button` describes in the group of actions across the top of a menu.
+//
+// An equal COLUMN, its glyph above its title — `.frame(maxWidth: .infinity)` on
+// a `VStack { Image; Text }`. Equal rather than hugging is the whole point: the
+// actions stand on equal shares of the panel whatever their titles are, so
+// "Duplicate" does not push "Hide" off its share.
+function menuActionDescription(
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+    key: Int,
+    label: some Widget,
+) -> CALayerDescription {
+    let pad = menuActionPad(modifiers)
+    return CALayerDescription {
+        hittable: !modifiers.disabled,
+        hitKey: key,
+        layout: CALayoutIntent {
+            heightFill: false,
+            paddingLeading: pad,
+            paddingTrailing: pad,
+            flex: 1
+        },
+        sublayers: [label.describe(context, modifierContextForPresentation(modifiers))]
+    }
+}
+
 function menuActionPad(modifiers: borrow ModifierContext) -> Float {
     return resolvedControlMetrics(modifiers).menuActionPadding
 }
@@ -479,9 +538,9 @@ function menuChevronBox(modifiers: borrow ModifierContext) -> Float {
 // anything open to announce.
 construct MenuHeader(title: String, systemImage: Symbol, amount: Float, key: Int) extends Widget {
 
-    // The header row as a hittable layer: label, spacer and the disclosure
-    // chevron. The row framing and press wash are geometry/input the later
-    // stages apply.
+    // The header row as one press region: label, spacer and the disclosure
+    // chevron, inset as every menu row is. The chevron turns inside a squared
+    // box, so the row does not re-resolve around it while it turns.
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let row = HStack(spacing: .Small, alignment: .Center) {
             Label(title: title, systemImage: systemImage)
@@ -489,15 +548,24 @@ construct MenuHeader(title: String, systemImage: Symbol, amount: Float, key: Int
 
             Spacer()
 
-            Icon(symbol: .ChevronRight)
-                .imageScale(.Small)
-                .foregroundColor(.Secondary)
-                .rotationEffect(menuChevronTurn(amount))
+            ZStack(alignment: .Center) {
+                Icon(symbol: .ChevronRight)
+                    .font(size: resolvedControlMetrics(modifiers).menuChevronSize)
+                    .foregroundColor(.Secondary)
+                    .rotationEffect(menuChevronTurn(amount))
+            }
+            .width(menuChevronBox(modifiers))
+            .height(menuChevronBox(modifiers))
         }
         .height(menuRowPitch(modifiers))
         return CALayerDescription {
             hittable: true,
             hitKey: key,
+            layout: CALayoutIntent {
+                heightFill: false,
+                paddingLeading: menuRowLeading(modifiers),
+                paddingTrailing: menuRowTrailing(modifiers)
+            },
             sublayers: [row.describe(context, modifiers)]
         }
     }
@@ -547,6 +615,7 @@ construct Menu(title: String, systemImage: Symbol = .None) extends Widget {
     // retained tree — the header itself when closed.
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let key = kiraUiTapSeqKey()
+        kiraUiLayerActionRegister(key, kiraUiToggleMenuFn(key))
         let amount = menuRevealAdvance(key)
         let header = MenuHeader(title: title, systemImage: systemImage, amount: amount, key: key)
         if amount <= menuCardFloor() {
@@ -601,10 +670,12 @@ construct ContextMenu(width: Float = 0.0) extends Widget {
         if resolvedWidth <= 0.0 {
             resolvedWidth = resolvedControlMetrics(modifiers).menuCardWidth
         }
-        let card = rows
-            .width(resolvedWidth)
-            .glassEffect(shape: .Squircle(menuCardRadius(modifiers)))
-            .scaleEffect(scale)
+        // The panel is the platform's menu material at every size, not the
+        // regular glass `.glassEffect` puts under a control.
+        let card = SurfaceLayer(style: .LayeredGlass, shape: .Squircle(menuCardRadius(modifiers))) {
+            rows.width(resolvedWidth)
+        }
+        .scaleEffect(scale)
         return card.describe(context, modifierContextPresenting(modifiers, .MenuRow))
     }
 }

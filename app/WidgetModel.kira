@@ -398,10 +398,12 @@ function uniformInsets(length: Float) -> EdgeInsets {
     }
 }
 
-function contentMarginsInset(margins: ContentMargins) -> Float {
+// `.automatic` is the column's layout margin with any extra added on top;
+// `.fixed` is exactly the length it names.
+function contentMarginsInset(margins: ContentMargins, modifiers: borrow ModifierContext) -> Float {
     match margins {
         automatic(extra) -> {
-            var inset = extra
+            var inset = resolvedContentMargin(modifiers) + extra
             if inset < 0.0 {
                 inset = 0.0
             }
@@ -461,7 +463,10 @@ function describedChildren(
     var children: [CALayerDescription] = []
     let childModifiers = modifierContextForChildren(modifiers)
     for widget in widgets {
-        children.append(widget.describe(context, childModifiers))
+        let child = widget.describe(context, childModifiers)
+        if !describesNothing(child) {
+            children.append(move child)
+        }
     }
     return children
 }
@@ -551,7 +556,7 @@ construct SurfacePaddingLayer(value: Float) extends Widget {
 
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        return content.describe(context, modifierContextForChildren(modifiers))
+        return insetDescription(content.describe(context, modifierContextForChildren(modifiers)), value)
     }
 }
 
@@ -560,7 +565,7 @@ construct ContentMarginsLayer(value: ContentMargins) extends Widget {
 
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        return content.describe(context, modifierContextForChildren(modifiers))
+        return insetDescription(content.describe(context, modifierContextForChildren(modifiers)), contentMarginsInset(value, modifiers))
     }
 }
 
@@ -584,6 +589,19 @@ construct FillWidthLayer() extends Widget {
         var described = content.describe(context, modifierContextForChildren(modifiers))
         described.layout.widthFill = true
         described.layout.fixedWidth = -1.0
+        return described
+    }
+}
+
+construct ScenePaddingLayer() extends Widget {
+    let content: some Widget
+
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        let described = content.describe(context, modifierContextForChildren(modifiers))
+        if modifiers.hasContentMargin {
+            return insetDescription(move described, modifiers.contentMargin)
+        }
         return described
     }
 }
@@ -712,7 +730,8 @@ construct Text(content: String) extends Widget {
                 inkLeft: foundationTextRunInkLeft(content: content, size: textSize, weight: textWeight),
                 inkRight: foundationTextRunInkRight(content: content, size: textSize, weight: textWeight),
                 inkTop: foundationTextRunInkTop(content: content, size: textSize, weight: textWeight),
-                inkBottom: foundationTextRunInkBottom(content: content, size: textSize, weight: textWeight)
+                inkBottom: foundationTextRunInkBottom(content: content, size: textSize, weight: textWeight),
+                wraps: true
             })
         }
     }
@@ -761,6 +780,33 @@ construct Button(
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let k = kiraUiTapSeqKey()
+        // In a menu a button is the menu's row or action: no fill of its own,
+        // the highlight is the menu's, and choosing it dismisses the menu.
+        match modifiers.controlPresentation {
+            MenuRow -> {
+                kiraUiLayerActionRegister(k, kiraUiMenuChooseFn(action))
+                return menuRowDescription(context, modifiers, k, label)
+            }
+            MenuAction -> {
+                kiraUiLayerActionRegister(k, kiraUiMenuChooseFn(action))
+                return menuActionDescription(context, modifiers, k, label)
+            }
+            Toolbar -> {
+                kiraUiLayerActionRegister(k, action)
+                return toolbarButtonDescription(context, modifiers, k, label)
+            }
+            InsetGrouped -> {
+                kiraUiLayerActionRegister(k, action)
+                var row = label
+                    .foregroundColor(.Accent)
+                    .describe(context, modifiers)
+                row.hittable = !modifiers.disabled
+                row.hitKey = k
+                return row
+            }
+            Sidebar -> {}
+            Standalone -> {}
+        }
         kiraUiLayerActionRegister(k, action)
         let tokens = modifierTokens(modifiers)
         var buttonFill = foundationColor(tokens.fill.control)
@@ -769,14 +815,6 @@ construct Button(
             Destructive -> {
                 buttonFill = foundationColor(tokens.tint.danger)
             }
-        }
-        // A menu row/action carries no fill of its own; the highlight is the
-        // menu's. A standalone or toolbar button fills.
-        match modifiers.controlPresentation {
-            MenuRow -> { buttonFill = transparentFoundationColor() }
-            MenuAction -> { buttonFill = transparentFoundationColor() }
-            Toolbar -> {}
-            Standalone -> {}
         }
         var labelModifiers = modifierContextForPresentation(modifiers)
         if modifiers.hasForegroundColor == false && modifiers.hasTextColor == false {
@@ -803,6 +841,68 @@ construct Button(
     }
 }
 
+// A button on the window's bar: its label in the bar's ink on no fill of its
+// own, because the glass under its group is its surface. Its box is the whole
+// of its piece of glass -- as tall, a symbol centred in a square of it, words
+// held off its ends -- so a press anywhere on the glass is a press on it. Held
+// down, it is the glass under it that answers.
+function toolbarButtonDescription(
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+    key: Int,
+    label: borrow Any Widget,
+) -> CALayerDescription {
+    let metrics = windowChromeMetrics
+    var described = label.describe(context, modifierContextForPresentation(modifiers))
+    described.layout.widthFill = false
+    described.layout.heightFill = false
+    let inset = toolbarLabelInset(described, metrics)
+    return CALayerDescription {
+        hittable: !modifiers.disabled,
+        hitKey: key,
+        opacity: modifiers.disabled ? 0.4 : 1.0,
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedHeight: metrics.itemHeight,
+            minWidth: metrics.itemWidth,
+            paddingLeading: inset,
+            paddingTrailing: inset,
+            alignment: Point { x: 0.5, y: 0.5 }
+        },
+        sublayers: [described]
+    }
+}
+
+// How far a bar button holds its label off its ends: a symbol sits in the
+// square the item's width makes and needs nothing more, words take the bar's
+// label inset.
+function toolbarLabelInset(label: borrow CALayerDescription, metrics: borrow WindowChromeMetrics) -> Float {
+    if drawsOnlySymbol(label) {
+        return 0.0
+    }
+    return metrics.labelInset
+}
+
+// Whether a description draws one symbol and nothing else: the glyph itself,
+// or boxes around it that draw nothing of their own.
+function drawsOnlySymbol(layer: borrow CALayerDescription) -> Bool {
+    match layer.content {
+        Icon(i) -> return true
+        Empty -> {
+            if layer.sublayers.count != 1 {
+                return false
+            }
+            return drawsOnlySymbol(layer.sublayers[0])
+        }
+        Text(t) -> return false
+        Solid(s) -> return false
+        Glass(g) -> return false
+        Gradient(r) -> return false
+        Texture(x) -> return false
+    }
+}
+
 // Whether a fill is dark enough that light ink reads on it. The usual weighted
 // luminance, so a saturated accent answers the way the eye does rather than the
 // way an average of three channels would.
@@ -824,12 +924,20 @@ construct AppSurface() extends Widget {
     let content: some Widget
 
 
+    // The canvas reaches the column's edges; what stands on it is held inside
+    // the column's layout margin, the way a list or form adopts the margins of
+    // the column it fills. Outside any column there is no margin to adopt, so
+    // the window's own surface runs edge to edge.
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        var described = content.describe(context, modifierContextForChildren(modifiers))
+        if modifiers.hasContentMargin {
+            described = insetDescription(move described, modifiers.contentMargin)
+        }
         return CALayerDescription {
             content: .Solid(CASolid {
                 fill: caColorFromFoundation(modifierCanvas(modifiers))
             }),
-            sublayers: [content.describe(context, modifierContextForChildren(modifiers))]
+            sublayers: [described]
         }
     }
 }
@@ -1304,7 +1412,9 @@ construct MinHeightLayer(value: Float) extends Widget {
 
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        return content.describe(context, modifierContextForChildren(modifiers))
+        var described = content.describe(context, modifierContextForChildren(modifiers))
+        described.layout.minHeight = value
+        return described
     }
 }
 
@@ -1313,7 +1423,20 @@ construct MinWidthLayer(value: Float) extends Widget {
 
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        return content.describe(context, modifierContextForChildren(modifiers))
+        var described = content.describe(context, modifierContextForChildren(modifiers))
+        described.layout.minWidth = value
+        return described
+    }
+}
+
+construct MaxWidthLayer(value: Float) extends Widget {
+    let content: some Widget
+
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        var described = content.describe(context, modifierContextForChildren(modifiers))
+        described.layout.maxWidth = value
+        return described
     }
 }
 
@@ -1410,16 +1533,39 @@ construct Divider(
     followsTrailing: Any AlignmentGuide = ListRowSeparatorTrailing(),
 ) extends Widget {
 
-    // A hairline: a thin solid line in the resolved border colour. Its extent and
-    // insets are geometry the layout stage applies.
+    // A hairline across whatever holds it: the border's width tall, in the
+    // border's colour.
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let ignored = context.frameCount
         let border = modifierResolvedBorder(modifiers)
-        return CALayerDescription {
+        let line = CALayerDescription {
+            layout: CALayoutIntent {
+                heightFill: false,
+                fixedHeight: border.width
+            },
             content: .Solid(CASolid {
                 fill: caColorFromFoundation(modifierSurfaceFill(foundationColor(border.color), modifiers))
             })
         }
+        // In a menu a divider is a GROUP BOUNDARY, and that is more than a line.
+        // Measured off the platform's menu (Examples/liquid-glass-menu): rows
+        // inside a group sit on a 42pt pitch, rows either side of a separator on
+        // 64 — so the separator is a rule with air above and below it, inset
+        // from each edge rather than running edge to edge.
+        if modifiers.controlPresentation == .MenuRow {
+            let metrics = resolvedControlMetrics(modifiers)
+            return CALayerDescription {
+                layout: CALayoutIntent {
+                    heightFill: false,
+                    paddingLeading: metrics.menuDividerInset,
+                    paddingTop: metrics.menuDividerVerticalInset,
+                    paddingTrailing: metrics.menuDividerInset,
+                    paddingBottom: metrics.menuDividerVerticalInset
+                },
+                sublayers: [line]
+            }
+        }
+        return line
     }
 }
 
