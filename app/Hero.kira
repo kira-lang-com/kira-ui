@@ -50,7 +50,7 @@ struct KiraUiHero {
     // continue rather than restart — an element sent back while it is still
     // arriving turns round from where it actually is, at the speed it has.
     var move: MotionMove = MotionMove {}
-    // The size is travelling too: a row becoming a header changes width as well
+    // The size is traveling too: a row becoming a header changes width as well
     // as position, and interpolating only the origin would fly the element to
     // the right place at the wrong size.
     var width: MotionSpringState = MotionSpringState {}
@@ -68,10 +68,19 @@ function heroSlotKey(id: Int) -> String {
     return kiraUiSlotKey("kiraui.hero.", id)
 }
 
-function heroState(id: Int) -> KiraUiHero {
+// The slot, made the first time it is asked for. A writer recovers it in
+// place after this: a recovered value handed back out of a function is a
+// copy, and what was written to it would be lost.
+function heroEnsure(id: Int) {
     if kiraUiStateSlotHas(heroSlotKey(id)) == false {
         kiraUiStateSlotPut(heroSlotKey(id), nativeUserData(nativeState(KiraUiHero {})))
     }
+    return
+}
+
+// The state as it stands, to read.
+function heroState(id: Int) -> KiraUiHero {
+    heroEnsure(id)
     return nativeRecover<KiraUiHero>(kiraUiStateSlotGet(heroSlotKey(id)))
 }
 
@@ -101,7 +110,8 @@ function heroCurve() -> MotionCurveName {
 //   * placed, moved       -> begin a flight from where it was
 //   * flying              -> advance, and report the interpolated rectangle
 function heroAdvance(id: Int, destination: borrow Rect) -> Rect {
-    var hero = heroState(id)
+    heroEnsure(id)
+    var hero = nativeRecover<KiraUiHero>(kiraUiStateSlotGet(heroSlotKey(id)))
 
     if hero.placed == false {
         if destination.width <= 0.0 {
@@ -208,7 +218,9 @@ construct MatchedGeometry(id: Int) extends Widget {
         if kiraUiHeroFlying(id) == false {
             return content.describe(context, childModifiers)
         }
-        let ignored = content.describe(context, childModifiers)
+        // In flight the content still lowers, so it is in the overlay the
+        // flight draws; the space it leaves behind is empty.
+        content.describe(context, childModifiers)
         return CALayerDescription {}
     }
 }

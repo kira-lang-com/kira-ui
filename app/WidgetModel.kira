@@ -215,6 +215,7 @@ enum ContentMargins {
 
 enum FontWeight {
     Regular
+    Medium
     SemiBold
     Bold
 }
@@ -292,6 +293,11 @@ function modifierPrimaryColor(
     modifiers: borrow ModifierContext,
 ) -> FoundationColor {
     let tokens = modifierTokens(modifiers)
+    // SwiftUI's `.tint` is the accent of everything under it, so `.Accent`
+    // names the tint wherever one was set.
+    if color == .Accent && modifiers.hasTint && modifiers.tint != .Accent {
+        return foundationColor(primaryColorAsColor(modifiers.tint, tokens))
+    }
     return foundationColor(primaryColorAsColor(color, tokens))
 }
 
@@ -368,6 +374,8 @@ function foundationColor(color: Color) -> FoundationColor {
 function foundationFontWeight(weight: borrow FontWeight) -> Float {
     match weight {
         Regular -> return 400.0
+        // SF Pro's Medium instance sits at 510 on its weight axis, not 500.
+        Medium -> return 510.0
         SemiBold -> return 600.0
         Bold -> return 700.0
     }
@@ -415,40 +423,6 @@ function contentMarginsInset(margins: ContentMargins, modifiers: borrow Modifier
             }
             return length
         }
-    }
-}
-
-function cardFill(material: borrow Material) -> FoundationColor {
-    match material {
-        Flat -> return foundationRgba(1.0, 1.0, 1.0, 1.0)
-        Frosted -> return foundationRgba(1.0, 1.0, 1.0, 0.14)
-        LayeredGlass -> return foundationRgba(0.86, 0.93, 1.0, 0.18)
-        // The compositor fills it; the surface paints nothing of its own.
-        WindowBackdrop -> return transparentFoundationColor()
-    }
-}
-
-function cardBorder(material: borrow Material) -> FoundationColor {
-    match material {
-        Flat -> return foundationRgba(0.91, 0.89, 0.85, 1.0)
-        Frosted -> return foundationRgba(1.0, 1.0, 1.0, 0.10)
-        LayeredGlass -> return foundationRgba(1.0, 1.0, 1.0, 0.20)
-        WindowBackdrop -> return transparentFoundationColor()
-    }
-}
-
-function cardEffects(material: borrow Material) -> [FoundationEffect] {
-    match material {
-        Flat -> return []
-        Frosted -> return []
-        WindowBackdrop -> return []
-        LayeredGlass -> return [
-            .LayerGlow(Glow {
-                color: foundationRgba(0.34, 0.56, 1.0, 1.0),
-                radius: 18.0,
-                intensity: 0.16
-            })
-        ]
     }
 }
 
@@ -548,7 +522,7 @@ function modifierEffects(
 // What that cost: a TextureView lost the texture it was crossfading TOWARDS the
 // moment anything gave it a width, so a swipe between two components' sidebars
 // ran the whole transition and showed nothing move. A gradient lost its end
-// colour, glass lost its material and its blur, a scroll region lost the fact
+// color, glass lost its material and its blur, a scroll region lost the fact
 // that it scrolls. All the same bug, and none of them visible in the modifier
 // that caused it.
 construct SurfacePaddingLayer(value: Float) extends Widget {
@@ -699,7 +673,6 @@ function spacingImplementation(
 construct Text(content: String) extends Widget {
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let ignored = context.frameCount
         var textSize = 16.0
         var textWeight = 400.0
         if modifiers.hasFont {
@@ -785,6 +758,13 @@ construct Button(
         match modifiers.controlPresentation {
             MenuRow -> {
                 kiraUiLayerActionRegister(k, kiraUiMenuChooseFn(action))
+                match role {
+                    Normal -> {}
+                    // A destructive row is set in the danger ink, glyph and title.
+                    Destructive -> {
+                        return menuRowDescription(context, modifierContextApply(modifiers, modifierDeltaForegroundColor(.Danger)), k, label)
+                    }
+                }
                 return menuRowDescription(context, modifiers, k, label)
             }
             MenuAction -> {
@@ -798,7 +778,7 @@ construct Button(
             InsetGrouped -> {
                 kiraUiLayerActionRegister(k, action)
                 var row = label
-                    .foregroundColor(.Accent)
+                    .foregroundColor(insetGroupedButtonInk(role, modifiers.disabled))
                     .describe(context, modifiers)
                 row.hittable = !modifiers.disabled
                 row.hitKey = k
@@ -841,9 +821,21 @@ construct Button(
     }
 }
 
+// A button's ink in a grouped list, where the ink is all it has: the accent, the
+// danger tint for a destructive role, and the tertiary ink while disabled.
+function insetGroupedButtonInk(role: ButtonRole, disabled: Bool) -> PrimaryColor {
+    if disabled {
+        return .Tertiary
+    }
+    match role {
+        Normal -> return .Accent
+        Destructive -> return .Danger
+    }
+}
+
 // A button on the window's bar: its label in the bar's ink on no fill of its
 // own, because the glass under its group is its surface. Its box is the whole
-// of its piece of glass -- as tall, a symbol centred in a square of it, words
+// of its piece of glass -- as tall, a symbol centered in a square of it, words
 // held off its ends -- so a press anywhere on the glass is a press on it. Held
 // down, it is the glass under it that answers.
 function toolbarButtonDescription(
@@ -942,97 +934,45 @@ construct AppSurface() extends Widget {
     }
 }
 
-construct Card(
-    title: String = "",
-    material: Material = .Frosted,
-) extends Widget {
-    let children: [some Widget]
-
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let childModifiers = modifierContextForChildren(modifiers)
-        let tokens = modifierTokens(modifiers)
-        var selectedMaterial = tokens.surfaceMaterial
-        var selectedRadius = tokens.cardRadius
-        var selectedFill = foundationColor(tokens.background.surface)
-        var selectedBorder = foundationColor(tokens.border.standard.color)
-        if material == .Flat {
-            selectedMaterial = .Flat
-            selectedFill = foundationColor(tokens.background.raised)
-            selectedBorder = foundationColor(tokens.border.subtle.color)
-        }
-        if modifiers.hasMaterial {
-            selectedMaterial = modifiers.material
-            if selectedMaterial == .Flat {
-                selectedFill = foundationColor(tokens.background.raised)
-                selectedBorder = foundationColor(tokens.border.subtle.color)
-            } else {
-                selectedFill = cardFill(selectedMaterial)
-                selectedBorder = cardBorder(selectedMaterial)
-            }
-        }
-        var cardChildren: [CALayerDescription] = []
-        if title.count > 0 {
-            let titleDelta = modifierDeltaTypography(.headline)
-            let titleModifiers = modifierContextApply(childModifiers, move titleDelta)
-            cardChildren.append(Text(content: move title).describe(context, titleModifiers))
-        }
-        for child in children {
-            cardChildren.append(child.describe(context, childModifiers))
-        }
-        return CALayerDescription {
-            cornerRadius: selectedRadius,
-            clipsChildren: true,
-            capturesBackdrop: selectedMaterial == .LayeredGlass,
-            layout: CALayoutIntent {
-                axis: .Column,
-                spacing: spacingImplementation(.Medium, modifiers),
-                heightFill: false,
-                paddingLeading: spacingImplementation(.Medium, modifiers),
-                paddingTop: spacingImplementation(.Medium, modifiers),
-                paddingTrailing: spacingImplementation(.Medium, modifiers),
-                paddingBottom: spacingImplementation(.Medium, modifiers)
-            },
-            content: .Solid(CASolid {
-                fill: caColorFromFoundation(modifierSurfaceFill(move selectedFill, modifiers)),
-                border: caColorFromFoundation(modifierSurfaceBorder(move selectedBorder, modifiers)),
-                borderWidth: 1.0,
-                cornerRadius: selectedRadius
-            }),
-            sublayers: move cardChildren
-        }
-    }
-}
-
-// The bar tints with the cascading `.foregroundColor(...)` when one is set,
-// the accent otherwise; the track is the control fill.
+// A determinate progress bar. The fill takes the cascading `.tint(...)` when
+// one is set and the accent otherwise, like a slider's.
 construct Progress(value: Float) extends Widget {
 
-    // Track plus a filled bar; the bar's fractional width is applied by the
-    // layout stage.
+    // A thin track across the room it is offered, filled with the tint up to
+    // the value: two shares of one row, so the fill is a fraction of whatever
+    // width the track ends up.
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let tokens = modifierTokens(modifiers)
-        let capsuleRadius = modifierTheme(modifiers).cornerRadius(.Capsule)
-        var barColor = foundationColor(tokens.tint.accent)
-        if modifiers.hasForegroundColor {
-            barColor = modifierPrimaryColor(modifiers.foregroundColor, modifiers)
-        }
-        let track = CALayerDescription {
-            cornerRadius: capsuleRadius,
-            content: .Solid(CASolid {
-                fill: caColorFromFoundation(modifierSurfaceFill(foundationColor(tokens.fill.control), modifiers)),
-                cornerRadius: capsuleRadius
-            })
-        }
+        let radius = progressTrackHeight / 2.0
+        let filledShare = Int(controlClamp01(value) * 1000.0 + 0.5)
         let filled = CALayerDescription {
-            cornerRadius: capsuleRadius,
+            layout: CALayoutIntent {
+                flex: filledShare
+            },
+            cornerRadius: radius,
             content: .Solid(CASolid {
-                fill: caColorFromFoundation(barColor),
-                cornerRadius: capsuleRadius
+                fill: caColorFromFoundation(modifierColor(controlActiveColor(modifiers), modifiers)),
+                cornerRadius: radius,
+                shapeKind: 1
             })
         }
         return CALayerDescription {
-            sublayers: [track, filled]
+            layout: CALayoutIntent {
+                axis: .Row,
+                heightFill: false,
+                fixedHeight: progressTrackHeight,
+                flex: 1
+            },
+            cornerRadius: radius,
+            content: .Solid(CASolid {
+                fill: caColorFromFoundation(modifierColor(foundationColor(themeAdaptiveColor(progressTrack, modifierTheme(modifiers).appearance())), modifiers)),
+                cornerRadius: radius,
+                shapeKind: 1
+            }),
+            sublayers: [filled, CALayerDescription {
+                layout: CALayoutIntent {
+                    flex: 1000 - filledShare
+                }
+            }]
         }
     }
 }
@@ -1041,7 +981,6 @@ construct Spacer() extends Widget {
 
     // A flexing gap: no content, it takes the leftover main-axis space.
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let ignored = context.frameCount
         return CALayerDescription {
             layout: CALayoutIntent {
                 flex: 1
@@ -1052,18 +991,10 @@ construct Spacer() extends Widget {
 
 construct Circle() extends Widget {
 
+    // A capsule in a square box: the unbounded radius comes out at half the
+    // side.
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let ignored = context.frameCount
-        var circleFill = foundationColor(modifierTokens(modifiers).foreground.primary)
-        if modifiers.hasForegroundColor {
-            circleFill = modifierPrimaryColor(modifiers.foregroundColor, modifiers)
-        }
-        return CALayerDescription {
-            content: .Solid(CASolid {
-                fill: caColorFromFoundation(modifierSurfaceFill(move circleFill, modifiers)),
-                shapeKind: 1
-            })
-        }
+        return shapeDescription(context, modifiers, containerShapeUnbounded(), 0)
     }
 }
 
@@ -1085,7 +1016,7 @@ function foundationGradient(direction: borrow GradientDirection) -> FoundationGr
     }
 }
 
-// A fade from one colour to another, across the space it is given.
+// A fade from one color to another, across the space it is given.
 //
 //     LinearGradient(start: colorPurple(), end: colorBlue())
 //     LinearGradient(start: top, end: bottom, direction: .Across)
@@ -1101,7 +1032,6 @@ construct LinearGradient(
 ) extends Widget {
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let ignored = context.viewportWidth
         return CALayerDescription {
             cornerRadius: cornerRadiusImplementation(radius, modifiers),
             content: .Gradient(CAGradient {
@@ -1119,7 +1049,6 @@ construct LinearGradient(
 construct BackgroundFill(style: BackgroundStyle, radius: CornerRadius = .None) extends Widget {
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let ignored = context.frameCount
         let cr = cornerRadiusImplementation(radius, modifiers)
         return CALayerDescription {
             cornerRadius: cr,
@@ -1134,7 +1063,6 @@ construct BackgroundFill(style: BackgroundStyle, radius: CornerRadius = .None) e
 construct SurfaceTint(color: Color) extends Widget {
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let ignored = context.frameCount
         return CALayerDescription {
             content: .Solid(CASolid {
                 fill: caColorFromFoundation(modifierSurfaceFill(foundationColor(color), modifiers))
@@ -1306,34 +1234,6 @@ construct CornerRadiusLayer(radius: Float) extends Widget {
     }
 }
 
-construct BlurBehindLayer(radius: Float, saturation: Float) extends Widget {
-    let content: some Widget
-
-
-    // A backdrop-blurring surface around the content: the compositor opens a
-    // backdrop capture for a layer that requests one.
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let ignored = saturation
-        return CALayerDescription {
-            cornerRadius: radius,
-            capturesBackdrop: true,
-            sublayers: [content.describe(context, modifierContextForChildren(modifiers))]
-        }
-    }
-}
-
-construct GlowLayer(intensity: Float) extends Widget {
-    let content: some Widget
-
-
-    // Glow is a shadow the description tree has no field for yet; the content
-    // passes through until one exists.
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let ignored = intensity
-        return content.describe(context, modifierContextForChildren(modifiers))
-    }
-}
-
 construct FontLayer(size: Float, weight: FontWeight) extends Widget {
     let content: some Widget
 
@@ -1369,6 +1269,24 @@ construct OpacityLayer(value: Float) extends Widget {
     }
 }
 
+// `.shadow(...)`: cast by the view's own layer, so it takes that layer's
+// outline -- a card's continuous corner, a capsule's ends -- rather than the box
+// around it, and a layer under glass casts it only past its edge.
+construct ShadowLayer(color: Color, radius: Float, x: Float, y: Float) extends Widget {
+    let content: some Widget
+
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        var described = content.describe(context, modifierContextForChildren(modifiers))
+        described.shadow = CAShadow {
+            color: caColorFromFoundation(modifierColor(foundationColor(color), modifiers)),
+            radius: radius,
+            offset: Point { x: x, y: y }
+        }
+        return described
+    }
+}
+
 // `.scaleEffect(...)`: the subtree drawn larger or smaller than it was laid out.
 //
 // A DEFORMATION rather than a resize, which is the whole distinction. The view
@@ -1376,9 +1294,9 @@ construct OpacityLayer(value: Float) extends Widget {
 // row inside a menu cannot reflow the menu — and the transform descends, so the
 // row's label and glyph go with it instead of being scaled one by one.
 //
-// It scales about the subtree's own centre. Any other pivot is a scale plus a
-// translation, and `FoundationDeform` folds the two together anyway.
-// `.rotationEffect(...)`: the subtree's leaves drawn turned about their centres.
+// It scales about `anchor`, the subtree's own center unless it names another
+// point, as SwiftUI's `scaleEffect(_:anchor:)` does.
+// `.rotationEffect(...)`: the subtree's leaves drawn turned about their centers.
 //
 // Drawing state, so a turning glyph keeps the space layout gave it and cannot
 // reflow the row it is in — which is the whole reason a chevron can be animated
@@ -1395,7 +1313,7 @@ construct RotationLayer(radians: Float) extends Widget {
     }
 }
 
-construct ScaleLayer(value: Float) extends Widget {
+construct ScaleLayer(value: Float, anchor: StackAlignment = .Center) extends Widget {
     let content: some Widget
 
 
@@ -1403,6 +1321,7 @@ construct ScaleLayer(value: Float) extends Widget {
         var described = content.describe(context, modifierContextForChildren(modifiers))
         described.scaleX = value
         described.scaleY = value
+        described.anchorPoint = stackAlignmentUnitPoint(anchor)
         return described
     }
 }
@@ -1476,29 +1395,6 @@ construct TextColorLayer(color: Color) extends Widget {
     }
 }
 
-construct SurfaceRadiusLayer(value: Float) extends Widget {
-    let content: some Widget
-
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        var described = content.describe(context, modifierContextForChildren(modifiers))
-        described.cornerRadius = value
-        return described
-    }
-}
-
-construct SurfaceShapeLayer(shape: SurfaceShape) extends Widget {
-    let content: some Widget
-
-
-    // The shape kind rides on the child's `.Solid`/`.Glass` content; until the
-    // shape is threaded through, the child passes through unchanged.
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let ignored = shape
-        return content.describe(context, modifierContextForChildren(modifiers))
-    }
-}
-
 construct SurfaceBorderLayer(color: Color, width: Float) extends Widget {
     let content: some Widget
 
@@ -1513,7 +1409,7 @@ construct SurfaceBorderLayer(color: Color, width: Float) extends Widget {
 
 // A hairline between two things.
 //
-// Its colour and its thickness are the theme's border tokens, and how far it is
+// Its color and its thickness are the theme's border tokens, and how far it is
 // held off the edges it runs between is the size class's — leading and trailing
 // separately, because a grouped list insets its separators to the label column
 // on one side and runs them to the edge on the other. `.themeBorder(...)` picks
@@ -1522,21 +1418,11 @@ construct SurfaceBorderLayer(color: Color, width: Float) extends Widget {
 // The inset lives on the divider rather than on whatever encloses it, so a
 // section, a sidebar and a toolbar all divide the same way without any of them
 // restating it.
-//
-// `follows` names a pair of guides the divider takes its extent from instead,
-// when something before it publishes them. That is how a hairline lines up with
-// a label column it has no way to measure: the column answers the guide, and the
-// divider reads the answer. The size class's insets remain the fallback for when
-// nothing does.
-construct Divider(
-    followsLeading: Any AlignmentGuide = ListRowSeparatorLeading(),
-    followsTrailing: Any AlignmentGuide = ListRowSeparatorTrailing(),
-) extends Widget {
+construct Divider() extends Widget {
 
     // A hairline across whatever holds it: the border's width tall, in the
-    // border's colour.
+    // border's color.
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let ignored = context.frameCount
         let border = modifierResolvedBorder(modifiers)
         let line = CALayerDescription {
             layout: CALayoutIntent {
@@ -1570,7 +1456,7 @@ construct Divider(
 }
 
 // The border a widget is drawn in: the named `.themeBorder(...)` when one is in
-// effect, the subtle hairline otherwise. Colour and width together, because a
+// effect, the subtle hairline otherwise. Color and width together, because a
 // border is both.
 function modifierResolvedBorder(modifiers: borrow ModifierContext) -> ResolvedBorder {
     let tokens = modifierTokens(modifiers)

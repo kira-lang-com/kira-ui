@@ -34,7 +34,7 @@ enum GuideAxis {
     Vertical
 }
 
-// The edges and centres of a view, in the view's own coordinates.
+// The edges and centers of a view, in the view's own coordinates.
 enum AlignmentAnchor {
     Leading
     Trailing
@@ -99,26 +99,17 @@ construct AlignmentGuide {
     @Required function defaultValue(dimensions: ViewDimensions) -> Float
 }
 
-// Where the hairline under a row begins and ends.
+// Where the hairline under a row begins.
 //
-// The defaults are the row's own edges, which is a full-bleed separator. A
-// grouped list moves the leading one to the label column by publishing it from
-// the column itself.
+// The default is the row's own edge, which is a full-bleed separator. A label
+// in a grouped list moves it to its title by publishing it from the title
+// itself.
 construct ListRowSeparatorLeading() extends AlignmentGuide {
     let name = "listRowSeparatorLeading"
     let axis: GuideAxis = .Horizontal
 
     function defaultValue(dimensions: ViewDimensions) -> Float {
         return dimensions.subscript(.Leading)
-    }
-}
-
-construct ListRowSeparatorTrailing() extends AlignmentGuide {
-    let name = "listRowSeparatorTrailing"
-    let axis: GuideAxis = .Horizontal
-
-    function defaultValue(dimensions: ViewDimensions) -> Float {
-        return dimensions.subscript(.Trailing)
     }
 }
 
@@ -155,12 +146,18 @@ construct AlignmentGuideLayer(guide: Any AlignmentGuide, value: (ViewDimensions)
     let content: some Widget
 
 
-    // An alignment guide is layout metadata; the content passes through and the
-    // layout stage reads the guide.
+    // The guide rides on the content's layer for layout to resolve once the
+    // layer has its width. A guide is an edge or a center and a length off it,
+    // and every anchor is a fraction of the width, so the closure asked at no
+    // width and at a unit width says both halves exactly.
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let ignored = guideTag(guide)
-        return content.describe(context, modifiers)
+        var described = content.describe(context, modifiers)
+        let answer: borrow (ViewDimensions) -> Float = value
+        let atZero = answer(ViewDimensions { width: 0.0, height: 0.0 })
+        let atUnit = answer(ViewDimensions { width: 1.0, height: 0.0 })
+        described.layout.guide = guideTag(guide)
+        described.layout.guideFraction = atUnit - atZero
+        described.layout.guidePosition = atZero
+        return described
     }
 }
-
-// The same view, taking its painted extent from a pair of guides.

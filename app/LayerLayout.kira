@@ -289,7 +289,55 @@ function caPlaceColumn(
 function caLayoutTree(root: borrow mut CALayerDescription, width: Float, height: Float) {
     caPlace(root, width, height)
     root.position = Point { x: 0.0, y: 0.0 }
+    caResolveGuides(root)
     caApplyOffsets(root)
+}
+
+// Moves each follower's leading edge to the guide it follows, as published by
+// the sublayers placed before it, in the follower's parent's coordinates.
+function caResolveGuides(node: borrow mut CALayerDescription) {
+    for i in 0..node.sublayers.count {
+        let tag = node.sublayers[i].layout.followsGuide
+        if tag != 0 {
+            var found = false
+            var at = 0.0
+            for j in 0..i {
+                if !found {
+                    let answer = caGuideIn(node.sublayers[j], tag)
+                    if answer.found {
+                        found = true
+                        at = node.sublayers[j].position.x + answer.x
+                    }
+                }
+            }
+            if found {
+                let trailing = node.sublayers[i].position.x + node.sublayers[i].size.width
+                node.sublayers[i].position = Point { x: at, y: node.sublayers[i].position.y }
+                node.sublayers[i].size = Size { width: max(trailing - at, 0.0), height: node.sublayers[i].size.height }
+            }
+        }
+        caResolveGuides(node.sublayers[i])
+    }
+}
+
+struct CAGuideAnswer {
+    var found: Bool = false
+    var x: Float = 0.0
+}
+
+// Where `tag` sits in a layer's own coordinates, as the layer or the first of
+// its sublayers to publish it answers.
+function caGuideIn(node: borrow CALayerDescription, tag: Int) -> CAGuideAnswer {
+    if node.layout.guide == tag {
+        return CAGuideAnswer { found: true, x: node.layout.guideFraction * node.size.width + node.layout.guidePosition }
+    }
+    for child in node.sublayers {
+        let answer = caGuideIn(child, tag)
+        if answer.found {
+            return CAGuideAnswer { found: true, x: child.position.x + answer.x }
+        }
+    }
+    return CAGuideAnswer {}
 }
 
 // Moves every layer by its offset once everything is placed, so it is drawn

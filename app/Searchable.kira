@@ -1,0 +1,129 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's `.searchable(text:prompt:)`: the window's search field, which
+// iPadOS sets at the trailing end of the toolbar over the view that asks
+// for it.
+//
+//     @State var query: String = ""
+//
+//     body {
+//         ProjectList(query = query)
+//             .searchable(text = query, onChange = { text in
+//                 query = text
+//                 return
+//             })
+//     }
+//
+// SwiftUI takes the text as a binding. A binding is two things -- the value
+// the field shows and what to do when the field changes it -- and here they
+// are the two arguments: the field shows `text`, and hands every edit to
+// `onChange`. Setting the state to something else, an empty string to clear
+// the search, puts that in the field.
+construct SearchableLayer(text: String, onChange: (String) -> Void, prompt: String) extends Widget {
+    let content: some Widget
+
+
+    // The field is described by the bar; the view under it is described here.
+    // The bar is collected after the whole tree, so the field is asked for
+    // once the content -- which may hold the split view collecting it -- has
+    // lowered.
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        let described = content.describe(context, modifiers)
+        let key = kiraUiSearchFieldKey()
+        searchFieldFollow(key, text)
+        kiraUiLayerTextInputRegister(key, searchFieldTypeFn(key, onChange), searchFieldCommandFn(key, onChange))
+        kiraUiLayerActionRegister(key, searchFieldPressFn(key, modifiers))
+        let clearKey = kiraUiTapSeqKey()
+        kiraUiLayerActionRegister(clearKey, searchFieldClearFn(key, onChange))
+        kiraUiToolbarSetSearch(copy prompt, clearKey)
+        return described
+    }
+}
+
+extend Widget {
+    // The window's search field, matching SwiftUI's `.searchable(text:prompt:)`.
+    function searchable(text: String, onChange: (String) -> Void, prompt: String = "Search") -> Any Widget {
+        return SearchableLayer(text: text, onChange: onChange, prompt: prompt) {
+            self
+        }
+    }
+}
+
+// The window has one search field, so its key is one constant, clear of the
+// bands minted and hero keys are drawn from (600000 up) and of the band below
+// them applications decode: a field keeps its focus and its text from frame to
+// frame by its key, and a minted one moves whenever what is built before it
+// does.
+function kiraUiSearchFieldKey() -> Int {
+    return 500000
+}
+
+// The field takes the text it is given whenever that differs from what it
+// holds: after an edit the two already agree, and anything else is the
+// application setting the search.
+function searchFieldFollow(key: Int, text: borrow String) {
+    textFieldSeed(key, text)
+    if textFieldText(key) != text {
+        textFieldReset(key)
+        textFieldSeed(key, text)
+    }
+    return
+}
+
+// An edit, and the text it left handed on when it changed anything.
+function searchFieldEdited(key: Int, before: borrow String, onChange: (String) -> Void) {
+    let after = textFieldText(key)
+    if after != before {
+        onChange(move after)
+    }
+    return
+}
+
+function searchFieldTypeFn(key: Int, onChange: (String) -> Void) -> (Int) -> Void {
+    let k = key
+    let change = onChange
+    let f: (Int) -> Void = { cp in
+        let before = textFieldText(k)
+        textFieldInsert(k, cp)
+        searchFieldEdited(k, before, change)
+        return
+    }
+    return f
+}
+
+// The keys the focused field answers. Return submits nothing: the search is
+// already the text.
+function searchFieldCommandFn(key: Int, onChange: (String) -> Void) -> (Int) -> Void {
+    let k = key
+    let change = onChange
+    let f: (Int) -> Void = { code in
+        let before = textFieldText(k)
+        if code == 259 {
+            textFieldBackspace(k)
+        } else if code != 257 {
+            textFieldNav(k, code)
+        }
+        searchFieldEdited(k, before, change)
+        return
+    }
+    return f
+}
+
+// A press puts the caret where it landed, past the magnifier.
+function searchFieldPressFn(key: Int, modifiers: borrow ModifierContext) -> () -> Void {
+    let metrics = windowChromeMetrics
+    return textFieldPressFn(key, textFieldTextSize(modifiers), metrics.searchLeading + metrics.symbolSize + metrics.searchSpacing)
+}
+
+function searchFieldClearFn(key: Int, onChange: (String) -> Void) -> () -> Void {
+    let k = key
+    let change = onChange
+    let f: () -> Void = { in
+        textFieldReset(k)
+        textFieldSeed(k, "")
+        change("")
+        return
+    }
+    return f
+}

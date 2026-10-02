@@ -141,8 +141,6 @@ struct ThemeTokens {
     let border: BorderTokens
     let glassTint: Color
     let glassEdgeLighting: Bool
-    let surfaceMaterial: Material
-    let cardRadius: Float
     let controlRadius: Float
     let bodySize: Float
     let bodyWeight: FontWeight
@@ -228,8 +226,6 @@ function styleThemeTokens(style: Any StyleImplementation) -> ThemeTokens {
         },
         glassTint: themeAdaptiveColor(materials.glassTint, appearance),
         glassEdgeLighting: materials.liquidGlass.edgeLighting,
-        surfaceMaterial: .LayeredGlass,
-        cardRadius: radii.large,
         controlRadius: radii.small,
         bodySize: typography.body.size,
         bodyWeight: typography.body.weight,
@@ -241,33 +237,25 @@ function styleThemeTokens(style: Any StyleImplementation) -> ThemeTokens {
 }
 
 construct Theme {
-    @Required let StyleImplementation: Any StyleImplementation
-    @Required let text: Any StyleImplementation
-    @Required let icon: Any StyleImplementation
-    @Required let button: Any StyleImplementation
-    @Required let card: Any StyleImplementation
-    @Required let progress: Any StyleImplementation
-    @Required let textField: Any StyleImplementation
-    @Required let toggle: Any StyleImplementation
-    @Required let slider: Any StyleImplementation
-    @Required let sidebar: Any StyleImplementation
-    @Required let divider: Any StyleImplementation
+    @Required let style: Any StyleImplementation
 
     function appearance() -> Appearance {
-        return resolvedAppearance(StyleImplementation.appearance)
+        return resolvedAppearance(self.style.appearance)
     }
 
     function tokens() -> ThemeTokens {
-        return styleThemeTokens(StyleImplementation)
+        return styleThemeTokens(self.style)
     }
 
     function typography(style: borrow TypographyStyle) -> FontImplementation {
-        let values = StyleImplementation.typography
+        let values = self.style.typography
         match style {
             caption -> return values.caption
             body -> return values.body
             control -> return values.control
             subheadline -> return values.subheadline
+            callout -> return values.callout
+            caption2 -> return values.caption2
             bodyEmphasis -> return values.bodyEmphasis
             footnote -> return values.footnote
             overline -> return values.overline
@@ -283,7 +271,7 @@ construct Theme {
     }
 
     function cornerRadius(style: borrow CornerRadius) -> Float {
-        let values = StyleImplementation.cornerRadii
+        let values = self.style.cornerRadii
         match style {
             None -> return values.none
             Small -> return values.small
@@ -295,11 +283,11 @@ construct Theme {
     }
 
     function symbol(name: borrow Symbol) -> String {
-        return styleSymbol(StyleImplementation.symbols, name)
+        return styleSymbol(self.style.symbols, name)
     }
 
     function controlMetrics(size: borrow ControlSize) -> ControlMetricsImplementation {
-        let values = StyleImplementation.metrics
+        let values = self.style.metrics
         match size {
             Mini -> return values.mini
             Small -> return values.small
@@ -309,7 +297,7 @@ construct Theme {
     }
 
     function spacing(style: borrow Spacing) -> Float {
-        let values = StyleImplementation.spacing
+        let values = self.style.spacing
         match style {
             None -> return values.none
             Micro -> return values.micro
@@ -324,18 +312,13 @@ construct Theme {
 }
 
 construct DefaultTheme() extends Theme {
-    let StyleImplementation = DefaultStyle {}
-    let text = DefaultStyle {}
-    let icon = DefaultStyle {}
-    let button = DefaultStyle {}
-    let card = DefaultStyle {}
-    let progress = DefaultStyle {}
-    let textField = DefaultStyle {}
-    let toggle = DefaultStyle {}
-    let slider = DefaultStyle {}
-    let sidebar = DefaultStyle {}
-    let divider = DefaultStyle {}
+    let style = DefaultStyle {}
 }
+
+// The library's own theme, built once. Every context and every modifier holds
+// a theme whether or not one was applied, and an unthemed tree asks for this
+// one at nearly every widget.
+let defaultTheme: Any Theme = DefaultTheme {}
 
 // The theme in effect here: the applied one, or the library's own when nothing
 // applied a theme.
@@ -344,13 +327,13 @@ construct DefaultTheme() extends Theme {
 // differ in their TOKENS and in nothing else. Asking `hasTheme` at a call site
 // and reaching for a literal on the other branch is what left an application
 // with no theme drawing near-white text on a light surface and asking
-// `.backgroundStyle(.Surface)` for a colour that came back transparent: two
+// `.backgroundStyle(.Surface)` for a color that came back transparent: two
 // defaults that were never authored together.
 function modifierTheme(modifiers: borrow ModifierContext) -> Any Theme {
     if modifiers.hasTheme {
         return copy modifiers.theme
     }
-    return DefaultTheme {}
+    return copy defaultTheme
 }
 
 // What `.background(...)` paints with: a style, named after what it IS rather
@@ -384,7 +367,7 @@ enum ThemeBorder {
 // materialized resolved style on each widget.
 struct ModifierDelta {
     let hasTheme: Bool = false
-    let theme: Any Theme = DefaultTheme {}
+    let theme: Any Theme = copy defaultTheme
     let hasForegroundColor: Bool = false
     let foregroundColor: PrimaryColor = .Primary
     let hasMaterial: Bool = false
@@ -403,6 +386,8 @@ struct ModifierDelta {
     let controlSize: ControlSize = .Regular
     let hasImageScale: Bool = false
     let imageScale: IconScale = .Medium
+    let hasSymbolVariant: Bool = false
+    let symbolVariant: SymbolVariants = .None
     let hasTint: Bool = false
     let tint: PrimaryColor = .Accent
     let hasContentInset: Bool = false
@@ -433,7 +418,7 @@ struct ModifierDelta {
 // and isolated values are removed by modifierContextForChildren; inherited,
 // cascading, and environmental values remain available to descendants.
 struct ModifierContext {
-    let theme: Any Theme = DefaultTheme {}
+    let theme: Any Theme = copy defaultTheme
     let hasTheme: Bool = false
     // `.foregroundColor(...)` cascades: it is the subtree's ink until something
     // deeper restates it, exactly like text color in a retained environment.
@@ -458,7 +443,10 @@ struct ModifierContext {
     // How large a glyph is drawn relative to the size class around it.
     let imageScale: IconScale = .Medium
     let hasImageScale: Bool = false
-    // The colour a control's ACTIVE side takes: a switch's on-track, a slider's
+    // Which drawing of a symbol is used: the outlined one, or its fill.
+    let symbolVariant: SymbolVariants = .None
+    let hasSymbolVariant: Bool = false
+    // The color a control's ACTIVE side takes: a switch's on-track, a slider's
     // filled segment, a progress bar's fill. Separate from the foreground so a
     // row can dim its label without draining the accent out of the switch that
     // turns the row back on.
@@ -523,6 +511,8 @@ function modifierContextApply(
         hasControlSize: delta.hasControlSize ? true : context.hasControlSize,
         imageScale: delta.hasImageScale ? delta.imageScale : context.imageScale,
         hasImageScale: delta.hasImageScale ? true : context.hasImageScale,
+        symbolVariant: delta.hasSymbolVariant ? delta.symbolVariant : context.symbolVariant,
+        hasSymbolVariant: delta.hasSymbolVariant ? true : context.hasSymbolVariant,
         tint: delta.hasTint ? delta.tint : context.tint,
         hasTint: delta.hasTint ? true : context.hasTint,
         contentInset: delta.hasContentInset ? delta.contentInset : context.contentInset,
@@ -582,6 +572,8 @@ function modifierContextForOverlay(context: borrow ModifierContext) -> ModifierC
         hasControlSize: inherited.hasControlSize,
         imageScale: inherited.imageScale,
         hasImageScale: inherited.hasImageScale,
+        symbolVariant: inherited.symbolVariant,
+        hasSymbolVariant: inherited.hasSymbolVariant,
         tint: inherited.tint,
         hasTint: inherited.hasTint,
         contentInset: inherited.contentInset,
@@ -631,6 +623,8 @@ function modifierContextPresenting(
         hasControlSize: inherited.hasControlSize,
         imageScale: inherited.imageScale,
         hasImageScale: inherited.hasImageScale,
+        symbolVariant: inherited.symbolVariant,
+        hasSymbolVariant: inherited.hasSymbolVariant,
         tint: inherited.tint,
         hasTint: inherited.hasTint,
         contentInset: inherited.contentInset,
@@ -672,6 +666,8 @@ function modifierContextForChildren(context: borrow ModifierContext) -> Modifier
         hasControlSize: context.hasControlSize,
         imageScale: context.imageScale,
         hasImageScale: context.hasImageScale,
+        symbolVariant: context.symbolVariant,
+        hasSymbolVariant: context.hasSymbolVariant,
         tint: context.tint,
         hasTint: context.hasTint,
         contentInset: context.contentInset,
@@ -717,6 +713,8 @@ function modifierContextForPresentation(context: borrow ModifierContext) -> Modi
         hasControlSize: context.hasControlSize,
         imageScale: context.imageScale,
         hasImageScale: context.hasImageScale,
+        symbolVariant: context.symbolVariant,
+        hasSymbolVariant: context.hasSymbolVariant,
         tint: context.tint,
         hasTint: context.hasTint,
         contentInset: context.contentInset,
@@ -803,6 +801,13 @@ function modifierDeltaImageScale(scale: IconScale) -> ModifierDelta {
     return ModifierDelta {
         hasImageScale: true,
         imageScale: scale
+    }
+}
+
+function modifierDeltaSymbolVariant(variant: SymbolVariants) -> ModifierDelta {
+    return ModifierDelta {
+        hasSymbolVariant: true,
+        symbolVariant: variant
     }
 }
 

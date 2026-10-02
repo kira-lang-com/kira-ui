@@ -45,22 +45,9 @@ construct RenderSurface() extends Widget {
     }
 }
 
-// A window's root content. A `Window` owns a compositor and a retained tree —
-// which `RunKiraLayerApp` is — so the widget itself only names the content and
-// the title; the runner is what stands the window up. `RunKiraWindowApp` runs
-// one from a builder.
-construct Window(title: String = "Kira") extends Widget {
-    let content: some Widget
-
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let ignored = title
-        return content.describe(context, modifierContextForChildren(modifiers))
-    }
-}
-
 // Run a window on the retained stack: build the root each rebuild and drive it
-// through the reconcile runner.
+// through the reconcile runner. The window's title is the runner's, because the
+// window is stood up before anything inside it is built.
 function RunKiraWindowApp(
     title: String,
     width: Int,
@@ -105,11 +92,12 @@ construct Pager(selection: Int = 0) extends Widget {
 
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let ignored = selection
         var pages: [CALayerDescription] = []
         let described = describedChildren(context, modifiers, children)
         for index in 0..described.count {
-            pages.append(renderSurface(described[index]))
+            var page = renderSurface(described[index])
+            page.layout.offset = Point { x: Float(index - selection) * context.viewportWidth, y: 0.0 }
+            pages.append(move page)
         }
         return CALayerDescription {
             sublayers: move pages

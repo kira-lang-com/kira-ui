@@ -8,11 +8,10 @@ import KCoreAnimation
 // slot, seeded once from `initial` (String is opaque, so it is decoded to
 // codepoints via foundationStringToCodepoints). Typing inserts
 // at the caret; Backspace / forward-Delete remove around it; Left/Right/Home/End
-// move it (routed through onKey); a click sets the caret to the nearest character
+// move it; a click focuses the field and sets the caret to the nearest character
 // (prefix measurement). The caret is rendered without measurement by splitting
-// the text at the caret and placing a thin bar between the two halves. Enter
-// fires onSubmit with the current text and resets the field so it re-seeds next
-// time it is mounted.
+// the text at the caret and placing a thin bar between the two halves. Return
+// fires onSubmit; the text stays, and `textFieldText(key)` reads it.
 
 struct KiraUiTextFieldState {
     var codes: [Int] = []
@@ -293,6 +292,55 @@ function textFieldNavFn(key: Int) -> (Int) -> Void {
     return f
 }
 
+// The keys a focused field answers: Return submits, Delete removes behind the
+// caret, and the rest move it.
+function textFieldCommandFn(key: Int, onSubmit: () -> Void) -> (Int) -> Void {
+    let k = key
+    let submit = onSubmit
+    let f: (Int) -> Void = { code in
+        if code == 257 {
+            submit()
+        } else if code == 259 {
+            textFieldBackspace(k)
+        } else {
+            textFieldNav(k, code)
+        }
+        return
+    }
+    return f
+}
+
+// One run of a field's text, in the field's size and the primary ink.
+function textFieldRun(
+    content: String,
+    size: Float,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    return Text(content)
+        .font(size: size)
+        .foregroundColor(.Primary)
+        .describe(context, modifiers)
+}
+
+// The insertion point: the catalog's bar in the accent.
+function textFieldCaret(modifiers: borrow ModifierContext) -> CALayerDescription {
+    let metrics = caretMetrics
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedWidth: metrics.width,
+            fixedHeight: metrics.height
+        },
+        cornerRadius: metrics.width / 2.0,
+        content: .Solid(CASolid {
+            fill: caColorFromFoundation(modifierColor(foundationColor(modifierTokens(modifiers).tint.accent), modifiers)),
+            cornerRadius: metrics.width / 2.0
+        })
+    }
+}
+
 function textFieldPressFn(key: Int, size: Float, leftPad: Float) -> () -> Void {
     let k = key
     let sz = size
@@ -366,40 +414,64 @@ construct TextField(
     onSubmit: () -> Void
 ) extends Widget {
 
-    // A hittable field box with its text (or placeholder) as content. The caret,
-    // selection and per-glyph layout are the input stage's; describe carries the
-    // field surface and the current string.
+    // The field's text, or its placeholder while it is empty. Focused, it takes
+    // the keyboard and splits its text at the caret with the insertion point
+    // drawn between the halves, so no glyph has to be measured to place it.
+    //
+    // In a grouped list the row is the field, as it is in a platform form: no
+    // fill of its own, across the row. Anywhere else it is a filled box of the
+    // size it was given.
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let size = textFieldTextSize(modifiers)
-        var bg = foundationColor(modifierTokens(modifiers).fill.control)
-        bg = modifierSurfaceFill(move bg, modifiers)
         textFieldSeed(key, initial)
+        kiraUiLayerTextInputRegister(key, textFieldInsertFn(key), textFieldCommandFn(key, onSubmit))
         let st = nativeRecover<KiraUiTextFieldState>(kiraUiStateSlotGet(textFieldSlotKey(key)))
-        let n = st.codes.count
-        var shown = placeholder
-        var ink = textFieldPlaceholderColor(modifiers)
-        if n > 0 {
-            shown = foundationStringFromCodepoints(st.codes, 0, n)
-            ink = modifierTextColor(modifiers)
+        let focused = context.focusedKey == key
+        var runs: [CALayerDescription] = []
+        if st.codes.count == 0 {
+            if focused {
+                runs.append(textFieldCaret(modifiers))
+            }
+            runs.append(Text(placeholder)
+                .font(size: size)
+                .foregroundColor(.Tertiary)
+                .describe(context, modifiers))
+        } else if focused {
+            runs.append(textFieldRun(foundationStringFromCodepoints(st.codes, 0, st.caret), size, context, modifiers))
+            runs.append(textFieldCaret(modifiers))
+            runs.append(textFieldRun(foundationStringFromCodepoints(st.codes, st.caret, st.codes.count), size, context, modifiers))
+        } else {
+            runs.append(textFieldRun(foundationStringFromCodepoints(st.codes, 0, st.codes.count), size, context, modifiers))
+        }
+        let grouped = modifiers.controlPresentation == .InsetGrouped
+        var fill = transparentFoundationColor()
+        if !grouped {
+            fill = modifierSurfaceFill(foundationColor(modifierTokens(modifiers).fill.control), modifiers)
         }
         let radius = textFieldRadius(modifiers)
+        let inset = grouped ? 0.0 : radius
+        kiraUiLayerActionRegister(key, textFieldPressFn(key, size, inset))
         return CALayerDescription {
+            layout: CALayoutIntent {
+                axis: .Row,
+                widthFill: grouped || width <= 0.0,
+                heightFill: false,
+                fixedWidth: grouped || width <= 0.0 ? -1.0 : width,
+                fixedHeight: height,
+                paddingLeading: inset,
+                paddingTrailing: inset,
+                flex: grouped || width <= 0.0 ? 1 : 0,
+                alignment: Point { x: 0.0, y: 0.5 }
+            },
             hittable: !modifiers.disabled,
             hitKey: key,
             cornerRadius: radius,
             clipsChildren: true,
             content: .Solid(CASolid {
-                fill: caColorFromFoundation(textFieldColorWithOpacity(bg, modifiers.opacity)),
+                fill: caColorFromFoundation(textFieldColorWithOpacity(fill, modifiers.opacity)),
                 cornerRadius: radius
             }),
-            sublayers: [CALayerDescription {
-                content: .Text(CAText {
-                    content: move shown,
-                    color: caColorFromFoundation(ink),
-                    size: size,
-                    weight: 400.0
-                })
-            }]
+            sublayers: move runs
         }
     }
 }

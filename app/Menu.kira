@@ -14,53 +14,45 @@ import KCoreAnimation
 //         }
 //     }
 //
-// # A submenu opens IN the menu, not over it
+// # A submenu opens out of its own row
 //
-// The platform's own submenu does not fly a second panel out to the side. The
-// card it is already in grows downward to hold it, the row that owns it becomes
-// that submenu's header, and everything else in the menu recedes — dimmer, and
-// pulled in from both edges — so the submenu is the only thing at the front.
-// Pressing the header again reverses it.
+// The platform's submenu does not fly a second panel out to the side. The row
+// that owns it becomes the header of a card of its own, exactly as wide as the
+// menu was, and the card opens out of the row: its top rises to leave air
+// over the header, its bottom falls past the last item, and the header rides
+// up between them, set emphasized, its chevron turned down. The card's items
+// are there almost at once, uncovered where they will stay; its glass comes up
+// over the menu's only once it is half open. The card stays where the row was
+// unless it would run off the window, and then rises as far as it has to.
 //
-// That is also the only version that can be pressed reliably. Every view the
-// foundation draws is a view it PLACED, so a panel drawn outside the layout is
-// a panel a press has to be routed to by hand — which is the same reason
-// `Picker` expands its options under its row rather than floating them.
+// Everything else in the menu falls back behind it -- smaller, toward where
+// the menu came from, and dimmer -- so the submenu is the only thing at the
+// front. Pressing the header again, or anywhere on the menu behind, puts it
+// back: the items go first, and the card closes into a pill on the row.
 //
-// # The submenu is symmetric; the menu behind it is not
+// The row keeps its place in the menu while it is out, so nothing below it
+// moves, and the card is presented over the menu at the row's rectangle.
 //
-// Measured off a 30fps capture of the platform's own menu, frame by frame, and
-// it is not the shape it looks like. The submenu's own growth runs at very
-// nearly the same rate in both directions — fitted responses of 0.49 opening and
-// 0.48 closing, which is one spring. All of the asymmetry is in what happens
-// BEHIND it.
+// # Going waits, coming back does not
 //
-// Opening, the menu does not begin receding when the press lands. It HOLDS at
-// full strength for a fifth of a second while the submenu arrives, and only then
-// dims, over about four tenths. That hold is what makes the transition read as
-// deliberate rather than as everything moving at once: the new thing is allowed
-// to arrive before anything is taken away. A spring cannot express it — a spring
-// starts moving immediately — which is why fitting one to those frames leaves an
-// error two orders of magnitude worse than fitting a hold plus a spring.
-//
-// Closing, there is no hold and the menu comes back fast: essentially restored
-// within an eighth of a second, well before the submenu has finished leaving.
-// What you are returning to arrives first.
-//
-// Every number below is that fit, not a preset — see `menuRevealSpring`,
-// `menuRecedeSpring` and `menuRecedeHold`.
+// Measured off the platform's menu frame by frame. The card opens and closes
+// on one short critically damped spring, and the menu behind shrinks on that
+// same spring. Its ink does not: going, it HOLDS at full strength while the
+// submenu arrives and only then dims, slowly -- a spring cannot express a
+// hold, since a spring starts moving immediately, so it is a hold and then a
+// spring. Coming back there is no hold and the ink returns in a fraction of
+// the time: what you are returning to arrives first.
 
 // --- measured metrics --------------------------------------------------------
 //
-// From Examples/liquid-glass-menu, where every number was measured off a 3x
-// screenshot of the platform's own menu rather than guessed: 42pt row pitch,
-// 30/28 horizontal insets, a fixed icon column, 16.5pt labels, and separators
-// that are a line plus ten and a half points of air. The example proved the
-// numbers; this is the library finally using them.
+// From Apple's iOS and iPadOS 27 design kit, its iPad menu: a 238pt card with
+// ten points of air top and bottom, 36pt rows held 16pt off its edges, a 28pt
+// glyph column eight points before 15pt titles, and separators that are a line
+// in a 16pt band.
 
 // Menu geometry resolves through the active control-size table. The regular
-// defaults are the measured 42/30/28/16.5 values from the reference capture,
-// while Mini/Small/Large are theme-owned variants in Metrics.kira.
+// defaults are the kit's; Mini/Small/Large are theme-owned variants in
+// Metrics.kira.
 function menuRowPitch(modifiers: borrow ModifierContext) -> Float {
     return resolvedControlMetrics(modifiers).menuRowHeight
 }
@@ -77,91 +69,37 @@ function menuLabelSize(modifiers: borrow ModifierContext) -> Float {
     return resolvedControlMetrics(modifiers).menuLabelSize
 }
 
-// --- placeholder metrics -----------------------------------------------------
-//
-// MEASURED OFF NOTHING YET. These are the shape of the thing, fitted by eye to a
-// 30fps capture of the platform's own menu, and every one of them is expected to
-// move once the frames are measured properly. They are gathered here, named, and
-// used nowhere else so that refining them is editing this block.
-
-// How far the menu behind an open submenu fades. Not to nothing: it stays a
-// legible ghost, because it is still the thing you are going back to.
-function menuRecededOpacity() -> Float {
-    return 0.42
-}
-
-// How far the receding menu is scaled down.
-//
-// A TRANSFORM, and that is the whole point. The menu is not re-laid-out smaller
-// — its rows keep their sizes, their spacing and their wrapping, and what
-// changes is only where their pixels land. Laying it out at a smaller size would
-// reflow the type inside it, re-break any label that wraps, and re-resolve the
-// tree on every frame of the animation; the platform's menu plainly does none of
-// that, because it is the same menu drawn smaller rather than a smaller menu.
-//
-// `.scaleEffect` carries a `MotionDeformation` down the subtree, which the
-// renderer descends with: the space layout gave the menu is exactly the space it
-// still occupies. See `FoundationDeform` — "nothing here touches layout".
-function menuRecedeScale() -> Float {
-    return 0.90
-}
-
-// The corner every menu card takes — the panel and the submenu that opens over
+// The corner every menu card takes -- the panel and the submenu that opens over
 // it alike. It is part of menu presentation geometry, so it resolves through the
 // active metric table rather than living as a private literal here.
 function menuCardRadius(modifiers: borrow ModifierContext) -> Float {
     return resolvedControlMetrics(modifiers).menuCardRadius
 }
 
-// Below this the card is not drawn at all.
+// --- the submenu's motion ---------------------------------------------------
 //
-// A submenu does not shrink to nothing. It fades while it is still a panel and
-// is gone before it would be the size of the row it came from — which is what
-// the platform's does, and is also the only size at which this material is
-// trustworthy: a Liquid Glass surface about one row tall renders far brighter
-// live than the same surface does from the interior cache (measured: 254 against
-// 180 on the same geometry). Anything that collapses a glass card to nothing
-// passes through that, and flashes white on the way.
-//
-// So the card leaves from a size the material is exact at. See the note in
-// `Menu` about what stays behind while it does.
-function menuCardFloor() -> Float {
-    return 0.34
+// Every number is the catalog's, measured off the platform's menu; see
+// `MenuSubmenuMetrics`.
+
+// The submenu's card growing out of its row, and going back into it.
+function menuSubmenuSpring(opening: Bool) -> MotionSpring {
+    let metrics = menuSubmenuMetrics
+    if opening {
+        return MotionSpring { response: metrics.openResponse, damping: metrics.openDamping, target: 1.0 }
+    }
+    return MotionSpring { response: metrics.closeResponse, damping: metrics.closeDamping, target: 0.0 }
 }
 
-// How present the card's material is at a point in its growth.
-//
-// Nothing at the floor, full a little above it: the card is the thing in front,
-// and a panel that spends its life at nine tenths reads as washed out rather
-// than as arriving. Reaching zero AT the floor is what makes the moment it stops
-// being drawn invisible.
-function menuCardOpacity(amount: Float) -> Float {
-    let over = (amount - menuCardFloor()) / (1.0 - menuCardFloor())
-    return min(max(over * 2.2, 0.0), 1.0)
+// The menu behind it falling back. Slow, and it starts late -- see
+// `recedeHold`.
+function menuRecedeInSpring() -> MotionSpring {
+    return MotionSpring { response: menuSubmenuMetrics.recedeInResponse, damping: menuSubmenuMetrics.recedeInDamping, target: 1.0 }
 }
 
-// The submenu's own growth. One spring both ways: the capture puts it at 0.49
-// opening and 0.48 closing, which is the same motion inside the error of reading
-// it off frames.
-function menuRevealSpring(target: Float) -> MotionSpring {
-    return MotionSpring { response: 0.49, damping: 0.90, target: target }
-}
-
-// The menu behind it, dimming. Slow, and it starts late — see `menuRecedeHold`.
-function menuRecedeInSpring(target: Float) -> MotionSpring {
-    return MotionSpring { response: 0.685, damping: 0.90, target: target }
-}
-
-// The menu behind it, coming back. Nothing like the same motion: an eighth of a
-// second, and no hold at all. The thing you are returning to does not wait.
-function menuRecedeOutSpring(target: Float) -> MotionSpring {
-    return MotionSpring { response: 0.19, damping: 0.95, target: target }
-}
-
-// How long the menu holds at full strength before it begins to recede, in
-// seconds. Only on the way in; coming back it starts at once.
-function menuRecedeHold() -> Float {
-    return 0.20
+// The menu behind it coming back. Nothing like the same motion, and no hold at
+// all: the thing you are returning to does not wait.
+function menuRecedeOutSpring() -> MotionSpring {
+    return MotionSpring { response: menuSubmenuMetrics.recedeOutResponse, damping: menuSubmenuMetrics.recedeOutDamping, target: 0.0 }
 }
 
 // --- which submenu is open ---------------------------------------------------
@@ -176,10 +114,22 @@ function menuRecedeHold() -> Float {
 struct KiraUiMenuState {
     // The key of the expanded `Menu`, or 0 when none is.
     var openKey: Int = 0
+    // The key of the `Menu` presented from a bar, whose card floats under
+    // its button, or 0 when none is.
+    var presentedKey: Int = 0
+    // How far the menu behind has dimmed, on a spring of its own.
     var recede: MotionSpringState = MotionSpringState {}
     var receded: Float = 0.0
+    // How far it has shrunk, on the submenu's own spring: the menu gives way
+    // exactly as fast as the submenu arrives.
+    var shrink: MotionSpringState = MotionSpringState {}
+    var shrunk: Float = 0.0
+    // Where across the screen the row that opened the submenu stood, its
+    // center at the press. The menu gives way toward the side it stands on;
+    // see `menuRecessionAnchor`.
+    var sideX: Float = 0.0
     // Seconds still to wait before the recession starts moving. See
-    // `menuRecedeHold`: the menu stands at full strength while the submenu
+    // `recedeHold`: the menu stands at full strength while the submenu
     // arrives, and a spring has no way to say that — it leaves the instant it is
     // retargeted.
     var holdRemaining: Float = 0.0
@@ -194,10 +144,19 @@ function kiraUiMenuSlotKey() -> String {
     return "kiraui.menu"
 }
 
-function kiraUiMenuState() -> KiraUiMenuState {
+// The slot, made the first time it is asked for. A writer recovers it in
+// place after this: a recovered value handed back out of a function is a
+// copy, and what was written to it would be lost.
+function kiraUiMenuEnsure() {
     if kiraUiStateSlotHas(kiraUiMenuSlotKey()) == false {
         kiraUiStateSlotPut(kiraUiMenuSlotKey(), nativeUserData(nativeState(KiraUiMenuState {})))
     }
+    return
+}
+
+// The state as it stands, to read.
+function kiraUiMenuState() -> KiraUiMenuState {
+    kiraUiMenuEnsure()
     return nativeRecover<KiraUiMenuState>(kiraUiStateSlotGet(kiraUiMenuSlotKey()))
 }
 
@@ -234,22 +193,96 @@ function kiraUiMenuChooseFn(action: () -> Void) -> () -> Void {
     let chosen = action
     let press: () -> Void = { in
         chosen()
-        var state = kiraUiMenuState()
+        kiraUiMenuEnsure()
+        var state = nativeRecover<KiraUiMenuState>(kiraUiStateSlotGet(kiraUiMenuSlotKey()))
         if state.openKey != 0 {
             menuRevealRetarget(state.openKey, false)
             state.openKey = 0
-            menuRetarget(state.recede, 0.0, menuRecedeOutSpring(0.0))
+            menuRecessionRetarget(state, false)
+        }
+        if state.presentedKey != 0 {
+            menuMorphRetarget(state.presentedKey, false)
+            state.presentedKey = 0
         }
         return
     }
     return press
 }
 
+// Presents a bar's menu under its button, or puts it away if it is the one
+// already out. Whatever other menu was out goes.
+function kiraUiPresentMenuFn(key: Int) -> () -> Void {
+    let target = key
+    let press: () -> Void = { in
+        kiraUiMenuEnsure()
+        var state = nativeRecover<KiraUiMenuState>(kiraUiStateSlotGet(kiraUiMenuSlotKey()))
+        let presented = state.presentedKey
+        if presented != 0 {
+            menuMorphRetarget(presented, false)
+            state.presentedKey = 0
+        }
+        if presented != target {
+            state.presentedKey = target
+            menuMorphRetarget(target, true)
+        }
+        return
+    }
+    return press
+}
+
+// Puts away whichever bar menu is out: a press anywhere off its card.
+function kiraUiDismissMenuFn() -> () -> Void {
+    let press: () -> Void = { in
+        kiraUiMenuEnsure()
+        var state = nativeRecover<KiraUiMenuState>(kiraUiStateSlotGet(kiraUiMenuSlotKey()))
+        if state.presentedKey != 0 {
+            menuMorphRetarget(state.presentedKey, false)
+            state.presentedKey = 0
+        }
+        return
+    }
+    return press
+}
+
+// Every menu out is put away at once, with no motion home: what it came out
+// of is gone, as when the path is replaced with one that starts elsewhere.
+// Its keys name controls of the new views now, which must not find it open.
+function kiraUiMenuDismissAll() {
+    kiraUiMenuEnsure()
+    var state = nativeRecover<KiraUiMenuState>(kiraUiStateSlotGet(kiraUiMenuSlotKey()))
+    if state.openKey != 0 {
+        menuRevealPutAway(state.openKey)
+        state.openKey = 0
+    }
+    if state.presentedKey != 0 {
+        menuRevealPutAway(state.presentedKey)
+        state.presentedKey = 0
+    }
+    state.recede = MotionSpringState {}
+    state.receded = 0.0
+    state.shrink = MotionSpringState {}
+    state.shrunk = 0.0
+    state.holdRemaining = 0.0
+    return
+}
+
+function menuRevealPutAway(key: Int) {
+    menuRevealEnsure(key)
+    var reveal = nativeRecover<KiraUiMenuReveal>(kiraUiStateSlotGet(menuRevealSlotKey(key)))
+    reveal.progress = MotionSpringState {}
+    reveal.amount = 0.0
+    reveal.fall = MotionSpringState {}
+    reveal.fallen = 0.0
+    reveal.opening = false
+    return
+}
+
 // Opens a submenu, or closes it if it is the one already open.
 function kiraUiToggleMenuFn(key: Int) -> () -> Void {
     let target = key
     let press: () -> Void = { in
-        var state = kiraUiMenuState()
+        kiraUiMenuEnsure()
+        var state = nativeRecover<KiraUiMenuState>(kiraUiStateSlotGet(kiraUiMenuSlotKey()))
         var opening = true
         // Whichever was open is told to close, whatever happens next.
         //
@@ -267,22 +300,30 @@ function kiraUiToggleMenuFn(key: Int) -> () -> Void {
         } else {
             state.openKey = target
         }
-        // The menu behind recedes on the trailing curve and returns on the
-        // leading one — the swap described at the top of this file.
-        if opening {
-            menuRetarget(state.recede, 1.0, menuRecedeInSpring(1.0))
-            state.holdRemaining = menuRecedeHold()
-        } else {
-            menuRetarget(state.recede, 0.0, menuRecedeOutSpring(0.0))
-            // No hold coming back. Whatever was still to run of one is dropped,
-            // so a submenu shut during the hold brings the menu straight back
-            // instead of finishing a wait for a dim that never began.
-            state.holdRemaining = 0.0
-        }
+        menuRecessionRetarget(state, opening)
         menuRevealRetarget(target, opening)
         return
     }
     return press
+}
+
+// Sends the menu behind a submenu back, or brings it forward. Its size rides
+// the submenu's spring both ways; its ink waits out the hold going and comes
+// straight back returning -- the swap described at the top of this file.
+function menuRecessionRetarget(state: borrow mut KiraUiMenuState, opening: Bool) {
+    menuRetarget(state.shrink, opening ? 1.0 : 0.0, menuSubmenuSpring(opening))
+    if opening {
+        state.sideX = foundationPressBoundsX() + foundationPressBoundsW() / 2.0
+        menuRetarget(state.recede, 1.0, menuRecedeInSpring())
+        state.holdRemaining = menuSubmenuMetrics.recedeHold
+        return
+    }
+    menuRetarget(state.recede, 0.0, menuRecedeOutSpring())
+    // No hold coming back. Whatever was still to run of one is dropped, so a
+    // submenu shut during the hold brings the menu straight back instead of
+    // finishing a wait for a dim that never began.
+    state.holdRemaining = 0.0
+    return
 }
 
 // --- one submenu's own reveal ------------------------------------------------
@@ -303,16 +344,32 @@ struct KiraUiMenuReveal {
     var anchorY: Float = 0.0
     var anchorW: Float = 0.0
     var anchorH: Float = 0.0
+    // A bar's menu only: whether it is on its way out or home, and how far its
+    // center has fallen from the button toward the card's. The fall rides a
+    // spring of its own, looser than the growth, which is what drops the glass
+    // past the card before it spreads back up into it.
+    var opening: Bool = false
+    var fall: MotionSpringState = MotionSpringState {}
+    var fallen: Float = 0.0
 }
 
 function menuRevealSlotKey(key: Int) -> String {
     return kiraUiSlotKey("kiraui.menu.", key)
 }
 
-function menuRevealState(key: Int) -> KiraUiMenuReveal {
+// The slot, made the first time it is asked for. A writer recovers it in
+// place after this: a recovered value handed back out of a function is a
+// copy, and what was written to it would be lost.
+function menuRevealEnsure(key: Int) {
     if kiraUiStateSlotHas(menuRevealSlotKey(key)) == false {
         kiraUiStateSlotPut(menuRevealSlotKey(key), nativeUserData(nativeState(KiraUiMenuReveal {})))
     }
+    return
+}
+
+// The state as it stands, to read.
+function menuRevealState(key: Int) -> KiraUiMenuReveal {
+    menuRevealEnsure(key)
     return nativeRecover<KiraUiMenuReveal>(kiraUiStateSlotGet(menuRevealSlotKey(key)))
 }
 
@@ -327,17 +384,9 @@ function kiraUiMenuAnchor(key: Int) -> KiraUiOverlay {
     }
 }
 
-// How wide the floating card stands: as wide as the row it came out of.
-//
-// Taken from the anchor rather than stated, so the card matches the menu that
-// owns it however wide that menu is, and a second menu at another width needs
-// nothing said here.
-function menuCardWidth(key: Int) -> Float {
-    return menuRevealState(key).anchorW
-}
-
 function menuRevealRetarget(key: Int, opening: Bool) {
-    var reveal = menuRevealState(key)
+    menuRevealEnsure(key)
+    var reveal = nativeRecover<KiraUiMenuReveal>(kiraUiStateSlotGet(menuRevealSlotKey(key)))
     // The row's own bounds, recorded just before this handler ran — but only
     // when the submenu is opening from FULLY CLOSED.
     //
@@ -356,12 +405,80 @@ function menuRevealRetarget(key: Int, opening: Bool) {
         reveal.anchorW = foundationPressBoundsW()
         reveal.anchorH = foundationPressBoundsH()
     }
+    reveal.opening = opening
+    menuRetarget(reveal.progress, opening ? 1.0 : 0.0, menuSubmenuSpring(opening))
+    return
+}
+
+// --- a bar's menu, growing out of its button ----------------------------------
+
+// The springs a bar's menu rides: out of the button, its size critically damped
+// and its fall loose; home, both on one short spring that never passes the
+// button. See `MenuMorphMetrics`.
+function menuMorphGrowthSpring() -> MotionSpring {
+    return MotionSpring { response: menuMorphMetrics.growthResponse, damping: 1.0, target: 1.0 }
+}
+
+function menuMorphFallSpring() -> MotionSpring {
+    return MotionSpring { response: menuMorphMetrics.dropResponse, damping: menuMorphMetrics.dropDamping, target: 1.0 }
+}
+
+function menuMorphHomeSpring() -> MotionSpring {
+    return MotionSpring { response: menuMorphMetrics.closeResponse, damping: 1.0, target: 0.0 }
+}
+
+// Sends a bar's menu out of its button or home into it, from wherever it is.
+// The button is recorded at the press, and only when the menu is all the way
+// home: until then the button is under the card and the press landed on it.
+function menuMorphRetarget(key: Int, opening: Bool) {
+    menuRevealEnsure(key)
+    var reveal = nativeRecover<KiraUiMenuReveal>(kiraUiStateSlotGet(menuRevealSlotKey(key)))
+    if opening && reveal.amount <= 0.0 {
+        reveal.anchorX = foundationPressBoundsX()
+        reveal.anchorY = foundationPressBoundsY()
+        reveal.anchorW = foundationPressBoundsW()
+        reveal.anchorH = foundationPressBoundsH()
+    }
+    reveal.opening = opening
     if opening {
-        menuRetarget(reveal.progress, 1.0, menuRevealSpring(1.0))
+        menuRetarget(reveal.progress, 1.0, menuMorphGrowthSpring())
+        menuRetarget(reveal.fall, 1.0, menuMorphFallSpring())
     } else {
-        menuRetarget(reveal.progress, 0.0, menuRevealSpring(0.0))
+        menuRetarget(reveal.progress, 0.0, menuMorphHomeSpring())
+        menuRetarget(reveal.fall, 0.0, menuMorphHomeSpring())
     }
     return
+}
+
+// Advances a bar's menu by a frame and answers where it is. The fall is left
+// unclamped: overshooting the card is its whole motion.
+function menuMorphAdvance(key: Int) -> KiraUiMenuReveal {
+    menuRevealEnsure(key)
+    var reveal = nativeRecover<KiraUiMenuReveal>(kiraUiStateSlotGet(menuRevealSlotKey(key)))
+    let delta = kiraUiClockDelta()
+    let growth = motionSpringAdvance(reveal.progress, delta)
+    let fall = motionSpringAdvance(reveal.fall, delta)
+    reveal.amount = min(max(growth.value, 0.0), 1.0)
+    reveal.fallen = fall.value
+    let grown = motionSpringSettled(reveal.progress, growth, motionSpringEpsilon())
+    let landed = motionSpringSettled(reveal.fall, fall, motionSpringEpsilon())
+    if grown && landed {
+        reveal.amount = min(max(reveal.progress.spring.target, 0.0), 1.0)
+        reveal.fallen = reveal.fall.spring.target
+        return copy reveal
+    }
+    kiraUiClockStillMoving()
+    return copy reveal
+}
+
+// Whether a bar button's glass is out with its menu: from the press that opens
+// the menu until the menu is home again. The bar draws that button bare, since
+// the glass it would sit on is the menu's.
+function kiraUiMenuHoldsGlass(key: Int) -> Bool {
+    if key == 0 || kiraUiStateSlotHas(menuRevealSlotKey(key)) == false {
+        return false
+    }
+    return kiraUiMenuState().presentedKey == key || menuRevealState(key).amount > 0.0
 }
 
 // Advances this submenu's reveal by a frame and answers where it is.
@@ -370,7 +487,8 @@ function menuRevealRetarget(key: Int, opening: Bool) {
 // coming: an interactive app only rebuilds when something happened, and a
 // spring settling is the one thing that happens while nothing does.
 function menuRevealAdvance(key: Int) -> Float {
-    var reveal = menuRevealState(key)
+    menuRevealEnsure(key)
+    var reveal = nativeRecover<KiraUiMenuReveal>(kiraUiStateSlotGet(menuRevealSlotKey(key)))
     let sample = motionSpringAdvance(reveal.progress, kiraUiClockDelta())
     reveal.amount = min(max(sample.value, 0.0), 1.0)
     if motionSpringSettled(reveal.progress, sample, motionSpringEpsilon()) {
@@ -383,29 +501,64 @@ function menuRevealAdvance(key: Int) -> Float {
     return reveal.amount
 }
 
-// Advances the shared recession, once per frame however many cards ask.
-function kiraUiMenuRecede(frameCount: Int) -> Float {
-    var state = kiraUiMenuState()
-    if state.advancedOn == frameCount {
-        return state.receded
+// What the menu behind an open submenu is drawn with at one moment: its ink,
+// its size, and the point it shrinks about.
+struct MenuRecession {
+    var ink: Float = 1.0
+    var scale: Float = 1.0
+    var anchor: StackAlignment = .Top
+}
+
+// The point a menu shrinks about: its top, at the side of the screen it stands
+// on. A menu out at the trailing edge holds that edge and comes in from the
+// leading one, the side with room, as Music's does; one in the middle third of
+// the screen comes in from both, half on each.
+function menuRecessionAnchor(sideX: Float, viewportWidth: Float) -> StackAlignment {
+    let third = viewportWidth / 3.0
+    if sideX < third {
+        return .TopLeading
     }
-    state.advancedOn = frameCount
-    // Held: the menu stays exactly where it is and the spring's clock does not
-    // start. Reported as still moving, because a hold is part of the transition
-    // and the frames have to keep coming or it would end here.
-    if state.holdRemaining > 0.0 {
-        state.holdRemaining = state.holdRemaining - kiraUiClockDelta()
-        kiraUiClockStillMoving()
-        return state.receded
+    if sideX > viewportWidth - third {
+        return .TopTrailing
     }
-    let sample = motionSpringAdvance(state.recede, kiraUiClockDelta())
-    state.receded = min(max(sample.value, 0.0), 1.0)
-    if motionSpringSettled(state.recede, sample, motionSpringEpsilon()) {
-        state.receded = min(max(state.recede.spring.target, 0.0), 1.0)
-        return state.receded
+    return .Top
+}
+
+// Advances the shared recession, once per frame however many cards ask, and
+// answers where it stands.
+function kiraUiMenuRecession(context: borrow BuildContext) -> MenuRecession {
+    kiraUiMenuEnsure()
+    var state = nativeRecover<KiraUiMenuState>(kiraUiStateSlotGet(kiraUiMenuSlotKey()))
+    if state.advancedOn != context.frameCount {
+        state.advancedOn = context.frameCount
+        let delta = kiraUiClockDelta()
+        state.shrunk = menuRecessionStep(state.shrink, delta)
+        // Held: the ink stays exactly where it is and its spring's clock does
+        // not start. Reported as still moving, because a hold is part of the
+        // transition and the frames have to keep coming or it would end here.
+        if state.holdRemaining > 0.0 {
+            state.holdRemaining = state.holdRemaining - delta
+            kiraUiClockStillMoving()
+        } else {
+            state.receded = menuRecessionStep(state.recede, delta)
+        }
+    }
+    let metrics = menuSubmenuMetrics
+    return MenuRecession {
+        ink: 1.0 - (1.0 - metrics.recededOpacity) * state.receded,
+        scale: 1.0 - (1.0 - metrics.recedeScale) * state.shrunk,
+        anchor: menuRecessionAnchor(state.sideX, context.viewportWidth)
+    }
+}
+
+// One frame of one of the recession's springs, landing exactly on its end.
+function menuRecessionStep(state: borrow mut MotionSpringState, delta: Float) -> Float {
+    let sample = motionSpringAdvance(state, delta)
+    if motionSpringSettled(state, sample, motionSpringEpsilon()) {
+        return min(max(state.spring.target, 0.0), 1.0)
     }
     kiraUiClockStillMoving()
-    return state.receded
+    return min(max(sample.value, 0.0), 1.0)
 }
 
 // --- a control's presentation inside a menu ----------------------------------
@@ -428,7 +581,7 @@ function menuRowDescription(
         modifierContextForPresentation(modifiers),
         modifierDeltaFont(menuLabelSize(modifiers), .Regular)
     )
-    // A one-line row stands at the menu's pitch with its line centred; a title
+    // A one-line row stands at the menu's pitch with its line centered; a title
     // that wraps keeps that same air above and below and the row grows.
     let pitch = menuRowPitch(modifiers)
     let air = max((pitch - foundationTextLineBox(menuLabelSize(modifiers), foundationFontWeight(.Regular))) / 2.0, 0.0)
@@ -516,13 +669,14 @@ function menuRowRadius(modifiers: borrow ModifierContext) -> Float {
 // shape in a single frame and re-resolves the row around it, which is the
 // padding that appeared and disappeared at each end of the animation.
 //
-// A quarter turn clockwise, following the reveal, so the chevron is wherever the
-// submenu is — including part way, and including on the way back out.
+// A quarter turn clockwise, following the reveal and done before it is, so the
+// chevron points down by the time the card has mostly opened -- and on the way
+// back stays down until the card is mostly shut.
 function menuChevronTurn(amount: Float) -> Float {
-    return 1.5707963267948966 * min(max(amount, 0.0), 1.0)
+    return 1.5707963267948966 * min(max(amount / menuSubmenuMetrics.chevronTurn, 0.0), 1.0)
 }
 
-// The box the chevron is centred in. A turning glyph sweeps its own diagonal, so
+// The box the chevron is centered in. A turning glyph sweeps its own diagonal, so
 // the box is squared and large enough to hold it at every angle rather than at
 // the two it rests at.
 function menuChevronBox(modifiers: borrow ModifierContext) -> Float {
@@ -532,10 +686,8 @@ function menuChevronBox(modifiers: borrow ModifierContext) -> Float {
 // A submenu's header: the row that owns it, which stays put while the card grows
 // around it and is pressed again to close.
 //
-// While the submenu is open the row is LIT — it is the selected thing, and the
-// one row in the menu that has not receded. The highlight comes up with the same
-// value that grows the card, so the row does not announce itself before there is
-// anything open to announce.
+// While the submenu is out the row is its card's header: emphasized, its
+// chevron turned down with the same value that grows the card.
 construct MenuHeader(title: String, systemImage: Symbol, amount: Float, key: Int) extends Widget {
 
     // The header row as one press region: label, spacer and the disclosure
@@ -544,7 +696,7 @@ construct MenuHeader(title: String, systemImage: Symbol, amount: Float, key: Int
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let row = HStack(spacing: .Small, alignment: .Center) {
             Label(title: title, systemImage: systemImage)
-                .font(size: menuLabelSize(modifiers))
+                .font(size: menuLabelSize(modifiers), weight: amount > 0.0 ? .SemiBold : .Regular)
 
             Spacer()
 
@@ -583,7 +735,7 @@ construct MenuHeader(title: String, systemImage: Symbol, amount: Float, key: Int
 //
 // This is the whole difference between it working and it not. A widget that
 // swaps its shape at either end of a transition — a row here on one frame and
-// inside a card on the next, a placeholder that is the travelling size rather
+// inside a card on the next, a placeholder that is the traveling size rather
 // than the resting one — re-resolves layout at exactly the moments the eye is
 // following it, moves its keys, and leaves frames where its press region does
 // not exist. What that produces is padding appearing and disappearing at each
@@ -609,37 +761,334 @@ construct Menu(title: String, systemImage: Symbol = .None) extends Widget {
     let children: [some Widget]
 
 
-    // The submenu's card and lit pill are presented through the overlay side
-    // channel, which still holds FoundationViews, so describe keeps the legacy
-    // overlay presentation and contributes the row's resting space to the
-    // retained tree — the header itself when closed.
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        if modifiers.controlPresentation == .Toolbar {
+            return presentedMenuDescription(context, modifiers)
+        }
         let key = kiraUiTapSeqKey()
         kiraUiLayerActionRegister(key, kiraUiToggleMenuFn(key))
         let amount = menuRevealAdvance(key)
         let header = MenuHeader(title: title, systemImage: systemImage, amount: amount, key: key)
-        if amount <= menuCardFloor() {
-            return header.describe(context, modifiers)
+        var row = header.describe(context, modifiers)
+        if amount <= 0.0 {
+            return row
         }
-        // Open: the header plus the submenu's items, as a column. The floating
-        // glass card and lit pill were presented through the legacy FoundationView
-        // overlay sink, which the retained runner does not read; the retained
-        // overlay/glass presentation is a later stage, so describe carries the
-        // expanded content inline for now.
-        let ignored = menuCardWidth(key)
-        var subs: [CALayerDescription] = []
-        subs.append(header.describe(context, modifiers))
+        // Out: the row keeps its place and draws nothing there. While the card
+        // is open its header is the row's press; while it goes back the row's
+        // own place is, so pressing it again reopens it at once.
+        let open = kiraUiOpenMenuKey() == key
+        row.sublayers[0].opacity = 0.0
+        if open {
+            layerInert(row)
+        }
+        let band = kiraUiTapSeqEnterOverlay()
         let overlayModifiers = modifierContextForOverlay(modifiers)
-        for item in children {
-            subs.append(item.describe(context, overlayModifiers))
+        let lifted = header.describe(context, overlayModifiers)
+        let rule = Divider().describe(context, overlayModifiers)
+        let items = VStack(spacing: .None) {
+            For(item in children) {
+                item
+            }
         }
-        return CALayerDescription {
+        .describe(context, overlayModifiers)
+        var overlay = kiraUiMenuAnchor(key)
+        let reveal = menuRevealState(key)
+        var card = menuSubmenuCard(context, key, move lifted, move rule, move items, reveal, modifiers)
+        if !open {
+            layerInert(card)
+        }
+        // The card's box, placed exactly: the row's left edge, and its top
+        // where the card's top lands open.
+        overlay.z = kiraUiOverlayZSubmenu()
+        overlay.alignment = 0.0
+        overlay.spacing = menuSubmenuTop(reveal, card.layout.fixedHeight, context.viewportHeight) - overlay.anchorY - overlay.anchorH
+        overlay.content = move card
+        if open {
+            let dismissKey = kiraUiTapSeqKey()
+            kiraUiLayerActionRegister(dismissKey, kiraUiToggleMenuFn(key))
+            overlay.dismissKey = dismissKey
+        }
+        kiraUiTapSeqLeaveOverlay(band)
+        kiraUiOverlayPresent(move overlay)
+        return row
+    }
+
+    // On a bar a menu is a button whose glass becomes the menu, as on the
+    // platform since iOS 26. Pressed, the glass leaves the button and grows
+    // into the card, falling past it and spreading back up, the items coming
+    // clear in it; dismissed, the items blur away first and the glass shrinks
+    // and is drawn home into the button along a neck. The card covers the
+    // button, its top and trailing edges on the button's. The button shows the
+    // symbol when the menu has one, as the platform's bar does, and the title
+    // when it has none.
+    function presentedMenuDescription(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        let key = kiraUiTapSeqKey()
+        kiraUiLayerActionRegister(key, kiraUiPresentMenuFn(key))
+        var label: Any Widget = Text(content: title)
+        if systemImage != .None {
+            label = Icon(symbol: systemImage)
+        }
+        var button = toolbarButtonDescription(context, modifiers, key, label)
+        if !kiraUiMenuHoldsGlass(key) {
+            return button
+        }
+        let reveal = menuMorphAdvance(key)
+        let presented = kiraUiMenuState().presentedKey == key
+        // The glyph travels with the glass, so the button keeps only its press.
+        var glyph = copy button.sublayers[0]
+        button.sublayers[0].opacity = 0.0
+        let band = kiraUiTapSeqEnterOverlay()
+        let overlayModifiers = modifierContextForOverlay(modifiers)
+        var items = MenuItems() {
+            For(item in children) {
+                item
+            }
+        }
+        .describe(context, overlayModifiers)
+        if !presented {
+            layerInert(items)
+        }
+        var overlay = kiraUiMenuAnchor(key)
+        // Hung by its own height above the bottom of the button: over it.
+        overlay.spacing = 0.0 - overlay.anchorH
+        overlay.alignment = 1.0
+        var morph = menuMorphDescription(move items, move glyph, reveal, modifiers)
+        // Falls back behind a submenu open in it, as a whole, toward the button
+        // it came out of.
+        let recession = kiraUiMenuRecession(context)
+        morph.scaleX = recession.scale
+        morph.scaleY = recession.scale
+        morph.anchorPoint = stackAlignmentUnitPoint(.TopTrailing)
+        overlay.content = move morph
+        if presented {
+            let dismissKey = kiraUiTapSeqKey()
+            kiraUiLayerActionRegister(dismissKey, kiraUiDismissMenuFn())
+            overlay.dismissKey = dismissKey
+        }
+        kiraUiTapSeqLeaveOverlay(band)
+        kiraUiOverlayPresent(move overlay)
+        return button
+    }
+}
+
+// Where an open submenu's card tops out: so the header is where its row was,
+// the card's air above it, unless the card would run off the bottom of the
+// window -- then as far up as it has to go, and never off the top.
+function menuSubmenuTop(reveal: borrow KiraUiMenuReveal, full: Float, viewportHeight: Float) -> Float {
+    let margin = windowChromeMetrics.edgeInset
+    let inset = menuSubmenuMetrics.headerCenter - reveal.anchorH * 0.5
+    return max(min(reveal.anchorY - inset, viewportHeight - margin - full), margin)
+}
+
+// A submenu's card at one moment, in a box the open card's size: the row's
+// width, from its top to the last item.
+//
+// The card is the row at first, on the row, and opens on one spring: its top
+// rises to the box's and its bottom falls to the box's, the header riding
+// between them to its place under the card's air, so the items are uncovered
+// in place rather than slid in. They are there almost at once, over the rows
+// of the menu behind as those dim; the card's own glass, and the rule under
+// its header, come up only once it is half open, over the menu's. Going back the items go first and the glass
+// last, as a pill the size of the row, back on it.
+function menuSubmenuCard(
+    context: borrow BuildContext,
+    key: Int,
+    header: CALayerDescription,
+    rule: CALayerDescription,
+    items: CALayerDescription,
+    reveal: borrow KiraUiMenuReveal,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let metrics = menuSubmenuMetrics
+    let width = reveal.anchorW
+    let rowHeight = reveal.anchorH
+    let inset = metrics.headerCenter - rowHeight * 0.5
+    let full = inset + rowHeight + caMeasure(rule, width).height + caMeasure(items, width).height
+    let top = menuSubmenuTop(reveal, full, context.viewportHeight)
+    let grown = reveal.amount
+    let height = rowHeight + (full - rowHeight) * grown
+    let radius = min(menuCardRadius(modifiers), height * 0.5)
+
+    var glassOpacity = min(max(grown / metrics.cardVanish, 0.0), 1.0)
+    var itemsOpacity = min(max((grown - metrics.itemsVanish) / metrics.itemsVanishSpan, 0.0), 1.0)
+    if reveal.opening {
+        glassOpacity = min(max((grown - metrics.cardAppear) / metrics.cardAppearSpan, 0.0), 1.0)
+        itemsOpacity = min(max((grown - metrics.itemsAppear) / metrics.itemsAppearSpan, 0.0), 1.0)
+    }
+    var glass = interactiveGlassDescription(
+        context,
+        key,
+        CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedWidth: width,
+            fixedHeight: height
+        },
+        radius,
+        .Squircle(radius),
+        modifiers,
+        []
+    )
+    glass.opacity = glassOpacity
+
+    // The rule under the header is the card's, not the items': it comes and
+    // goes with the glass.
+    var divider = move rule
+    divider.opacity = divider.opacity * glassOpacity
+    var shown = move items
+    shown.opacity = shown.opacity * itemsOpacity
+    let content = CALayerDescription {
+        layout: CALayoutIntent {
+            axis: .Column,
+            widthFill: false,
+            heightFill: false,
+            fixedWidth: width,
+            offset: Point { x: 0.0, y: inset * grown }
+        },
+        sublayers: [move header, move divider, move shown]
+    }
+
+    var card = CALayerDescription {
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedWidth: width,
+            fixedHeight: full
+        },
+        sublayers: [CALayerDescription {
             layout: CALayoutIntent {
-                axis: .Column,
-                heightFill: false
+                widthFill: false,
+                heightFill: false,
+                fixedWidth: width,
+                fixedHeight: height,
+                offset: Point { x: 0.0, y: (reveal.anchorY - top) * (1.0 - grown) }
             },
-            sublayers: move subs
-        }
+            cornerRadius: radius,
+            clipsChildren: true,
+            sublayers: [move glass, move content]
+        }]
+    }
+    layerImmediate(card)
+    return card
+}
+
+// The glass of a bar's menu at one moment, in a box the card's size whose top
+// trailing corner is the button's.
+//
+// The glass goes from the button's rectangle to the card's: its size with the
+// growth, its center across with the growth and down with the fall on the way
+// out, and on the way home both late, so it shrinks where it is before it
+// travels. It stays round until it has grown far enough to square off to the
+// card's corner. The items sit at the card's size centered in it, clipped by
+// it, blurred by what is left to grow and clear once it has grown. Near home a second shape at the button, growing as the glass shrinks,
+// is fused to it by the material's smooth union: the neck it is drawn in by.
+function menuMorphDescription(
+    items: CALayerDescription,
+    glyph: CALayerDescription,
+    reveal: borrow KiraUiMenuReveal,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let metrics = menuMorphMetrics
+    let card = caMeasure(items, 100000.0)
+    let buttonW = reveal.anchorW
+    let buttonH = reveal.anchorH
+    let buttonX = card.width - buttonW
+    let grown = reveal.amount
+    var across = grown
+    var down = reveal.fallen
+    if !reveal.opening {
+        across = sqrt(grown)
+        down = across
+    }
+    let width = buttonW + (card.width - buttonW) * grown
+    let height = buttonH + (card.height - buttonH) * grown
+    let centerX = buttonX + buttonW * 0.5 + (card.width * 0.5 - buttonX - buttonW * 0.5) * across
+    let centerY = buttonH * 0.5 + (card.height - buttonH) * 0.5 * down
+    let x = centerX - width * 0.5
+    let y = centerY - height * 0.5
+    let round = min(width, height) * 0.5
+    let squared = min(max((grown - metrics.roundness) / (1.0 - metrics.roundness), 0.0), 1.0)
+    let radius = round + (min(menuCardRadius(modifiers), round) - round) * squared
+
+    var glass = liquidGlassContent(.Squircle(radius), modifiers)
+    let neck = reveal.opening ? 0.0 : min(max(1.0 - grown / metrics.neckStart, 0.0), 1.0)
+    if neck > 0.0 {
+        glass.morphWidth = buttonW * neck
+        glass.morphHeight = buttonH * neck
+        glass.morphX = buttonX + (buttonW - glass.morphWidth) * 0.5 - x
+        glass.morphY = (buttonH - glass.morphHeight) * 0.5 - y
+        glass.morphRadius = glass.morphHeight * 0.5
+        // The union swells two shapes that lie on each other by a quarter of
+        // its reach, so the reach lets go as the neck becomes the button: the
+        // glass lands the button's size, not a ring wider.
+        glass.morphBlend = metrics.neckBlend * (1.0 - neck)
+    }
+
+    // The rows are there, all but at their own size, well before the glass
+    // has grown round them, under a blur that clears as it finishes; going
+    // home they blur away first.
+    let threshold = reveal.opening ? metrics.contentOpen : metrics.contentClose
+    let shown = min(max((grown - threshold) / (1.0 - threshold), 0.0), 1.0)
+    let zoom = 1.0 + metrics.contentZoom * (1.0 - grown)
+    var content = move items
+    content.opacity = content.opacity * min(shown * 2.5, 1.0)
+    content.blur = metrics.contentBlur * (1.0 - shown)
+    content.scaleX = zoom
+    content.scaleY = zoom
+    content.layout.widthFill = false
+    content.layout.heightFill = false
+    content.layout.offset = Point { x: (width - card.width) * 0.5, y: (height - card.height) * 0.5 }
+
+    // The button's glyph, where the button is, out as the glass leaves it and
+    // back as it comes home.
+    let symbol = menuMorphGlyph(
+        move glyph,
+        Point { x: buttonX - x, y: 0.0 - y },
+        buttonW,
+        buttonH,
+        min(max(1.0 - grown / metrics.neckStart, 0.0), 1.0)
+    )
+
+    var morph = CALayerDescription {
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedWidth: card.width,
+            fixedHeight: card.height
+        },
+        sublayers: [CALayerDescription {
+            layout: CALayoutIntent {
+                widthFill: false,
+                heightFill: false,
+                fixedWidth: width,
+                fixedHeight: height,
+                offset: Point { x: x, y: y }
+            },
+            cornerRadius: radius,
+            clipsChildren: true,
+            capturesBackdrop: true,
+            content: .Glass(move glass),
+            sublayers: [move content, move symbol]
+        }]
+    }
+    layerImmediate(morph)
+    return morph
+}
+
+// The button's glyph in a box the button's size, centered as the button
+// centers it, at `origin` in the glass.
+function menuMorphGlyph(glyph: CALayerDescription, origin: Point, width: Float, height: Float, opacity: Float) -> CALayerDescription {
+    return CALayerDescription {
+        opacity: opacity,
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedWidth: width,
+            fixedHeight: height,
+            alignment: Point { x: 0.5, y: 0.5 },
+            offset: origin
+        },
+        sublayers: [move glyph]
     }
 }
 
@@ -651,31 +1100,55 @@ construct Menu(title: String, systemImage: Symbol = .None) extends Widget {
 // anything; until then an application places it. Either way it is the thing that
 // RECEDES when a submenu inside it opens, which is why the recession is read
 // here rather than pushed down from the menu that caused it.
-construct ContextMenu(width: Float = 0.0) extends Widget {
+construct ContextMenu() extends Widget {
     let children: [some Widget]
 
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let receded = kiraUiMenuRecede(context.frameCount)
-        let ink = 1.0 - (1.0 - menuRecededOpacity()) * receded
-        let scale = 1.0 - (1.0 - menuRecedeScale()) * receded
+        let recession = kiraUiMenuRecession(context)
+        // The panel is the platform's menu material at every size, not the
+        // regular glass `.glassEffect` puts under a control, and it is lifted
+        // off what it is over by the kit's wide, soft shadow.
+        let card = SurfaceLayer(style: .LayeredGlass, shape: .Squircle(menuCardRadius(modifiers))) {
+            MenuItems() {
+                For(item in children) {
+                    item
+                }
+            }
+        }
+        .shadow(
+            color: themeAdaptiveColor(menuShadow, modifierTheme(modifiers).appearance()),
+            radius: menuShadowRadius,
+            x: 0.0,
+            y: menuShadowOffset
+        )
+        .scaleEffect(recession.scale, anchor: recession.anchor)
+        return card.describe(context, modifierContextPresenting(modifiers, .MenuRow))
+    }
+}
+
+// A menu's rows, without the card: what a `ContextMenu` sets on its panel and
+// a bar's menu carries inside the glass it grows. The card is the platform's
+// width, not its rows': a short menu is not a narrow one, and a long title
+// wraps rather than widening it. The rows dim while a submenu is open over
+// them.
+construct MenuItems() extends Widget {
+    let children: [some Widget]
+
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        let recession = kiraUiMenuRecession(context)
+        let metrics = resolvedControlMetrics(modifiers)
         let rows = VStack(spacing: .None) {
             For(item in children) {
                 item
             }
         }
-        .opacity(ink)
-
-        var resolvedWidth = width
-        if resolvedWidth <= 0.0 {
-            resolvedWidth = resolvedControlMetrics(modifiers).menuCardWidth
-        }
-        // The panel is the platform's menu material at every size, not the
-        // regular glass `.glassEffect` puts under a control.
-        let card = SurfaceLayer(style: .LayeredGlass, shape: .Squircle(menuCardRadius(modifiers))) {
-            rows.width(resolvedWidth)
-        }
-        .scaleEffect(scale)
-        return card.describe(context, modifierContextPresenting(modifiers, .MenuRow))
+        .opacity(recession.ink)
+        .width(metrics.menuCardWidth)
+        var described = rows.describe(context, modifierContextPresenting(modifiers, .MenuRow))
+        described.layout.paddingTop = metrics.menuCardPadding
+        described.layout.paddingBottom = metrics.menuCardPadding
+        return described
     }
 }

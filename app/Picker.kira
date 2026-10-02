@@ -47,35 +47,41 @@ construct Label(title: String, systemImage: Symbol = .None) extends Widget {
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         // Across the top of a menu a label STACKS: the glyph over the title,
-        // centred, because the actions are columns rather than rows. Same
-        // declaration; the environment decides which way it reads.
+        // centered, because the actions are columns rather than rows. Same
+        // declaration; the environment decides which way it reads. The
+        // platform sets these heavier than a row: the glyph filled, the title
+        // semibold.
         let metrics = resolvedControlMetrics(modifiers)
         if modifiers.controlPresentation == .MenuAction {
             let stacked = VStack(spacing: .None, alignment: .Center, spacingLength: metrics.menuActionSpacing) {
                 Icon(symbol: systemImage)
-                    .font(size: metrics.menuActionIconSize)
+                    .symbolVariant(.Fill)
+                    .font(size: metrics.menuActionIconSize, weight: .SemiBold)
 
                 Text(content: title)
-                    .typography(.caption)
+                    .font(size: metrics.menuActionLabelSize, weight: .SemiBold)
             }
             .fillWidth()
             return stacked.describe(context, modifiers)
         }
-        // The glyph is centred in a fixed column, not against its leading edge.
+        // The glyph is centered in a fixed column, not against its leading edge.
         // Glyphs differ in width — a chevron is narrow, a folder is wide — so
         // aligning them to an edge lines up their BOXES and leaves their ink
-        // ragged, and the titles beside them with it. Centring lines up what the
+        // ragged, and the titles beside them with it. Centering lines up what the
         // eye actually reads, which is why every platform column of icons is
-        // centred.
+        // centered.
         //
         // In a menu the glyph is the row's own ink, in a column of the menu's
         // measure with air before the title; elsewhere it is a quieter mark in
         // the shared gutter.
+        // A menu's glyph is drawn a cut heavier than its title, as the
+        // platform's are: its strokes read as the title's stems do.
         if modifiers.controlPresentation == .MenuRow {
             let row = HStack(spacing: .None, alignment: .Center, spacingLength: metrics.menuIconGap) {
                 ZStack(alignment: .Center) {
                     if systemImage != .None {
                         Icon(symbol: systemImage)
+                            .font(size: metrics.menuLabelSize, weight: .SemiBold)
                     }
                 }
                 .width(metrics.menuIconColumn)
@@ -104,7 +110,8 @@ construct Label(title: String, systemImage: Symbol = .None) extends Widget {
         }
         // In a grouped list a label is its title alone, or its glyph in the
         // accent before it, set the way the kit sets a symbol row in either
-        // of its lists.
+        // of its lists. The row's separator starts at the title, as SwiftUI's
+        // does under a label.
         if modifiers.controlPresentation == .InsetGrouped {
             let row = HStack(spacing: .None, alignment: .Center, spacingLength: sidebarMetrics.titleSpacing) {
                 if systemImage != .None {
@@ -117,18 +124,24 @@ construct Label(title: String, systemImage: Symbol = .None) extends Widget {
                 }
 
                 Text(content: title)
+                    .alignmentGuide(ListRowSeparatorLeading()) { dimensions in
+                        return dimensions.subscript(.Leading)
+                    }
             }
             .hugWidth()
             return row.describe(context, modifiers)
         }
-        let label = HStack(spacing: .None, alignment: .Center) {
-            ZStack(alignment: .Center) {
-                if systemImage != .None {
+        // Anywhere else the glyph is in the title's own ink, centered in the
+        // symbol column with the platform's gap before the title, as SwiftUI
+        // sets a `Label` on its own.
+        let label = HStack(spacing: .None, alignment: .Center, spacingLength: sidebarMetrics.titleSpacing) {
+            if systemImage != .None {
+                ZStack(alignment: .Center) {
                     Icon(symbol: systemImage)
-                        .foregroundColor(.Secondary)
+                        .font(size: sidebarMetrics.symbolSize)
                 }
+                .width(sidebarMetrics.iconColumn)
             }
-            .width(metrics.gutter)
 
             Text(content: title)
         }
@@ -145,10 +158,19 @@ function kiraUiPickerSlotKey() -> String {
     return "kiraui.picker"
 }
 
-function kiraUiPickerState() -> KiraUiPickerState {
+// The slot, made the first time it is asked for. A writer recovers it in
+// place after this: a recovered value handed back out of a function is a
+// copy, and what was written to it would be lost.
+function kiraUiPickerEnsure() {
     if kiraUiStateSlotHas(kiraUiPickerSlotKey()) == false {
         kiraUiStateSlotPut(kiraUiPickerSlotKey(), nativeUserData(nativeState(KiraUiPickerState {})))
     }
+    return
+}
+
+// The state as it stands, to read.
+function kiraUiPickerState() -> KiraUiPickerState {
+    kiraUiPickerEnsure()
     return nativeRecover<KiraUiPickerState>(kiraUiStateSlotGet(kiraUiPickerSlotKey()))
 }
 
@@ -157,7 +179,8 @@ function kiraUiOpenPickerKey() -> Int {
 }
 
 function kiraUiSetOpenPickerKey(key: Int) {
-    var state = kiraUiPickerState()
+    kiraUiPickerEnsure()
+    var state = nativeRecover<KiraUiPickerState>(kiraUiStateSlotGet(kiraUiPickerSlotKey()))
     state.openKey = key
     return
 }
@@ -201,7 +224,6 @@ function kiraUiPickerOptionInk(selection: Int, index: Int) -> PrimaryColor {
 }
 
 function kiraUiPickerNoop(index: Int) {
-    let ignored = index + 0
     return
 }
 
