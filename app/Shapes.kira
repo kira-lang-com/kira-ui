@@ -63,7 +63,7 @@ function containerShapeSurfaceShape(shape: borrow ContainerShape) -> FoundationS
     }
 }
 
-// What `.background(_:in:)` and `.glassEffect(in:)` both lower to: one surface
+// What `.background(_:in:)` lowers to, and a menu's panel: one surface
 // painted BEHIND the content, taking the footprint the content already resolved
 // to rather than a footprint of its own. That is the whole difference from a
 // container — a background never moves what it is behind.
@@ -77,26 +77,17 @@ construct SurfaceLayer(style: Material, shape: ContainerShape) extends Widget {
     // through the surface; every other material fills flat.
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let radius = containerShapeRadius(shape, modifiers)
+        let described = content.describe(context, modifierContextForChildren(modifiers))
+        let footprint = surfaceFootprint(described.layout)
         if style == .LayeredGlass {
-            return CALayerDescription {
-                cornerRadius: radius,
-                clipsChildren: true,
-                capturesBackdrop: true,
-                content: .Glass(CAGlass {
-                    blur: 1.0,
-                    edgeRefraction: 1.0,
-                    tint: caColorFromFoundation(modifierTokens(modifiers).glassTint),
-                    material: CAGlassMaterial {},
-                    shapeKind: surfaceLayerGlassShapeKind(shape)
-                }),
-                sublayers: [content.describe(context, modifierContextForChildren(modifiers))]
-            }
+            return liquidGlassDescription(copy footprint, radius, shape, CAGlassSizing {}, modifiers, [described])
         }
         var borderWidth = 1.0
         if modifiers.hasThemeBorder == false {
             borderWidth = 0.0
         }
         return CALayerDescription {
+            layout: footprint,
             cornerRadius: radius,
             clipsChildren: true,
             capturesBackdrop: false,
@@ -106,8 +97,77 @@ construct SurfaceLayer(style: Material, shape: ContainerShape) extends Widget {
                 borderWidth: borderWidth,
                 cornerRadius: radius
             }),
-            sublayers: [content.describe(context, modifierContextForChildren(modifiers))]
+            sublayers: [described]
         }
+    }
+}
+
+// What `.glassEffect(_:in:)` describes: the content on a piece of glass, which
+// takes the content's footprint exactly as a background does.
+construct GlassEffectLayer(glass: Glass, shape: ContainerShape) extends Widget {
+    let content: some Widget
+
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        let described = content.describe(context, modifierContextForChildren(modifiers))
+        return liquidGlassDescription(
+            surfaceFootprint(described.layout),
+            containerShapeRadius(shape, modifiers),
+            shape,
+            glassSizing(glass, modifiers),
+            modifiers,
+            [described]
+        )
+    }
+}
+
+// A piece of Liquid Glass: a clipping layer the compositor captures the
+// backdrop behind, blurs and refracts through its shape, holding `sublayers`
+// on top. Every glass surface in the toolkit is this one description — a
+// control's capsule, a toolbar group, a sidebar, a menu — so they are one
+// material. `sizing` is what the surface's size does to it once it is laid
+// out; a menu's panel passes none and stays the material it was measured as.
+function liquidGlassDescription(
+    layout: CALayoutIntent,
+    radius: Float,
+    shape: borrow ContainerShape,
+    sizing: CAGlassSizing,
+    modifiers: borrow ModifierContext,
+    sublayers: [CALayerDescription],
+) -> CALayerDescription {
+    return CALayerDescription {
+        layout: layout,
+        cornerRadius: radius,
+        clipsChildren: true,
+        capturesBackdrop: true,
+        content: .Glass(liquidGlassContent(shape, move sizing, modifiers)),
+        sublayers: move sublayers
+    }
+}
+
+// What a piece of Liquid Glass is drawn with: the platform's measured
+// material -- its wash stack, its rim, the edge light, and the blur the Liquid
+// Glass step takes -- the same stack UI Foundation's `LiquidGlassSurface` draws.
+function liquidGlassContent(shape: borrow ContainerShape, sizing: CAGlassSizing, modifiers: borrow ModifierContext) -> CAGlass {
+    return CAGlass {
+        blur: surfaceGlassBlur(.LayeredGlass, modifiers),
+        edgeRefraction: 1.0,
+        tint: caColorFromFoundation(surfaceGlassFill(Color {}, .LayeredGlass, modifiers)),
+        material: surfaceGlassMaterial(.LayeredGlass, modifiers),
+        shapeKind: surfaceLayerGlassShapeKind(shape),
+        sizing: sizing
+    }
+}
+
+// The box a surface takes: exactly its content's, so a background sizes itself
+// by what it is behind — a hugging card stays a card, a filling one fills.
+function surfaceFootprint(content: borrow CALayoutIntent) -> CALayoutIntent {
+    return CALayoutIntent {
+        widthFill: content.widthFill,
+        heightFill: content.heightFill,
+        fixedWidth: content.fixedWidth,
+        fixedHeight: content.fixedHeight,
+        flex: content.flex
     }
 }
 
@@ -217,22 +277,25 @@ construct PaddingLayer(length: Float) extends Widget {
     let content: some Widget
 
 
-    // A wrapper that holds the child off its edges by one length on every side.
-    // The child fills the inner box; the wrapper takes the child's own fill/hug.
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let described = content.describe(context, modifierContextForChildren(modifiers))
-        let fillsWidth = described.layout.widthFill
-        let fillsHeight = described.layout.heightFill
-        return CALayerDescription {
-            layout: CALayoutIntent {
-                widthFill: fillsWidth,
-                heightFill: fillsHeight,
-                paddingLeading: length,
-                paddingTop: length,
-                paddingTrailing: length,
-                paddingBottom: length
-            },
-            sublayers: [described]
-        }
+        return insetDescription(content.describe(context, modifierContextForChildren(modifiers)), length)
+    }
+}
+
+// A wrapper that holds a description off its edges by one length on every side.
+// The child fills the inner box; the wrapper takes the child's own fill/hug.
+function insetDescription(described: CALayerDescription, length: Float) -> CALayerDescription {
+    let fillsWidth = described.layout.widthFill
+    let fillsHeight = described.layout.heightFill
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            widthFill: fillsWidth,
+            heightFill: fillsHeight,
+            paddingLeading: length,
+            paddingTop: length,
+            paddingTrailing: length,
+            paddingBottom: length
+        },
+        sublayers: [described]
     }
 }

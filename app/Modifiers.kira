@@ -62,6 +62,15 @@ extend Widget {
         }
     }
 
+    // SwiftUI's `.scenePadding()`: the column's own layout margin on every
+    // edge, with nothing painted behind. Content standing on a pane it does not
+    // own -- a sidebar's glass -- is held where the column holds everything.
+    function scenePadding() -> Any Widget {
+        return ScenePaddingLayer() {
+            self
+        }
+    }
+
     function inset(
         horizontal: Spacing = .None,
         vertical: Spacing = .None,
@@ -88,11 +97,11 @@ extend Widget {
     // 12).fill(.regularMaterial))` — and a filled shape is already a view, so it
     // goes through the spelling above with nothing added.
 
-    // `.glassEffect(in:)`. The shape defaults to a capsule because SwiftUI's
-    // does — glass is applied to controls far more often than to panels, and a
-    // control is a capsule.
-    function glassEffect(shape: ContainerShape = .Capsule) -> Any Widget {
-        return SurfaceLayer(style: .LayeredGlass, shape: shape) {
+    // `.glassEffect(_:in:)`. Regular glass in a capsule by default, because
+    // SwiftUI's is — glass is applied to controls far more often than to
+    // panels, and a control is a capsule.
+    function glassEffect(glass: Glass = .Regular, shape: ContainerShape = .Capsule) -> Any Widget {
+        return GlassEffectLayer(glass: glass, shape: shape) {
             self
         }
     }
@@ -227,6 +236,15 @@ extend Widget {
         }
     }
 
+    // SwiftUI's `.frame(maxWidth:)`: a CEILING over the width. A view that fills
+    // stops at it, and where it lands in the room left over is its parent's
+    // alignment.
+    function maxWidth(value: Float) -> Any Widget {
+        return MaxWidthLayer(value: value) {
+            self
+        }
+    }
+
     // SwiftUI's `.frame(minHeight:)`: a FLOOR under the height, never a cap.
     //
     // The distinction is the whole reason this exists. A minimum tap target
@@ -252,6 +270,14 @@ extend Widget {
     // canvas — says zero, and the bar above it starts where the canvas starts.
     function contentMargin(value: Float) -> Any Widget {
         return ContentMarginLayer(value: value) {
+            self
+        }
+    }
+
+    // How the lists in this subtree are drawn. A split view already gives its
+    // sidebar column the sidebar style; this is for a list that wants another.
+    function listStyle(style: ListStyle) -> Any Widget {
+        return ListStyleLayer(style: style) {
             self
         }
     }

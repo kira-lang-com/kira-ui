@@ -110,11 +110,18 @@ enum ChromeEdge {
 // the entry is what lets the bar be assembled after every column has spoken
 // without any column having to know what its neighbours declared.
 struct KiraUiToolbarEntry {
-    // Whether this item is drawn on the glass its neighbours are drawn on.
+    // What the item draws, described where it was declared — under the
+    // modifiers and the theme of the view that put it on the bar.
+    let content: CALayerDescription = CALayerDescription {}
+    // Whether this item is drawn on glass at all.
     let shared: Bool = true
-    // A spacer: closes the group before it and opens the next one.
+    // Which declaration the item came from. Items of one `ToolbarItemGroup`
+    // share one piece of glass; a `ToolbarItem` is a piece of glass of its own,
+    // as the platform draws two items written one after the other.
+    let group: Int = 0
+    // A spacer: closes the group before it and opens the next one. A fixed one
+    // holds the platform's spacer width open; a flexible one takes what is left.
     let isSpacer: Bool = false
-    let spacing: Float = 0.0
     let flexible: Bool = false
     let axisBehavior: ChromeAxisBehavior = .Automatic
     // Higher-priority chrome survives compression before lower-priority chrome.
@@ -138,6 +145,9 @@ struct KiraUiToolbarSink {
     // are set the same way without either column saying so.
     var sidebarTitle: String = ""
     var detailTitle: String = ""
+    // Whether the document's title is set large under the bar, by the stack
+    // showing it, rather than in the bar's own band.
+    var largeTitle: Bool = false
     // What each column holds its content off its edges by, so the SECTION over a
     // column starts where that column's own content starts. A negative value is
     // "the column did not say", and the size class answers instead.
@@ -167,6 +177,15 @@ struct KiraUiToolbarSink {
     // content lowers and taken immediately after, which is the one moment it can
     // belong to exactly that item.
     var pendingSharedHidden: Bool = false
+    // The group the next declaration opens.
+    var nextGroup: Int = 1
+    // Whether a split view put its sidebar toggle on the bar this frame.
+    var sidebarToggle: Bool = false
+    // Whether a container in the tree laid its content out inside the window's
+    // safe area. A navigation container does, because its columns' backgrounds
+    // run under the bar while their content does not; when nothing did, the
+    // window insets its whole content instead.
+    var safeAreaHandled: Bool = false
 }
 
 // A button press happens in the input callback, while the native window is
@@ -280,6 +299,7 @@ function kiraUiToolbarCollect() {
     sink.tabSearch = move tabSearch
     sink.sidebarTitle = ""
     sink.detailTitle = ""
+    sink.largeTitle = false
     sink.sidebarMargin = 0.0 - 1.0
     sink.detailMargin = 0.0 - 1.0
     sink.navigationWidth = 0.0
@@ -290,7 +310,19 @@ function kiraUiToolbarCollect() {
     sink.column = kiraUiToolbarDetailColumn()
     sink.collecting = true
     sink.windowDragHeight = 0.0
+    sink.safeAreaHandled = false
+    sink.nextGroup = 1
+    sink.sidebarToggle = false
     return
+}
+
+// A fresh group for the declaration about to put its items on the bar.
+function kiraUiToolbarOpenGroup() -> Int {
+    kiraUiToolbarSinkEnsure()
+    var sink = nativeRecover<KiraUiToolbarSink>(kiraUiStateSlotGet(kiraUiToolbarSinkKey()))
+    let group = sink.nextGroup
+    sink.nextGroup = group + 1
+    return group
 }
 
 // The column about to be lowered. Everything a view declares from here until the
@@ -318,6 +350,25 @@ function kiraUiToolbarSetTitle(title: String) {
     return
 }
 
+// What the column being lowered calls itself, so far.
+function kiraUiToolbarColumnTitle() -> String {
+    kiraUiToolbarSinkEnsure()
+    let sink = nativeRecover<KiraUiToolbarSink>(kiraUiStateSlotGet(kiraUiToolbarSinkKey()))
+    if sink.column == kiraUiToolbarSidebarColumn() {
+        return sink.sidebarTitle
+    }
+    return sink.detailTitle
+}
+
+// The document's title is being set large under the bar, so the band leaves
+// it out.
+function kiraUiToolbarShowLargeTitle() {
+    kiraUiToolbarSinkEnsure()
+    var sink = nativeRecover<KiraUiToolbarSink>(kiraUiStateSlotGet(kiraUiToolbarSinkKey()))
+    sink.largeTitle = true
+    return
+}
+
 // What the column being lowered holds its content off its edges by.
 function kiraUiToolbarSetMargin(margin: Float) {
     kiraUiToolbarSinkEnsure()
@@ -331,6 +382,29 @@ function kiraUiToolbarSetMargin(margin: Float) {
     }
     sink.detailMargin = margin
     return
+}
+
+// A container laid its content out inside the window's safe area itself.
+function kiraUiChromeSafeAreaHandled() {
+    kiraUiToolbarSinkEnsure()
+    var sink = nativeRecover<KiraUiToolbarSink>(kiraUiStateSlotGet(kiraUiToolbarSinkKey()))
+    sink.safeAreaHandled = true
+    return
+}
+
+// A column is about to be lowered, and has laid out nothing inside the safe
+// area yet.
+function kiraUiChromeSafeAreaPending() {
+    kiraUiToolbarSinkEnsure()
+    var sink = nativeRecover<KiraUiToolbarSink>(kiraUiStateSlotGet(kiraUiToolbarSinkKey()))
+    sink.safeAreaHandled = false
+    return
+}
+
+function kiraUiChromeSafeAreaWasHandled() -> Bool {
+    kiraUiToolbarSinkEnsure()
+    let sink = nativeRecover<KiraUiToolbarSink>(kiraUiStateSlotGet(kiraUiToolbarSinkKey()))
+    return sink.safeAreaHandled
 }
 
 function kiraUiToolbarStopCollecting() {
@@ -352,6 +426,13 @@ function kiraUiChromeSetNavigationLayout(
     sink.navigationWidth = navigationWidth
     sink.hasNavigationColumn = hasNavigationColumn
     sink.visibleColumn = visibleColumn
+    return
+}
+
+function kiraUiChromeShowSidebarToggle() {
+    kiraUiToolbarSinkEnsure()
+    var sink = nativeRecover<KiraUiToolbarSink>(kiraUiStateSlotGet(kiraUiToolbarSinkKey()))
+    sink.sidebarToggle = true
     return
 }
 
@@ -391,19 +472,10 @@ function kiraUiToolbarTakePendingShared() -> Bool {
 
 // The space that ends a group, matching SwiftUI's `ToolbarSpacer`. It is the
 // only way a view separates its items into two pieces of glass rather than one.
-function kiraUiToolbarAppendSpacer(
-    placement: ToolbarItemPlacement,
-    sizing: SpacerSizing,
-    spacing: Float,
-) {
-    var flexible = false
-    if sizing == .Flexible {
-        flexible = true
-    }
+function kiraUiToolbarAppendSpacer(placement: ToolbarItemPlacement, sizing: SpacerSizing) {
     kiraUiToolbarAppendEntry(move placement, KiraUiToolbarEntry {
         isSpacer: true,
-        spacing: spacing,
-        flexible: flexible
+        flexible: sizing == .Flexible
     })
     return
 }
@@ -450,9 +522,22 @@ construct ToolbarItem(placement: ToolbarItemPlacement = .Automatic) extends Widg
 
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let ignored = placement
-        return content.describe(context, modifiers)
+        let group = kiraUiToolbarOpenGroup()
+        kiraUiToolbarDeclare(placement, group, content.describe(context, modifiers))
+        return CALayerDescription {}
     }
+}
+
+// One described item onto the bar. The shared-background flag is taken right
+// after the item's content described, which is the one moment a
+// `.sharedBackgroundVisibility(...)` written inside it can belong to it.
+function kiraUiToolbarDeclare(placement: ToolbarItemPlacement, group: Int, described: CALayerDescription) {
+    kiraUiToolbarAppendEntry(move placement, KiraUiToolbarEntry {
+        content: move described,
+        shared: kiraUiToolbarTakePendingShared(),
+        group: group
+    })
+    return
 }
 
 // Several items, each with its own placement, matching SwiftUI's
@@ -469,39 +554,37 @@ construct ToolbarContent() extends Widget {
     }
 }
 
-// Several items at one placement, matching SwiftUI's `ToolbarItemGroup`: the
-// same as writing one `ToolbarItem` each, without repeating the placement.
+// Several items at one placement on one piece of glass, matching SwiftUI's
+// `ToolbarItemGroup`: the items read as one control with a seam between them.
 construct ToolbarItemGroup(placement: ToolbarItemPlacement = .Automatic) extends Widget {
     let children: [some Widget]
 
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let ignored = placement
-        return CALayerDescription {
-            sublayers: describedChildren(context, modifiers, children)
+        let group = kiraUiToolbarOpenGroup()
+        for child in children {
+            kiraUiToolbarDeclare(placement, group, child.describe(context, modifiers))
         }
+        return CALayerDescription {}
     }
 }
 
 // The space that splits one run of toolbar items into two, matching SwiftUI's
 // `ToolbarSpacer`.
 //
-// Items on a bar share one piece of glass by default — that is what makes a
-// toolbar read as a single control rather than a row of loose buttons — so
-// separating them needs saying, and this is how it is said. `.Flexible` takes
-// whatever room is left, which is what pushes a trailing group to the far end.
+// A fixed spacer holds the platform's spacer width between the pieces of glass
+// either side of it. `.Flexible` takes whatever room is left, which is what
+// pushes a trailing group to the far end.
 // SwiftUI takes the sizing UNLABELLED and first — `ToolbarSpacer(.fixed,
 // placement: .primaryAction)` — so it is first here too. Kira binds by position
 // and treats a label as decoration, which means the order is the API.
 construct ToolbarSpacer(
     sizing: SpacerSizing = .Fixed,
     placement: ToolbarItemPlacement = .Automatic,
-    spacing: Float = 8.0,
 ) extends Widget {
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let ignored = context.frameCount
-        kiraUiToolbarAppendSpacer(placement, sizing, spacing)
+        kiraUiToolbarAppendSpacer(placement, sizing)
         return CALayerDescription {}
     }
 }

@@ -45,12 +45,15 @@ import KCoreAnimation
 // that does not.
 construct Label(title: String, systemImage: Symbol = .None) extends Widget {
 
-    // Menu action: glyph over title. Otherwise a glyph beside the title. The
-    // fixed gutter framing is geometry the layout stage applies.
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        // Across the top of a menu a label STACKS: the glyph over the title,
+        // centred, because the actions are columns rather than rows. Same
+        // declaration; the environment decides which way it reads.
+        let metrics = resolvedControlMetrics(modifiers)
         if modifiers.controlPresentation == .MenuAction {
-            let stacked = VStack(spacing: .ExtraSmall, alignment: .Center) {
+            let stacked = VStack(spacing: .None, alignment: .Center, spacingLength: metrics.menuActionSpacing) {
                 Icon(symbol: systemImage)
+                    .font(size: metrics.menuActionIconSize)
 
                 Text(content: title)
                     .typography(.caption)
@@ -58,11 +61,74 @@ construct Label(title: String, systemImage: Symbol = .None) extends Widget {
             .fillWidth()
             return stacked.describe(context, modifiers)
         }
-        let label = HStack(spacing: .Small, alignment: .Center) {
-            if systemImage != .None {
-                Icon(symbol: systemImage)
-                    .foregroundColor(.Secondary)
+        // The glyph is centred in a fixed column, not against its leading edge.
+        // Glyphs differ in width — a chevron is narrow, a folder is wide — so
+        // aligning them to an edge lines up their BOXES and leaves their ink
+        // ragged, and the titles beside them with it. Centring lines up what the
+        // eye actually reads, which is why every platform column of icons is
+        // centred.
+        //
+        // In a menu the glyph is the row's own ink, in a column of the menu's
+        // measure with air before the title; elsewhere it is a quieter mark in
+        // the shared gutter.
+        if modifiers.controlPresentation == .MenuRow {
+            let row = HStack(spacing: .None, alignment: .Center, spacingLength: metrics.menuIconGap) {
+                ZStack(alignment: .Center) {
+                    if systemImage != .None {
+                        Icon(symbol: systemImage)
+                    }
+                }
+                .width(metrics.menuIconColumn)
+
+                Text(content: title)
             }
+            .hugWidth()
+            return row.describe(context, modifiers)
+        }
+        // In a sidebar the glyph is the accent, in the sidebar's own column.
+        if modifiers.controlPresentation == .Sidebar {
+            let row = HStack(spacing: .None, alignment: .Center, spacingLength: sidebarMetrics.titleSpacing) {
+                ZStack(alignment: .Center) {
+                    if systemImage != .None {
+                        Icon(symbol: systemImage)
+                            .font(size: sidebarMetrics.symbolSize)
+                            .foregroundColor(.Accent)
+                    }
+                }
+                .width(sidebarMetrics.iconColumn)
+
+                Text(content: title)
+            }
+            .hugWidth()
+            return row.describe(context, modifiers)
+        }
+        // In a grouped list a label is its title alone, or its glyph in the
+        // accent before it, set the way the kit sets a symbol row in either
+        // of its lists.
+        if modifiers.controlPresentation == .InsetGrouped {
+            let row = HStack(spacing: .None, alignment: .Center, spacingLength: sidebarMetrics.titleSpacing) {
+                if systemImage != .None {
+                    ZStack(alignment: .Center) {
+                        Icon(symbol: systemImage)
+                            .font(size: sidebarMetrics.symbolSize)
+                            .foregroundColor(.Accent)
+                    }
+                    .width(sidebarMetrics.iconColumn)
+                }
+
+                Text(content: title)
+            }
+            .hugWidth()
+            return row.describe(context, modifiers)
+        }
+        let label = HStack(spacing: .None, alignment: .Center) {
+            ZStack(alignment: .Center) {
+                if systemImage != .None {
+                    Icon(symbol: systemImage)
+                        .foregroundColor(.Secondary)
+                }
+            }
+            .width(metrics.gutter)
 
             Text(content: title)
         }

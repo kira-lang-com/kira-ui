@@ -1,0 +1,255 @@
+import Foundation
+import KCoreUI
+import KCoreAnimation
+
+// SwiftUI's `Glass`: what a piece of Liquid Glass is made of.
+//
+// `.Regular` is the glass of controls, bars and sidebars. `.Clear` only
+// refracts, for glass over media that should show through untouched. Either one
+// is a single recipe across every size, read from the catalog, so the case says
+// which glass and the surface's laid-out size says how it looks: the 36-point
+// capsule on a toolbar shows none of the blur a sidebar does.
+enum Glass {
+    Regular
+    Clear
+}
+
+// One input of a catalog recipe as the ramp the compositor applies, or a flat
+// zero when the recipe leaves it out.
+function glassCompositorRamp(recipe: borrow ResolvedGlass, input: GlassInput) -> CAGlassRamp {
+    let wanted = glassInputValue(input)
+    for ramp in recipe.ramps {
+        if glassInputValue(ramp.input) == wanted {
+            return CAGlassRamp {
+                base: ramp.base,
+                slope: ramp.slope,
+                minimum: ramp.minimum,
+                maximum: ramp.maximum
+            }
+        }
+    }
+    return CAGlassRamp {}
+}
+
+// A recipe as what the compositor draws with it. The platform's blur opacity
+// is how much of the blurred backdrop shows, so it is read against the most
+// the recipe ever shows and scales the material's own blur: a surface past the
+// size where the ramp tops out blurs exactly as the material says. The edge's
+// greys and its light are the recipe's own at every size. Liquid Glass casts no shadow, so a
+// recipe's shadow inputs are not drawn.
+function glassCompositorSizing(recipe: borrow ResolvedGlass) -> CAGlassSizing {
+    let blur = glassCompositorRamp(recipe, .BlurOpacity)
+    var share = CAGlassRamp {}
+    if blur.maximum > 0.0 {
+        share = CAGlassRamp {
+            base: blur.base / blur.maximum,
+            slope: blur.slope / blur.maximum,
+            minimum: blur.minimum / blur.maximum,
+            maximum: 1.0
+        }
+    }
+    return CAGlassSizing {
+        blur: share,
+        ringTone: glassCompositorRamp(recipe, .EdgeRingTone),
+        sideTone: glassCompositorRamp(recipe, .EdgeSideTone),
+        lightDodge: glassCompositorRamp(recipe, .EdgeLightDodge),
+        lightBurn: glassCompositorRamp(recipe, .EdgeLightBurn)
+    }
+}
+
+// A glass in both appearances, resolved once.
+struct GlassSizingPair {
+    var light: CAGlassSizing = CAGlassSizing {}
+    var dark: CAGlassSizing = CAGlassSizing {}
+}
+
+function catalogGlassSizing(stack: borrow CatalogStack, name: borrow String) -> GlassSizingPair {
+    return GlassSizingPair {
+        light: glassCompositorSizing(resolveGlass(stack, name, kiraUICatalogEnvironment(.Light))),
+        dark: glassCompositorSizing(resolveGlass(stack, name, kiraUICatalogEnvironment(.Dark)))
+    }
+}
+
+let regularGlassSizing = catalogGlassSizing(kiraUICatalogStack, glassRegular())
+let clearGlassSizing = catalogGlassSizing(kiraUICatalogStack, glassClear())
+
+// What `glass` does with size in the appearance in effect.
+function glassSizing(glass: borrow Glass, modifiers: borrow ModifierContext) -> CAGlassSizing {
+    var pair = regularGlassSizing
+    if glass == .Clear {
+        pair = clearGlassSizing
+    }
+    match modifierTheme(modifiers).appearance() {
+        Light -> return pair.light
+        Dark -> return pair.dark
+    }
+}
+
+// --- Vibrancy ----------------------------------------------------------------
+//
+// What content set into glass is inked with. Apple does not paint a symbol over
+// the glass in a grey; it burns the grey into it in the light appearance and
+// dodges it in the dark, so the glass — and whatever it refracts — shows through
+// the glyph. The catalog states each style as a material of one fill layer: the
+// grey and the blend together.
+
+struct VibrantInk {
+    var color: CAColor = CAColor {}
+    var blend: CABlendMode = .Normal
+}
+
+struct VibrantInkPair {
+    var light: VibrantInk = VibrantInk {}
+    var dark: VibrantInk = VibrantInk {}
+}
+
+// The blends the compositor can set ink in; every other one inks normally.
+function vibrantBlend(blend: borrow BlendMode) -> CABlendMode {
+    match blend {
+        LinearBurn -> return .LinearBurn
+        LinearDodge -> return .LinearDodge
+        Normal -> return .Normal
+        ColorDodge -> return .Normal
+        HardLight -> return .Normal
+        Overlay -> return .Normal
+        Lighten -> return .Normal
+        Darken -> return .Normal
+        Multiply -> return .Normal
+        Luminosity -> return .Normal
+        Unknown(value) -> return .Normal
+    }
+}
+
+function vibrantInkFrom(layer: borrow ResolvedMaterialLayer) -> VibrantInk {
+    return VibrantInk {
+        color: CAColor { r: layer.color.r, g: layer.color.g, b: layer.color.b, a: layer.color.a * layer.opacity },
+        blend: vibrantBlend(layer.blend)
+    }
+}
+
+function catalogVibrantInkAt(stack: borrow CatalogStack, name: borrow String, appearance: borrow Appearance) -> VibrantInk {
+    let material = resolveMaterial(stack, name, kiraUICatalogEnvironment(appearance))
+    for layer in material.layers {
+        match layer.kind {
+            Fill -> return vibrantInkFrom(layer)
+            BackdropBlur -> {}
+            Saturation -> {}
+            Tint -> {}
+            Noise -> {}
+            Border -> {}
+        }
+    }
+    return VibrantInk {}
+}
+
+function catalogVibrantInk(stack: borrow CatalogStack, name: borrow String) -> VibrantInkPair {
+    return VibrantInkPair {
+        light: catalogVibrantInkAt(stack, name, .Light),
+        dark: catalogVibrantInkAt(stack, name, .Dark)
+    }
+}
+
+let vibrantLabelInk = catalogVibrantInk(kiraUICatalogStack, materialVibrantLabel())
+
+// The primary vibrant ink in the appearance in effect.
+function vibrantLabel(modifiers: borrow ModifierContext) -> VibrantInk {
+    match modifierTheme(modifiers).appearance() {
+        Light -> return vibrantLabelInk.light
+        Dark -> return vibrantLabelInk.dark
+    }
+}
+
+// --- Interactive glass -------------------------------------------------------
+//
+// SwiftUI's `.glassEffect(.regular.interactive())`: a piece of glass that
+// answers a press anywhere on it, whichever control inside took it. The whole
+// piece comes up to meet the finger, swelling uniformly by a fixed rise; a
+// light comes up in it under the fingertip and travels with it; a pull drags it
+// a little way after the pointer through resistance and reshapes it, tall and
+// narrow pulled up or down, long pulled sideways; and let go, it springs home,
+// dipping under its resting size before it settles. Whatever it holds is part
+// of the piece: it moves, swells and leans with it.
+
+struct InteractiveGlass {
+    var pull: MotionPullState = MotionPullState {}
+    var glow: MotionGlowState = MotionGlowState {}
+    var held: Bool = false
+    // The box the glass rests in, kept from the press so it settles back into
+    // it after the pointer has let go.
+    var size: Size = Size {}
+}
+
+function interactiveGlassSlotKey(key: Int) -> String {
+    return kiraUiSlotKey("kiraui.glass.", key)
+}
+
+// A piece of Liquid Glass, as `liquidGlassDescription` draws it, that is
+// interactive under `key`.
+function interactiveGlassDescription(
+    context: borrow BuildContext,
+    key: Int,
+    layout: CALayoutIntent,
+    radius: Float,
+    shape: borrow ContainerShape,
+    sizing: CAGlassSizing,
+    modifiers: borrow ModifierContext,
+    sublayers: [CALayerDescription],
+) -> CALayerDescription {
+    var layer = liquidGlassDescription(move layout, radius, shape, copy sizing, modifiers, move sublayers)
+    layer.interactive = true
+    layer.hitKey = key
+
+    // Recovered in place rather than through a helper: a recovered value
+    // handed back out of a function is a copy, and the press would be lost.
+    if kiraUiStateSlotHas(interactiveGlassSlotKey(key)) == false {
+        kiraUiStateSlotPut(interactiveGlassSlotKey(key), nativeUserData(nativeState(InteractiveGlass {})))
+    }
+    var glass = nativeRecover<InteractiveGlass>(kiraUiStateSlotGet(interactiveGlassSlotKey(key)))
+    let held = context.heldKey == key
+    let point = context.heldPoint
+    let delta = kiraUiClockDelta()
+    let reduced = kiraUiReducedMotion()
+    if held && !glass.held {
+        glass.size = context.heldSize
+        motionPullFit(glass.pull, glass.size.width, glass.size.height)
+        motionPullPress(glass.pull, point.x, point.y, reduced)
+        motionGlowPress(glass.glow, point.x, point.y)
+    } else if held {
+        motionPullMove(glass.pull, point.x, point.y, delta)
+        motionGlowMove(glass.glow, point.x, point.y)
+    } else if glass.held {
+        motionPullRelease(glass.pull, reduced)
+        motionGlowRelease(glass.glow)
+    }
+    glass.held = held
+    let pulled = motionPullAdvance(glass.pull, delta, reduced)
+    let light = motionGlowAdvance(glass.glow, delta)
+    if !motionPullMoving(glass.pull) && !motionGlowLit(glass.glow) {
+        return layer
+    }
+    kiraUiClockStillMoving()
+
+    // Drawn where the pull has taken it, swollen and leaning about its centre:
+    // the whole piece as it was drawn, what it holds included, transformed
+    // last, so its box -- and everything around it -- stays where layout put
+    // it. The light is carried back through all of that into the glass's own
+    // coordinates.
+    let centerX = glass.size.width * 0.5
+    let centerY = glass.size.height * 0.5
+    let scaleX = pulled.pressScale * pulled.scaleX
+    let scaleY = pulled.pressScale * pulled.scaleY
+    layer.layout.offset = Point { x: pulled.x, y: pulled.y }
+    layer.scaleX = scaleX
+    layer.scaleY = scaleY
+    layer.disablesActions = true
+    var content = liquidGlassContent(shape, move sizing, modifiers)
+    // The light stays in the glass: a pointer pulled off its edge lights the
+    // edge it left by.
+    let lightX = centerX + (glass.glow.x - pulled.x - centerX) / scaleX
+    let lightY = centerY + (glass.glow.y - pulled.y - centerY) / scaleY
+    content.glowX = clamp(lightX, 0.0, glass.size.width)
+    content.glowY = clamp(lightY, 0.0, glass.size.height)
+    content.glowStrength = light
+    layer.content = .Glass(move content)
+    return layer
+}

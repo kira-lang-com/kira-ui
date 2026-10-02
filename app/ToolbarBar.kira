@@ -14,127 +14,380 @@ import KCoreAnimation
 
 // --- The bar -----------------------------------------------------------------
 
-// The window's one bar, assembled from what the columns declared.
+// The window's chrome: the band across the top that its title, its toolbar
+// items and its window controls sit in, drawn over the content.
 //
-// Its sections are laid out against the COLUMNS beneath it: the navigation
-// section is exactly as wide as the sidebar, so an item over the sidebar is over
-// the sidebar and not merely near it, and the rest of the bar belongs to the
-// document. A window with nothing to put on the bar gets no bar at all — an
-// empty band across the top is a band that has to be explained.
-construct WindowToolbar(
-    navigationWidth: Float,
-    hasNavigationColumn: Bool,
-    visibleColumn: Int = kiraUiToolbarDetailColumn(),
-) extends Widget {
+// The band is split along the columns beneath it, as SwiftUI splits it. Over a
+// sidebar, the window controls hold the leading end and the sidebar's items --
+// its toggle last -- sit at its trailing edge. Over the document, what the
+// column is showing sits at the leading end, its principal item at the
+// section's centre, and what it can be asked to do at the trailing end. With
+// the sidebar collapsed, its items and its toggle move up beside the window
+// controls and the document's section takes the rest of the band.
+//
+// Every length comes from the catalog (`windowChromeMetrics`), and the band
+// paints nothing of its own: the glass under each group of items is the only
+// surface it has, which is the Liquid Glass bar.
+construct WindowChrome() extends Widget {
 
-    // The toolbar band as a retained surface. The item sections are still built
-    // from raw FoundationViews through the sink; their content migrates to
-    // descriptions when the toolbar helpers do, so describe carries the band
-    // surface for now.
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let ignored = navigationWidth
-        return Rectangle()
-            .backgroundStyle(.Surface)
-            .describe(context, modifiers)
+        kiraUiToolbarSinkEnsure()
+        var sink = nativeRecover<KiraUiToolbarSink>(kiraUiStateSlotGet(kiraUiToolbarSinkKey()))
+        let metrics = windowChromeMetrics
+        sink.windowDragHeight = metrics.toolbarHeight
+        let barModifiers = modifierContextPresenting(modifiers, .Toolbar)
+
+        var sections: [CALayerDescription] = []
+        var leading: [CALayerDescription] = []
+        if sink.hasNavigationColumn {
+            sections.append(sidebarSection(sink, metrics, context, barModifiers))
+        } else {
+            leading.append(windowControlsArea(metrics, context, barModifiers))
+            for group in toolbarGroups(sink.navigation, metrics, context, barModifiers) {
+                leading.append(group)
+            }
+            if sink.sidebarToggle {
+                leading.append(sidebarToggle(metrics, context, barModifiers))
+            }
+        }
+        sections.append(documentSection(sink, move leading, metrics, context, barModifiers))
+        return CALayerDescription {
+            layout: CALayoutIntent {
+                axis: .Row,
+                heightFill: false,
+                fixedHeight: metrics.toolbarHeight
+            },
+            sublayers: move sections
+        }
+    }
+
+    // Over the sidebar: the window controls, then the sidebar's own items and
+    // its toggle held at its trailing edge.
+    function sidebarSection(
+        sink: borrow KiraUiToolbarSink,
+        metrics: borrow WindowChromeMetrics,
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext,
+    ) -> CALayerDescription {
+        var parts: [CALayerDescription] = []
+        parts.append(windowControlsArea(metrics, context, modifiers))
+        parts.append(toolbarFlexibleSpace())
+        for group in toolbarGroups(sink.navigation, metrics, context, modifiers) {
+            parts.append(group)
+        }
+        if sink.sidebarToggle {
+            parts.append(sidebarToggle(metrics, context, modifiers))
+        }
+        return toolbarSection(move parts, metrics, sink.navigationWidth, 0.0)
+    }
+
+    // Over the document: whatever leads it, a back button, the title, then the
+    // items at the trailing end -- and the principal item centred over all of
+    // it, the way the platform centres it on the section rather than between
+    // whatever happens to be either side.
+    function documentSection(
+        sink: borrow KiraUiToolbarSink,
+        leading: [CALayerDescription],
+        metrics: borrow WindowChromeMetrics,
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext,
+    ) -> CALayerDescription {
+        // A section that starts at a column's edge holds its first piece of glass
+        // off it; one that starts with the window controls starts at the window's.
+        let leadingInset = leading.count > 0 ? 0.0 : metrics.edgeInset
+        var parts = move leading
+        let backGroups = toolbarGroups(sink.back, metrics, context, modifiers)
+        let followsBack = backGroups.count > 0
+        for group in backGroups {
+            parts.append(group)
+        }
+        if sink.detailTitle.count > 0 && !sink.largeTitle {
+            parts.append(windowTitle(sink.detailTitle, metrics, followsBack, context, modifiers))
+        }
+        parts.append(toolbarFlexibleSpace())
+        for group in toolbarGroups(sink.automatic, metrics, context, modifiers) {
+            parts.append(group)
+        }
+        for group in toolbarGroups(sink.primaryAction, metrics, context, modifiers) {
+            parts.append(group)
+        }
+        var bar = toolbarSection(move parts, metrics, 0.0 - 1.0, leadingInset)
+        if sink.principal.count == 0 {
+            bar.layout.flex = 1
+            return bar
+        }
+        return CALayerDescription {
+            layout: CALayoutIntent {
+                heightFill: false,
+                fixedHeight: metrics.toolbarHeight,
+                flex: 1,
+                alignment: Point { x: 0.5, y: 0.5 }
+            },
+            sublayers: [bar, principalRow(sink, metrics, context, modifiers)]
+        }
+    }
+
+    // The principal item, centred across the section.
+    function principalRow(
+        sink: borrow KiraUiToolbarSink,
+        metrics: borrow WindowChromeMetrics,
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext,
+    ) -> CALayerDescription {
+        return CALayerDescription {
+            layout: CALayoutIntent {
+                axis: .Row,
+                spacing: metrics.itemSpacing,
+                widthFill: false,
+                heightFill: false,
+                fixedHeight: metrics.toolbarHeight,
+                alignment: Point { x: 0.0, y: 0.5 }
+            },
+            sublayers: toolbarGroups(sink.principal, metrics, context, modifiers)
+        }
+    }
+
+    // The button that shows and hides the sidebar: a piece of glass of its own,
+    // which the platform adds to every split view without being asked.
+    function sidebarToggle(metrics: borrow WindowChromeMetrics, context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        let button = Button(action: navigationSidebarToggleAction()) {
+            Icon(symbol: .SidebarLeft)
+        }
+        return toolbarGlassGroup([button.describe(context, modifiers)], metrics, context, modifiers)
+    }
+}
+
+// One section of the band: its parts in a row, centred across the band's
+// height, a piece of glass's gap apart, and the last one held off the
+// section's trailing edge. A section with no width of its own takes what the
+// sections before it left.
+function toolbarSection(parts: [CALayerDescription], metrics: borrow WindowChromeMetrics, width: Float, leadingInset: Float) -> CALayerDescription {
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            axis: .Row,
+            spacing: metrics.itemSpacing,
+            widthFill: width < 0.0,
+            heightFill: false,
+            fixedWidth: width,
+            fixedHeight: metrics.toolbarHeight,
+            paddingLeading: leadingInset,
+            paddingTrailing: metrics.edgeInset,
+            alignment: Point { x: 0.0, y: 0.5 }
+        },
+        sublayers: move parts
+    }
+}
+
+// The room the close, minimise and zoom buttons take. The platform draws them
+// where it has them; where the toolkit draws its own, they sit here.
+function windowControlsArea(metrics: borrow WindowChromeMetrics, context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    var controls = WindowControls().describe(context, modifiers)
+    controls.layout.widthFill = false
+    controls.layout.heightFill = false
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedWidth: metrics.controlsEnd() - metrics.itemSpacing,
+            paddingLeading: metrics.controlsLeading,
+            alignment: Point { x: 0.0, y: 0.5 }
+        },
+        sublayers: [controls]
+    }
+}
+
+// A column's title, set the way the platform sets a window title: its glyphs
+// start the title inset past whatever leads the section -- the column's edge,
+// the window controls, the sidebar's toggle -- or the title spacing past a back
+// button.
+function windowTitle(
+    title: borrow String,
+    metrics: borrow WindowChromeMetrics,
+    followsBack: Bool,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    var text = Text(content: copy title)
+        .font(size: windowTitleFont.size, weight: windowTitleFont.weight)
+        .describe(context, modifiers)
+    text.layout.widthFill = false
+    text.layout.heightFill = false
+    let gap = followsBack ? metrics.titleSpacing : metrics.titleInset
+    text.layout.paddingLeading = max(gap - metrics.itemSpacing, 0.0)
+    return text
+}
+
+function toolbarFlexibleSpace() -> CALayerDescription {
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            heightFill: false,
+            flex: 1
+        }
+    }
+}
+
+// Entries, collapsed into the pieces of glass they describe.
+//
+// The items of one declaration share one capsule: a `ToolbarItemGroup` is one
+// control with seams, and each `ToolbarItem` is a piece of glass of its own --
+// what the platform draws for each. An item that opted out of the shared
+// background stands bare, and a spacer closes whatever was open.
+function toolbarGroups(
+    entries: borrow [KiraUiToolbarEntry],
+    metrics: borrow WindowChromeMetrics,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> [CALayerDescription] {
+    var groups: [CALayerDescription] = []
+    var run: [CALayerDescription] = []
+    var runGroup = 0
+    for entry in entries {
+        let continuesRun = entry.shared && !entry.isSpacer && run.count > 0 && entry.group == runGroup
+        if !continuesRun && run.count > 0 {
+            groups.append(toolbarGlassGroup(move run, metrics, context, modifiers))
+            run = []
+        }
+        if entry.isSpacer {
+            if entry.flexible {
+                groups.append(toolbarFlexibleSpace())
+            } else if metrics.spacerWidth > metrics.itemSpacing * 2.0 {
+                groups.append(toolbarFixedSpace(metrics))
+            }
+        } else if entry.shared {
+            run.append(toolbarItemFrame(entry.content, metrics))
+            runGroup = entry.group
+        } else {
+            groups.append(toolbarItemFrame(entry.content, metrics))
+        }
+    }
+    if run.count > 0 {
+        groups.append(toolbarGlassGroup(move run, metrics, context, modifiers))
+    }
+    return groups
+}
+
+// A fixed spacer wider than the gap the section already leaves between two
+// pieces of glass holds the rest open. At the platform's own numbers the gap
+// alone is the spacer -- 8 points between the glass either side -- and nothing
+// is added.
+function toolbarFixedSpace(metrics: borrow WindowChromeMetrics) -> CALayerDescription {
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedWidth: metrics.spacerWidth - metrics.itemSpacing * 2.0
+        }
+    }
+}
+
+// One item's box on the bar: as tall as a piece of glass, the item centred in
+// it. A button already is that box; anything else -- a run of text, a picker --
+// hugs its content.
+function toolbarItemFrame(content: borrow CALayerDescription, metrics: borrow WindowChromeMetrics) -> CALayerDescription {
+    var item = copy content
+    item.layout.widthFill = false
+    item.layout.heightFill = false
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedHeight: metrics.itemHeight,
+            alignment: Point { x: 0.5, y: 0.5 }
+        },
+        sublayers: [item]
+    }
+}
+
+// A run of shared items on one capsule of glass. The capsule is interactive
+// glass: a press on any item in it moves the whole capsule, as the platform's
+// does, while the item takes the action. An item alone is its glass; two or
+// more are held a little off the capsule's ends.
+function toolbarGlassGroup(
+    items: [CALayerDescription],
+    metrics: borrow WindowChromeMetrics,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let inset = items.count > 1 ? metrics.groupInset : 0.0
+    let row = CALayerDescription {
+        layout: CALayoutIntent {
+            axis: .Row,
+            spacing: metrics.groupSpacing,
+            paddingLeading: inset,
+            paddingTrailing: inset,
+            widthFill: false,
+            heightFill: false,
+            alignment: Point { x: 0.0, y: 0.5 }
+        },
+        sublayers: move items
+    }
+    return interactiveGlassDescription(
+        context,
+        kiraUiTapSeqKey(),
+        CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedHeight: metrics.itemHeight
+        },
+        containerShapeRadius(.Capsule, modifiers),
+        .Capsule,
+        glassSizing(.Regular, modifiers),
+        modifiers,
+        [row]
+    )
+}
+
+// The window: its background, its content, and its chrome over both.
+//
+// The content is laid out inside the safe area the chrome leaves, unless a
+// container in it already did that itself — a split view does, so its sidebar
+// can run under the bar.
+function windowDescription(content: CALayerDescription, context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    var body = move content
+    if !kiraUiChromeSafeAreaWasHandled() {
+        body = safeAreaInset(move body, context.safeArea)
+    }
+    var chrome = WindowChrome().describe(context, modifiers)
+    chrome.layout.widthFill = true
+    return CALayerDescription {
+        content: .Solid(CASolid {
+            fill: caColorFromFoundation(navigationCanvas(modifiers))
+        }),
+        sublayers: [body, chrome]
+    }
+}
+
+// Content held inside a safe area, its box otherwise its own.
+function safeAreaInset(content: CALayerDescription, insets: borrow EdgeInsets) -> CALayerDescription {
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            paddingLeading: insets.leading,
+            paddingTop: insets.top,
+            paddingTrailing: insets.trailing,
+            paddingBottom: insets.bottom
+        },
+        sublayers: [move content]
     }
 }
 
 // The native compositor asks this only for a real pointer press. Controls in
-// the toolbar still receive their ordinary UI event; xdg-shell decides whether
-// the serial begins a move once the press belongs to the bar.
+// the toolbar still receive their ordinary UI event; the window decides whether
+// the press begins a move once it belongs to the bar.
 function kiraUiToolbarWindowDragRegion(x: Float, y: Float) -> Bool {
     kiraUiToolbarSinkEnsure()
     let sink = nativeRecover<KiraUiToolbarSink>(kiraUiStateSlotGet(kiraUiToolbarSinkKey()))
     if sink.windowDragHeight <= 0.0 {
         return graphicsApplicationFallbackWindowDragRegion(x, y)
     }
-    return x >= 0.0 && y >= 0.0 && y < sink.windowDragHeight
-}
-
-// What a section insets its items by: the margin the column under it stated, and
-// the size class's own when that column said nothing.
-function toolbarMargin(declared: Float, metrics: borrow ControlMetricsImplementation) -> Float {
-    if declared < 0.0 {
-        return metrics.contentMargin
+    if x < 0.0 || y < 0.0 || y >= sink.windowDragHeight {
+        return false
     }
-    return declared
-}
-
-// One section of the bar: its items centred across the toolbar's height.
-//
-// Window edges are never padded by a column's content margin. A content margin
-// belongs to the column BELOW the chrome, not to the chrome's outer boundary.
-// When two toolbar sections meet, the corresponding column margin can still be
-// applied on that INTERNAL boundary so the split remains legible and aligned.
-function toolbarGroupSpacing(modifiers: borrow ModifierContext) -> Float {
-    return spacingImplementation(.Micro, modifiers)
-}
-
-function toolbarGroupInset(modifiers: borrow ModifierContext) -> Float {
-    return spacingImplementation(.ExtraSmall, modifiers)
-}
-
-// Entries, collapsed into the pieces of glass they describe.
-//
-// Consecutive shared items become ONE capsule. A spacer closes the run and
-// opens the next; an item that opted out of the shared background stands on its
-// own. This is the Liquid Glass rule Apple states for toolbars — items in a
-// logical grouping are given a glass background shared with the others — and
-// the reason a bar reads as one control with a seam rather than as a row of
-// separate buttons.
-construct ToolbarTitle(text: String) extends Widget {
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let title = Text(content: text)
-            .typography(.headline)
-        return title.describe(context, modifiers)
-    }
-}
-
-// The document's section: what the window is showing at the leading end, and
-// what it can be asked to do at the trailing one.
-function kiraUiToolbarHasTopItems() -> Bool {
-    kiraUiToolbarSinkEnsure()
-    let sink = nativeRecover<KiraUiToolbarSink>(kiraUiStateSlotGet(kiraUiToolbarSinkKey()))
-    if sink.sidebarTitle.count + sink.detailTitle.count > 0 {
-        return true
-    }
-    return sink.back.count
-        + sink.navigation.count
-        + sink.principal.count
-        + sink.primaryAction.count
-        + sink.automatic.count > 0
-}
-
-function kiraUiChromeHasTabs() -> Bool {
-    kiraUiToolbarSinkEnsure()
-    let sink = nativeRecover<KiraUiToolbarSink>(kiraUiStateSlotGet(kiraUiToolbarSinkKey()))
-    return sink.tabs.count + sink.tabSearch.count > 0
-}
-
-function kiraUiToolbarHasItems() -> Bool {
-    return kiraUiToolbarHasTopItems() || kiraUiChromeHasTabs()
-}
-
-// --- Window chrome compositor ------------------------------------------------
-//
-// Contributors only declare semantic chrome. This is the single place where
-// those declarations become physical bars. `KIRA_UI_CHROME=vertical-trailing`
-// is the host/testing override until the platform layer exposes fold posture.
-function kiraUiChromeOrientation() -> ChromeOrientation {
-    let requested = environmentValue("KIRA_UI_CHROME")
-    if requested == "vertical" || requested == "vertical-trailing" {
-        return .Vertical
-    }
-    return .Horizontal
-}
-
-function kiraUiChromeVerticalWidth(metrics: borrow ControlMetricsImplementation) -> Float {
-    // One control target plus a real edge gutter. The chrome floats along the
-    // display edge; its glass must not touch or clip against that edge.
-    // The rail is deliberately fixed-width; its height is the flexible axis
-    // and is where overflow/compression will operate.
-    return metrics.height + metrics.contentMargin * 4.0
+    // The close, minimise and zoom buttons are the window's, wherever they are
+    // drawn, and a press on them is theirs.
+    let metrics = windowChromeMetrics
+    let controlsStart = metrics.controlsLeading
+    let controlsEnd = controlsStart + metrics.controlDiameter * 3.0 + metrics.controlSpacing * 2.0
+    return x < controlsStart || x > controlsEnd
 }
 
 construct SharedBackgroundVisibilityLayer(visibility: SharedBackgroundVisibility) extends Widget {
@@ -218,8 +471,8 @@ construct ToolbarLayer(items: Any Widget) extends Widget {
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let childModifiers = modifierContextForChildren(modifiers)
         let toolbarModifiers = modifierContextPresenting(modifiers, .Toolbar)
+        // A toolbar's labels are set in the body face, as the platform's are.
         let ignored = items
-            .typography(.headline)
             .backgroundStyle(.Clear)
             .describe(context, toolbarModifiers)
         return content.describe(context, childModifiers)

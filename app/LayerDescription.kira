@@ -1,4 +1,6 @@
+import Foundation
 import KCoreAnimation
+import KiraLayout
 
 struct BuildContext {
     let frameCount: Int
@@ -6,6 +8,29 @@ struct BuildContext {
     let viewportHeight: Float
     let pointerX: Float
     let focusedKey: Int
+    // The control being held down, while the pointer is still on it: the one
+    // that acts if it is let go now. Zero when nothing is.
+    var pressedKey: Int = 0
+    // The interactive surface a held press landed on, wherever the pointer has
+    // gone since; the pointer in that surface's own coordinates; and the
+    // surface's size. Interactive glass follows the pointer off its edge and
+    // comes back to the box it rests in when it is let go.
+    var heldKey: Int = 0
+    var heldPoint: Point = Point {}
+    var heldSize: Size = Size {}
+    // The window's safe area: the band along each edge the window's own chrome
+    // draws over. Content is laid out inside it; a container whose background
+    // belongs edge to edge -- a split view's sidebar -- draws under it and holds
+    // only its content in.
+    var safeArea: EdgeInsets = EdgeInsets {}
+}
+
+// The context a container's content is built in once the container has laid it
+// out inside the safe area itself: nothing further in is under the chrome.
+function insideSafeArea(context: borrow BuildContext) -> BuildContext {
+    var inner = copy context
+    inner.safeArea = EdgeInsets {}
+    return inner
 }
 
 function buildContext(context: borrow FoundationUiContext) -> BuildContext {
@@ -14,7 +39,8 @@ function buildContext(context: borrow FoundationUiContext) -> BuildContext {
         viewportWidth: context.viewport.width,
         viewportHeight: context.viewport.height,
         pointerX: context.pointerX,
-        focusedKey: context.focusedKey
+        focusedKey: context.focusedKey,
+        pressedKey: context.pressedKey == context.hoveredKey ? context.pressedKey : 0
     }
 }
 

@@ -1,0 +1,299 @@
+import Foundation
+import KiraGraphics
+import KiraLayout
+import KCoreAnimation
+
+// SwiftUI's `List`: rows in one column, drawn the way the list's style says.
+//
+//     List {
+//         Section("Workspace") {
+//             NavigationLink(value = ProjectsRoute()) {
+//                 Label("Projects", systemImage = .Folder)
+//             }
+//         }
+//     }
+//
+// The list does not draw its rows; it says what they are in. Under the sidebar
+// style a `Section` is its title over its rows, a `NavigationLink` is a row
+// carrying the selection band and a `Label` sets its glyph in the accent. Under
+// the inset grouped style the same `Section` is a header over a card of rows
+// and the same link is a row that drills in.
+
+// How a list is drawn, matching SwiftUI's list styles. `Automatic` is the
+// platform's answer for where the list is: the sidebar style in a split view's
+// sidebar column, inset grouped everywhere else, as on iPad.
+enum ListStyle {
+    Automatic
+    Plain
+    InsetGrouped
+    Sidebar
+}
+
+construct List() extends Widget {
+    let children: [some Widget]
+
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        match modifiers.listStyle {
+            Sidebar -> {
+                let rows = VStack(spacing: .None) {
+                    For(child in children) {
+                        child
+                    }
+                }
+                return rows.describe(context, modifierContextPresenting(modifiers, .Sidebar))
+            }
+            Plain -> {
+                let rows = VStack(spacing: .None) {
+                    For(child in children) {
+                        child
+                    }
+                }
+                return rows.describe(context, modifiers)
+            }
+            InsetGrouped -> {}
+            Automatic -> {}
+        }
+        let grouped = InsetGroupedList() {
+            For(child in children) {
+                child
+            }
+        }
+        return grouped.describe(context, modifiers)
+    }
+}
+
+// The inset grouped list: its sections down one readable column, centred in
+// the room it has and held off its edges by the column's margin, on the
+// grouped canvas. The canvas is also what it asks the column around it to be
+// painted with, so the band under the bar is the same grey.
+construct InsetGroupedList() extends Widget {
+    let children: [some Widget]
+
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        let canvas = themeAdaptiveColor(groupedBackground, modifierTheme(modifiers).appearance())
+        kiraUiNavigationSetBackground(copy canvas)
+        let sections = VStack(spacing: .None, spacingLength: listMetrics.sectionSpacing) {
+            For(section in children) {
+                section
+            }
+        }
+        var column = sections.describe(context, modifierContextPresenting(modifiers, .InsetGrouped))
+        column.layout.maxWidth = listMetrics.readableWidth
+        return CALayerDescription {
+            layout: CALayoutIntent {
+                axis: .Column,
+                paddingLeading: modifiers.contentMargin,
+                paddingTop: listMetrics.topInset,
+                paddingTrailing: modifiers.contentMargin,
+                alignment: Point { x: 0.5, y: 0.0 }
+            },
+            content: .Solid(CASolid {
+                fill: caColorFromFoundation(modifierColor(foundationColor(move canvas), modifiers))
+            }),
+            sublayers: [column]
+        }
+    }
+}
+
+// One section of an inset grouped list: its header, then its rows together on
+// one card, then its footer. A header or footer left at `EmptyView()` takes no
+// room at all.
+//
+// The header is the emphasized `title2`, the footer the `footnote` in the
+// secondary ink; both start where the rows' content does. Every row is at
+// least the list's row height with its content centred in it, and every row
+// after the first carries a hairline across its top, inset like its content.
+function insetGroupedSection(
+    rows: [CALayerDescription],
+    header: CALayerDescription,
+    footer: CALayerDescription,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let radius = listMetrics.cornerRadius
+    let card = CALayerDescription {
+        layout: CALayoutIntent {
+            axis: .Column,
+            heightFill: false
+        },
+        cornerRadius: radius,
+        clipsChildren: true,
+        content: .Solid(CASolid {
+            fill: caColorFromFoundation(modifierColor(foundationColor(themeAdaptiveColor(groupedCardBackground, modifierTheme(modifiers).appearance())), modifiers)),
+            cornerRadius: radius,
+            shapeKind: 1
+        }),
+        sublayers: move rows
+    }
+    var group: [CALayerDescription] = []
+    if !describesNothing(header) {
+        group.append(CALayerDescription {
+            layout: CALayoutIntent {
+                heightFill: false,
+                paddingLeading: listMetrics.rowInset,
+                paddingTop: listMetrics.headerPadding,
+                paddingTrailing: listMetrics.rowInset,
+                paddingBottom: listMetrics.headerPadding
+            },
+            sublayers: [move header]
+        })
+    }
+    group.append(move card)
+    var parts: [CALayerDescription] = []
+    parts.append(CALayerDescription {
+        layout: CALayoutIntent {
+            axis: .Column,
+            spacing: listMetrics.sectionSpacing,
+            heightFill: false
+        },
+        sublayers: move group
+    })
+    if !describesNothing(footer) {
+        parts.append(CALayerDescription {
+            layout: CALayoutIntent {
+                heightFill: false,
+                paddingLeading: listMetrics.rowInset,
+                paddingTop: listMetrics.footerTopInset,
+                paddingTrailing: listMetrics.rowInset,
+                paddingBottom: listMetrics.footerBottomInset
+            },
+            sublayers: [move footer]
+        })
+    }
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            axis: .Column,
+            heightFill: false
+        },
+        sublayers: move parts
+    }
+}
+
+// One row of a grouped card: its content across the row and centred down at
+// least the row height, held off the card's edges, under a hairline when a row
+// comes before it.
+function insetGroupedRow(content: CALayerDescription, separated: Bool, modifiers: borrow ModifierContext) -> CALayerDescription {
+    var layers: [CALayerDescription] = []
+    layers.append(CALayerDescription {
+        layout: CALayoutIntent {
+            heightFill: false,
+            minHeight: listMetrics.rowHeight,
+            alignment: Point { x: 0.0, y: 0.5 }
+        },
+        sublayers: [move content]
+    })
+    if separated {
+        layers.append(CALayerDescription {
+            layout: CALayoutIntent {
+                heightFill: false,
+                fixedHeight: listMetrics.separatorThickness
+            },
+            content: .Solid(CASolid {
+                fill: caColorFromFoundation(modifierColor(foundationColor(themeAdaptiveColor(listSeparator, modifierTheme(modifiers).appearance())), modifiers))
+            })
+        })
+    }
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            heightFill: false,
+            paddingLeading: listMetrics.rowInset,
+            paddingTrailing: listMetrics.rowInset
+        },
+        sublayers: move layers
+    }
+}
+
+construct ListStyleLayer(style: ListStyle) extends Widget {
+    let content: some Widget
+
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        return content.describe(context, modifierContextApply(modifiers, modifierDeltaListStyle(style)))
+    }
+}
+
+// A section's title in a sidebar: its own row, the title held off the column's
+// edge and low in the row, close to the rows it heads, in the body face and
+// the secondary ink.
+construct SidebarSectionHeader() extends Widget {
+    let content: some Widget
+
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        let title = content
+            .typography(.body)
+            .foregroundColor(.Secondary)
+        return CALayerDescription {
+            layout: CALayoutIntent {
+                axis: .Row,
+                heightFill: false,
+                fixedHeight: sidebarMetrics.headerHeight,
+                paddingLeading: sidebarMetrics.headerInset,
+                paddingTop: sidebarMetrics.headerTopInset,
+                paddingTrailing: sidebarMetrics.headerInset
+            },
+            sublayers: [title.describe(context, modifiers)]
+        }
+    }
+}
+
+// One row of a sidebar: the column's width at the row height, pressed as a
+// whole. The selected row carries a band held in from the column's edges with
+// a continuous corner and sets its title emphasized; the content starts
+// further in, the same distance from the edge whether or not the band is
+// behind it.
+construct SidebarRow(selected: Bool, action: () -> Void) extends Widget {
+    let content: some Widget
+
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        let key = kiraUiTapSeqKey()
+        kiraUiLayerActionRegister(key, action)
+        let gutter = sidebarMetrics.rowInset - sidebarMetrics.selectionInset
+        let radius = sidebarMetrics.selectionRadius
+        let face = modifierTheme(modifiers).typography(.body)
+        let title = content.font(size: face.size, weight: sidebarRowWeight(selected))
+        return CALayerDescription {
+            layout: CALayoutIntent {
+                heightFill: false,
+                fixedHeight: sidebarMetrics.rowHeight,
+                paddingLeading: sidebarMetrics.selectionInset,
+                paddingTrailing: sidebarMetrics.selectionInset
+            },
+            hittable: !modifiers.disabled,
+            hitKey: key,
+            sublayers: [CALayerDescription {
+                layout: CALayoutIntent {
+                    axis: .Row,
+                    paddingLeading: gutter,
+                    paddingTrailing: gutter,
+                    alignment: Point { x: 0.0, y: 0.5 }
+                },
+                cornerRadius: radius,
+                content: .Solid(CASolid {
+                    fill: caColorFromFoundation(modifierColor(foundationColor(sidebarRowBand(selected, modifiers)), modifiers)),
+                    cornerRadius: radius,
+                    shapeKind: 1
+                }),
+                sublayers: [title.describe(context, modifiers)]
+            }]
+        }
+    }
+}
+
+function sidebarRowWeight(selected: Bool) -> FontWeight {
+    if selected {
+        return .SemiBold
+    }
+    return .Regular
+}
+
+// The band behind a sidebar row: the sidebar's selection wash when the row is
+// selected, nothing otherwise.
+function sidebarRowBand(selected: Bool, modifiers: borrow ModifierContext) -> Color {
+    if selected {
+        return themeAdaptiveColor(sidebarSelection, modifierTheme(modifiers).appearance())
+    }
+    return Color { a: 0.0 }
+}

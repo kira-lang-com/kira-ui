@@ -47,3 +47,31 @@ function styleSymbol(symbols: borrow StyleSymbolTokens, symbol: borrow Symbol) -
 function symbolImplementation(symbol: Symbol, modifiers: borrow ModifierContext) -> String {
     return modifierTheme(modifiers).symbol(symbol)
 }
+
+// The em a symbol stated in SF Symbols' point size is drawn at here.
+//
+// Apple states a symbol as a point size, and this library's drawings sit in a
+// larger em than SF's: set at the same nominal size, every glyph comes out
+// about four fifths as tall — a bell's ink is 14.6 points against SF's 18.8 at
+// 17, an ellipsis circle's 14.6 against 17.9, a sidebar's 13.1 against 16.9.
+// Scaling the em by their ratio sets the drawing at the size Apple's is.
+function symbolEm(points: Float) -> Float {
+    return points * 1.28
+}
+
+// How much heavier than drawn a symbol stated at `weight` is, in points of
+// outward growth on each side of its strokes.
+//
+// Brought to SF's size, this library's strokes are SF's regular weight: an
+// ellipsis circle's ring 1.6 points against SF's 1.5 at 17, a sidebar's 1.44
+// against 1.5. SF's own stroke grows with weight at about 0.018% of the point
+// size per unit — 1.5 points at regular, 1.875 at medium (510), 2.375 at bold —
+// so the difference from regular, halved because growth thickens both sides,
+// is what the drawing has to gain. A weight lighter than regular is drawn as
+// regular: growth only ever thickens.
+function symbolWeightGrowth(points: Float, weight: Float) -> Float {
+    if weight <= 400.0 {
+        return 0.0
+    }
+    return points * 0.00009 * (weight - 400.0)
+}

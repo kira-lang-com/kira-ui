@@ -188,13 +188,17 @@ construct ControlGroup(spacing: Spacing = .ExtraSmall) extends Widget {
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         if modifiers.controlPresentation == .MenuRow {
+            let metrics = resolvedControlMetrics(modifiers)
             let actions = HStack(spacing: .None, alignment: .Top) {
                 For(item in children) {
                     item
                 }
             }
             .fillWidth()
-            return actions.describe(context, modifierContextPresenting(modifiers, .MenuAction))
+            var described = actions.describe(context, modifierContextPresenting(modifiers, .MenuAction))
+            described.layout.paddingTop = metrics.menuActionsTopInset
+            described.layout.paddingBottom = metrics.menuActionsBottomInset
+            return described
         }
         let items = HStack(spacing: spacing, alignment: .Center) {
             For(item in children) {
@@ -224,11 +228,7 @@ construct ControlGroup(spacing: Spacing = .ExtraSmall) extends Widget {
 // The column on the other side of the document: the properties of whatever is
 // selected, as a form of sections. It takes its width from the metrics table, so
 // a window states neither it nor the split view's sidebar width.
-// Sections stand well apart: the gap between two grouped cards is two thirds of
-// a row on the platform, and a tighter one makes three cards read as one long
-// list rather than as three groups.
 construct Inspector(
-    spacing: Spacing = .ExtraLarge,
     background: BackgroundStyle = .Surface,
     material: Material = .Flat,
 ) extends Widget {
@@ -237,7 +237,7 @@ construct Inspector(
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let metrics = resolvedControlMetrics(modifiers)
-        let panel = Form(spacing: spacing) {
+        let panel = Form() {
             For(section in children) {
                 section
             }
