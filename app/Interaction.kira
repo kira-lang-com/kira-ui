@@ -3,13 +3,14 @@ import Foundation
 import KiraLayout
 import KCoreAnimation
 
-// Interaction primitives: the clickable / flex / surface / gesture-texture
-// building blocks that let dense chrome UIs (editor panels, inspectors, live
-// viewports) be expressed as pure body-DSL widgets instead of hand-lowering
-// FoundationView.HitArea / Surface / Expanded by hand.
+// Interaction primitives: the clickable / surface / gesture-texture building
+// blocks that let dense chrome UIs (editor panels, inspectors, live viewports)
+// be expressed as pure body-DSL widgets instead of hand-lowering
+// FoundationView.HitArea / Surface by hand.
 //
-// TAPPABLE gives every button a default hover highlight (subtle white wash) for
-// free, driven by foundationHovered on the button's own key. Auto-key forms draw
+// TAPPABLE gives every button a default hover highlight for free: the region
+// states the theme's hover fill and the compositor lights it while the pointer
+// rests on it, with nothing rebuilt. Auto-key forms draw
 // a stable per-build key from a frame-reset sequence counter (mirrors the pattern
 // an app would otherwise reinvent); keyed forms take an explicit key so a control
 // that carries semantic meaning (a tree row, an asset tile — decoded elsewhere by
@@ -39,6 +40,11 @@ struct KiraUiTapSeq {
     // open or not, which is the property that makes the keys stable.
     var overlayNext: Int = 0
     var inOverlay: Bool = false
+    // The same for the view a stack shows under the one moving over it: it is
+    // drawn beside the view on top only while the stack moves, and must not
+    // shift the keys of the view that stays.
+    var coveredNext: Int = 0
+    var inCovered: Bool = false
 }
 
 function kiraUiTapSeqSlotKey() -> String {
@@ -55,6 +61,8 @@ function kiraUiTapSeqReset() {
     seq.next = 0
     seq.overlayNext = 0
     seq.inOverlay = false
+    seq.coveredNext = 0
+    seq.inCovered = false
     return
 }
 
@@ -68,44 +76,63 @@ function kiraUiTapSeqKey() -> Int {
         seq.overlayNext = seq.overlayNext + 1
         return 800000 + seq.overlayNext
     }
+    if seq.inCovered {
+        seq.coveredNext = seq.coveredNext + 1
+        return 900000 + seq.coveredNext
+    }
     seq.next = seq.next + 1
     return 600000 + seq.next
 }
 
-// Draw keys from the overlay band until told otherwise. Everything lowered for a
-// hoisted view sits between these two, so the main sequence carries on afterward
-// exactly where it left off.
-function kiraUiTapSeqEnterOverlay() {
+// Draw keys from the overlay band while lowering a view presented over the
+// main build, so the main sequence carries on afterward exactly where it left
+// off. Answers whether the band was already in use, to be handed back to
+// `kiraUiTapSeqLeaveOverlay`: a submenu presented from inside a menu that is
+// itself presented leaves the band only when the outer one does.
+function kiraUiTapSeqEnterOverlay() -> Bool {
     if kiraUiStateSlotHas(kiraUiTapSeqSlotKey()) == false {
         kiraUiStateSlotPut(kiraUiTapSeqSlotKey(), nativeUserData(nativeState(KiraUiTapSeq {})))
     }
     var seq = nativeRecover<KiraUiTapSeq>(kiraUiStateSlotGet(kiraUiTapSeqSlotKey()))
+    let was = seq.inOverlay
     seq.inOverlay = true
-    return
+    return was
 }
 
-function kiraUiTapSeqLeaveOverlay() {
+function kiraUiTapSeqLeaveOverlay(was: Bool) {
     if kiraUiStateSlotHas(kiraUiTapSeqSlotKey()) == false {
         return
     }
     var seq = nativeRecover<KiraUiTapSeq>(kiraUiStateSlotGet(kiraUiTapSeqSlotKey()))
-    seq.inOverlay = false
+    seq.inOverlay = was
     return
 }
 
-// Default hover highlight painted behind a Tappable while the pointer is over it:
-// a subtle white wash (~8% alpha), transparent otherwise. Foundation forces a
-// rebuild when the hovered region changes, so the fill flips as the pointer
-// crosses button boundaries.
-function kiraUiHoverWash() -> FoundationColor {
-    return foundationRgba(1.0, 1.0, 1.0, 0.08)
+// Draw keys from the covered band while a stack lowers the view under the one
+// moving over it.
+function kiraUiTapSeqEnterCovered() {
+    if kiraUiStateSlotHas(kiraUiTapSeqSlotKey()) == false {
+        kiraUiStateSlotPut(kiraUiTapSeqSlotKey(), nativeUserData(nativeState(KiraUiTapSeq {})))
+    }
+    var seq = nativeRecover<KiraUiTapSeq>(kiraUiStateSlotGet(kiraUiTapSeqSlotKey()))
+    seq.inCovered = true
+    return
 }
 
-function kiraUiTapBackground(key: Int) -> FoundationColor {
-    if kiraUiHovered(key) {
-        return kiraUiHoverWash()
+function kiraUiTapSeqLeaveCovered() {
+    if kiraUiStateSlotHas(kiraUiTapSeqSlotKey()) == false {
+        return
     }
-    return transparentFoundationColor()
+    var seq = nativeRecover<KiraUiTapSeq>(kiraUiStateSlotGet(kiraUiTapSeqSlotKey()))
+    seq.inCovered = false
+    return
+}
+
+// The wash a pressable region lights with while the pointer rests on it: the
+// theme's hover fill. The region only states it; the compositor knows what the
+// pointer is over and lays it on that region alone.
+function kiraUiHoverColor(modifiers: borrow ModifierContext) -> CAColor {
+    return caColorFromFoundation(modifierColor(modifierBackgroundStyle(.Hover, modifiers), modifiers))
 }
 
 // --- Actions -----------------------------------------------------------------
@@ -136,9 +163,10 @@ construct ClickLayer(action: () -> Void) extends Widget {
         return CALayerDescription {
             hittable: !modifiers.disabled,
             hitKey: k,
+            hoverColor: kiraUiHoverColor(modifiers),
             cornerRadius: radius,
             content: .Solid(CASolid {
-                fill: caColorFromFoundation(modifierColor(kiraUiTapBackground(k), modifiers)),
+                fill: CAColor { a: 0.0 },
                 cornerRadius: radius
             }),
             sublayers: [content.describe(context, modifiers)]
@@ -186,9 +214,10 @@ construct ClickRegion(
         return CALayerDescription {
             hittable: !modifiers.disabled,
             hitKey: k,
+            hoverColor: kiraUiHoverColor(modifiers),
             cornerRadius: cr,
             content: .Solid(CASolid {
-                fill: caColorFromFoundation(modifierColor(kiraUiTapBackground(k), modifiers)),
+                fill: CAColor { a: 0.0 },
                 cornerRadius: cr
             }),
             sublayers: [content.describe(context, modifiers)]
@@ -230,8 +259,8 @@ construct DragRegion(
 // overlay (a context menu, a modal card) puts underneath itself so any click
 // outside dismisses it.
 //
-// `.onClick(...)` cannot serve here. It paints the hover wash
-// `kiraUiTapBackground` returns, and a wash over a Fill/Fill region tints the
+// `.onClick(...)` cannot serve here. It lights with the hover wash, and a
+// wash over a Fill/Fill region tints the
 // entire window for as long as the overlay is open. So this is its own leaf:
 // same HitArea node, no `backgroundFill`, and a transparent Fill/Fill Surface
 // child so the region has something to size against.
@@ -240,30 +269,11 @@ construct DismissArea(key: Int, onPress: () -> Void) extends Widget {
     // A window-filling hit region that paints nothing; a press runs the dismiss
     // action the key is bound to.
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let ignored = context.frameCount
         kiraUiLayerActionRegister(key, onPress)
         return CALayerDescription {
             hittable: !modifiers.disabled,
             hitKey: key
         }
-    }
-}
-
-// --- Expanded ---------------------------------------------------------------
-
-// Fills leftover main-axis space in a stack (an Expanded node with the given
-// flex weight). Columns/rows mixing fixed and flexing children lay out reliably
-// when the flexing children are built ALL-flex with weights; flex 1 is the plain
-// "take the rest" case.
-construct Expanded(flex: Int) extends Widget {
-    let content: some Widget
-
-
-    // Flex is a layout property; the content passes through and the layout stage
-    // applies the weight.
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let ignored = flex
-        return content.describe(context, modifierContextForChildren(modifiers))
     }
 }
 
@@ -289,7 +299,6 @@ construct GestureTextureView(
     // A hittable texture layer: the external handle as `.Texture` content, the
     // key registered against the scroll/drag callbacks by the input stage.
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let ignored = context.frameCount
         return CALayerDescription {
             hittable: !modifiers.disabled,
             hitKey: key,

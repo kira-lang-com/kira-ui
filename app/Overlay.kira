@@ -55,14 +55,29 @@ struct KiraUiOverlay {
     // Presentation ORDER cannot answer this: a card is presented after the
     // element it contains, because lowering the card is what lowers the
     // element — so the thing that should be in front is always declared first.
-    // An element in transit is above the surface it is travelling into, and
+    // An element in transit is above the surface it is traveling into, and
     // says so rather than hoping it was hoisted late enough.
     var z: Int = 0
+    // The view, lowered.
+    var content: CALayerDescription = CALayerDescription {}
+    // Where it hangs under its anchor: how far below it, and where across it,
+    // from 0 (the two leading edges together) to 1 (the two trailing edges).
+    var spacing: Float = 0.0
+    var alignment: Float = 0.0
+    // The key a press anywhere off the view fires, zero when such a press
+    // should reach whatever is underneath instead. A menu is dismissed this
+    // way.
+    var dismissKey: Int = 0
 }
 
 // The layer a surface floats on.
 function kiraUiOverlayZSurface() -> Int {
     return 0
+}
+
+// The layer a submenu floats on: over the menu it came out of.
+function kiraUiOverlayZSubmenu() -> Int {
+    return 1
 }
 
 // The layer an element in transit flies on: over every surface, including the
@@ -144,4 +159,58 @@ function kiraUiPressAnchor() -> KiraUiOverlay {
 // Absolute arrangement, because an overlay is placed at a point rather than laid
 // out among siblings: each one is offset to its own anchor and takes its natural
 // size there. The stack fills the canvas, so that offset is in canvas
-// coordinates — the same ones the anchor was recorded in.
+// coordinates — the same ones the anchor was recorded in. An overlay is held
+// inside the canvas by the margin a window keeps its chrome off its edges.
+//
+// The content sits in the stack whether anything floats or not. The retained
+// tree knows a layer by where it stands, so content that moved one level down
+// whenever a menu opened would be a different tree each time: every layer in
+// the window would be matched to another and animate into it.
+function overlayStack(content: CALayerDescription, overlays: [KiraUiOverlay], width: Float, height: Float) -> CALayerDescription {
+    let margin = windowChromeMetrics.edgeInset
+    var layers: [CALayerDescription] = []
+    layers.append(move content)
+    for i in overlayOrder(overlays) {
+        if overlays[i].dismissKey != 0 {
+            layers.append(CALayerDescription {
+                hittable: true,
+                hitKey: overlays[i].dismissKey
+            })
+        }
+        var floating = copy overlays[i].content
+        let size = caMeasure(floating, width - margin * 2.0)
+        let x = overlays[i].anchorX + (overlays[i].anchorW - size.width) * overlays[i].alignment
+        let y = overlays[i].anchorY + overlays[i].anchorH + overlays[i].spacing
+        floating.layout.widthFill = false
+        floating.layout.heightFill = false
+        floating.layout.offset = Point {
+            x: min(max(x, margin), width - margin - size.width),
+            y: min(max(y, margin), height - margin - size.height)
+        }
+        layers.append(move floating)
+    }
+    return CALayerDescription {
+        sublayers: move layers
+    }
+}
+
+// The order the overlays draw in: by level, nearest last, and in the order
+// they were presented within a level.
+function overlayOrder(overlays: borrow [KiraUiOverlay]) -> [Int] {
+    var order: [Int] = []
+    var placed: [Bool] = []
+    for i in 0..overlays.count {
+        placed.append(false)
+    }
+    for n in 0..overlays.count {
+        var next = -1
+        for i in 0..overlays.count {
+            if !placed[i] && (next < 0 || overlays[i].z < overlays[next].z) {
+                next = i
+            }
+        }
+        placed[next] = true
+        order.append(next)
+    }
+    return order
+}

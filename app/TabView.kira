@@ -3,9 +3,16 @@ import KiraGraphics
 import KiraLayout
 import KCoreAnimation
 
-// Top-level application destinations. Tabs declare navigation meaning; the
-// chrome compositor decides whether those destinations are shown along the
-// bottom edge or in a vertical system rail.
+// Top-level application destinations, matching SwiftUI's `TabView`:
+//
+//     TabView {
+//         Tab("Home", systemImage: .House, value: 0) { HomePage() }
+//         Tab("Search", systemImage: .Search, value: 1) { SearchPage() }
+//     }
+//
+// The selected tab's content is the window's content. Every tab puts itself on
+// the window's chrome as it is lowered, and the chrome floats them in one
+// capsule of glass in the toolbar's row, as iPad does.
 
 struct KiraUiTabSelectionState {
     var selection: Int = 0
@@ -13,7 +20,6 @@ struct KiraUiTabSelectionState {
 
 struct KiraUiTabEnvironment {
     var key: Int = 0
-    var nextIndex: Int = 0
     var active: Bool = false
 }
 
@@ -39,7 +45,6 @@ function kiraUiTabEnter(key: Int) -> KiraUiTabEnvironment {
         kiraUiStateSlotGet(kiraUiTabEnvironmentKey())
     )
     current.key = key
-    current.nextIndex = 0
     current.active = true
     return previous
 }
@@ -49,22 +54,8 @@ function kiraUiTabLeave(previous: borrow KiraUiTabEnvironment) {
         kiraUiStateSlotGet(kiraUiTabEnvironmentKey())
     )
     current.key = previous.key
-    current.nextIndex = previous.nextIndex
     current.active = previous.active
     return
-}
-
-function kiraUiTabNextIndex() -> Int {
-    var current = nativeRecover<KiraUiTabEnvironment>(
-        kiraUiStateSlotGet(kiraUiTabEnvironmentKey())
-    )
-    let index = current.nextIndex
-    current.nextIndex = current.nextIndex + 1
-    return index
-}
-
-function kiraUiTabChromeKey(tabViewKey: Int, index: Int) -> Int {
-    return 0 - 1000000 - tabViewKey * 1024 - index
 }
 
 function kiraUiTabSelectionKey(key: Int) -> String {
@@ -111,13 +102,6 @@ function kiraUiTabSelectFn(key: Int, selection: Int) -> () -> Void {
     return press
 }
 
-function kiraUiTabInk(selected: Bool) -> PrimaryColor {
-    if selected {
-        return .Accent
-    }
-    return .Secondary
-}
-
 construct Tab(
     title: String,
     systemImage: Symbol,
@@ -126,23 +110,88 @@ construct Tab(
     let content: some Widget
 
 
-    // The selected tab's content joins the retained tree. The tab-bar chrome was
-    // built into the legacy FoundationView chrome sink, which the retained runner
-    // does not read; retained tab chrome is a later stage.
+    // Every tab puts itself on the bar; only the selected one's content is
+    // the window's. The iPad's bar names a tab by its title alone; the symbol
+    // is for the sidebar a tab view becomes.
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let ignored = title
         let environment = kiraUiTabEnvironment()
         if environment.active == false {
             return content.describe(context, modifiers)
         }
         let selected = kiraUiTabSelection(environment.key) == value
-        let tabIndex = kiraUiTabNextIndex()
-        let ignoredKey = kiraUiTabChromeKey(environment.key, tabIndex)
+        kiraUiChromeAppend(.Tab, KiraUiToolbarEntry {
+            content: tabBarItem(title, selected, kiraUiTabSelectFn(environment.key, value), context, modifiers)
+        })
         if selected {
             return content.describe(context, modifiers)
         }
         return CALayerDescription {}
     }
+}
+
+// One tab on the bar: its title held off the ends of a capsule the bar's
+// height less its inset. The selected tab sits on the selection capsule with
+// its title emphasized in the accent; a press on any tab selects it.
+function tabBarItem(
+    title: borrow String,
+    selected: Bool,
+    select: () -> Void,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let key = kiraUiTapSeqKey()
+    kiraUiLayerActionRegister(key, move select)
+    let metrics = tabBarMetrics
+    let radius = metrics.tabHeight / 2.0
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            axis: .Row,
+            widthFill: false,
+            heightFill: false,
+            fixedHeight: metrics.tabHeight,
+            paddingLeading: metrics.labelInset,
+            paddingTrailing: metrics.labelInset,
+            alignment: Point { x: 0.5, y: 0.5 }
+        },
+        hittable: !modifiers.disabled,
+        hitKey: key,
+        cornerRadius: radius,
+        content: .Solid(CASolid {
+            fill: caColorFromFoundation(modifierColor(foundationColor(tabBarItemFill(selected, modifiers)), modifiers)),
+            cornerRadius: radius
+        }),
+        sublayers: [tabBarItemTitle(title, selected, context, modifiers)]
+    }
+}
+
+// A tab's title: the subheadline face, medium, in the bar's ink; bold in the
+// accent when the tab is selected.
+function tabBarItemTitle(
+    title: borrow String,
+    selected: Bool,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let face = modifierTheme(modifiers).typography(.subheadline)
+    if selected {
+        let emphasized = Text(content: copy title)
+            .font(size: face.size, weight: .Bold)
+            .foregroundColor(.Accent)
+        return emphasized.describe(context, modifiers)
+    }
+    let plain = Text(content: copy title)
+        .font(size: face.size, weight: .Medium)
+        .textColor(themeAdaptiveColor(tabLabel, modifierTheme(modifiers).appearance()))
+    return plain.describe(context, modifiers)
+}
+
+// The capsule behind a tab: the selection's when it is selected, nothing
+// otherwise.
+function tabBarItemFill(selected: Bool, modifiers: borrow ModifierContext) -> Color {
+    if selected {
+        return themeAdaptiveColor(tabSelection, modifierTheme(modifiers).appearance())
+    }
+    return Color { a: 0.0 }
 }
 
 construct TabView(initialSelection: Int = 0) extends Widget {

@@ -80,7 +80,7 @@ construct SurfaceLayer(style: Material, shape: ContainerShape) extends Widget {
         let described = content.describe(context, modifierContextForChildren(modifiers))
         let footprint = surfaceFootprint(described.layout)
         if style == .LayeredGlass {
-            return liquidGlassDescription(copy footprint, radius, shape, CAGlassSizing {}, modifiers, [described])
+            return liquidGlassDescription(copy footprint, radius, shape, modifiers, [described])
         }
         var borderWidth = 1.0
         if modifiers.hasThemeBorder == false {
@@ -114,9 +114,9 @@ construct GlassEffectLayer(glass: Glass, shape: ContainerShape) extends Widget {
             surfaceFootprint(described.layout),
             containerShapeRadius(shape, modifiers),
             shape,
-            glassSizing(glass, modifiers),
             modifiers,
-            [described]
+            [described],
+            glass
         )
     }
 }
@@ -125,22 +125,24 @@ construct GlassEffectLayer(glass: Glass, shape: ContainerShape) extends Widget {
 // backdrop behind, blurs and refracts through its shape, holding `sublayers`
 // on top. Every glass surface in the toolkit is this one description — a
 // control's capsule, a toolbar group, a sidebar, a menu — so they are one
-// material. `sizing` is what the surface's size does to it once it is laid
-// out; a menu's panel passes none and stays the material it was measured as.
+// material. `variant` is the glass, `.Regular` unless a surface asks for
+// `.Clear`: what the surface's size does to it once it is laid out -- its blur,
+// the grays its edge burns in and the light along its rim -- read off the
+// platform's glass at each size.
 function liquidGlassDescription(
     layout: CALayoutIntent,
     radius: Float,
     shape: borrow ContainerShape,
-    sizing: CAGlassSizing,
     modifiers: borrow ModifierContext,
     sublayers: [CALayerDescription],
+    variant: borrow Glass = .Regular,
 ) -> CALayerDescription {
     return CALayerDescription {
         layout: layout,
         cornerRadius: radius,
         clipsChildren: true,
         capturesBackdrop: true,
-        content: .Glass(liquidGlassContent(shape, move sizing, modifiers)),
+        content: .Glass(liquidGlassContent(shape, modifiers, variant)),
         sublayers: move sublayers
     }
 }
@@ -148,14 +150,14 @@ function liquidGlassDescription(
 // What a piece of Liquid Glass is drawn with: the platform's measured
 // material -- its wash stack, its rim, the edge light, and the blur the Liquid
 // Glass step takes -- the same stack UI Foundation's `LiquidGlassSurface` draws.
-function liquidGlassContent(shape: borrow ContainerShape, sizing: CAGlassSizing, modifiers: borrow ModifierContext) -> CAGlass {
+function liquidGlassContent(shape: borrow ContainerShape, modifiers: borrow ModifierContext, variant: borrow Glass = .Regular) -> CAGlass {
     return CAGlass {
         blur: surfaceGlassBlur(.LayeredGlass, modifiers),
         edgeRefraction: 1.0,
         tint: caColorFromFoundation(surfaceGlassFill(Color {}, .LayeredGlass, modifiers)),
         material: surfaceGlassMaterial(.LayeredGlass, modifiers),
         shapeKind: surfaceLayerGlassShapeKind(shape),
-        sizing: sizing
+        sizing: glassSizing(variant, modifiers)
     }
 }
 
@@ -192,9 +194,17 @@ function surfaceLayerGlassShapeKind(shape: borrow ContainerShape) -> Int {
 // without repeating the content's size — and what makes a `Panel` unnecessary,
 // because a background shape already fills the box behind the content.
 //
+// SwiftUI's `RoundedCornerStyle`: a circular arc, or the continuous curve that
+// runs into the straight edges (see `ContainerShape.Squircle`).
+enum RoundedCornerStyle {
+    Circular
+    Continuous
+}
+
 construct RoundedRectangle(
     cornerRadius: Float = 0.0,
-    style: CornerRadius = .None,
+    style: RoundedCornerStyle = .Circular,
+    token: CornerRadius = .None,
     followsTheme: Bool = false,
 ) extends Widget {
     // Two ways to name one corner, so one name answers to both.
@@ -206,20 +216,20 @@ construct RoundedRectangle(
     // different shape, so neither gets a different type: the token spelling is
     // an `init`, and `RoundedRectangle(…)` names both.
     init(radius: CornerRadius) {
-        return RoundedRectangle(cornerRadius: 0.0, style: radius, followsTheme: true)
+        return RoundedRectangle(cornerRadius: 0.0, style: .Circular, token: radius, followsTheme: true)
     }
 
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         var radius = cornerRadius
         if followsTheme {
-            radius = cornerRadiusImplementation(style, modifiers)
+            radius = cornerRadiusImplementation(token, modifiers)
         }
-        return shapeDescription(context, modifiers, radius, 0)
+        return shapeDescription(context, modifiers, radius, style == .Continuous ? 1 : 0)
     }
 }
 
-// The square-cornered one. A swatch, a hairline rule, a band of colour behind a
+// The square-cornered one. A swatch, a hairline rule, a band of color behind a
 // page — sized by `.width(...)` / `.height(...)` / `.fillWidth()` like any other
 // view, and filled by the cascade or by `.fill(...)`.
 construct Rectangle() extends Widget {
@@ -236,9 +246,22 @@ construct Capsule() extends Widget {
     }
 }
 
+// What a shape is filled with, as in SwiftUI: the foreground ink in effect, or
+// an explicit `.fill(...)`. On Liquid Glass the material owns its wash.
+function shapeFill(style: borrow Material, modifiers: borrow ModifierContext) -> FoundationColor {
+    if style == .LayeredGlass {
+        return surfaceGlassFill(Color {}, style, modifiers)
+    }
+    var ink = foundationColor(modifierTokens(modifiers).foreground.primary)
+    if modifiers.hasForegroundColor {
+        ink = modifierPrimaryColor(modifiers.foregroundColor, modifiers)
+    }
+    return modifierSurfaceFill(move ink, modifiers)
+}
+
 // One shape, filled the way the modifiers in effect say to fill it: `.material`
 // picks the material, `.backgroundStyle` / `.foregroundColor` the flat fill,
-// `.themeBorder` the edge. A shape does not name its own colour, exactly as
+// `.themeBorder` the edge. A shape does not name its own color, exactly as
 // SwiftUI's does not — `.fill(...)` and the cascade decide.
 function shapeDescription(
     context: borrow BuildContext,
@@ -246,7 +269,6 @@ function shapeDescription(
     radius: Float,
     shapeKind: Int,
 ) -> CALayerDescription {
-    let ignored = context.frameCount
     var style: Material = .Flat
     if modifiers.hasMaterial {
         style = modifiers.material
@@ -262,7 +284,7 @@ function shapeDescription(
     return CALayerDescription {
         cornerRadius: radius,
         content: .Solid(CASolid {
-            fill: caColorFromFoundation(surfaceGlassFill(Color {}, style, modifiers)),
+            fill: caColorFromFoundation(shapeFill(style, modifiers)),
             border: caColorFromFoundation(border),
             borderWidth: borderWidth,
             cornerRadius: radius,

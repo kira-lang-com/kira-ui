@@ -31,11 +31,17 @@ struct KiraUiClock {
     // Whether transitions should be shortened to a cross-dissolve.
     //
     // Every motion entry point takes this and nothing in this stack answers it
-    // yet: the platform query belongs beside the colour scheme in
+    // yet: the platform query belongs beside the color scheme in
     // NativeLibs/Appearance, which reads the same kind of setting from the same
     // four places. Until it is there an app can set it, so the library is honest
     // about the seam rather than hardcoding `false` at thirty call sites.
     var reducedMotion: Bool = false
+    // How many times slower than real time every motion runs, as the
+    // Simulator's Slow Animations does: `KIRA_UI_SLOW_ANIMATIONS=10` gives a
+    // tenth of a second of motion to each second, so a transition can be read
+    // frame by frame against a slowed recording of the platform's. Zero until
+    // the first frame reads it.
+    var slowdown: Int = 0
 }
 
 function kiraUiClockSlotKey() -> String {
@@ -78,7 +84,12 @@ function kiraUiClockCeiling() -> Float {
 function kiraUiClockTick(frame: borrow KiraGraphics.RenderFrame) {
     kiraUiClockEnsure()
     var clock = nativeRecover<KiraUiClock>(kiraUiStateSlotGet(kiraUiClockSlotKey()))
-    clock.delta = min(max(foundationFrameDuration(frame), kiraUiClockFloor()), kiraUiClockCeiling())
+    if clock.slowdown <= 0 {
+        let requested = environmentInt("KIRA_UI_SLOW_ANIMATIONS", 1)
+        clock.slowdown = requested > 1 ? requested : 1
+    }
+    let delta = min(max(foundationFrameDuration(frame), kiraUiClockFloor()), kiraUiClockCeiling())
+    clock.delta = delta / Float(clock.slowdown)
     return
 }
 

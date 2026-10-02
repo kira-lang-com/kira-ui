@@ -28,14 +28,18 @@ struct KiraLayerAppState {
     var frameCount: Int = 0
     var ui: FoundationUiContext = FoundationUiContext {}
     var transparent: Bool = false
-    // The interactive surface the held press landed on, where it landed in the
-    // window and in the surface's own coordinates, and the surface's size. The
-    // pointer's place on the surface is the second moved by however far the
-    // pointer has gone from the first.
+    // The interactive surface the held press landed on -- its layer, and the
+    // key that layer answers under now -- where it landed in the window and in
+    // the surface's own coordinates, and the surface's size. The pointer's
+    // place on the surface is the second moved by however far the pointer has
+    // gone from the first.
+    var pressSurfaceLayer: LayerId = LayerId(0)
     var pressSurface: Int = 0
     var pressWindow: Point = Point {}
     var pressLocal: Point = Point {}
     var pressSize: Size = Size {}
+    // The pressed control's box as the press found it.
+    var pressBounds: Rect = Rect {}
 }
 
 function kiraLayerViewport(frame: borrow RenderFrame, fallbackWidth: Int, fallbackHeight: Int) -> Size {
@@ -71,19 +75,37 @@ function kiraLayerDispatch(userData: RawPtr, x: Float, y: Float, kind: AppEventK
     state.ui.pointerY = y
     let hit = caHitTestTree(state.compositor.tree, x, y)
     state.ui.hoveredKey = hit.hit ? hit.hitKey : 0
+    state.compositor.tree.setHovered(hit.hit ? hit.layer : caNoLayer())
     if kind == .PointerDown {
         state.ui.pressedKey = state.ui.hoveredKey
+        state.compositor.tree.setPressed(hit.hit ? hit.layer : caNoLayer())
+        state.pressSurfaceLayer = hit.surfaceLayer
         state.pressSurface = hit.surfaceKey
         state.pressWindow = Point { x: x, y: y }
         state.pressLocal = Point { x: hit.surfaceX, y: hit.surfaceY }
         state.pressSize = Size { width: hit.surfaceWidth, height: hit.surfaceHeight }
+        // A press focuses the field it lands on, and anywhere else ends the
+        // editing, as a tap outside a field does.
+        state.ui.focusedKey = kiraUiLayerTextInputAccepts(state.ui.hoveredKey) ? state.ui.hoveredKey : 0
+        // Where the control stood when it was pressed, before a press could
+        // move or grow it.
+        state.pressBounds = Rect {
+            x: hit.boundsX,
+            y: hit.boundsY,
+            width: hit.boundsWidth,
+            height: hit.boundsHeight
+        }
     }
     if kind == .PointerUp {
         let released = state.ui.pressedKey
         state.ui.pressedKey = 0
+        state.compositor.tree.setPressed(caNoLayer())
+        state.pressSurfaceLayer = caNoLayer()
         state.pressSurface = 0
         if released != 0 && released == state.ui.hoveredKey {
             state.ui.clickedKey = released
+            // Where the control is, for an action that opens something from it.
+            foundationWritePressBounds(state.ui, state.pressBounds)
             // The release runs the action the pressed key was bound to during
             // the last rebuild's `describe`.
             kiraUiLayerActionInvoke(released)
@@ -91,6 +113,66 @@ function kiraLayerDispatch(userData: RawPtr, x: Float, y: Float, kind: AppEventK
     }
     state.ui.eventCount = state.ui.eventCount + 1
     foundationWriteInputSnapshot(state.ui)
+    return
+}
+
+// Forward the keyboard to the focused field: a typed character as text, any
+// other key as a command. Escape ends the editing instead.
+function kiraLayerDispatchKeyboard(userData: RawPtr, event: borrow AppEvent) {
+    var state = nativeRecover<KiraLayerAppState>(userData)
+    let focused = state.ui.focusedKey
+    if focused == 0 {
+        return
+    }
+    if event.kind == .TextInput {
+        kiraUiLayerTextInputDeliver(focused, event.textCodepoint, false)
+    } else if event.keyCode == 256 {
+        state.ui.focusedKey = 0
+    } else {
+        kiraUiLayerTextInputDeliver(focused, event.keyCode, true)
+    }
+    state.ui.eventCount = state.ui.eventCount + 1
+    foundationWriteInputSnapshot(state.ui)
+    return
+}
+
+// Forward a trackpad's scroll to the stack's swipe back. Only a gesture's own
+// phases count -- a wheel reports none, and the glide after the fingers lift
+// is not the fingers -- and a swipe starts only off the controls.
+function kiraLayerDispatchScroll(userData: RawPtr, event: borrow AppEvent) {
+    if !event.scrollPrecise || event.scrollMomentum != .None {
+        return
+    }
+    if event.scrollPhase == .Began {
+        let state = nativeRecover<KiraLayerAppState>(userData)
+        let hit = caHitTestTree(state.compositor.tree, event.pointerX, event.pointerY)
+        kiraUiNavigationSwipeBegin(event.pointerX, event.pointerY, hit.hit)
+    }
+    if event.scrollPhase == .Began || event.scrollPhase == .Changed {
+        // The deltas follow the fingers under natural scrolling and run
+        // against them otherwise; the swipe wants the fingers.
+        let across = event.scrollInverted ? event.scrollX : 0.0 - event.scrollX
+        kiraUiNavigationSwipeMove(across, event.scrollY)
+    }
+    if event.scrollPhase == .Ended || event.scrollPhase == .Cancelled {
+        kiraUiNavigationSwipeEnd()
+    }
+    return
+}
+
+// Forward a touch to the stack's swipe back, as a trackpad's fingers are.
+function kiraLayerDispatchTouch(userData: RawPtr, event: borrow AppEvent) {
+    if event.kind == .TouchesBegan {
+        let state = nativeRecover<KiraLayerAppState>(userData)
+        let hit = caHitTestTree(state.compositor.tree, event.pointerX, event.pointerY)
+        kiraUiNavigationSwipeBegin(event.pointerX, event.pointerY, hit.hit)
+    }
+    if event.kind == .TouchesMoved {
+        kiraUiNavigationSwipeTouchMove(event.pointerX, event.pointerY)
+    }
+    if event.kind == .TouchesEnded || event.kind == .TouchesCancelled {
+        kiraUiNavigationSwipeEnd()
+    }
     return
 }
 
@@ -140,6 +222,8 @@ function RunKiraLayerApp(
         // An opaque window is a document window: its title and toolbar share
         // one band the content runs under, and KiraUI draws what sits on it.
         titlebar: transparent ? .Standard : .Unified,
+        // And its corner is the platform's window corner, not the desktop's.
+        cornerRadius: transparent ? 0.0 : windowChromeMetrics.cornerRadius,
         windowDragRegion: { x, y in
             return kiraLayerWindowDragRegion(runtimeUser, x, y)
         },
@@ -149,6 +233,15 @@ function RunKiraLayerApp(
     app.onEvent { event in
         if event.kind == .PointerMoved || event.kind == .PointerDown || event.kind == .PointerUp {
             kiraLayerDispatch(runtimeUser, event.pointerX, event.pointerY, event.kind)
+        }
+        if event.kind == .TextInput || event.kind == .KeyDown {
+            kiraLayerDispatchKeyboard(runtimeUser, event)
+        }
+        if event.kind == .Scroll {
+            kiraLayerDispatchScroll(runtimeUser, event)
+        }
+        if event.kind == .TouchesBegan || event.kind == .TouchesMoved || event.kind == .TouchesEnded || event.kind == .TouchesCancelled {
+            kiraLayerDispatchTouch(runtimeUser, event)
         }
         return
     }
@@ -160,6 +253,11 @@ function RunKiraLayerApp(
         hostFrame(frame)
         var state = nativeRecover<KiraLayerAppState>(frame.userData)
         let viewport = kiraLayerViewport(frame, width, height)
+        // A window being resized lays its content out again every frame, and
+        // the content takes the new size as the window does, as UIKit's does in
+        // a live resize: nothing slides to where the new layout puts it, and
+        // nothing already animating is cut short.
+        let resized = viewport.width != state.ui.viewport.width || viewport.height != state.ui.viewport.height
         state.ui.viewport = viewport
         state.ui.frameCount = state.frameCount
         let renderScale = foundationRenderScale(frame.backingScale())
@@ -191,6 +289,8 @@ function RunKiraLayerApp(
         }
         widgetContext.heldSize = state.pressSize
         var described = CALayerDescription {}
+        // What floats is declared while the tree lowers and drawn over it.
+        kiraUiOverlayCollect()
         if state.transparent {
             described = build().describe(widgetContext, ModifierContext {})
         } else {
@@ -203,16 +303,34 @@ function RunKiraLayerApp(
             kiraUiToolbarStopCollecting()
             described = windowDescription(move content, widgetContext, ModifierContext {})
         }
+        kiraUiOverlayStopCollecting()
+        described = overlayStack(move described, kiraUiOverlaysThisFrame(), viewport.width, viewport.height)
         caLayoutTree(described, viewport.width, viewport.height)
-        let mount = state.frameCount == 0
-        if mount {
-            let ignored = caReconcileImmediate(state.compositor.tree, described)
+        if state.frameCount == 0 {
+            caReconcileImmediate(state.compositor.tree, described)
+        } else if resized {
+            caReconcileResizing(state.compositor.tree, described)
         } else {
-            let ignored = caReconcile(state.compositor.tree, described)
+            caReconcile(state.compositor.tree, described)
         }
+        // A press is held by the layers it landed on, not by the keys they had
+        // then: a rebuild that numbers the controls differently moves the keys,
+        // and the press follows its layers to theirs. A layer that is gone takes
+        // its press with it.
+        state.ui.pressedKey = state.compositor.tree.hitKeyOf(state.compositor.tree.pressed())
+        state.pressSurface = state.compositor.tree.hitKeyOf(state.pressSurfaceLayer)
 
-        let ignoredAdvance = caCompositorAdvance(state.compositor, frame)
-        let ignoredEncode = caCompositorEncode(
+        // What the pointer is over is decided against the tree just built: a
+        // rebuild moves things under a pointer that has not moved, and a key
+        // remembered from the last tree may name a different control in this
+        // one.
+        let under = caHitTestTree(state.compositor.tree, state.ui.pointerX, state.ui.pointerY)
+        state.ui.hoveredKey = under.hit ? under.hitKey : 0
+        state.compositor.tree.setHovered(under.hit ? under.layer : caNoLayer())
+        foundationWriteInputSnapshot(state.ui)
+
+        caCompositorAdvance(state.compositor, frame)
+        caCompositorEncode(
             state.compositor,
             frame,
             graphics,

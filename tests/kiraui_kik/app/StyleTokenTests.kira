@@ -3,25 +3,32 @@ import KiraUI
 
 // The default style's tokens.
 //
-// These values used to be literals in `Styles.kira` and are now renditions in a
-// KCoreUI catalog. The point of this file is that moving them changed nothing:
-// every number below is the one the toolkit shipped before the catalog existed,
-// so a regression here is a regression in what the toolkit draws.
+// These are renditions in the KCoreUI catalog, and the catalog's colors are
+// Apple's: the variables of the iOS and iPadOS 27 design kit, quoted 0-255 as
+// the kit quotes them. A regression here is a regression in what the toolkit
+// draws. What Apple has no word for -- the intents, the border ladder, ink on a
+// filled control -- is the toolkit's own, quoted as it was authored.
 //
-// A catalog stores a channel as 16.16 fixed point, so a value authored in
-// thousandths comes back within one part in 65536 of what was written. That is
-// four decimal places finer than an 8-bit channel can express, and it is why
-// these compare within a tolerance rather than exactly.
+// A catalog stores a channel as 16.16 fixed point, in Display P3, so a value
+// comes back within a few parts in 65536 of what was written. That is finer
+// than an 8-bit channel can express, and it is why these compare within a
+// tolerance rather than exactly.
 
 function kuiNear(left: Float, right: Float) -> Bool {
     return abs(left - right) < 0.0001
 }
 
-// Compared channel by channel rather than through one colour parameter. KiraUI
+// Compared channel by channel rather than through one color parameter. KiraUI
 // declares its own `Color` and the resolved token structs carry another, so a
 // helper taking either would only work on half the cases here.
 function kuiRgba(r: Float, g: Float, b: Float, a: Float, er: Float, eg: Float, eb: Float, ea: Float) -> Bool {
     return kuiNear(r, er) && kuiNear(g, eg) && kuiNear(b, eb) && kuiNear(a, ea)
+}
+
+// The same, against a color as the kit quotes it: 0-255 channels and a unit
+// alpha.
+function kuiKit(r: Float, g: Float, b: Float, a: Float, er: Float, eg: Float, eb: Float, ea: Float) -> Bool {
+    return kuiRgba(r, g, b, a, er / 255.0, eg / 255.0, eb / 255.0, ea)
 }
 
 function kuiTokens() -> ThemeTokens {
@@ -37,10 +44,10 @@ function kuiStyle() -> Any StyleImplementation {
 construct KuiThePaletteKeepsItsAuthoredValues() extends Test {
     test {
         let palette = kuiStyle().palette
-        return kuiRgba(palette.red.light.r, palette.red.light.g, palette.red.light.b, palette.red.light.a, 1.0, 0.231, 0.188, 1.0)
-            && kuiRgba(palette.red.dark.r, palette.red.dark.g, palette.red.dark.b, palette.red.dark.a, 1.0, 0.271, 0.227, 1.0)
-            && kuiRgba(palette.blue.light.r, palette.blue.light.g, palette.blue.light.b, palette.blue.light.a, 0.0, 0.478, 1.0, 1.0)
-            && kuiRgba(palette.gray.dark.r, palette.gray.dark.g, palette.gray.dark.b, palette.gray.dark.a, 0.557, 0.557, 0.576, 1.0)
+        return kuiKit(palette.red.light.r, palette.red.light.g, palette.red.light.b, palette.red.light.a, 255.0, 56.0, 60.0, 1.0)
+            && kuiKit(palette.red.dark.r, palette.red.dark.g, palette.red.dark.b, palette.red.dark.a, 255.0, 66.0, 69.0, 1.0)
+            && kuiKit(palette.blue.light.r, palette.blue.light.g, palette.blue.light.b, palette.blue.light.a, 0.0, 136.0, 255.0, 1.0)
+            && kuiKit(palette.gray.dark.r, palette.gray.dark.g, palette.gray.dark.b, palette.gray.dark.a, 142.0, 142.0, 147.0, 1.0)
     }
     expect { let e: Result<Any, TestFailure> = Result.Ok(true)
         return e
@@ -52,18 +59,18 @@ construct KuiThePaletteKeepsItsAuthoredValues() extends Test {
 construct KuiTheForegroundLadderKeepsItsAuthoredValues() extends Test {
     test {
         let foregrounds = kuiStyle().foregrounds
-        return kuiRgba(foregrounds.primary.light.r, foregrounds.primary.light.g, foregrounds.primary.light.b, foregrounds.primary.light.a, 0.08, 0.09, 0.12, 1.0)
-            && kuiRgba(foregrounds.primary.dark.r, foregrounds.primary.dark.g, foregrounds.primary.dark.b, foregrounds.primary.dark.a, 0.95, 0.96, 0.99, 1.0)
-            && kuiRgba(foregrounds.secondary.light.r, foregrounds.secondary.light.g, foregrounds.secondary.light.b, foregrounds.secondary.light.a, 0.38, 0.4, 0.46, 1.0)
-            && kuiRgba(foregrounds.tertiary.light.r, foregrounds.tertiary.light.g, foregrounds.tertiary.light.b, foregrounds.tertiary.light.a, 0.5, 0.51, 0.55, 0.58)
-            && kuiRgba(foregrounds.quaternary.dark.r, foregrounds.quaternary.dark.g, foregrounds.quaternary.dark.b, foregrounds.quaternary.dark.a, 0.58, 0.6, 0.66, 0.34)
+        return kuiKit(foregrounds.primary.light.r, foregrounds.primary.light.g, foregrounds.primary.light.b, foregrounds.primary.light.a, 0.0, 0.0, 0.0, 1.0)
+            && kuiKit(foregrounds.primary.dark.r, foregrounds.primary.dark.g, foregrounds.primary.dark.b, foregrounds.primary.dark.a, 255.0, 255.0, 255.0, 1.0)
+            && kuiKit(foregrounds.secondary.light.r, foregrounds.secondary.light.g, foregrounds.secondary.light.b, foregrounds.secondary.light.a, 60.0, 60.0, 67.0, 0.6)
+            && kuiKit(foregrounds.tertiary.light.r, foregrounds.tertiary.light.g, foregrounds.tertiary.light.b, foregrounds.tertiary.light.a, 60.0, 60.0, 67.0, 0.3)
+            && kuiKit(foregrounds.quaternary.dark.r, foregrounds.quaternary.dark.g, foregrounds.quaternary.dark.b, foregrounds.quaternary.dark.a, 235.0, 235.0, 245.0, 0.16)
     }
     expect { let e: Result<Any, TestFailure> = Result.Ok(true)
         return e
     }
 }
 
-// Ink that stays readable on a filled control. Apple names no such colour, so
+// Ink that stays readable on a filled control. Apple names no such color, so
 // the catalog carries it under a name of the toolkit's own.
 construct KuiTheInverseForegroundSurvivedTheMove() extends Test {
     test {
@@ -81,11 +88,11 @@ construct KuiTheInverseForegroundSurvivedTheMove() extends Test {
 construct KuiTheElevationLadderKeepsItsAuthoredValues() extends Test {
     test {
         let backgrounds = kuiStyle().backgrounds
-        return kuiRgba(backgrounds.canvas.light.r, backgrounds.canvas.light.g, backgrounds.canvas.light.b, backgrounds.canvas.light.a, 0.95, 0.96, 0.98, 1.0)
-            && kuiRgba(backgrounds.canvas.dark.r, backgrounds.canvas.dark.g, backgrounds.canvas.dark.b, backgrounds.canvas.dark.a, 0.035, 0.04, 0.065, 1.0)
-            && kuiRgba(backgrounds.surface.light.r, backgrounds.surface.light.g, backgrounds.surface.light.b, backgrounds.surface.light.a, 1.0, 1.0, 1.0, 0.92)
-            && kuiRgba(backgrounds.raised.dark.r, backgrounds.raised.dark.g, backgrounds.raised.dark.b, backgrounds.raised.dark.a, 0.12, 0.14, 0.2, 0.96)
-            && kuiRgba(backgrounds.overlay.light.r, backgrounds.overlay.light.g, backgrounds.overlay.light.b, backgrounds.overlay.light.a, 0.96, 0.97, 1.0, 0.88)
+        return kuiKit(backgrounds.canvas.light.r, backgrounds.canvas.light.g, backgrounds.canvas.light.b, backgrounds.canvas.light.a, 255.0, 255.0, 255.0, 1.0)
+            && kuiKit(backgrounds.canvas.dark.r, backgrounds.canvas.dark.g, backgrounds.canvas.dark.b, backgrounds.canvas.dark.a, 0.0, 0.0, 0.0, 1.0)
+            && kuiKit(backgrounds.surface.light.r, backgrounds.surface.light.g, backgrounds.surface.light.b, backgrounds.surface.light.a, 242.0, 242.0, 247.0, 1.0)
+            && kuiKit(backgrounds.raised.dark.r, backgrounds.raised.dark.g, backgrounds.raised.dark.b, backgrounds.raised.dark.a, 44.0, 44.0, 46.0, 1.0)
+            && kuiKit(backgrounds.overlay.light.r, backgrounds.overlay.light.g, backgrounds.overlay.light.b, backgrounds.overlay.light.a, 255.0, 255.0, 255.0, 1.0)
     }
     expect { let e: Result<Any, TestFailure> = Result.Ok(true)
         return e
@@ -95,9 +102,9 @@ construct KuiTheElevationLadderKeepsItsAuthoredValues() extends Test {
 construct KuiTheFillsKeepTheirAuthoredValues() extends Test {
     test {
         let fills = kuiStyle().fills
-        return kuiRgba(fills.control.light.r, fills.control.light.g, fills.control.light.b, fills.control.light.a, 0.91, 0.93, 0.98, 1.0)
-            && kuiRgba(fills.hover.dark.r, fills.hover.dark.g, fills.hover.dark.b, fills.hover.dark.a, 0.95, 0.96, 0.99, 0.08)
-            && kuiRgba(fills.selection.light.r, fills.selection.light.g, fills.selection.light.b, fills.selection.light.a, 0.2, 0.45, 0.96, 0.22)
+        return kuiKit(fills.control.light.r, fills.control.light.g, fills.control.light.b, fills.control.light.a, 120.0, 120.0, 120.0, 0.2)
+            && kuiKit(fills.hover.dark.r, fills.hover.dark.g, fills.hover.dark.b, fills.hover.dark.a, 120.0, 120.0, 128.0, 0.32)
+            && kuiKit(fills.selection.light.r, fills.selection.light.g, fills.selection.light.b, fills.selection.light.a, 80.0, 156.0, 254.0, 0.2)
     }
     expect { let e: Result<Any, TestFailure> = Result.Ok(true)
         return e
@@ -109,11 +116,11 @@ construct KuiTheFillsKeepTheirAuthoredValues() extends Test {
 construct KuiTheTintsKeepTheirAuthoredValues() extends Test {
     test {
         let tints = kuiStyle().tints
-        return kuiRgba(tints.accent.light.r, tints.accent.light.g, tints.accent.light.b, tints.accent.light.a, 0.2, 0.45, 0.96, 1.0)
-            && kuiRgba(tints.accent.dark.r, tints.accent.dark.g, tints.accent.dark.b, tints.accent.dark.a, 0.43, 0.67, 1.0, 1.0)
+        return kuiKit(tints.accent.light.r, tints.accent.light.g, tints.accent.light.b, tints.accent.light.a, 0.0, 136.0, 255.0, 1.0)
+            && kuiKit(tints.accent.dark.r, tints.accent.dark.g, tints.accent.dark.b, tints.accent.dark.a, 0.0, 145.0, 255.0, 1.0)
             && kuiRgba(tints.success.light.r, tints.success.light.g, tints.success.light.b, tints.success.light.a, 0.12, 0.58, 0.3, 1.0)
             && kuiRgba(tints.warning.dark.r, tints.warning.dark.g, tints.warning.dark.b, tints.warning.dark.a, 0.98, 0.75, 0.25, 1.0)
-            && kuiRgba(tints.danger.dark.r, tints.danger.dark.g, tints.danger.dark.b, tints.danger.dark.a, 0.96, 0.31, 0.37, 1.0)
+            && kuiKit(tints.danger.dark.r, tints.danger.dark.g, tints.danger.dark.b, tints.danger.dark.a, 255.0, 66.0, 69.0, 1.0)
     }
     expect { let e: Result<Any, TestFailure> = Result.Ok(true)
         return e
@@ -122,12 +129,12 @@ construct KuiTheTintsKeepTheirAuthoredValues() extends Test {
 
 // --- Borders ---------------------------------------------------------------
 
-// A border is a catalog colour and a width the toolkit still owns, so this case
+// A border is a catalog color and a width the toolkit still owns, so this case
 // checks both halves of that split.
-construct KuiTheBorderLadderKeepsItsColoursAndWidths() extends Test {
+construct KuiTheBorderLadderKeepsItsColorsAndWidths() extends Test {
     test {
         let borders = kuiStyle().borders
-        return kuiRgba(borders.subtle.color.light.r, borders.subtle.color.light.g, borders.subtle.color.light.b, borders.subtle.color.light.a, 0.08, 0.1, 0.16, 0.1)
+        return kuiKit(borders.subtle.color.light.r, borders.subtle.color.light.g, borders.subtle.color.light.b, borders.subtle.color.light.a, 0.0, 0.0, 0.0, 0.12)
             && kuiRgba(borders.standard.color.dark.r, borders.standard.color.dark.g, borders.standard.color.dark.b, borders.standard.color.dark.a, 1.0, 1.0, 1.0, 0.18)
             && kuiRgba(borders.strong.color.light.r, borders.strong.color.light.g, borders.strong.color.light.b, borders.strong.color.light.a, 0.08, 0.1, 0.16, 0.32)
             && kuiRgba(borders.focus.color.dark.r, borders.focus.color.dark.g, borders.focus.color.dark.b, borders.focus.color.dark.a, 0.43, 0.67, 1.0, 0.9)
@@ -151,16 +158,16 @@ function kuiFontIs(font: borrow FontImplementation, size: Float, lineHeight: Flo
 construct KuiTheTextMetricsKeepTheirAuthoredValues() extends Test {
     test {
         let typography = kuiStyle().typography
-        return kuiFontIs(typography.body, 15.0, 21.0, 0.0)
-            && kuiFontIs(typography.caption, 12.0, 16.0, 0.2)
+        return kuiFontIs(typography.body, 17.0, 22.0, 0.0 - 0.43)
+            && kuiFontIs(typography.caption, 12.0, 16.0, 0.0)
             && kuiFontIs(typography.control, 15.0, 20.0, 0.0)
-            && kuiFontIs(typography.title, 28.0, 34.0, 0.0 - 0.3)
-            && kuiFontIs(typography.footnote, 11.0, 15.0, 0.0)
+            && kuiFontIs(typography.title, 28.0, 34.0, 0.38)
+            && kuiFontIs(typography.footnote, 13.0, 18.0, 0.0 - 0.08)
             && kuiFontIs(typography.overline, 10.0, 13.0, 0.5)
-            && kuiFontIs(typography.headline, 18.0, 23.0, 0.0)
+            && kuiFontIs(typography.headline, 17.0, 22.0, 0.0 - 0.43)
             && kuiFontIs(typography.title1, 30.0, 36.0, 0.0 - 0.3)
-            && kuiFontIs(typography.title2, 24.0, 29.0, 0.0 - 0.2)
-            && kuiFontIs(typography.title3, 28.0, 34.0, 0.0 - 0.2)
+            && kuiFontIs(typography.title2, 22.0, 28.0, 0.0 - 0.26)
+            && kuiFontIs(typography.title3, 20.0, 25.0, 0.0 - 0.45)
     }
     expect { let e: Result<Any, TestFailure> = Result.Ok(true)
         return e
@@ -174,7 +181,7 @@ construct KuiTheTextWeightsSurviveTheNumericAxis() extends Test {
         return typography.body.weight == .Regular
             && typography.control.weight == .SemiBold
             && typography.label.weight == .SemiBold
-            && typography.title.weight == .Bold
+            && typography.title.weight == .Regular
             && typography.section.weight == .Bold
     }
     expect { let e: Result<Any, TestFailure> = Result.Ok(true)
@@ -193,7 +200,7 @@ construct KuiResolvedTokensReachAWidgetUnchanged() extends Test {
         let expectedPrimary = themeAdaptiveColor(kuiStyle().foregrounds.primary, resolvedAppearance(kuiStyle().appearance))
         return kuiRgba(tokens.foreground.primary.r, tokens.foreground.primary.g, tokens.foreground.primary.b, tokens.foreground.primary.a, expectedPrimary.r, expectedPrimary.g, expectedPrimary.b, expectedPrimary.a)
             && tokens.border.focus.width == 2.0
-            && kuiNear(tokens.bodySize, 15.0)
+            && kuiNear(tokens.bodySize, 17.0)
     }
     expect { let e: Result<Any, TestFailure> = Result.Ok(true)
         return e

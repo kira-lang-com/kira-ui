@@ -196,6 +196,10 @@ construct NavigationValue {
 
 struct KiraUiNavigationPathState {
     var values: [Any NavigationValue] = []
+    // Which run of views the path is showing. Replacing the path with one
+    // that starts somewhere else -- choosing another sidebar row -- starts a
+    // new run: its views are new views, not the old ones changed.
+    var generation: Int = 0
 }
 
 // NavigationPath is an empty value-shaped handle over the app navigation state.
@@ -268,7 +272,8 @@ function kiraUiNavigationValues() -> [Any NavigationValue] {
     return state.values
 }
 
-function kiraUiNavigationSetValues(values: [Any NavigationValue]) {
+// The path, replaced as it is: nothing moves.
+function kiraUiNavigationStore(values: [Any NavigationValue]) {
     kiraUiNavigationEnsure()
     var state = nativeRecover<KiraUiNavigationPathState>(
         kiraUiStateSlotGet(kiraUiNavigationSlotKey())
@@ -277,19 +282,56 @@ function kiraUiNavigationSetValues(values: [Any NavigationValue]) {
     return
 }
 
+// The path replaced outright, as choosing a sidebar's row replaces it: the new
+// view is simply there, and whatever was moving stops. A path that starts
+// somewhere new is a new run of views, so nothing of the old one turns into it.
+function kiraUiNavigationSetValues(values: [Any NavigationValue]) {
+    kiraUiNavigationTransitionCancel()
+    kiraUiNavigationEnsure()
+    var state = nativeRecover<KiraUiNavigationPathState>(
+        kiraUiStateSlotGet(kiraUiNavigationSlotKey())
+    )
+    if navigationRootType(state.values) != navigationRootType(values) {
+        state.generation = state.generation + 1
+        kiraUiMenuDismissAll()
+    }
+    state.values = move values
+    return
+}
+
+// What a path starts at, by the type of its first value; empty for an empty
+// path.
+function navigationRootType(values: borrow [Any NavigationValue]) -> String {
+    if values.count == 0 {
+        return ""
+    }
+    return values[0].navigationType()
+}
+
+function kiraUiNavigationGeneration() -> Int {
+    kiraUiNavigationEnsure()
+    let state = nativeRecover<KiraUiNavigationPathState>(
+        kiraUiStateSlotGet(kiraUiNavigationSlotKey())
+    )
+    return state.generation
+}
+
+// A value pushed: the view it shows slides in over the one that was showing.
 function kiraUiNavigationPush(value: Any NavigationValue) {
     let current = kiraUiNavigationValues()
     var next: [Any NavigationValue] = []
     var index = 0
     while index < current.count {
-        next.append(move current[index])
+        next.append(copy current[index])
         index = index + 1
     }
     next.append(move value)
-    kiraUiNavigationSetValues(move next)
+    kiraUiNavigationTransitionPush(move current, copy next)
+    kiraUiNavigationStore(move next)
     return
 }
 
+// The last value popped: the view it showed slides off the one under it.
 function kiraUiNavigationPop() {
     let current = kiraUiNavigationValues()
     if current.count == 0 {
@@ -298,10 +340,11 @@ function kiraUiNavigationPop() {
     var next: [Any NavigationValue] = []
     var index = 0
     while index < current.count - 1 {
-        next.append(move current[index])
+        next.append(copy current[index])
         index = index + 1
     }
-    kiraUiNavigationSetValues(move next)
+    kiraUiNavigationTransitionPop(move current, copy next)
+    kiraUiNavigationStore(move next)
     return
 }
 
@@ -322,7 +365,7 @@ struct KiraUiNavigationEnvironment {
     // What the view a stack is showing asked its column to be painted with, as
     // SwiftUI's `containerBackground(_:for: .navigation)` asks. A grouped list
     // asks for its grouped canvas, so the column under the bar is the list's
-    // grey rather than a band of the window's own.
+    // gray rather than a band of the window's own.
     var hasBackground: Bool = false
     var background: Color = Color {}
 }
@@ -407,9 +450,9 @@ function navigationPushAction(value: Any NavigationValue) -> () -> Void {
 function navigationSelectAction(value: Any NavigationValue) -> () -> Void {
     var targetValue = move value
     let action: () -> Void = { in
-        let path = NavigationPath {}
-        path.removeAll()
-        path.append(value: copy targetValue)
+        var chosen: [Any NavigationValue] = []
+        chosen.append(copy targetValue)
+        kiraUiNavigationSetValues(move chosen)
         return
     }
     return action
@@ -417,8 +460,7 @@ function navigationSelectAction(value: Any NavigationValue) -> () -> Void {
 
 function navigationPopAction() -> () -> Void {
     let action: () -> Void = { in
-        let path = NavigationPath {}
-        path.removeLast()
+        kiraUiNavigationBack()
         return
     }
     return action
@@ -505,7 +547,14 @@ construct NavigationLink(value: Any NavigationValue) extends Widget {
                     .foregroundColor(.Tertiary)
             }
             .minHeight(listMetrics.rowHeight)
-            return row.onClick(navigationPushAction(move value)).describe(context, modifiers)
+            // The press is the whole row's, which the list lights across the
+            // card: the link only says what it does.
+            let key = kiraUiTapSeqKey()
+            kiraUiLayerActionRegister(key, navigationPushAction(move value))
+            var described = row.describe(context, modifiers)
+            described.hittable = !modifiers.disabled
+            described.hitKey = key
+            return described
         }
         let metrics = navigationMetrics(context.viewportWidth)
         let target = label.minHeight(metrics.targetSize)
@@ -588,6 +637,15 @@ extend Widget {
 
 // One-column push navigation. The root view is never put in the path and
 // cannot be popped, matching NavigationStack.
+//
+// Each view the stack shows is a page of its own: its canvas under the bar,
+// its title set large, then its content. While the stack moves between two
+// views it shows both -- the one under, dimmed, and the
+// one moving over it, slid across by how far it has gone, its corners rounded.
+// A page is known by how deep in the path it is, so the view that was showing
+// is the same page when it is covered and when it is uncovered again; the
+// pages together are known by the path's generation, so a path replaced by
+// one that starts elsewhere shows new pages rather than reshaping the old.
 construct NavigationStack(path: NavigationPath = NavigationPath {}) extends Widget {
     let root: some Widget
 
@@ -595,38 +653,110 @@ construct NavigationStack(path: NavigationPath = NavigationPath {}) extends Widg
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let previous = kiraUiNavigationEnter(false)
         let columnModifiers = navigationColumnModifiers(modifiers, navigationMetrics(context.viewportWidth))
-        if path.isEmpty() == false {
+        kiraUiNavigationTransitionAdvance(context.viewportWidth)
+        let transition = kiraUiNavigationTransition()
+        var pages: [CALayerDescription] = []
+        if transition.active {
+            let current = kiraUiNavigationValues()
+            // The view on top lowers first and under the stack's own keys, so
+            // its controls keep the keys they had before anything moved.
+            let mark = kiraUiToolbarMark()
+            kiraUiNavigationStore(copy transition.front)
+            let front = self.page(context, modifiers, columnModifiers, transition.front.count, navigationTransitionMetrics.pageCornerRadius)
+            let top = kiraUiToolbarBeginCovered(mark)
+            kiraUiTapSeqEnterCovered()
+            kiraUiNavigationStore(copy transition.covered)
+            let under = self.page(context, modifiers, columnModifiers, transition.covered.count, 0.0)
+            kiraUiTapSeqLeaveCovered()
+            kiraUiToolbarEndCovered(move top, mark, transition.progress)
+            kiraUiNavigationStore(move current)
+            pages.append(navigationCoveredPage(move under, transition.progress, context.viewportWidth))
+            pages.append(navigationMovingPage(move front, transition.progress, context.viewportWidth))
+        } else {
+            pages.append(self.page(context, modifiers, columnModifiers, kiraUiNavigationValues().count, 0.0))
+        }
+        kiraUiNavigationLeave(previous)
+        // The stack's canvas runs under the window's bar; what it shows starts
+        // below it, under its title set large.
+        kiraUiChromeSafeAreaHandled()
+        return CALayerDescription {
+            clipsChildren: true,
+            sublayers: [CALayerDescription {
+                key: kiraUiNavigationGeneration() + 1,
+                sublayers: move pages
+            }]
+        }
+    }
+
+    // The view the path shows, as one page `depth` views deep: its canvas,
+    // rounded by `radius`, and inside the safe area its title and content.
+    function page(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext,
+        columnModifiers: borrow ModifierContext,
+        depth: Int,
+        radius: Float,
+    ) -> CALayerDescription {
+        if depth > kiraUiNavigationRootDepth() {
             navigationDeclareBack(context, modifiers)
         }
         kiraUiNavigationClearBackground()
         let view = root.describe(insideSafeArea(context), columnModifiers)
         let canvas = navigationColumnCanvas(modifiers)
-        kiraUiNavigationLeave(previous)
-        // The stack's canvas runs under the window's bar; what it shows starts
-        // below it, under its title set large.
-        kiraUiChromeSafeAreaHandled()
-        var page: [CALayerDescription] = []
+        var column: [CALayerDescription] = []
         let title = kiraUiToolbarColumnTitle()
         if title.count > 0 {
             kiraUiToolbarShowLargeTitle()
-            page.append(navigationLargeTitle(move title, context, columnModifiers))
+            column.append(navigationLargeTitle(move title, context, columnModifiers))
         }
         var content = move view
         content.layout.flex = 1
-        page.append(move content)
+        column.append(move content)
         return CALayerDescription {
+            key: depth + 1,
+            cornerRadius: radius,
             clipsChildren: true,
+            // The stack moves its pages itself, every frame.
+            disablesActions: true,
             content: .Solid(CASolid {
-                fill: caColorFromFoundation(canvas)
+                fill: caColorFromFoundation(canvas),
+                cornerRadius: radius,
+                shapeKind: 1
             }),
             sublayers: [safeAreaInset(CALayerDescription {
                 layout: CALayoutIntent {
                     axis: .Column
                 },
-                sublayers: move page
+                sublayers: move column
             }, context.safeArea)]
         }
     }
+}
+
+// The page under a moving one, under a dimming that lifts as it is
+// uncovered, trailing the moving page at a fraction of its speed from a little
+// way toward the leading edge. Nothing on it answers a press.
+function navigationCoveredPage(page: CALayerDescription, progress: Float, width: Float) -> CALayerDescription {
+    let metrics = navigationTransitionMetrics
+    var covered = move page
+    layerInert(covered)
+    covered.layout.offset = Point { x: 0.0 - (1.0 - progress) * width * metrics.coveredParallax, y: 0.0 }
+    covered.sublayers.append(CALayerDescription {
+        opacity: metrics.coveredDim * (1.0 - progress),
+        disablesActions: true,
+        content: .Solid(CASolid {
+            fill: CAColor { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }
+        })
+    })
+    return covered
+}
+
+// The page moving over another: slid toward the trailing edge by how far it
+// has gone across the stack's width.
+function navigationMovingPage(page: CALayerDescription, progress: Float, width: Float) -> CALayerDescription {
+    var moving = move page
+    moving.layout.offset = Point { x: progress * width, y: 0.0 }
+    return moving
 }
 
 // A stack's title set large under the bar, at the column's margin, in the
@@ -654,7 +784,7 @@ function navigationLargeTitle(title: String, context: borrow BuildContext, modif
 // NavigationSplitViewVisibility. `Automatic` is the platform's own answer, which
 // on a window wide enough to split is every column the view was given.
 //
-// `DoubleColumn` means two columns beside the detail's neighbour: on the
+// `DoubleColumn` means two columns beside the detail's neighbor: on the
 // three-column form that is the content and the detail, and on the two-column
 // form — where there is no content column to fall back to — it is the sidebar
 // and the detail. SwiftUI reads the same way; the case is named for how many
@@ -710,15 +840,25 @@ construct NavigationSplitView(
     let detail: some Widget
 
 
-    // The columns as sublayers, each described under its own toolbar column so
-    // the items and title each one declares land over it.
+    // The columns, each described under its own toolbar column so the items
+    // and title each one declares land over it.
     //
     // Side by side, the sidebar is a pane of glass the window's full height:
     // it runs under the bar, so the window controls and the sidebar's items sit
-    // on it, and only its content is held below the band. The detail does the
-    // same over the window's canvas, a hairline between the two.
+    // on it, and only its content is held below the band. The detail runs
+    // under the sidebar too, to the window's leading edge, with its content
+    // held clear of it: the glass is over the detail's canvas, and a view the
+    // detail slides in or out passes under the glass rather than being cut at
+    // the column's edge.
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let metrics = navigationMetrics(context.viewportWidth)
+        let split = metrics.presentation == .Split
+        // The split view's own toggle is always on the bar; what it decides is
+        // whether the sidebar is.
+        let showsSidebar = split && navigationShowsSidebar(columnVisibility, false) && !kiraUiSidebarCollapsed()
+        // Side by side, the row chosen in the sidebar is the root of what the
+        // detail shows; stacked, the sidebar is the root and the row is pushed.
+        kiraUiNavigationSetRootDepth(split ? 1 : 0)
         let inner = insideSafeArea(context)
         let previous = kiraUiNavigationEnter(true)
         kiraUiInspectorCollect()
@@ -726,21 +866,31 @@ construct NavigationSplitView(
         let sidebarDesc = sidebar.describe(inner, navigationSidebarModifiers(modifiers, metrics))
         kiraUiToolbarEnterColumn(kiraUiToolbarContentColumn())
         let contentDesc = content.describe(inner, navigationColumnModifiers(modifiers, metrics))
-        // The detail is handed the window's safe area: a stack in it paints its
-        // canvas under the bar and holds only its content below it, as the
-        // sidebar's glass does. Anything else is held below the bar here.
+        // The detail is handed the window's safe area, and the sidebar and the
+        // content column as more of it on the leading side: a stack in it
+        // paints its canvas under all of them and holds only its content clear.
+        // Anything else is held clear here.
+        var beside = 0.0
+        if showsSidebar {
+            beside = metrics.primaryWidth + windowChromeMetrics.dividerThickness
+        }
+        if split {
+            beside = beside + caMeasure(contentDesc, context.viewportWidth).width
+        }
+        var detailContext = copy context
+        detailContext.safeArea.leading = detailContext.safeArea.leading + beside
         kiraUiToolbarEnterColumn(kiraUiToolbarDetailColumn())
         kiraUiChromeSafeAreaPending()
-        var detailDesc = detail.describe(context, navigationColumnModifiers(modifiers, metrics))
+        var detailDesc = detail.describe(detailContext, navigationColumnModifiers(modifiers, metrics))
         if !kiraUiChromeSafeAreaWasHandled() {
-            detailDesc = safeAreaInset(move detailDesc, context.safeArea)
+            detailDesc = safeAreaInset(move detailDesc, detailContext.safeArea)
         }
         kiraUiInspectorStopCollecting()
         kiraUiNavigationLeave(previous)
         kiraUiChromeSafeAreaHandled()
 
-        var columns: [CALayerDescription] = []
-        if metrics.presentation == .Stack {
+        if !split {
+            var columns: [CALayerDescription] = []
             let current = NavigationPath {}
             if current.isEmpty() {
                 columns.append(safeAreaInset(move sidebarDesc, context.safeArea))
@@ -752,10 +902,8 @@ construct NavigationSplitView(
             }
         }
 
-        // The split view's own toggle is always on the bar; what it decides is
-        // whether the sidebar is.
         kiraUiChromeShowSidebarToggle()
-        let showsSidebar = navigationShowsSidebar(columnVisibility, false) && !kiraUiSidebarCollapsed()
+        var columns: [CALayerDescription] = []
         if showsSidebar {
             kiraUiChromeSetNavigationLayout(metrics.primaryWidth, true, kiraUiToolbarDetailColumn())
             columns.append(liquidGlassDescription(
@@ -765,29 +913,29 @@ construct NavigationSplitView(
                 },
                 0.0,
                 .Rect,
-                glassSizing(.Regular, modifiers),
                 modifiers,
                 [safeAreaInset(move sidebarDesc, context.safeArea)]
             ))
             columns.append(splitDivider(modifiers))
         }
-        // An unwritten content column measures nothing; the detail takes what
-        // is left of the window.
-        columns.append(safeAreaInset(move contentDesc, context.safeArea))
-        var detailColumn = move detailDesc
-        detailColumn.layout.flex = 1
-        columns.append(detailColumn)
+        // An unwritten content column measures nothing.
+        var contentColumn = safeAreaInset(move contentDesc, context.safeArea)
+        contentColumn.layout.widthFill = false
+        columns.append(move contentColumn)
         return CALayerDescription {
-            layout: CALayoutIntent {
-                axis: .Row
-            },
-            sublayers: move columns
+            sublayers: [move detailDesc, CALayerDescription {
+                layout: CALayoutIntent {
+                    axis: .Row,
+                    widthFill: false
+                },
+                sublayers: move columns
+            }]
         }
     }
 }
 
 // The line between two columns: the platform's divider thickness, in the
-// border's colour.
+// border's color.
 function splitDivider(modifiers: borrow ModifierContext) -> CALayerDescription {
     let border = modifierResolvedBorder(modifiers)
     return CALayerDescription {

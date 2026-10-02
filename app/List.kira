@@ -63,10 +63,10 @@ construct List() extends Widget {
     }
 }
 
-// The inset grouped list: its sections down one readable column, centred in
+// The inset grouped list: its sections down one readable column, centered in
 // the room it has and held off its edges by the column's margin, on the
 // grouped canvas. The canvas is also what it asks the column around it to be
-// painted with, so the band under the bar is the same grey.
+// painted with, so the band under the bar is the same gray.
 construct InsetGroupedList() extends Widget {
     let children: [some Widget]
 
@@ -103,7 +103,7 @@ construct InsetGroupedList() extends Widget {
 //
 // The header is the emphasized `title2`, the footer the `footnote` in the
 // secondary ink; both start where the rows' content does. Every row is at
-// least the list's row height with its content centred in it, and every row
+// least the list's row height with its content centered in it, and every row
 // after the first carries a hairline across its top, inset like its content.
 function insetGroupedSection(
     rows: [CALayerDescription],
@@ -170,10 +170,23 @@ function insetGroupedSection(
     }
 }
 
-// One row of a grouped card: its content across the row and centred down at
+// One row of a grouped card: its content across the row and centered down at
 // least the row height, held off the card's edges, under a hairline when a row
 // comes before it.
-function insetGroupedRow(content: CALayerDescription, separated: Bool, modifiers: borrow ModifierContext) -> CALayerDescription {
+//
+// A row whose content can be pressed is pressed as a whole: the hit region is
+// lifted off the content onto the row, and the row lights edge to edge while
+// it is held, clipped by the card's corners. It does not light on hover.
+function insetGroupedRow(
+    content: CALayerDescription,
+    separated: Bool,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    var inner = content
+    let key = inner.hitKey
+    let pressable = inner.hittable
+    inner.hittable = false
     var layers: [CALayerDescription] = []
     layers.append(CALayerDescription {
         layout: CALayoutIntent {
@@ -181,13 +194,16 @@ function insetGroupedRow(content: CALayerDescription, separated: Bool, modifiers
             minHeight: listMetrics.rowHeight,
             alignment: Point { x: 0.0, y: 0.5 }
         },
-        sublayers: [move content]
+        sublayers: [move inner]
     })
+    // The hairline starts where the row says its separator does -- a label's
+    // title, past its glyph -- and at the row's edge when nothing says.
     if separated {
         layers.append(CALayerDescription {
             layout: CALayoutIntent {
                 heightFill: false,
-                fixedHeight: listMetrics.separatorThickness
+                fixedHeight: listMetrics.separatorThickness,
+                followsGuide: guideTag(ListRowSeparatorLeading())
             },
             content: .Solid(CASolid {
                 fill: caColorFromFoundation(modifierColor(foundationColor(themeAdaptiveColor(listSeparator, modifierTheme(modifiers).appearance())), modifiers))
@@ -200,8 +216,24 @@ function insetGroupedRow(content: CALayerDescription, separated: Bool, modifiers
             paddingLeading: listMetrics.rowInset,
             paddingTrailing: listMetrics.rowInset
         },
+        hittable: pressable,
+        hitKey: pressable ? key : 0,
+        content: .Solid(CASolid {
+            fill: caColorFromFoundation(transparentFoundationColor())
+        }),
+        pressColor: insetGroupedRowWash(pressable, modifiers),
         sublayers: move layers
     }
+}
+
+// What lights a row: the list's highlight while it is held. A row on the
+// platform does not answer the pointer resting on it; only a press lights it,
+// and the tree lays the highlight on the row pressed.
+function insetGroupedRowWash(pressable: Bool, modifiers: borrow ModifierContext) -> CAColor {
+    if !pressable {
+        return CAColor { a: 0.0 }
+    }
+    return caColorFromFoundation(modifierColor(foundationColor(themeAdaptiveColor(listRowHighlight, modifierTheme(modifiers).appearance())), modifiers))
 }
 
 construct ListStyleLayer(style: ListStyle) extends Widget {
@@ -242,7 +274,8 @@ construct SidebarSectionHeader() extends Widget {
 // whole. The selected row carries a band held in from the column's edges with
 // a continuous corner and sets its title emphasized; the content starts
 // further in, the same distance from the edge whether or not the band is
-// behind it.
+// behind it. Selection lands at once, as a sidebar cell's does: the band and
+// the emphasis switch rows, they do not fade between them.
 construct SidebarRow(selected: Bool, action: () -> Void) extends Widget {
     let content: some Widget
 
@@ -271,6 +304,7 @@ construct SidebarRow(selected: Bool, action: () -> Void) extends Widget {
                     alignment: Point { x: 0.0, y: 0.5 }
                 },
                 cornerRadius: radius,
+                disablesActions: true,
                 content: .Solid(CASolid {
                     fill: caColorFromFoundation(modifierColor(foundationColor(sidebarRowBand(selected, modifiers)), modifiers)),
                     cornerRadius: radius,

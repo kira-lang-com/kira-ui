@@ -8,7 +8,7 @@ import KCoreAnimation
 // screen.
 //
 // There is ONE stack per axis. A hug-sized row and a fill-sized row are the same
-// widget under two sizing modifiers, and a leading-aligned column and a centred
+// widget under two sizing modifiers, and a leading-aligned column and a centered
 // one are the same widget under two alignments — so a vocabulary carrying
 // `HGroup` beside `HStack`, and `VGroupLeading` beside `VGroup`, is a vocabulary
 // asking every reader to learn which of four names means the row they wanted.
@@ -102,7 +102,6 @@ function indices(count: Int) -> [Int] {
 construct EmptyView() extends Widget {
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let ignored = context.frameCount
         return CALayerDescription {
             layout: CALayoutIntent {
                 fixedWidth: 0.0,
@@ -129,6 +128,29 @@ function describesNothing(layer: borrow CALayerDescription) -> Bool {
         Gradient(r) -> return false
         Texture(x) -> return false
     }
+}
+
+// A layer and everything in it, made deaf to presses: a view on screen that is
+// on its way out, or not yet the one in front.
+function layerInert(node: borrow mut CALayerDescription) {
+    node.hittable = false
+    node.interactive = false
+    node.hitKey = 0
+    for i in 0..node.sublayers.count {
+        layerInert(node.sublayers[i])
+    }
+    return
+}
+
+// A layer and everything in it, landing on each change at once. For a view a
+// spring already moves frame by frame: an implicit action on top of it would
+// trail the motion it is given, each layer on its own clock.
+function layerImmediate(node: borrow mut CALayerDescription) {
+    node.disablesActions = true
+    for i in 0..node.sublayers.count {
+        layerImmediate(node.sublayers[i])
+    }
+    return
 }
 
 // --- Stacks ------------------------------------------------------------------
@@ -217,7 +239,7 @@ construct ZStack(alignment: StackAlignment = .Center) extends Widget {
 }
 
 // Where a row's alignment puts a shorter child, as a fraction of the leftover
-// height. A first-text-baseline row centres until layout reads ink metrics.
+// height. A first-text-baseline row centers until layout reads ink metrics.
 function verticalAlignmentUnit(alignment: VerticalAlignment) -> Float {
     match alignment {
         Top -> return 0.0
@@ -262,7 +284,6 @@ construct FixedGap(width: Float, height: Float) extends Widget {
 
     // A paint-free box of a fixed extent.
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let ignored = context.frameCount
         return CALayerDescription {
             layout: CALayoutIntent {
                 widthFill: false,
@@ -283,13 +304,12 @@ construct FixedGap(width: Float, height: Float) extends Widget {
 //
 //     Icon(.sidebar).onClick(toggleSidebar)
 //
-// Nothing about how large or what colour is stated here. `.imageScale(...)`
+// Nothing about how large or what color is stated here. `.imageScale(...)`
 // names the glyph's size RELATIVE to the size class in effect, and
 // `.foregroundColor(...)` names its ink exactly as it does a run of text's.
 construct Icon(symbol: Symbol) extends Widget {
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let ignored = context.frameCount
         // On the bar a symbol is set at the bar's own size and weight, not
         // those of the type beside it — a toolbar's glyphs and its labels are
         // two sizes — and inked vibrant, into the glass it stands on.
@@ -326,7 +346,6 @@ construct Icon(symbol: Symbol) extends Widget {
 construct Artwork(svg: String, scale: IconScale = .Medium, points: Float = -1.0) extends Widget {
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let ignored = context.frameCount
         var size = iconScaleSize(scale, modifiers)
         if points >= 0.0 {
             size = points
@@ -350,8 +369,13 @@ function iconInkDensity(svg: borrow String) -> Float {
     return foundationIconInkDensity(svg)
 }
 
+// How much of its own box a symbol's ink covers before it counts as solid.
+// Measured on the set: an outline of a compact shape -- a folder, a tag, two
+// squares -- covers 0.41 to 0.45 of its box, a filled one 0.73 to 0.88. The
+// line sits between the two, where 0.4 took the compact outlines for solids
+// and left them a cut lighter than the type beside them.
 function iconSolidDensity() -> Float {
-    return 0.4
+    return 0.6
 }
 
 function iconDescription(
@@ -369,11 +393,11 @@ function iconDescription(
     return iconLayer(move svg, size, VibrantInk { color: caColorFromFoundation(iconInk(modifiers)) }, growth)
 }
 
-// The colour a glyph is inked in.
+// The color a glyph is inked in.
 //
 // A glyph is ink, so it answers the same explicit override a run of text does.
 // `.foregroundColor(...)` names a role and is what application code should
-// reach for; `.textColor(...)` is the escape hatch for artwork whose colour is
+// reach for; `.textColor(...)` is the escape hatch for artwork whose color is
 // the document's rather than the theme's — a gizmo's axis, a swatch — and an
 // icon that ignored it had no way to be one of those.
 function iconInk(modifiers: borrow ModifierContext) -> FoundationColor {
@@ -397,8 +421,8 @@ function iconLayer(
 ) -> CALayerDescription {
     // `size` is the glyph's EM. A symbol is rasterized trimmed to its ink, so
     // the ink layer is the share of the em this glyph's drawing occupies — the
-    // library's shared canvas makes that knowable — and it stands centred in an
-    // em-tall box, so glyphs of different shapes share a centre line and the
+    // library's shared canvas makes that knowable — and it stands centered in an
+    // em-tall box, so glyphs of different shapes share a center line and the
     // words beside or below them share a baseline.
     let inkHeight = size * (foundationIconInkBottom(svg) - foundationIconInkTop(svg))
     let inkWidth = inkHeight * iconInkAspect(svg)

@@ -34,7 +34,7 @@ enum ToolbarItemPlacement {
     // The navigation section: over the sidebar, where a column says what it is
     // showing.
     Navigation
-    // The centre section: the document's own title and breadcrumb.
+    // The center section: the document's own title and breadcrumb.
     Principal
     // The action the window is most likely to be asked for, at the trailing end.
     PrimaryAction
@@ -58,7 +58,7 @@ enum SpacerSizing {
     Flexible
 }
 
-// Whether an item joins the glass background its neighbours share, matching
+// Whether an item joins the glass background its neighbors share, matching
 // SwiftUI's `Visibility` as `.sharedBackgroundVisibility(...)` takes it.
 enum SharedBackgroundVisibility {
     // The platform's answer: share it.
@@ -108,7 +108,7 @@ enum ChromeEdge {
 // A bar is not a flat list of items — it is a run of GROUPS, and which items
 // share a group is the whole of the Liquid Glass look. Keeping the grouping on
 // the entry is what lets the bar be assembled after every column has spoken
-// without any column having to know what its neighbours declared.
+// without any column having to know what its neighbors declared.
 struct KiraUiToolbarEntry {
     // What the item draws, described where it was declared — under the
     // modifiers and the theme of the view that put it on the bar.
@@ -126,6 +126,28 @@ struct KiraUiToolbarEntry {
     let axisBehavior: ChromeAxisBehavior = .Automatic
     // Higher-priority chrome survives compression before lower-priority chrome.
     let visibilityPriority: Int = 0
+}
+
+// What one view in a stack put on the document's section of the bar: its back
+// button, its items, its title and its tabs.
+struct KiraUiToolbarPage {
+    var back: [KiraUiToolbarEntry] = []
+    var tabs: [KiraUiToolbarEntry] = []
+    var principal: [KiraUiToolbarEntry] = []
+    var primaryAction: [KiraUiToolbarEntry] = []
+    var automatic: [KiraUiToolbarEntry] = []
+    var title: String = ""
+    var largeTitle: Bool = false
+}
+
+// How many entries each bucket held at some moment: what a stack takes as the
+// line between what the views around it declared and what its own views did.
+struct KiraUiToolbarMark {
+    var back: Int = 0
+    var tabs: Int = 0
+    var principal: Int = 0
+    var primaryAction: Int = 0
+    var automatic: Int = 0
 }
 
 struct KiraUiToolbarSink {
@@ -186,6 +208,21 @@ struct KiraUiToolbarSink {
     // run under the bar while their content does not; when nothing did, the
     // window insets its whole content instead.
     var safeAreaHandled: Bool = false
+    // While a stack moves between two views, what the view coming into sight
+    // put on the bar, and how far into sight it is: 0 shows only the items
+    // above, 1 only these. The bar stays where it is and its items turn from
+    // one view's into the other's.
+    var moving: Bool = false
+    var covered: KiraUiToolbarPage = KiraUiToolbarPage {}
+    var coveredShown: Float = 0.0
+    // Where the view on top's own entries end: anything after was declared by
+    // the views around the stack, and is on the bar for both views.
+    var pageEnd: KiraUiToolbarMark = KiraUiToolbarMark {}
+    // The search field a view asked for with `.searchable`, if one did: what
+    // it prompts with while empty, and the key its clear button answers to.
+    var searching: Bool = false
+    var searchPrompt: String = ""
+    var searchClearKey: Int = 0
 }
 
 // A button press happens in the input callback, while the native window is
@@ -313,7 +350,125 @@ function kiraUiToolbarCollect() {
     sink.safeAreaHandled = false
     sink.nextGroup = 1
     sink.sidebarToggle = false
+    sink.moving = false
+    sink.covered = KiraUiToolbarPage {}
+    sink.coveredShown = 0.0
+    sink.searching = false
+    sink.searchPrompt = ""
+    sink.searchClearKey = 0
     return
+}
+
+// What each bucket holds so far.
+function kiraUiToolbarMark() -> KiraUiToolbarMark {
+    kiraUiToolbarSinkEnsure()
+    let sink = nativeRecover<KiraUiToolbarSink>(kiraUiStateSlotGet(kiraUiToolbarSinkKey()))
+    return KiraUiToolbarMark {
+        back: sink.back.count,
+        tabs: sink.tabs.count,
+        principal: sink.principal.count,
+        primaryAction: sink.primaryAction.count,
+        automatic: sink.automatic.count
+    }
+}
+
+// The entries after `from`, taken out of `entries`.
+function kiraUiToolbarSplit(entries: borrow mut [KiraUiToolbarEntry], from: Int) -> [KiraUiToolbarEntry] {
+    var kept: [KiraUiToolbarEntry] = []
+    var taken: [KiraUiToolbarEntry] = []
+    for i in 0..entries.count {
+        if i < from {
+            kept.append(copy entries[i])
+        } else {
+            taken.append(copy entries[i])
+        }
+    }
+    entries = move kept
+    return taken
+}
+
+// `entries` with `more` after them.
+function kiraUiToolbarJoin(entries: borrow mut [KiraUiToolbarEntry], more: [KiraUiToolbarEntry]) {
+    for entry in more {
+        entries.append(copy entry)
+    }
+    return
+}
+
+// The view under a moving one is about to lower: what the view on top put on
+// the bar since `mark` is set aside, so what this one declares can be told
+// from it. What the views around the stack declared stays, for both.
+function kiraUiToolbarBeginCovered(mark: borrow KiraUiToolbarMark) -> KiraUiToolbarPage {
+    kiraUiToolbarSinkEnsure()
+    var sink = nativeRecover<KiraUiToolbarSink>(kiraUiStateSlotGet(kiraUiToolbarSinkKey()))
+    let top = KiraUiToolbarPage {
+        back: kiraUiToolbarSplit(sink.back, mark.back),
+        tabs: kiraUiToolbarSplit(sink.tabs, mark.tabs),
+        principal: kiraUiToolbarSplit(sink.principal, mark.principal),
+        primaryAction: kiraUiToolbarSplit(sink.primaryAction, mark.primaryAction),
+        automatic: kiraUiToolbarSplit(sink.automatic, mark.automatic),
+        title: sink.detailTitle,
+        largeTitle: sink.largeTitle
+    }
+    sink.detailTitle = ""
+    sink.largeTitle = false
+    return top
+}
+
+// The covered view has lowered: everything on the bar now is what it shows
+// with, and becomes the covered set, shown as far as it is uncovered. The view
+// on top gets its own entries back.
+function kiraUiToolbarEndCovered(top: KiraUiToolbarPage, mark: borrow KiraUiToolbarMark, shown: Float) {
+    kiraUiToolbarSinkEnsure()
+    var sink = nativeRecover<KiraUiToolbarSink>(kiraUiStateSlotGet(kiraUiToolbarSinkKey()))
+    var page = move top
+    sink.covered = KiraUiToolbarPage {
+        back: copy sink.back,
+        tabs: copy sink.tabs,
+        principal: copy sink.principal,
+        primaryAction: copy sink.primaryAction,
+        automatic: copy sink.automatic,
+        title: sink.detailTitle,
+        largeTitle: sink.largeTitle
+    }
+    kiraUiToolbarSplit(sink.back, mark.back)
+    kiraUiToolbarSplit(sink.tabs, mark.tabs)
+    kiraUiToolbarSplit(sink.principal, mark.principal)
+    kiraUiToolbarSplit(sink.primaryAction, mark.primaryAction)
+    kiraUiToolbarSplit(sink.automatic, mark.automatic)
+    kiraUiToolbarJoin(sink.back, move page.back)
+    kiraUiToolbarJoin(sink.tabs, move page.tabs)
+    kiraUiToolbarJoin(sink.principal, move page.principal)
+    kiraUiToolbarJoin(sink.primaryAction, move page.primaryAction)
+    kiraUiToolbarJoin(sink.automatic, move page.automatic)
+    sink.detailTitle = page.title
+    sink.largeTitle = page.largeTitle
+    sink.moving = true
+    sink.coveredShown = shown
+    sink.pageEnd = KiraUiToolbarMark {
+        back: sink.back.count,
+        tabs: sink.tabs.count,
+        principal: sink.principal.count,
+        primaryAction: sink.primaryAction.count,
+        automatic: sink.automatic.count
+    }
+    return
+}
+
+// The covered view's entries for one bucket as the bar draws them: its own,
+// then whatever the views around the stack declared after the stack lowered.
+function kiraUiToolbarCoveredEntries(
+    covered: borrow [KiraUiToolbarEntry],
+    current: borrow [KiraUiToolbarEntry],
+    pageEnd: Int,
+) -> [KiraUiToolbarEntry] {
+    var entries = copy covered
+    for i in 0..current.count {
+        if i >= pageEnd {
+            entries.append(copy current[i])
+        }
+    }
+    return entries
 }
 
 // A fresh group for the declaration about to put its items on the bar.
@@ -347,6 +502,20 @@ function kiraUiToolbarSetTitle(title: String) {
         return
     }
     sink.detailTitle = move title
+    return
+}
+
+// A view asked for the window's search field. The last to ask wins, as the
+// last title does.
+function kiraUiToolbarSetSearch(prompt: String, clearKey: Int) {
+    kiraUiToolbarSinkEnsure()
+    var sink = nativeRecover<KiraUiToolbarSink>(kiraUiStateSlotGet(kiraUiToolbarSinkKey()))
+    if sink.collecting == false {
+        return
+    }
+    sink.searching = true
+    sink.searchPrompt = move prompt
+    sink.searchClearKey = clearKey
     return
 }
 
@@ -427,6 +596,17 @@ function kiraUiChromeSetNavigationLayout(
     sink.hasNavigationColumn = hasNavigationColumn
     sink.visibleColumn = visibleColumn
     return
+}
+
+// Where the sidebar ends across the window, as the last frame laid it out: 0
+// with no sidebar beside the content.
+function kiraUiToolbarNavigationWidth() -> Float {
+    kiraUiToolbarSinkEnsure()
+    let sink = nativeRecover<KiraUiToolbarSink>(kiraUiStateSlotGet(kiraUiToolbarSinkKey()))
+    if !sink.hasNavigationColumn {
+        return 0.0
+    }
+    return sink.navigationWidth
 }
 
 function kiraUiChromeShowSidebarToggle() {
@@ -575,7 +755,7 @@ construct ToolbarItemGroup(placement: ToolbarItemPlacement = .Automatic) extends
 // A fixed spacer holds the platform's spacer width between the pieces of glass
 // either side of it. `.Flexible` takes whatever room is left, which is what
 // pushes a trailing group to the far end.
-// SwiftUI takes the sizing UNLABELLED and first — `ToolbarSpacer(.fixed,
+// SwiftUI takes the sizing UNLABELED and first — `ToolbarSpacer(.fixed,
 // placement: .primaryAction)` — so it is first here too. Kira binds by position
 // and treats a label as decoration, which means the order is the API.
 construct ToolbarSpacer(

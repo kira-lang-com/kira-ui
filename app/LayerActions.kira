@@ -19,8 +19,21 @@ struct KiraUiLayerActionEntry {
     var action: () -> Void = kiraUiLayerNoop
 }
 
+function kiraUiLayerNoopCode(code: Int) {
+    return
+}
+
+// A layer that takes the keyboard while it is focused: what a typed character
+// does to it, and what a key does.
+struct KiraUiLayerTextInputEntry {
+    var key: Int = 0
+    var text: (Int) -> Void = kiraUiLayerNoopCode
+    var command: (Int) -> Void = kiraUiLayerNoopCode
+}
+
 struct KiraUiLayerActionSink {
     var entries: [KiraUiLayerActionEntry] = []
+    var textInputs: [KiraUiLayerTextInputEntry] = []
 }
 
 function kiraUiLayerActionSinkKey() -> String {
@@ -43,6 +56,8 @@ function kiraUiLayerActionsReset() {
     var sink = nativeRecover<KiraUiLayerActionSink>(kiraUiStateSlotGet(kiraUiLayerActionSinkKey()))
     var empty: [KiraUiLayerActionEntry] = []
     sink.entries = move empty
+    var noInputs: [KiraUiLayerTextInputEntry] = []
+    sink.textInputs = move noInputs
     return
 }
 
@@ -71,6 +86,58 @@ function kiraUiLayerActionInvoke(key: Int) {
     for index in 0..sink.entries.count {
         if sink.entries[index].key == key {
             sink.entries[index].action()
+            return
+        }
+    }
+    return
+}
+
+// Bind the keyboard to a layer for while it is focused: `text` receives each
+// typed character's codepoint, `command` each key that is not one (Return,
+// Delete, the arrows). Bound per rebuild, like a press action.
+function kiraUiLayerTextInputRegister(key: Int, text: (Int) -> Void, command: (Int) -> Void) {
+    if key == 0 {
+        return
+    }
+    kiraUiLayerActionSinkEnsure()
+    var sink = nativeRecover<KiraUiLayerActionSink>(kiraUiStateSlotGet(kiraUiLayerActionSinkKey()))
+    sink.textInputs.append(KiraUiLayerTextInputEntry {
+        key: key,
+        text: text,
+        command: command
+    })
+    return
+}
+
+// Whether a press on this layer focuses it.
+function kiraUiLayerTextInputAccepts(key: Int) -> Bool {
+    if key == 0 {
+        return false
+    }
+    kiraUiLayerActionSinkEnsure()
+    let sink = nativeRecover<KiraUiLayerActionSink>(kiraUiStateSlotGet(kiraUiLayerActionSinkKey()))
+    for index in 0..sink.textInputs.count {
+        if sink.textInputs[index].key == key {
+            return true
+        }
+    }
+    return false
+}
+
+// Hand a typed character, or a key when `isCommand`, to the focused layer.
+function kiraUiLayerTextInputDeliver(key: Int, code: Int, isCommand: Bool) {
+    if key == 0 {
+        return
+    }
+    kiraUiLayerActionSinkEnsure()
+    let sink = nativeRecover<KiraUiLayerActionSink>(kiraUiStateSlotGet(kiraUiLayerActionSinkKey()))
+    for index in 0..sink.textInputs.count {
+        if sink.textInputs[index].key == key {
+            if isCommand {
+                sink.textInputs[index].command(code)
+            } else {
+                sink.textInputs[index].text(code)
+            }
             return
         }
     }
