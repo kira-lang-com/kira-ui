@@ -124,7 +124,8 @@ function caContentSize(node: borrow CALayerDescription, width: Float) -> Size {
 // child in turn is offered its width less the overflow and gives back what it
 // can — text by wrapping, a fixed glyph not at all — until the row fits or
 // nothing more gives. When `sharesLeftover`, flex children then split what is
-// left; a measure has no leftover to share, so there they ask like the rest.
+// left on top of their minimum width, as a flex basis; a measure has no
+// leftover to share, so there they ask like the rest.
 function caRowWidths(node: borrow CALayerDescription, innerWidth: Float, sharesLeftover: Bool) -> [Float] {
     let count = node.sublayers.count
     var widths: [Float] = []
@@ -133,8 +134,10 @@ function caRowWidths(node: borrow CALayerDescription, innerWidth: Float, sharesL
     for i in 0..count {
         let flex = node.sublayers[i].layout.flex
         if sharesLeftover && flex > 0 {
+            let basis = node.sublayers[i].layout.minWidth
             flexTotal = flexTotal + flex
-            widths.append(0.0)
+            used = used + basis
+            widths.append(basis)
         } else {
             let want = caMeasure(node.sublayers[i], innerWidth).width
             used = used + want
@@ -164,7 +167,7 @@ function caRowWidths(node: borrow CALayerDescription, innerWidth: Float, sharesL
         for i in 0..count {
             let flex = node.sublayers[i].layout.flex
             if flex > 0 {
-                widths[i] = leftover * Float(flex) / Float(flexTotal)
+                widths[i] = node.sublayers[i].layout.minWidth + leftover * Float(flex) / Float(flexTotal)
             }
         }
     }
@@ -239,8 +242,8 @@ function caPlaceRow(
 }
 
 // A column: fixed-height sublayers take what they measure at the column's
-// width, flex ones split the remainder, and each sits across the column where
-// the column's alignment says.
+// width, flex ones split the remainder on top of their minimum height, and
+// each sits across the column where the column's alignment says.
 function caPlaceColumn(
     node: borrow mut CALayerDescription,
     originX: Float,
@@ -262,8 +265,10 @@ function caPlaceColumn(
     for i in 0..count {
         let flex = node.sublayers[i].layout.flex
         if flex > 0 {
+            let basis = node.sublayers[i].layout.minHeight
             flexTotal = flexTotal + flex
-            heights.append(0.0)
+            fixedMain = fixedMain + basis
+            heights.append(basis)
         } else {
             let want = caMeasure(node.sublayers[i], innerWidth).height
             fixedMain = fixedMain + want
@@ -276,7 +281,7 @@ function caPlaceColumn(
     for i in 0..count {
         let flex = node.sublayers[i].layout.flex
         if flex > 0 && flexTotal > 0 {
-            heights[i] = leftover * Float(flex) / Float(flexTotal)
+            heights[i] = node.sublayers[i].layout.minHeight + leftover * Float(flex) / Float(flexTotal)
         }
         caPlace(node.sublayers[i], innerWidth, heights[i])
         let across = (innerWidth - node.sublayers[i].size.width) * node.layout.alignment.x

@@ -41,7 +41,7 @@ function controlActiveColor(modifiers: borrow ModifierContext) -> FoundationColo
     return foundationColor(modifierTokens(modifiers).tint.accent)
 }
 
-// A white knob with a continuous corner, as a switch and a slider both carry.
+// A white capsule knob, as a switch and a slider both carry.
 function controlKnobDescription(width: Float, height: Float, modifiers: borrow ModifierContext) -> CALayerDescription {
     let radius = min(width, height) / 2.0
     return CALayerDescription {
@@ -54,14 +54,14 @@ function controlKnobDescription(width: Float, height: Float, modifiers: borrow M
         cornerRadius: radius,
         content: .Solid(CASolid {
             fill: caColorFromFoundation(modifierColor(foundationColor(themeAdaptiveColor(controlKnob, modifierTheme(modifiers).appearance())), modifiers)),
-            cornerRadius: radius,
-            shapeKind: 1
+            cornerRadius: radius
         })
     }
 }
 
 // How opaque a switch or slider stands: the catalog's disabled opacity while it
-// is disabled, fully otherwise.
+// is disabled, fully otherwise. The control fades as one picture, so its knob
+// still hides the track under it.
 function controlOpacity(modifiers: borrow ModifierContext) -> Float {
     if modifiers.disabled {
         return disabledControlOpacity
@@ -69,13 +69,14 @@ function controlOpacity(modifiers: borrow ModifierContext) -> Float {
     return 1.0
 }
 
-// A slider's knob under its two shadows. A layer casts one, so the soft shadow
-// is cast by a holder of the knob's own shape and the tight one by the knob.
-function sliderKnobDescription(modifiers: borrow ModifierContext) -> CALayerDescription {
+// A slider's knob as it rests: a white capsule under its two shadows. A
+// layer casts one, so the soft shadow is cast by a holder of the knob's own
+// shape and the tight one by the knob.
+function sliderKnobDescription(width: Float, height: Float, modifiers: borrow ModifierContext) -> CALayerDescription {
     let metrics = sliderMetrics
-    let size = metrics.knobSize
     let ink = caColorFromFoundation(modifierColor(foundationColor(themeAdaptiveColor(knobShadow, modifierTheme(modifiers).appearance())), modifiers))
-    var knob = controlKnobDescription(size, size, modifiers)
+    var knob = controlKnobDescription(width, height, modifiers)
+    knob.disablesActions = true
     knob.shadow = CAShadow {
         color: ink,
         radius: metrics.knobContactShadowRadius,
@@ -85,10 +86,12 @@ function sliderKnobDescription(modifiers: borrow ModifierContext) -> CALayerDesc
         layout: CALayoutIntent {
             widthFill: false,
             heightFill: false,
-            fixedWidth: size,
-            fixedHeight: size
+            fixedWidth: width,
+            fixedHeight: height,
+            alignment: Point { x: 0.5, y: 0.5 }
         },
-        cornerRadius: size / 2.0,
+        disablesActions: true,
+        cornerRadius: height / 2.0,
         shadow: CAShadow {
             color: ink,
             radius: metrics.knobShadowRadius,
@@ -96,6 +99,20 @@ function sliderKnobDescription(modifiers: borrow ModifierContext) -> CALayerDesc
         },
         sublayers: [knob]
     }
+}
+
+// How a slider's knob is moving: lifted into glass while it is held, and
+// stretched along the track by how fast it is dragged.
+struct SliderKnob {
+    var lift: MotionSpringState = MotionSpringState {}
+    var lifted: Float = 0.0
+    var held: Bool = false
+    var lastX: Float = 0.0
+    var stretch: Float = 0.0
+}
+
+function sliderKnobSlotKey(key: Int) -> String {
+    return kiraUiSlotKey("kiraui.slider.", key)
 }
 
 // A switch: a capsule track with the knob held at its leading end when off and
@@ -119,6 +136,7 @@ construct Toggle(isOn: Bool) extends Widget {
                 alignment: Point { x: isOn ? 1.0 : 0.0, y: 0.5 }
             },
             opacity: controlOpacity(modifiers),
+            allowsGroupOpacity: true,
             cornerRadius: radius,
             content: .Solid(CASolid {
                 fill: caColorFromFoundation(modifierColor(toggleTrackColor(isOn, modifiers), modifiers)),
@@ -159,27 +177,22 @@ construct Slider(
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let k = kiraUiTapSeqKey()
         let metrics = sliderMetrics
-        let knobSize = metrics.knobSize
+        let inset = metrics.knobInset
+        let held = context.heldKey == k
         var shown = controlClamp01(value)
-        if context.heldKey == k && context.heldSize.width > knobSize {
-            shown = controlClamp01((context.heldPoint.x - knobSize / 2.0) / (context.heldSize.width - knobSize))
+        if held && context.heldSize.width > inset * 2.0 {
+            shown = controlClamp01((context.heldPoint.x - inset) / (context.heldSize.width - inset * 2.0))
             if shown != value {
                 let change = onChange
                 change(shown)
             }
         }
+
+        // The fill runs from the track's start to the knob's center, which
+        // travels the track less an inset at either end: the inset is its
+        // basis, and the value its share of the rest.
         let trackRadius = metrics.trackHeight / 2.0
         let filledShare = Int(shown * 1000.0 + 0.5)
-        let filled = CALayerDescription {
-            layout: CALayoutIntent {
-                flex: filledShare
-            },
-            cornerRadius: trackRadius,
-            content: .Solid(CASolid {
-                fill: caColorFromFoundation(modifierColor(controlActiveColor(modifiers), modifiers)),
-                cornerRadius: trackRadius
-            })
-        }
         let track = CALayerDescription {
             layout: CALayoutIntent {
                 axis: .Row,
@@ -191,17 +204,45 @@ construct Slider(
                 fill: caColorFromFoundation(modifierColor(foundationColor(themeAdaptiveColor(sliderTrack, modifierTheme(modifiers).appearance())), modifiers)),
                 cornerRadius: trackRadius
             }),
-            sublayers: [filled, CALayerDescription {
-                layout: CALayoutIntent {
-                    flex: 1000 - filledShare
+            sublayers: [
+                CALayerDescription {
+                    layout: CALayoutIntent {
+                        minWidth: inset,
+                        flex: filledShare
+                    },
+                    cornerRadius: trackRadius,
+                    content: .Solid(CASolid {
+                        fill: caColorFromFoundation(modifierColor(controlActiveColor(modifiers), modifiers)),
+                        cornerRadius: trackRadius
+                    })
+                },
+                CALayerDescription {
+                    layout: CALayoutIntent {
+                        minWidth: inset,
+                        flex: 1000 - filledShare
+                    }
                 }
-            }]
+            ]
         }
+
+        // The knob rides a point with no size, as the kit lays it out, and
+        // stands centered on it.
         let lane = CALayerDescription {
             layout: CALayoutIntent {
+                paddingLeading: inset,
+                paddingTrailing: inset,
                 alignment: Point { x: shown, y: 0.5 }
             },
-            sublayers: [sliderKnobDescription(modifiers)]
+            sublayers: [CALayerDescription {
+                layout: CALayoutIntent {
+                    widthFill: false,
+                    heightFill: false,
+                    fixedWidth: 0.0,
+                    fixedHeight: 0.0,
+                    alignment: Point { x: 0.5, y: 0.5 }
+                },
+                sublayers: sliderKnobLayers(context, k, held, modifiers)
+            }]
         }
         return CALayerDescription {
             layout: CALayoutIntent {
@@ -213,10 +254,67 @@ construct Slider(
                 alignment: Point { x: 0.0, y: 0.5 }
             },
             opacity: controlOpacity(modifiers),
+            allowsGroupOpacity: true,
             hittable: !modifiers.disabled,
             interactive: !modifiers.disabled,
             hitKey: k,
             sublayers: [track, lane]
         }
     }
+}
+
+// The knob as it stands this frame. At rest it is the white capsule. Held, it
+// swells into a larger piece of clear glass the track shows through, and
+// dragged fast it stretches along the track and thins; let go, it springs
+// back into the capsule.
+function sliderKnobLayers(context: borrow BuildContext, key: Int, held: Bool, modifiers: borrow ModifierContext) -> [CALayerDescription] {
+    let metrics = sliderMetrics
+    if kiraUiStateSlotHas(sliderKnobSlotKey(key)) == false {
+        kiraUiStateSlotPut(sliderKnobSlotKey(key), nativeUserData(nativeState(SliderKnob {})))
+    }
+    var knob = nativeRecover<SliderKnob>(kiraUiStateSlotGet(sliderKnobSlotKey(key)))
+    let delta = kiraUiClockDelta()
+    let x = context.heldPoint.x
+    if held != knob.held {
+        let curve = motionCurveFor(.Snappy, held ? 1.0 : 0.0, kiraUiReducedMotion())
+        knob.lift = motionSpringStart(move curve, knob.lifted, 0.0)
+        knob.held = held
+        knob.lastX = x
+    }
+    let sample = motionSpringAdvance(knob.lift, delta)
+    knob.lifted = sample.value
+    var speed = 0.0
+    if held && delta > 0.0 {
+        speed = abs(x - knob.lastX) / delta
+    }
+    knob.lastX = x
+    let reach = kiraUiReducedMotion() ? 0.0 : min(speed / 2000.0, 1.0) * 0.12
+    knob.stretch = knob.stretch + (reach - knob.stretch) * min(delta * 12.0, 1.0)
+    let settled = motionSpringSettled(knob.lift, sample, motionSpringEpsilon())
+    if !settled || knob.stretch > 0.001 {
+        kiraUiClockStillMoving()
+    }
+
+    let t = knob.lifted
+    let width = (metrics.knobWidth + (metrics.heldKnobWidth - metrics.knobWidth) * t) * (1.0 + knob.stretch)
+    let height = (metrics.knobHeight + (metrics.heldKnobHeight - metrics.knobHeight) * t) * (1.0 - knob.stretch * 0.6)
+    var resting = sliderKnobDescription(width, height, modifiers)
+    resting.opacity = clamp01(1.0 - t)
+    var layers = [resting]
+    if t > 0.001 {
+        var glass = liquidGlassDescription(CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedWidth: width,
+            fixedHeight: height,
+            alignment: Point { x: 0.5, y: 0.5 }
+        }, height / 2.0, .Capsule, modifiers, [], .Clear)
+        var lens = liquidGlassContent(.Capsule, modifiers, .Clear)
+        lens.tint = caColorFromFoundation(modifierColor(foundationColor(themeAdaptiveColor(sliderKnobGlass, modifierTheme(modifiers).appearance())), modifiers))
+        glass.content = .Glass(move lens)
+        glass.opacity = clamp01(t)
+        glass.disablesActions = true
+        layers.append(glass)
+    }
+    return layers
 }
