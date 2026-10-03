@@ -898,6 +898,7 @@ construct NavigationSplitView(
         let shown = hasSidebar ? kiraUiSidebarShown(context) : 0.0
         let showsSidebar = shown > 0.0
         let sidebarSpan = metrics.primaryWidth + windowChromeMetrics.dividerThickness
+        let bleed = sidebarMetrics.glassBleed
         // Side by side, the row chosen in the sidebar is the root of what the
         // detail shows; stacked, the sidebar is the root and the row is pushed.
         kiraUiNavigationSetRootDepth(split ? 1 : 0)
@@ -950,7 +951,9 @@ construct NavigationSplitView(
         //
         // The sidebar takes the room it is out by and slides in it, its glass
         // and divider at their own width, past the window's leading edge as
-        // it goes.
+        // it goes. The glass runs past the window's leading, top and bottom
+        // edges by the bleed, holding its content in by as much, so its own
+        // edge is never on the window there.
         var columns: [CALayerDescription] = []
         if showsSidebar {
             columns.append(CALayerDescription {
@@ -963,13 +966,19 @@ construct NavigationSplitView(
                     layout: CALayoutIntent {
                         axis: .Row,
                         widthFill: false,
-                        offset: Point { x: 0.0 - sidebarSpan * (1.0 - shown), y: 0.0 }
+                        heightFill: false,
+                        offset: Point { x: 0.0 - sidebarSpan * (1.0 - shown) - bleed, y: 0.0 - bleed }
                     },
                     sublayers: [
                         liquidGlassDescription(
                             CALayoutIntent {
                                 widthFill: false,
-                                fixedWidth: metrics.primaryWidth
+                                heightFill: false,
+                                fixedWidth: metrics.primaryWidth + bleed,
+                                fixedHeight: context.viewportHeight + bleed * 2.0,
+                                paddingLeading: bleed,
+                                paddingTop: bleed,
+                                paddingBottom: bleed
                             },
                             0.0,
                             .Rect,

@@ -141,6 +141,12 @@ function kiraUiNavigationTransitionAdvance(width: Float) {
     return
 }
 
+// Whether the spring is taking a view off: a pop on its way, the path already
+// gone back. Fingers that come down on one go back from the view under it.
+function navigationTransitionPopping(state: borrow KiraUiNavigationTransition) -> Bool {
+    return state.active && !state.dragging && state.spring.spring.target > 0.5
+}
+
 // Whether the stack is going back: popping, or under fingers swiping back.
 function kiraUiNavigationGoingBack() -> Bool {
     let state = kiraUiNavigationTransition()
@@ -186,13 +192,15 @@ function kiraUiNavigationRootDepth() -> Int {
 
 // Fingers came down at this point. They may become a swipe back when the stack
 // has somewhere to go back to and they are on the view itself -- past the
-// sidebar, and on no control. A push or a pop still moving is caught where it
-// stands, as UIKit's transitions are: the fingers take the view from there.
+// sidebar, and on no control. A push still moving, or a view settling back, is
+// caught where it stands, as UIKit's transitions are: the fingers take the
+// view from there. A pop still moving has already gone back, so the fingers
+// go back again from the view it uncovered, and need not wait for it.
 function kiraUiNavigationSwipeBegin(x: Float, y: Float, overControl: Bool) {
     kiraUiNavigationTransitionEnsure()
     var state = nativeRecover<KiraUiNavigationTransition>(kiraUiStateSlotGet(kiraUiNavigationTransitionKey()))
     state.tracking = false
-    let depth = state.active ? state.front.count : kiraUiNavigationValues().count
+    let depth = state.active && !navigationTransitionPopping(state) ? state.front.count : kiraUiNavigationValues().count
     if state.dragging || overControl || depth <= state.rootDepth {
         return
     }
@@ -234,6 +242,12 @@ function kiraUiNavigationSwipeMove(across: Float, down: Float) -> Bool {
     // swipe back; anything else belongs to whatever is under the fingers.
     if state.travel <= state.drift {
         return false
+    }
+    // The pop the fingers came down on is done: its view is gone at once and
+    // the swipe is a new one, from where the path now stands.
+    if navigationTransitionPopping(state) {
+        state.active = false
+        state.heldBack = false
     }
     state.dragging = true
     state.pending = state.travel
