@@ -23,7 +23,9 @@ import KCoreAnimation
 // column is showing sits at the leading end, its principal item at the
 // section's center, and what it can be asked to do at the trailing end. With
 // the sidebar collapsed, its items and its toggle move up beside the window
-// controls and the document's section takes the rest of the band.
+// controls and the document's section takes the rest of the band -- the
+// sidebar's section narrowing to them as the sidebar slides away, so the
+// bar keeps one shape all the way and nothing in it is taken for another.
 //
 // Every length comes from the catalog (`windowChromeMetrics`), and the band
 // paints nothing of its own: the glass under each group of items is the only
@@ -129,7 +131,9 @@ construct WindowChrome() extends Widget {
     }
 
     // Over the sidebar: the window controls, then the sidebar's own items and
-    // its toggle held at its trailing edge.
+    // its toggle held at its trailing edge. As the sidebar slides away the
+    // section narrows with it, down to what it holds, and its trailing edge
+    // closes from a column's inset to the gap between two pieces of glass.
     function sidebarSection(
         sink: borrow KiraUiToolbarSink,
         metrics: borrow WindowChromeMetrics,
@@ -145,7 +149,11 @@ construct WindowChrome() extends Widget {
         if sink.sidebarToggle {
             parts.append(sidebarToggle(metrics, context, modifiers))
         }
-        return toolbarSection(move parts, metrics, sink.navigationWidth, 0.0)
+        let shown = sink.navigationShown
+        var section = toolbarSection(move parts, metrics, sink.navigationWidth * shown, 0.0)
+        section.layout.paddingTrailing = metrics.edgeInset * shown + metrics.itemSpacing * (1.0 - shown)
+        section.key = 1
+        return section
     }
 
     // Over the document: whatever leads it, a back button, the title, then the
@@ -161,7 +169,12 @@ construct WindowChrome() extends Widget {
     ) -> CALayerDescription {
         // A section that starts at a column's edge holds its first piece of glass
         // off it; one that starts with the window controls starts at the window's.
-        let leadingInset = leading.count > 0 ? 0.0 : metrics.edgeInset
+        let leadingInset = leading.count > 0 ? 0.0 : metrics.edgeInset * sink.navigationShown
+        // Each piece is known by what it is -- the back button, the title, the
+        // space, each trailing group by its place among them, the search
+        // field -- never by where it stands in the row: a back button going
+        // away would otherwise have the tree hand its layers, the press it
+        // holds included, to whatever moved up into its place.
         var parts: [CALayerDescription] = []
         let covered = sink.covered
         let shown = sink.coveredShown
@@ -169,14 +182,22 @@ construct WindowChrome() extends Widget {
         let backGroups = toolbarMorphGroups(sink.back, kiraUiToolbarCoveredEntries(covered.back, sink.back, end.back), shown, sink.moving, metrics, context, modifiers, kiraUiNavigationGoingBack())
         let followsBack = backGroups.count > 0
         if followsBack {
-            parts.append(toolbarBackArea(move backGroups, metrics))
+            var back = toolbarBackArea(move backGroups, metrics)
+            back.key = toolbarPieceBack()
+            parts.append(move back)
         }
         if sink.moving {
-            parts.append(toolbarMorphTitle(sink, followsBack, metrics, context, modifiers))
+            var title = toolbarMorphTitle(sink, followsBack, metrics, context, modifiers)
+            title.key = toolbarPieceTitle()
+            parts.append(move title)
         } else if sink.detailTitle.count > 0 && !sink.largeTitle {
-            parts.append(windowTitle(sink.detailTitle, metrics, followsBack, context, modifiers))
+            var title = windowTitle(sink.detailTitle, metrics, followsBack, context, modifiers)
+            title.key = toolbarPieceTitle()
+            parts.append(move title)
         }
-        parts.append(toolbarFlexibleSpace())
+        var space = toolbarFlexibleSpace()
+        space.key = toolbarPieceSpace()
+        parts.append(move space)
         var trailing = copy sink.automatic
         for entry in sink.primaryAction {
             trailing.append(copy entry)
@@ -185,11 +206,17 @@ construct WindowChrome() extends Widget {
         for entry in kiraUiToolbarCoveredEntries(covered.primaryAction, sink.primaryAction, end.primaryAction) {
             coveredTrailing.append(copy entry)
         }
+        var place = 0
         for group in toolbarMorphGroups(trailing, coveredTrailing, shown, sink.moving, metrics, context, modifiers) {
-            parts.append(group)
+            var piece = copy group
+            piece.key = toolbarPieceTrailing(place)
+            parts.append(move piece)
+            place = place + 1
         }
         if sink.searching {
-            parts.append(toolbarSearchField(sink, metrics, context, modifiers))
+            var search = toolbarSearchField(sink, metrics, context, modifiers)
+            search.key = toolbarPieceSearch()
+            parts.append(move search)
         }
         // The window's own pieces lead the section and stay what they are;
         // the page's follow, known by the path's generation, so a path that
@@ -224,6 +251,7 @@ construct WindowChrome() extends Widget {
             layers.append(principalRow(sink, metrics, context, modifiers))
         }
         return CALayerDescription {
+            key: 2,
             layout: CALayoutIntent {
                 heightFill: false,
                 fixedHeight: metrics.toolbarHeight,
@@ -269,10 +297,33 @@ construct WindowChrome() extends Widget {
     }
 }
 
+// The keys the pieces of a document's section are known by. See
+// `documentSection`.
+function toolbarPieceBack() -> Int {
+    return 1
+}
+
+function toolbarPieceTitle() -> Int {
+    return 2
+}
+
+function toolbarPieceSpace() -> Int {
+    return 3
+}
+
+function toolbarPieceSearch() -> Int {
+    return 4
+}
+
+function toolbarPieceTrailing(place: Int) -> Int {
+    return 100 + place
+}
+
 // One section of the band: its parts in a row, centered across the band's
 // height, a piece of glass's gap apart, and the last one held off the
-// section's trailing edge. A section with no width of its own takes what the
-// sections before it left.
+// section's trailing edge. A section is at least the width it is given and
+// grows to what it holds; one given none takes what the sections before it
+// left.
 function toolbarSection(parts: [CALayerDescription], metrics: borrow WindowChromeMetrics, width: Float, leadingInset: Float) -> CALayerDescription {
     return CALayerDescription {
         layout: CALayoutIntent {
@@ -280,7 +331,7 @@ function toolbarSection(parts: [CALayerDescription], metrics: borrow WindowChrom
             spacing: metrics.itemSpacing,
             widthFill: width < 0.0,
             heightFill: false,
-            fixedWidth: width,
+            minWidth: max(width, 0.0),
             fixedHeight: metrics.toolbarHeight,
             paddingLeading: leadingInset,
             paddingTrailing: metrics.edgeInset,
@@ -598,8 +649,8 @@ function toolbarCrossFade(from: CALayerDescription, to: CALayerDescription, show
     return both
 }
 
-// A piece only one view has: as visible as that view, and as wide, so the
-// pieces beside it close up as it goes.
+// A piece only one view has: as visible as that view, as wide, and as present
+// in the bar, so the pieces beside it close up over its gap too as it goes.
 function toolbarFolding(piece: CALayerDescription, shown: Float) -> CALayerDescription {
     let width = caMeasure(piece, windowChromeMetrics.toolbarHeight * 100.0).width
     var folded = CALayerDescription {
@@ -607,6 +658,7 @@ function toolbarFolding(piece: CALayerDescription, shown: Float) -> CALayerDescr
             widthFill: false,
             heightFill: false,
             fixedWidth: width * shown,
+            presence: shown,
             alignment: Point { x: 0.0, y: 0.5 }
         },
         sublayers: [toolbarFaded(move piece, shown)]

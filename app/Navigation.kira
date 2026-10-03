@@ -468,30 +468,69 @@ function navigationPopAction() -> () -> Void {
 
 // --- The sidebar ------------------------------------------------------------
 
-// Whether the person collapsed the split view's sidebar with its toggle. It
-// outlives the frame like the path does, because it is the window's state and
-// not any view's.
+// Whether the person collapsed the split view's sidebar with its toggle, and
+// how far out it is on its way. It outlives the frame like the path does,
+// because it is the window's state and not any view's.
 struct KiraUiSidebarState {
     var collapsed: Bool = false
+    var slide: MotionSpringState = MotionSpringState {}
+    var shown: Float = 1.0
+    // The last frame the slide was advanced on, so it moves once a frame
+    // however many times it is asked.
+    var advancedOn: Int = 0 - 1
 }
 
 function kiraUiSidebarSlotKey() -> String {
     return "kiraui.navigation.sidebar"
 }
 
-function kiraUiSidebarCollapsed() -> Bool {
-    if kiraUiStateSlotHas(kiraUiSidebarSlotKey()) == false {
-        kiraUiStateSlotPut(kiraUiSidebarSlotKey(), nativeUserData(nativeState(KiraUiSidebarState {})))
+// The spring the sidebar slides on, toward out or away.
+function navigationSidebarSpring(target: Float) -> MotionSpring {
+    let spring = MotionSpring { response: sidebarMetrics.toggleResponse, damping: sidebarMetrics.toggleDamping, target: target }
+    if kiraUiReducedMotion() {
+        return motionCurveReduced(spring)
     }
-    let state = nativeRecover<KiraUiSidebarState>(kiraUiStateSlotGet(kiraUiSidebarSlotKey()))
-    return state.collapsed
+    return spring
 }
 
+// The slot, made the first time it is asked for: out, and at rest there.
+function kiraUiSidebarEnsure() {
+    if kiraUiStateSlotHas(kiraUiSidebarSlotKey()) == false {
+        kiraUiStateSlotPut(kiraUiSidebarSlotKey(), nativeUserData(nativeState(KiraUiSidebarState {
+            slide: motionSpringStart(navigationSidebarSpring(1.0), 1.0, 0.0)
+        })))
+    }
+    return
+}
+
+// How far out the sidebar is this frame, from 0 tucked away past the window's
+// leading edge to 1 beside the content. While it slides the content beside
+// it resizes with it, as in a live resize.
+function kiraUiSidebarShown(context: borrow BuildContext) -> Float {
+    kiraUiSidebarEnsure()
+    var state = nativeRecover<KiraUiSidebarState>(kiraUiStateSlotGet(kiraUiSidebarSlotKey()))
+    if state.advancedOn != context.frameCount {
+        state.advancedOn = context.frameCount
+        let sample = motionSpringAdvance(state.slide, kiraUiClockDelta())
+        state.shown = min(max(sample.value, 0.0), 1.0)
+        if motionSpringSettled(state.slide, sample, motionSpringEpsilon()) {
+            state.shown = state.slide.spring.target
+        } else {
+            kiraUiClockResizing()
+        }
+    }
+    return state.shown
+}
+
+// Slides the sidebar away, or back out, from wherever it is and at the speed
+// it has.
 function navigationSidebarToggleAction() -> () -> Void {
     let action: () -> Void = { in
-        let collapsed = kiraUiSidebarCollapsed()
+        kiraUiSidebarEnsure()
         var state = nativeRecover<KiraUiSidebarState>(kiraUiStateSlotGet(kiraUiSidebarSlotKey()))
-        state.collapsed = !collapsed
+        state.collapsed = !state.collapsed
+        let now = motionSpringSample(state.slide, state.slide.elapsed)
+        state.slide = motionSpringStart(navigationSidebarSpring(state.collapsed ? 0.0 : 1.0), now.value, now.velocity)
         return
     }
     return action
@@ -854,8 +893,11 @@ construct NavigationSplitView(
         let metrics = navigationMetrics(context.viewportWidth)
         let split = metrics.presentation == .Split
         // The split view's own toggle is always on the bar; what it decides is
-        // whether the sidebar is.
-        let showsSidebar = split && navigationShowsSidebar(columnVisibility, false) && !kiraUiSidebarCollapsed()
+        // whether the sidebar is, and it slides there.
+        let hasSidebar = split && navigationShowsSidebar(columnVisibility, false)
+        let shown = hasSidebar ? kiraUiSidebarShown(context) : 0.0
+        let showsSidebar = shown > 0.0
+        let sidebarSpan = metrics.primaryWidth + windowChromeMetrics.dividerThickness
         // Side by side, the row chosen in the sidebar is the root of what the
         // detail shows; stacked, the sidebar is the root and the row is pushed.
         kiraUiNavigationSetRootDepth(split ? 1 : 0)
@@ -870,10 +912,7 @@ construct NavigationSplitView(
         // content column as more of it on the leading side: a stack in it
         // paints its canvas under all of them and holds only its content clear.
         // Anything else is held clear here.
-        var beside = 0.0
-        if showsSidebar {
-            beside = metrics.primaryWidth + windowChromeMetrics.dividerThickness
-        }
+        var beside = sidebarSpan * shown
         if split {
             beside = beside + caMeasure(contentDesc, context.viewportWidth).width
         }
@@ -903,23 +942,48 @@ construct NavigationSplitView(
         }
 
         kiraUiChromeShowSidebarToggle()
+        if hasSidebar {
+            kiraUiChromeSetNavigationLayout(metrics.primaryWidth, true, shown, kiraUiToolbarDetailColumn())
+        }
+        // Each column is known by its own key, so the sidebar coming and going
+        // never has the tree take the content column for it.
+        //
+        // The sidebar takes the room it is out by and slides in it, its glass
+        // and divider at their own width, past the window's leading edge as
+        // it goes.
         var columns: [CALayerDescription] = []
         if showsSidebar {
-            kiraUiChromeSetNavigationLayout(metrics.primaryWidth, true, kiraUiToolbarDetailColumn())
-            columns.append(liquidGlassDescription(
-                CALayoutIntent {
+            columns.append(CALayerDescription {
+                key: 1,
+                layout: CALayoutIntent {
                     widthFill: false,
-                    fixedWidth: metrics.primaryWidth
+                    fixedWidth: sidebarSpan * shown
                 },
-                0.0,
-                .Rect,
-                modifiers,
-                [safeAreaInset(move sidebarDesc, context.safeArea)]
-            ))
-            columns.append(splitDivider(modifiers))
+                sublayers: [CALayerDescription {
+                    layout: CALayoutIntent {
+                        axis: .Row,
+                        widthFill: false,
+                        offset: Point { x: 0.0 - sidebarSpan * (1.0 - shown), y: 0.0 }
+                    },
+                    sublayers: [
+                        liquidGlassDescription(
+                            CALayoutIntent {
+                                widthFill: false,
+                                fixedWidth: metrics.primaryWidth
+                            },
+                            0.0,
+                            .Rect,
+                            modifiers,
+                            [safeAreaInset(move sidebarDesc, context.safeArea)]
+                        ),
+                        splitDivider(modifiers)
+                    ]
+                }]
+            })
         }
         // An unwritten content column measures nothing.
         var contentColumn = safeAreaInset(move contentDesc, context.safeArea)
+        contentColumn.key = 2
         contentColumn.layout.widthFill = false
         columns.append(move contentColumn)
         return CALayerDescription {

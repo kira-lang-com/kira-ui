@@ -31,25 +31,15 @@ function glassCompositorRamp(recipe: borrow ResolvedGlass, input: GlassInput) ->
     return CAGlassRamp {}
 }
 
-// A recipe as what the compositor draws with it. The platform's blur opacity
-// is how much of the blurred backdrop shows, so it is read against the most
-// the recipe ever shows and scales the material's own blur: a surface past the
-// size where the ramp tops out blurs exactly as the material says. The edge's
-// grays and its light are the recipe's own at every size. Liquid Glass casts no shadow, so a
-// recipe's shadow inputs are not drawn.
+// A recipe as what the compositor draws with it. Glass blurs everything
+// behind it, as far as the recipe's radius says at the surface's size -- a
+// little under a control, far under a menu or a panel -- and never shows the
+// backdrop sharp through the blur. The edge's grays and its light are the
+// recipe's own at every size. Liquid Glass casts no shadow, so a recipe's
+// shadow inputs are not drawn.
 function glassCompositorSizing(recipe: borrow ResolvedGlass) -> CAGlassSizing {
-    let blur = glassCompositorRamp(recipe, .BlurOpacity)
-    var share = CAGlassRamp {}
-    if blur.maximum > 0.0 {
-        share = CAGlassRamp {
-            base: blur.base / blur.maximum,
-            slope: blur.slope / blur.maximum,
-            minimum: blur.minimum / blur.maximum,
-            maximum: 1.0
-        }
-    }
     return CAGlassSizing {
-        blur: share,
+        blurRadius: glassCompositorRamp(recipe, .BlurRadius),
         ringTone: glassCompositorRamp(recipe, .EdgeRingTone),
         sideTone: glassCompositorRamp(recipe, .EdgeSideTone),
         lightDodge: glassCompositorRamp(recipe, .EdgeLightDodge),
