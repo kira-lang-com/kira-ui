@@ -160,7 +160,8 @@ function kiraUiPressAnchor() -> KiraUiOverlay {
 // out among siblings: each one is offset to its own anchor and takes its natural
 // size there. The stack fills the canvas, so that offset is in canvas
 // coordinates — the same ones the anchor was recorded in. An overlay is held
-// inside the canvas by the margin a window keeps its chrome off its edges.
+// inside the canvas by the margin a window keeps its chrome off its edges, or
+// by its anchor where that sits nearer an edge.
 //
 // The content sits in the stack whether anything floats or not. The retained
 // tree knows a layer by where it stands, so content that moved one level down
@@ -183,9 +184,16 @@ function overlayStack(content: CALayerDescription, overlays: [KiraUiOverlay], wi
         let y = overlays[i].anchorY + overlays[i].anchorH + overlays[i].spacing
         floating.layout.widthFill = false
         floating.layout.heightFill = false
+        // The margin keeps it in from the window's edges, but never further in
+        // than its anchor: a control that sits nearer the edge than the margin
+        // has what it presents hung from it where it is, flush with it.
+        let left = min(margin, overlays[i].anchorX)
+        let top = min(margin, overlays[i].anchorY)
+        let right = max(width - margin, overlays[i].anchorX + overlays[i].anchorW)
+        let bottom = max(height - margin, overlays[i].anchorY + overlays[i].anchorH)
         floating.layout.offset = Point {
-            x: min(max(x, margin), width - margin - size.width),
-            y: min(max(y, margin), height - margin - size.height)
+            x: min(max(x, left), right - size.width),
+            y: min(max(y, top), bottom - size.height)
         }
         layers.append(move floating)
     }

@@ -28,6 +28,10 @@ struct KiraUiClock {
     var delta: Float = 0.0
     // Whether anything advanced during the last build and has not settled.
     var moving: Bool = false
+    // Whether something in the build is resizing the window's content the way
+    // the window resizing would, a sidebar sliding in or out: the content
+    // takes each frame's layout at once, as in a live resize.
+    var resizing: Bool = false
     // Whether transitions should be shortened to a cross-dissolve.
     //
     // Every motion entry point takes this and nothing in this stack answers it
@@ -100,6 +104,17 @@ function kiraUiClockBeginFrame() {
     kiraUiClockEnsure()
     var clock = nativeRecover<KiraUiClock>(kiraUiStateSlotGet(kiraUiClockSlotKey()))
     clock.moving = false
+    clock.resizing = false
+    return
+}
+
+// "I am resizing the content this frame." Said by a widget while it lowers;
+// see `resizing`.
+function kiraUiClockResizing() {
+    kiraUiClockEnsure()
+    var clock = nativeRecover<KiraUiClock>(kiraUiStateSlotGet(kiraUiClockSlotKey()))
+    clock.resizing = true
+    clock.moving = true
     return
 }
 

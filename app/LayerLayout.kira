@@ -56,10 +56,7 @@ function caMeasure(node: borrow CALayerDescription, availableWidth: Float) -> Si
                 sum = sum + widths[i]
                 maxH = max(maxH, child.height)
             }
-            if node.sublayers.count > 1 {
-                sum = sum + intent.spacing * Float(node.sublayers.count - 1)
-            }
-            contentWidth = sum
+            contentWidth = sum + caStackSpacing(node)
             contentHeight = maxH
         }
         Column -> {
@@ -70,11 +67,8 @@ function caMeasure(node: borrow CALayerDescription, availableWidth: Float) -> Si
                 sum = sum + child.height
                 maxW = max(maxW, child.width)
             }
-            if node.sublayers.count > 1 {
-                sum = sum + intent.spacing * Float(node.sublayers.count - 1)
-            }
             contentWidth = maxW
-            contentHeight = sum
+            contentHeight = sum + caStackSpacing(node)
         }
     }
 
@@ -144,9 +138,7 @@ function caRowWidths(node: borrow CALayerDescription, innerWidth: Float, sharesL
             widths.append(want)
         }
     }
-    if count > 1 {
-        used = used + node.layout.spacing * Float(count - 1)
-    }
+    used = used + caStackSpacing(node)
 
     var overflow = used - innerWidth
     for i in 0..count {
@@ -172,6 +164,28 @@ function caRowWidths(node: borrow CALayerDescription, innerWidth: Float, sharesL
         }
     }
     return widths
+}
+
+// The gap a stack leaves before its sublayer at `index`: none before the first,
+// and otherwise its spacing, scaled by how fully the sublayer stands in the
+// stack and by how fully anything before it does. A sublayer folding away in
+// the middle so takes one gap with it, and one folding away at either end
+// takes the gap on its inner side -- what the stack closes up to without it.
+function caGapBefore(node: borrow CALayerDescription, index: Int) -> Float {
+    var before = 0.0
+    for i in 0..index {
+        before = max(before, node.sublayers[i].layout.presence)
+    }
+    return node.layout.spacing * min(node.sublayers[index].layout.presence, before)
+}
+
+// Every gap a stack leaves between its sublayers.
+function caStackSpacing(node: borrow CALayerDescription) -> Float {
+    var total = 0.0
+    for i in 0..node.sublayers.count {
+        total = total + caGapBefore(node, i)
+    }
+    return total
 }
 
 // This layer's own size given the space offered to it: fixed wins, then fill
@@ -234,10 +248,11 @@ function caPlaceRow(
     let widths = caRowWidths(node, innerWidth, true)
     var cursor = 0.0
     for i in 0..node.sublayers.count {
+        cursor = cursor + caGapBefore(node, i)
         caPlace(node.sublayers[i], widths[i], innerHeight)
         let across = (innerHeight - node.sublayers[i].size.height) * node.layout.alignment.y
         node.sublayers[i].position = Point { x: originX + cursor, y: originY + across }
-        cursor = cursor + widths[i] + node.layout.spacing
+        cursor = cursor + widths[i]
     }
 }
 
@@ -255,8 +270,6 @@ function caPlaceColumn(
     if count == 0 {
         return
     }
-    let spacing = node.layout.spacing
-
     // The height the non-flex children want, and the total flex weight sharing
     // what is left.
     var heights: [Float] = []
@@ -275,7 +288,7 @@ function caPlaceColumn(
             heights.append(want)
         }
     }
-    let leftover = max(innerHeight - fixedMain - spacing * Float(count - 1), 0.0)
+    let leftover = max(innerHeight - fixedMain - caStackSpacing(node), 0.0)
 
     var cursor = 0.0
     for i in 0..count {
@@ -283,10 +296,11 @@ function caPlaceColumn(
         if flex > 0 && flexTotal > 0 {
             heights[i] = node.sublayers[i].layout.minHeight + leftover * Float(flex) / Float(flexTotal)
         }
+        cursor = cursor + caGapBefore(node, i)
         caPlace(node.sublayers[i], innerWidth, heights[i])
         let across = (innerWidth - node.sublayers[i].size.width) * node.layout.alignment.x
         node.sublayers[i].position = Point { x: originX + across, y: originY + cursor }
-        cursor = cursor + heights[i] + spacing
+        cursor = cursor + heights[i]
     }
 }
 

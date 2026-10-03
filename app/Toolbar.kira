@@ -179,6 +179,9 @@ struct KiraUiToolbarSink {
     // compositor consumes this once, after every contributor has been collected.
     var navigationWidth: Float = 0.0
     var hasNavigationColumn: Bool = false
+    // How far out the sidebar is, from 0 tucked away to 1 beside the content,
+    // as its toggle's spring has it this frame.
+    var navigationShown: Float = 0.0
     var visibleColumn: Int = 2
     // Which column is being lowered, so a title declared inside one lands in the
     // section over it: 0 the sidebar, 1 the content, 2 the detail.
@@ -341,6 +344,7 @@ function kiraUiToolbarCollect() {
     sink.detailMargin = 0.0 - 1.0
     sink.navigationWidth = 0.0
     sink.hasNavigationColumn = false
+    sink.navigationShown = 0.0
     sink.visibleColumn = kiraUiToolbarDetailColumn()
     // A plain NavigationStack or root view is the document/detail surface. A
     // split view explicitly enters each of its columns while lowering them.
@@ -588,25 +592,27 @@ function kiraUiToolbarStopCollecting() {
 function kiraUiChromeSetNavigationLayout(
     navigationWidth: Float,
     hasNavigationColumn: Bool,
+    navigationShown: Float,
     visibleColumn: Int,
 ) {
     kiraUiToolbarSinkEnsure()
     var sink = nativeRecover<KiraUiToolbarSink>(kiraUiStateSlotGet(kiraUiToolbarSinkKey()))
     sink.navigationWidth = navigationWidth
     sink.hasNavigationColumn = hasNavigationColumn
+    sink.navigationShown = navigationShown
     sink.visibleColumn = visibleColumn
     return
 }
 
 // Where the sidebar ends across the window, as the last frame laid it out: 0
-// with no sidebar beside the content.
+// with no sidebar beside the content, and partway while it slides.
 function kiraUiToolbarNavigationWidth() -> Float {
     kiraUiToolbarSinkEnsure()
     let sink = nativeRecover<KiraUiToolbarSink>(kiraUiStateSlotGet(kiraUiToolbarSinkKey()))
     if !sink.hasNavigationColumn {
         return 0.0
     }
-    return sink.navigationWidth
+    return sink.navigationWidth * sink.navigationShown
 }
 
 function kiraUiChromeShowSidebarToggle() {
