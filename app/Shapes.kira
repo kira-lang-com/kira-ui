@@ -103,13 +103,26 @@ construct SurfaceLayer(style: Material, shape: ContainerShape) extends Widget {
 }
 
 // What `.glassEffect(_:in:)` describes: the content on a piece of glass, which
-// takes the content's footprint exactly as a background does.
-construct GlassEffectLayer(glass: Glass, shape: ContainerShape) extends Widget {
+// takes the content's footprint exactly as a background does, and answers a
+// press when it is interactive.
+construct GlassEffectLayer(glass: Glass, shape: ContainerShape, interactive: Bool) extends Widget {
     let content: some Widget
 
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let described = content.describe(context, modifierContextForChildren(modifiers))
+        if interactive {
+            return interactiveGlassDescription(
+                context,
+                kiraUiTapSeqKey(),
+                surfaceFootprint(described.layout),
+                containerShapeRadius(shape, modifiers),
+                shape,
+                modifiers,
+                [described],
+                glass
+            )
+        }
         return liquidGlassDescription(
             surfaceFootprint(described.layout),
             containerShapeRadius(shape, modifiers),
