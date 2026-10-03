@@ -945,7 +945,7 @@ construct Menu(title: String, systemImage: Symbol = .None) extends Widget {
         // Hung by its own height above the bottom of the button: over it.
         overlay.spacing = 0.0 - overlay.anchorH
         overlay.alignment = 1.0
-        var morph = menuMorphDescription(move items, move glyph, reveal, modifiers)
+        var morph = menuMorphDescription(context, kiraUiTapSeqKey(), move items, move glyph, reveal, modifiers)
         // Falls back behind a submenu open in it, as a whole, toward the button
         // it came out of.
         let recession = kiraUiMenuRecession(context)
@@ -1018,9 +1018,21 @@ function menuSubmenuCard(
         glassOpacity = min(max((grown - metrics.cardAppear) / metrics.cardAppearSpan, 0.0), 1.0)
         itemsOpacity = min(max((grown - metrics.itemsAppear) / metrics.itemsAppearSpan, 0.0), 1.0)
     }
-    var glass = interactiveGlassDescription(
-        context,
-        key,
+    // The card is interactive as a whole, rows and all, under the glass's
+    // light.
+    var clip = CALayerDescription {
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedWidth: width,
+            fixedHeight: height,
+            offset: Point { x: 0.0, y: (reveal.anchorY - top) * (1.0 - grown) - metrics.rise * reveal.risen }
+        },
+        cornerRadius: radius,
+        clipsChildren: true
+    }
+    let light = interactivePress(clip, key, context)
+    var glass = liquidGlassDescription(
         CALayoutIntent {
             widthFill: false,
             heightFill: false,
@@ -1032,6 +1044,9 @@ function menuSubmenuCard(
         modifiers,
         []
     )
+    var lit = liquidGlassContent(.Squircle(radius), modifiers)
+    interactiveGlassLit(lit, light)
+    glass.content = .Glass(move lit)
     glass.opacity = glassOpacity
 
     // The rule under the header is the card's, not the items': it comes and
@@ -1065,19 +1080,10 @@ function menuSubmenuCard(
             fixedHeight: full,
             offset: Point { x: 0.0, y: 0.0 - followed }
         },
-        sublayers: [CALayerDescription {
-            layout: CALayoutIntent {
-                widthFill: false,
-                heightFill: false,
-                fixedWidth: width,
-                fixedHeight: height,
-                offset: Point { x: 0.0, y: (reveal.anchorY - top) * (1.0 - grown) - metrics.rise * reveal.risen }
-            },
-            cornerRadius: radius,
-            clipsChildren: true,
-            sublayers: [move glass, move content]
-        }]
+        sublayers: []
     }
+    clip.sublayers = [move glass, move content]
+    card.sublayers.append(move clip)
     layerImmediate(card)
     return card
 }
@@ -1099,6 +1105,8 @@ function menuSubmenuCard(
 // it bends and blurs them as it bends what is behind it, and on it, clear,
 // once it has grown round them.
 function menuMorphDescription(
+    context: borrow BuildContext,
+    key: Int,
     items: CALayerDescription,
     glyph: CALayerDescription,
     reveal: borrow KiraUiMenuReveal,
@@ -1197,14 +1205,17 @@ function menuMorphDescription(
         content: .Solid(CASolid { fill: CAColor { a: 0.0 }, cornerRadius: radius, shapeKind: shapeKind }),
         sublayers: [move under]
     }
+    // Open, the glass is interactive glass, the rows on it part of it.
     var surface = CALayerDescription {
         layout: move box,
         cornerRadius: radius,
         clipsChildren: true,
         capturesBackdrop: true,
-        content: .Glass(move glass),
         sublayers: [move content]
     }
+    let light = interactivePress(surface, key, context)
+    interactiveGlassLit(glass, light)
+    surface.content = .Glass(move glass)
     var layers: [CALayerDescription] = [move rows]
     // The button's glyph rides the glass out at its center, gone as it grows,
     // and comes back home on the button's glass, out of a blur.
@@ -1330,16 +1341,15 @@ construct ContextMenu() extends Widget {
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let recession = kiraUiMenuRecession(context)
-        // The panel is the platform's menu material at every size, not the
-        // regular glass `.glassEffect` puts under a control, and it is lifted
-        // off what it is over by the kit's wide, soft shadow.
-        let card = SurfaceLayer(style: .LayeredGlass, shape: .Squircle(menuCardRadius(modifiers))) {
-            MenuItems() {
-                For(item in children) {
-                    item
-                }
+        // The panel is interactive glass: pressed or scrubbed anywhere it
+        // leans after the pointer, rows and all. It is lifted off what it is
+        // over by the kit's wide, soft shadow.
+        let card = MenuItems() {
+            For(item in children) {
+                item
             }
         }
+        .glassEffect(glass = .Regular, shape = .Squircle(menuCardRadius(modifiers)), interactive = true)
         .shadow(
             color: themeAdaptiveColor(menuShadow, modifierTheme(modifiers).appearance()),
             radius: menuShadowRadius,

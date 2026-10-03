@@ -173,19 +173,17 @@ function interactiveGlassSlotKey(key: Int) -> String {
     return kiraUiSlotKey("kiraui.glass.", key)
 }
 
-// A piece of Liquid Glass, as `liquidGlassDescription` draws it, that is
-// interactive under `key`.
-function interactiveGlassDescription(
-    context: borrow BuildContext,
-    key: Int,
-    layout: CALayoutIntent,
-    radius: Float,
-    shape: borrow ContainerShape,
-    modifiers: borrow ModifierContext,
-    sublayers: [CALayerDescription],
-    variant: borrow Glass = .Regular,
-) -> CALayerDescription {
-    var layer = liquidGlassDescription(move layout, radius, shape, modifiers, move sublayers, variant)
+
+// Makes `layer` interactive under `key`: pressed anywhere, whichever control
+// inside took the press, it swells, follows the pointer and leans, and let go
+// it springs home. The swell is the layer's own scale, so what it holds is
+// drawn at the size it swells to; the follow and the lean are its
+// deformation, which deforms that drawing as a picture, so nothing on it
+// reflows or slips while it is pulled. Its box -- and everything around it --
+// stays where layout put it. What comes back is the light the press has
+// brought up, carried back through the pull into the layer's own coordinates,
+// for a glass to draw.
+function interactivePress(layer: borrow mut CALayerDescription, key: Int, context: borrow BuildContext) -> MotionLight {
     layer.interactive = true
     layer.hitKey = key
 
@@ -202,7 +200,16 @@ function interactiveGlassDescription(
     if held && !glass.held {
         glass.size = context.heldSize
         motionPullFit(glass.pull, glass.size.width, glass.size.height)
+        let origin = context.heldOrigin
+        motionPullRoom(
+            glass.pull,
+            origin.x,
+            origin.y,
+            context.viewportWidth - origin.x - glass.size.width,
+            context.viewportHeight - origin.y - glass.size.height
+        )
         motionPullPress(glass.pull, point.x, point.y, reduced)
+        motionGlowFit(glass.glow, glass.size.width, glass.size.height)
         motionGlowPress(glass.glow, point.x, point.y)
     } else if held {
         motionPullMove(glass.pull, point.x, point.y, delta)
@@ -213,33 +220,60 @@ function interactiveGlassDescription(
     }
     glass.held = held
     let pulled = motionPullAdvance(glass.pull, delta, reduced)
-    let light = motionGlowAdvance(glass.glow, delta)
+    motionGlowAdvance(glass.glow, delta)
     if !motionPullMoving(glass.pull) && !motionGlowLit(glass.glow) {
-        return layer
+        return MotionLight {}
     }
     kiraUiClockStillMoving()
 
-    // Drawn where the pull has taken it, swollen and leaning about its center:
-    // the whole piece as it was drawn, what it holds included, transformed
-    // last, so its box -- and everything around it -- stays where layout put
-    // it. The light is carried back through all of that into the glass's own
-    // coordinates.
     let centerX = glass.size.width * 0.5
     let centerY = glass.size.height * 0.5
     let scaleX = pulled.pressScale * pulled.scaleX
     let scaleY = pulled.pressScale * pulled.scaleY
-    layer.layout.offset = Point { x: pulled.x, y: pulled.y }
-    layer.scaleX = scaleX
-    layer.scaleY = scaleY
+    layer.scaleX = layer.scaleX * pulled.pressScale
+    layer.scaleY = layer.scaleY * pulled.pressScale
+    layer.deformation = CADeformation {
+        x: pulled.x,
+        y: pulled.y,
+        scaleX: pulled.scaleX,
+        scaleY: pulled.scaleY
+    }
     layer.disablesActions = true
-    var content = liquidGlassContent(shape, modifiers, variant)
-    // The light stays in the glass: a pointer pulled off its edge lights the
+    // The light stays on the surface: a pointer pulled off its edge lights the
     // edge it left by.
-    let lightX = centerX + (glass.glow.x - pulled.x - centerX) / scaleX
-    let lightY = centerY + (glass.glow.y - pulled.y - centerY) / scaleY
-    content.glowX = clamp(lightX, 0.0, glass.size.width)
-    content.glowY = clamp(lightY, 0.0, glass.size.height)
-    content.glowStrength = light
+    let light = motionGlowLight(glass.glow)
+    return MotionLight {
+        x: clamp(centerX + (light.x - pulled.x - centerX) / scaleX, 0.0, glass.size.width),
+        y: clamp(centerY + (light.y - pulled.y - centerY) / scaleY, 0.0, glass.size.height),
+        radius: light.radius,
+        strength: light.strength
+    }
+}
+
+// Draws `light` in a piece of glass.
+function interactiveGlassLit(glass: borrow mut CAGlass, light: borrow MotionLight) {
+    glass.glowX = light.x
+    glass.glowY = light.y
+    glass.glowRadius = light.radius
+    glass.glowStrength = light.strength
+}
+
+// A piece of Liquid Glass, as `liquidGlassDescription` draws it, that is
+// interactive under `key`. Whatever it holds is part of the piece.
+function interactiveGlassDescription(
+    context: borrow BuildContext,
+    key: Int,
+    layout: CALayoutIntent,
+    radius: Float,
+    shape: borrow ContainerShape,
+    modifiers: borrow ModifierContext,
+    sublayers: [CALayerDescription],
+    variant: borrow Glass = .Regular,
+) -> CALayerDescription {
+    var layer = liquidGlassDescription(move layout, radius, shape, modifiers, move sublayers, variant)
+    let light = interactivePress(layer, key, context)
+    var content = liquidGlassContent(shape, modifiers, variant)
+    interactiveGlassLit(content, light)
     layer.content = .Glass(move content)
     return layer
 }
