@@ -278,11 +278,13 @@ public function kiraUiTokenCacheKey() -> String {
 
 public function kiraUiDefaultTokens() -> ThemeTokens {
     let scheme = kiraUiPlatformScheme()
-    if kiraUiStateSlotHas(kiraUiTokenCacheKey()) == false {
+    var slot = kiraUiStateSlotGet(kiraUiTokenCacheKey())
+    if slot == RawPtr.null {
         let made = KiraUiTokenCache { scheme: scheme, tokens: defaultTheme.tokens() }
         kiraUiStateSlotPut(kiraUiTokenCacheKey(), nativeUserData(nativeState(move made)))
+        slot = kiraUiStateSlotGet(kiraUiTokenCacheKey())
     }
-    var cache = nativeRecover<KiraUiTokenCache>(kiraUiStateSlotGet(kiraUiTokenCacheKey()))
+    var cache = nativeRecover<KiraUiTokenCache>(slot)
     if cache.scheme != scheme {
         cache.tokens = defaultTheme.tokens()
         cache.scheme = scheme
@@ -692,21 +694,21 @@ public function typographyImplementation(
     style: TypographyStyle,
     modifiers: borrow ModifierContext,
 ) -> FontImplementation {
-    return scaledTypography(modifierTheme(modifiers).typography(style), modifiers)
+    return scaledTypography(modifierTypography(modifiers, style), modifiers)
 }
 
 public function cornerRadiusImplementation(
     style: CornerRadius,
     modifiers: borrow ModifierContext,
 ) -> Float {
-    return modifierTheme(modifiers).cornerRadius(style)
+    return modifierCornerRadius(modifiers, style)
 }
 
 public function spacingImplementation(
     style: Spacing,
     modifiers: borrow ModifierContext,
 ) -> Float {
-    return modifierTheme(modifiers).spacing(style)
+    return modifierSpacing(modifiers, style)
 }
 
 public construct Text(content: String) extends Widget {
@@ -1009,7 +1011,7 @@ public construct Progress(value: Float) extends Widget {
             },
             cornerRadius: radius,
             content: .Solid(CASolid {
-                fill: caColorFromFoundation(modifierColor(foundationColor(themeAdaptiveColor(progressTrack, modifierTheme(modifiers).appearance())), modifiers)),
+                fill: caColorFromFoundation(modifierColor(foundationColor(themeAdaptiveColor(progressTrack, modifierAppearance(modifiers))), modifiers)),
                 cornerRadius: radius,
                 shapeKind: 1
             }),

@@ -34,14 +34,11 @@ public struct KiraUiNavigationTransition {
     // the fingers have it, or where the spring has it as of the last build.
     var progress: Float = 0.0
     var spring: MotionSpringState = MotionSpringState {}
-    // Where the stack describes the front view: where the motion starts on its
-    // first frame, the spring's target after that, under the fingers while
-    // they drag.
+    // Where the stack describes the front view: the spring's target, under
+    // the fingers while they drag.
     var shown: Float = 0.0
-    // Whether the stack has described where the motion starts, and whether
-    // the compositor has been handed the rest; when it was, and when the
-    // spring will have settled.
-    var primed: Bool = false
+    // Whether the compositor has been handed the motion; when it was, and
+    // when the spring will have settled.
     var started: Bool = false
     var startedAt: Float = 0.0
     var settlesAt: Float = 0.0
@@ -99,10 +96,10 @@ public function kiraUiNavigationTransition() -> KiraUiNavigationTransition {
 }
 
 // The front view starts `from` and the spring takes it to `to`, carrying the
-// speed it already had. `onScreen` says the pages are already where `from`
-// puts them -- a swipe let go, a motion turned around -- so the compositor
-// can take them from there without a frame describing them where they are.
-public function navigationTransitionSpring(state: borrow mut KiraUiNavigationTransition, from: Float, to: Float, velocity: Float, onScreen: Bool) {
+// speed it already had. A page not yet on screen enters from where `from`
+// puts it; one already there -- a swipe let go, a motion turned around -- is
+// taken from where it stands.
+public function navigationTransitionSpring(state: borrow mut KiraUiNavigationTransition, from: Float, to: Float, velocity: Float) {
     let metrics = navigationTransitionMetrics
     // Slowed animations stretch the spring's time, which its response is.
     let slowdown = max(Float(kiraUiClockState().slowdown), 1.0)
@@ -113,7 +110,6 @@ public function navigationTransitionSpring(state: borrow mut KiraUiNavigationTra
     state.spring = motionSpringStart(move spring, from, velocity)
     state.progress = from
     state.shown = from
-    state.primed = onScreen
     state.started = false
     state.dragging = false
     state.active = true
@@ -167,7 +163,7 @@ public function kiraUiNavigationTransitionPush(before: [Any NavigationValue], af
     var state = nativeRecover<KiraUiNavigationTransition>(kiraUiStateSlotGet(kiraUiNavigationTransitionKey()))
     state.front = move after
     state.covered = move before
-    navigationTransitionSpring(state, 1.0, 0.0, 0.0, false)
+    navigationTransitionSpring(state, 1.0, 0.0, 0.0)
     return
 }
 
@@ -186,7 +182,7 @@ public function kiraUiNavigationTransitionPop(before: [Any NavigationValue], aft
     }
     state.front = move before
     state.covered = move after
-    navigationTransitionSpring(state, from, 1.0, velocity, turning)
+    navigationTransitionSpring(state, from, 1.0, velocity)
     return
 }
 
@@ -204,8 +200,8 @@ public function kiraUiNavigationTransitionCancel() {
 
 // One build of the transition, as the stack lowers: the fingers' speed is
 // brought up to date, and where the stack describes the pages is decided --
-// where the motion starts, on its first build, then where it ends, with a
-// build asked for when the compositor will have taken them there.
+// where the motion ends, with a build asked for when the compositor will have
+// taken them there.
 public function kiraUiNavigationTransitionAdvance(context: borrow BuildContext) {
     kiraUiNavigationTransitionEnsure()
     var state = nativeRecover<KiraUiNavigationTransition>(kiraUiStateSlotGet(kiraUiNavigationTransitionKey()))
@@ -224,14 +220,6 @@ public function kiraUiNavigationTransitionAdvance(context: borrow BuildContext) 
     }
     if state.dragging {
         state.shown = state.progress
-        return
-    }
-    if !state.primed {
-        // Described where it starts, at once; the next build hands the rest
-        // to the compositor.
-        state.primed = true
-        state.shown = state.spring.origin
-        kiraUiClockStillMoving()
         return
     }
     let now = kiraUiClockNow()
@@ -259,6 +247,12 @@ public function kiraUiNavigationTransitionAdvance(context: borrow BuildContext) 
     state.shown = state.spring.spring.target
     kiraUiClockWakeAt(state.settlesAt)
     return
+}
+
+// Where a page coming on screen enters from: where the spring started, or
+// under the fingers, which describe it where it is.
+public function navigationTransitionFrom(state: borrow KiraUiNavigationTransition) -> Float {
+    return state.dragging ? state.shown : state.spring.origin
 }
 
 // Whether the spring is taking a view off: a pop on its way, the path already
@@ -435,10 +429,10 @@ public function kiraUiNavigationSwipeEnd() {
     let carried = speed / state.width
     if thrown || held {
         kiraUiNavigationStore(copy state.covered)
-        navigationTransitionSpring(state, from, 1.0, carried, true)
+        navigationTransitionSpring(state, from, 1.0, carried)
         return
     }
     kiraUiNavigationStore(copy state.front)
-    navigationTransitionSpring(state, from, 0.0, carried, true)
+    navigationTransitionSpring(state, from, 0.0, carried)
     return
 }

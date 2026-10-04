@@ -27,19 +27,13 @@ import KCoreAnimation
 //
 // For a description still being built: it is measured as it stands now, on a
 // copy, since whatever builds it may change it after asking.
+//
+// Only a layout pass keeps measures on a layer, and every frame lays out a tree
+// `describe` has just built, so a description reaches here, and reaches
+// `caLayoutTree`, with none kept.
 public function caMeasure(node: borrow CALayerDescription, availableWidth: Float) -> Size {
     var scratch = copy node
-    caForgetMeasures(scratch)
     return caMeasureLaid(scratch, availableWidth)
-}
-
-// Drops every size a layout pass kept on the subtree.
-public function caForgetMeasures(node: borrow mut CALayerDescription) {
-    node.measuredAt = -1.0
-    node.measuredAtLast = -1.0
-    for i in 0..node.sublayers.count {
-        caForgetMeasures(node.sublayers[i])
-    }
 }
 
 // `caMeasure` inside a layout pass, which keeps each answer on the layer it
@@ -132,22 +126,19 @@ public function caCappedWidth(intent: borrow CALayoutIntent, width: Float) -> Fl
 // The size a layer's own content asks for at `width`: its intrinsic extent, or —
 // for text that wraps and does not fit — the lines it breaks into there.
 public function caContentSize(node: borrow CALayerDescription, width: Float) -> Size {
-    let intent = node.layout
-    let intrinsic = Size { width: intent.intrinsicWidth, height: intent.intrinsicHeight }
+    let intrinsic = Size { width: node.layout.intrinsicWidth, height: node.layout.intrinsicHeight }
+    if intrinsic.width <= width + 0.5 {
+        return intrinsic
+    }
     match node.content {
         Text(t) -> {
-            if t.wraps && intrinsic.width > width + 0.5 {
+            if t.wraps {
                 return foundationTextWrappedSize(t.content, t.size, t.weight, width)
             }
-            return intrinsic
         }
-        Solid(s) -> return intrinsic
-        Icon(i) -> return intrinsic
-        Glass(g) -> return intrinsic
-        Gradient(r) -> return intrinsic
-        Texture(x) -> return intrinsic
-        Empty -> return intrinsic
+        else -> {}
     }
+    return intrinsic
 }
 
 // The width each sublayer of a row gets out of `innerWidth`.
@@ -383,7 +374,6 @@ public function caPlaceColumn(
 
 // Lay a whole tree out against a window of the given size, ready to reconcile.
 public function caLayoutTree(root: borrow mut CALayerDescription, width: Float, height: Float) {
-    caForgetMeasures(root)
     caPlace(root, width, height)
     root.position = Point { x: 0.0, y: 0.0 }
     caResolveGuides(root)

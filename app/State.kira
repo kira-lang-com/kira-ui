@@ -62,27 +62,50 @@ public function kiraUiStateSlotPut(key: String, value: NativeState<Any>) {
 // decimal digits.
 //
 // Auto-minted keys are build-sequence numbers, so one widget's state has to be
-// reachable from its key alone — there is nowhere else to put it. The digits are
-// built through the codepoint helper rather than a formatter because a slot key
-// is the one string this layer makes that nothing ever reads back.
+// reachable from its key alone — there is nowhere else to put it. Every keyed
+// widget asks for its slot on every build, so the digits are prepended as
+// literals rather than gathered into a codepoint array and converted.
 public function kiraUiSlotKey(prefix: String, key: Int) -> String {
     var remaining = key
     if remaining < 0 {
         remaining = 0 - remaining
     }
-    var digitsReversed: [Int] = []
-    if remaining == 0 {
-        digitsReversed.append(48)
-    }
+    var digits = kiraUiDecimalDigit(remaining - (remaining / 10) * 10)
+    remaining = remaining / 10
     while remaining > 0 {
-        digitsReversed.append(48 + (remaining - (remaining / 10) * 10))
+        digits = kiraUiDecimalDigit(remaining - (remaining / 10) * 10) + digits
         remaining = remaining / 10
     }
-    var codes: [Int] = []
-    var index = digitsReversed.count - 1
-    while index >= 0 {
-        codes.append(digitsReversed[index])
-        index = index - 1
+    return prefix + digits
+}
+
+function kiraUiDecimalDigit(digit: Int) -> String {
+    if digit < 5 {
+        if digit == 0 {
+            return "0"
+        }
+        if digit == 1 {
+            return "1"
+        }
+        if digit == 2 {
+            return "2"
+        }
+        if digit == 3 {
+            return "3"
+        }
+        return "4"
     }
-    return prefix + foundationStringFromCodepoints(codes, 0, codes.count)
+    if digit == 5 {
+        return "5"
+    }
+    if digit == 6 {
+        return "6"
+    }
+    if digit == 7 {
+        return "7"
+    }
+    if digit == 8 {
+        return "8"
+    }
+    return "9"
 }
