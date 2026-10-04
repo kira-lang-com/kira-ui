@@ -5,7 +5,7 @@ import Foundation
 // the declaration mechanism can migrate to that annotation when the compiler
 // grows it without changing the traversal or widget API.
 // Where a control finds itself, and therefore what it looks like.
-enum ControlPresentation {
+public enum ControlPresentation {
     // Ordinary content: a control owns its fill and its standalone geometry.
     Standalone
     // System chrome: the bar owns the shared surface and controls resolve their
@@ -26,7 +26,7 @@ enum ControlPresentation {
     InsetGrouped
 }
 
-enum ModifierInheritance {
+public enum ModifierInheritance {
     Inherited
     Scoped
     Cascading
@@ -39,7 +39,7 @@ enum ModifierInheritance {
 // a color is named at a call site. Each case resolves through the theme's
 // separated token groups (foregrounds, tints, palette); `Black`, `White` and
 // `Clear` are absolute.
-enum PrimaryColor {
+public enum PrimaryColor {
     Primary
     Secondary
     Tertiary
@@ -76,7 +76,7 @@ enum PrimaryColor {
 // groups its tokens. Widgets consume these; they never resolve an
 // AdaptiveColor themselves.
 
-struct PaletteColors {
+public struct PaletteColors {
     let red: Color
     let orange: Color
     let yellow: Color
@@ -92,7 +92,7 @@ struct PaletteColors {
     let gray: Color
 }
 
-struct ForegroundColors {
+public struct ForegroundColors {
     let primary: Color
     let secondary: Color
     let tertiary: Color
@@ -100,39 +100,39 @@ struct ForegroundColors {
     let inverse: Color
 }
 
-struct BackgroundColors {
+public struct BackgroundColors {
     let canvas: Color
     let surface: Color
     let raised: Color
     let overlay: Color
 }
 
-struct FillColors {
+public struct FillColors {
     let control: Color
     let hover: Color
     let selection: Color
 }
 
-struct TintColors {
+public struct TintColors {
     let accent: Color
     let success: Color
     let warning: Color
     let danger: Color
 }
 
-struct ResolvedBorder {
+public struct ResolvedBorder {
     let color: Color
     let width: Float
 }
 
-struct BorderTokens {
+public struct BorderTokens {
     let subtle: ResolvedBorder
     let standard: ResolvedBorder
     let strong: ResolvedBorder
     let focus: ResolvedBorder
 }
 
-struct ThemeTokens {
+public struct ThemeTokens {
     let palette: PaletteColors
     let foreground: ForegroundColors
     let background: BackgroundColors
@@ -150,14 +150,14 @@ struct ThemeTokens {
     let titleWeight: FontWeight
 }
 
-function themeAdaptiveColor(color: borrow AdaptiveColor, appearance: borrow Appearance) -> Color {
+public function themeAdaptiveColor(color: borrow AdaptiveColor, appearance: borrow Appearance) -> Color {
     match appearance {
         Light -> return color.light
         Dark -> return color.dark
     }
 }
 
-function resolvedBorder(border: borrow BorderImplementation, appearance: borrow Appearance) -> ResolvedBorder {
+public function resolvedBorder(border: borrow BorderImplementation, appearance: borrow Appearance) -> ResolvedBorder {
     return ResolvedBorder {
         color: themeAdaptiveColor(border.color, appearance),
         width: border.width
@@ -167,7 +167,7 @@ function resolvedBorder(border: borrow BorderImplementation, appearance: borrow 
 // The one place a style becomes resolved tokens. Theme.tokens() and the
 // no-theme fallback both come through here, so a widget cannot see two
 // different resolution rules.
-function styleThemeTokens(style: Any StyleImplementation) -> ThemeTokens {
+public function styleThemeTokens(style: Any StyleImplementation) -> ThemeTokens {
     let appearance = resolvedAppearance(style.appearance)
     let palette = style.palette
     let foregrounds = style.foregrounds
@@ -236,7 +236,7 @@ function styleThemeTokens(style: Any StyleImplementation) -> ThemeTokens {
     }
 }
 
-construct Theme {
+public construct Theme {
     @Required let style: Any StyleImplementation
 
     function appearance() -> Appearance {
@@ -311,14 +311,14 @@ construct Theme {
     }
 }
 
-construct DefaultTheme() extends Theme {
+public construct DefaultTheme() extends Theme {
     let style = DefaultStyle {}
 }
 
 // The library's own theme, built once. Every context and every modifier holds
 // a theme whether or not one was applied, and an unthemed tree asks for this
 // one at nearly every widget.
-let defaultTheme: Any Theme = DefaultTheme {}
+public let defaultTheme: Any Theme = DefaultTheme {}
 
 // The theme in effect here: the applied one, or the library's own when nothing
 // applied a theme.
@@ -329,7 +329,7 @@ let defaultTheme: Any Theme = DefaultTheme {}
 // with no theme drawing near-white text on a light surface and asking
 // `.backgroundStyle(.Surface)` for a color that came back transparent: two
 // defaults that were never authored together.
-function modifierTheme(modifiers: borrow ModifierContext) -> Any Theme {
+public function modifierTheme(modifiers: borrow ModifierContext) -> Any Theme {
     if modifiers.hasTheme {
         return copy modifiers.theme
     }
@@ -342,7 +342,7 @@ function modifierTheme(modifiers: borrow ModifierContext) -> Any Theme {
 // a selected row, and the wash under a hovered one. `Clear` is the honest name
 // for a row in neither state — a conditional background answers with a style,
 // not with a transparent color.
-enum BackgroundStyle {
+public enum BackgroundStyle {
     Clear
     Window
     Surface
@@ -354,7 +354,7 @@ enum BackgroundStyle {
     Hover
 }
 
-enum ThemeBorder {
+public enum ThemeBorder {
     Subtle
     Standard
     Strong
@@ -365,7 +365,7 @@ enum ThemeBorder {
 // omitted value from a value whose scalar representation happens to be a
 // default, without introducing a dynamic property map or a permanently
 // materialized resolved style on each widget.
-struct ModifierDelta {
+public struct ModifierDelta {
     let hasTheme: Bool = false
     let theme: Any Theme = copy defaultTheme
     let hasForegroundColor: Bool = false
@@ -417,7 +417,7 @@ struct ModifierDelta {
 // widget and derived once at the point where a widget consumes a delta. Scoped
 // and isolated values are removed by modifierContextForChildren; inherited,
 // cascading, and environmental values remain available to descendants.
-struct ModifierContext {
+public struct ModifierContext {
     let theme: Any Theme = copy defaultTheme
     let hasTheme: Bool = false
     // `.foregroundColor(...)` cascades: it is the subtree's ink until something
@@ -486,7 +486,7 @@ struct ModifierContext {
     let controlPresentation: ControlPresentation = .Standalone
 }
 
-function modifierContextApply(
+public function modifierContextApply(
     context: borrow ModifierContext,
     delta: ModifierDelta,
 ) -> ModifierContext {
@@ -549,7 +549,7 @@ function modifierContextApply(
 // its content was written in would be a worse bug than the one this fixes. What
 // resets is the presenter's own transient state — how faded it currently is —
 // which describes the presenter's box and nothing beyond it.
-function modifierContextForOverlay(context: borrow ModifierContext) -> ModifierContext {
+public function modifierContextForOverlay(context: borrow ModifierContext) -> ModifierContext {
     let inherited = modifierContextForChildren(context)
     return ModifierContext {
         theme: inherited.theme,
@@ -597,7 +597,7 @@ function modifierContextForOverlay(context: borrow ModifierContext) -> ModifierC
 // The context a menu's contents are built in. What makes a `Button` inside one
 // present itself as a row, and a `ControlGroup`'s children present themselves as
 // the actions across the top instead.
-function modifierContextPresenting(
+public function modifierContextPresenting(
     context: borrow ModifierContext,
     presentation: ControlPresentation,
 ) -> ModifierContext {
@@ -644,7 +644,7 @@ function modifierContextPresenting(
     }
 }
 
-function modifierContextForChildren(context: borrow ModifierContext) -> ModifierContext {
+public function modifierContextForChildren(context: borrow ModifierContext) -> ModifierContext {
     return ModifierContext {
         theme: context.theme,
         hasTheme: context.hasTheme,
@@ -691,7 +691,7 @@ function modifierContextForChildren(context: borrow ModifierContext) -> Modifier
 // The cascading foreground and explicit text color remain available to that
 // local presentation, while material and focus remain isolated from the
 // internal label node.
-function modifierContextForPresentation(context: borrow ModifierContext) -> ModifierContext {
+public function modifierContextForPresentation(context: borrow ModifierContext) -> ModifierContext {
     return ModifierContext {
         theme: context.theme,
         hasTheme: context.hasTheme,
@@ -734,112 +734,112 @@ function modifierContextForPresentation(context: borrow ModifierContext) -> Modi
     }
 }
 
-function modifierDeltaTheme(theme: Any Theme) -> ModifierDelta {
+public function modifierDeltaTheme(theme: Any Theme) -> ModifierDelta {
     return ModifierDelta {
         hasTheme: true,
         theme: move theme
     }
 }
 
-function modifierDeltaForegroundColor(color: PrimaryColor) -> ModifierDelta {
+public function modifierDeltaForegroundColor(color: PrimaryColor) -> ModifierDelta {
     return ModifierDelta {
         hasForegroundColor: true,
         foregroundColor: color
     }
 }
 
-function modifierDeltaMaterial(material: Material) -> ModifierDelta {
+public function modifierDeltaMaterial(material: Material) -> ModifierDelta {
     return ModifierDelta {
         hasMaterial: true,
         material: material
     }
 }
 
-function modifierDeltaFill(color: Color) -> ModifierDelta {
+public function modifierDeltaFill(color: Color) -> ModifierDelta {
     return ModifierDelta {
         hasFill: true,
         fillColor: move color
     }
 }
 
-function modifierDeltaBackgroundStyle(surface: BackgroundStyle) -> ModifierDelta {
+public function modifierDeltaBackgroundStyle(surface: BackgroundStyle) -> ModifierDelta {
     return ModifierDelta {
         hasBackgroundStyle: true,
         backgroundStyle: surface
     }
 }
 
-function modifierDeltaThemeBorder(border: ThemeBorder) -> ModifierDelta {
+public function modifierDeltaThemeBorder(border: ThemeBorder) -> ModifierDelta {
     return ModifierDelta {
         hasThemeBorder: true,
         themeBorder: border
     }
 }
 
-function modifierDeltaTextColor(color: Color) -> ModifierDelta {
+public function modifierDeltaTextColor(color: Color) -> ModifierDelta {
     return ModifierDelta {
         hasTextColor: true,
         textColor: move color
     }
 }
 
-function modifierDeltaTypography(style: TypographyStyle) -> ModifierDelta {
+public function modifierDeltaTypography(style: TypographyStyle) -> ModifierDelta {
     return ModifierDelta {
         hasTypography: true,
         typography: style
     }
 }
 
-function modifierDeltaControlSize(size: ControlSize) -> ModifierDelta {
+public function modifierDeltaControlSize(size: ControlSize) -> ModifierDelta {
     return ModifierDelta {
         hasControlSize: true,
         controlSize: size
     }
 }
 
-function modifierDeltaImageScale(scale: IconScale) -> ModifierDelta {
+public function modifierDeltaImageScale(scale: IconScale) -> ModifierDelta {
     return ModifierDelta {
         hasImageScale: true,
         imageScale: scale
     }
 }
 
-function modifierDeltaSymbolVariant(variant: SymbolVariants) -> ModifierDelta {
+public function modifierDeltaSymbolVariant(variant: SymbolVariants) -> ModifierDelta {
     return ModifierDelta {
         hasSymbolVariant: true,
         symbolVariant: variant
     }
 }
 
-function modifierDeltaContentMargin(length: Float) -> ModifierDelta {
+public function modifierDeltaContentMargin(length: Float) -> ModifierDelta {
     return ModifierDelta {
         hasContentMargin: true,
         contentMargin: length
     }
 }
 
-function modifierDeltaListStyle(style: ListStyle) -> ModifierDelta {
+public function modifierDeltaListStyle(style: ListStyle) -> ModifierDelta {
     return ModifierDelta {
         hasListStyle: true,
         listStyle: style
     }
 }
 
-function modifierDeltaContentInset(length: Float) -> ModifierDelta {
+public function modifierDeltaContentInset(length: Float) -> ModifierDelta {
     return ModifierDelta {
         hasContentInset: true,
         contentInset: length
     }
 }
 
-function modifierDeltaTint(color: PrimaryColor) -> ModifierDelta {
+public function modifierDeltaTint(color: PrimaryColor) -> ModifierDelta {
     return ModifierDelta {
         hasTint: true,
         tint: color
     }
 }
 
-function modifierDeltaFont(size: Float, weight: FontWeight) -> ModifierDelta {
+public function modifierDeltaFont(size: Float, weight: FontWeight) -> ModifierDelta {
     return ModifierDelta {
         hasFont: true,
         fontSize: size,
@@ -847,20 +847,20 @@ function modifierDeltaFont(size: Float, weight: FontWeight) -> ModifierDelta {
     }
 }
 
-function modifierDeltaOpacity(value: Float) -> ModifierDelta {
+public function modifierDeltaOpacity(value: Float) -> ModifierDelta {
     return ModifierDelta {
         hasOpacity: true,
         opacity: value
     }
 }
 
-function modifierDeltaDisabled(value: Bool) -> ModifierDelta {
+public function modifierDeltaDisabled(value: Bool) -> ModifierDelta {
     return ModifierDelta {
         disabled: value
     }
 }
 
-function modifierDeltaFocused(value: Bool) -> ModifierDelta {
+public function modifierDeltaFocused(value: Bool) -> ModifierDelta {
     return ModifierDelta {
         hasFocused: true,
         focused: value

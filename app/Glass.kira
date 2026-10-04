@@ -9,14 +9,14 @@ import KCoreAnimation
 // is a single recipe across every size, read from the catalog, so the case says
 // which glass and the surface's laid-out size says how it looks: the 36-point
 // capsule on a toolbar shows none of the blur a sidebar does.
-enum Glass {
+public enum Glass {
     Regular
     Clear
 }
 
 // One input of a catalog recipe as the ramp the compositor applies, or a flat
 // zero when the recipe leaves it out.
-function glassCompositorRamp(recipe: borrow ResolvedGlass, input: GlassInput) -> CAGlassRamp {
+public function glassCompositorRamp(recipe: borrow ResolvedGlass, input: GlassInput) -> CAGlassRamp {
     let wanted = glassInputValue(input)
     for ramp in recipe.ramps {
         if glassInputValue(ramp.input) == wanted {
@@ -37,7 +37,7 @@ function glassCompositorRamp(recipe: borrow ResolvedGlass, input: GlassInput) ->
 // backdrop sharp through the blur. The edge's grays and its light are the
 // recipe's own at every size. Liquid Glass casts no shadow, so a recipe's
 // shadow inputs are not drawn.
-function glassCompositorSizing(recipe: borrow ResolvedGlass) -> CAGlassSizing {
+public function glassCompositorSizing(recipe: borrow ResolvedGlass) -> CAGlassSizing {
     return CAGlassSizing {
         blurRadius: glassCompositorRamp(recipe, .BlurRadius),
         ringTone: glassCompositorRamp(recipe, .EdgeRingTone),
@@ -48,23 +48,23 @@ function glassCompositorSizing(recipe: borrow ResolvedGlass) -> CAGlassSizing {
 }
 
 // A glass in both appearances, resolved once.
-struct GlassSizingPair {
+public struct GlassSizingPair {
     var light: CAGlassSizing = CAGlassSizing {}
     var dark: CAGlassSizing = CAGlassSizing {}
 }
 
-function catalogGlassSizing(stack: borrow CatalogStack, name: borrow String) -> GlassSizingPair {
+public function catalogGlassSizing(stack: borrow CatalogStack, name: borrow String) -> GlassSizingPair {
     return GlassSizingPair {
         light: glassCompositorSizing(resolveGlass(stack, name, kiraUICatalogEnvironment(.Light))),
         dark: glassCompositorSizing(resolveGlass(stack, name, kiraUICatalogEnvironment(.Dark)))
     }
 }
 
-let regularGlassSizing = catalogGlassSizing(kiraUICatalogStack, glassRegular())
-let clearGlassSizing = catalogGlassSizing(kiraUICatalogStack, glassClear())
+public let regularGlassSizing = catalogGlassSizing(kiraUICatalogStack, glassRegular())
+public let clearGlassSizing = catalogGlassSizing(kiraUICatalogStack, glassClear())
 
 // What `glass` does with size in the appearance in effect.
-function glassSizing(glass: borrow Glass, modifiers: borrow ModifierContext) -> CAGlassSizing {
+public function glassSizing(glass: borrow Glass, modifiers: borrow ModifierContext) -> CAGlassSizing {
     var pair = regularGlassSizing
     if glass == .Clear {
         pair = clearGlassSizing
@@ -83,18 +83,18 @@ function glassSizing(glass: borrow Glass, modifiers: borrow ModifierContext) -> 
 // the glyph. The catalog states each style as a material of one fill layer: the
 // gray and the blend together.
 
-struct VibrantInk {
+public struct VibrantInk {
     var color: CAColor = CAColor {}
     var blend: CABlendMode = .Normal
 }
 
-struct VibrantInkPair {
+public struct VibrantInkPair {
     var light: VibrantInk = VibrantInk {}
     var dark: VibrantInk = VibrantInk {}
 }
 
 // The blends the compositor can set ink in; every other one inks normally.
-function vibrantBlend(blend: borrow BlendMode) -> CABlendMode {
+public function vibrantBlend(blend: borrow BlendMode) -> CABlendMode {
     match blend {
         LinearBurn -> return .LinearBurn
         LinearDodge -> return .LinearDodge
@@ -110,14 +110,14 @@ function vibrantBlend(blend: borrow BlendMode) -> CABlendMode {
     }
 }
 
-function vibrantInkFrom(layer: borrow ResolvedMaterialLayer) -> VibrantInk {
+public function vibrantInkFrom(layer: borrow ResolvedMaterialLayer) -> VibrantInk {
     return VibrantInk {
         color: CAColor { r: layer.color.r, g: layer.color.g, b: layer.color.b, a: layer.color.a * layer.opacity },
         blend: vibrantBlend(layer.blend)
     }
 }
 
-function catalogVibrantInkAt(stack: borrow CatalogStack, name: borrow String, appearance: borrow Appearance) -> VibrantInk {
+public function catalogVibrantInkAt(stack: borrow CatalogStack, name: borrow String, appearance: borrow Appearance) -> VibrantInk {
     let material = resolveMaterial(stack, name, kiraUICatalogEnvironment(appearance))
     for layer in material.layers {
         match layer.kind {
@@ -132,17 +132,17 @@ function catalogVibrantInkAt(stack: borrow CatalogStack, name: borrow String, ap
     return VibrantInk {}
 }
 
-function catalogVibrantInk(stack: borrow CatalogStack, name: borrow String) -> VibrantInkPair {
+public function catalogVibrantInk(stack: borrow CatalogStack, name: borrow String) -> VibrantInkPair {
     return VibrantInkPair {
         light: catalogVibrantInkAt(stack, name, .Light),
         dark: catalogVibrantInkAt(stack, name, .Dark)
     }
 }
 
-let vibrantLabelInk = catalogVibrantInk(kiraUICatalogStack, materialVibrantLabel())
+public let vibrantLabelInk = catalogVibrantInk(kiraUICatalogStack, materialVibrantLabel())
 
 // The primary vibrant ink in the appearance in effect.
-function vibrantLabel(modifiers: borrow ModifierContext) -> VibrantInk {
+public function vibrantLabel(modifiers: borrow ModifierContext) -> VibrantInk {
     match modifierTheme(modifiers).appearance() {
         Light -> return vibrantLabelInk.light
         Dark -> return vibrantLabelInk.dark
@@ -160,32 +160,42 @@ function vibrantLabel(modifiers: borrow ModifierContext) -> VibrantInk {
 // dipping under its resting size before it settles. Whatever it holds is part
 // of the piece: it moves, swells and leans with it.
 
-struct InteractiveGlass {
+public struct InteractiveGlass {
     var pull: MotionPullState = MotionPullState {}
     var glow: MotionGlowState = MotionGlowState {}
     var held: Bool = false
+    // Which press it is holding. A surface only sees a press end while it is
+    // built, and one that was not -- a submenu's card shut under the finger
+    // -- would take the next press on it for the old one still going.
+    var press: Int = 0
     // The box the glass rests in, kept from the press so it settles back into
     // it after the pointer has let go.
     var size: Size = Size {}
 }
 
-function interactiveGlassSlotKey(key: Int) -> String {
+public function interactiveGlassSlotKey(key: Int) -> String {
     return kiraUiSlotKey("kiraui.glass.", key)
 }
 
 
 // Makes `layer` interactive under `key`: pressed anywhere, whichever control
 // inside took the press, it swells, follows the pointer and leans, and let go
-// it springs home. The swell is the layer's own scale, so what it holds is
+// it springs home. A `panel` -- a menu's glass -- answers as the platform's
+// menus do: it follows and leans but never swells, and lights only under a
+// press on the panel itself, since a row pressed lights its own highlight. The swell is the layer's own scale, so what it holds is
 // drawn at the size it swells to; the follow and the lean are its
 // deformation, which deforms that drawing as a picture, so nothing on it
 // reflows or slips while it is pulled. Its box -- and everything around it --
 // stays where layout put it. What comes back is the light the press has
 // brought up, carried back through the pull into the layer's own coordinates,
 // for a glass to draw.
-function interactivePress(layer: borrow mut CALayerDescription, key: Int, context: borrow BuildContext) -> MotionLight {
+public function interactivePress(layer: borrow mut CALayerDescription, key: Int, context: borrow BuildContext, panel: Bool = false) -> MotionLight {
     layer.interactive = true
     layer.hitKey = key
+    // A press between its controls lands on the surface itself, not on
+    // whatever is behind it; on a panel it slides from control to control.
+    layer.hittable = true
+    layer.slidesPress = panel
 
     // Recovered in place rather than through a helper: a recovered value
     // handed back out of a function is a copy, and the press would be lost.
@@ -194,6 +204,12 @@ function interactivePress(layer: borrow mut CALayerDescription, key: Int, contex
     }
     var glass = nativeRecover<InteractiveGlass>(kiraUiStateSlotGet(interactiveGlassSlotKey(key)))
     let held = context.heldKey == key
+    if held && glass.held && glass.press != context.heldPress {
+        glass.pull = MotionPullState {}
+        glass.glow = MotionGlowState {}
+        glass.held = false
+    }
+    glass.press = context.heldPress
     let point = context.heldPoint
     let delta = kiraUiClockDelta()
     let reduced = kiraUiReducedMotion()
@@ -208,9 +224,14 @@ function interactivePress(layer: borrow mut CALayerDescription, key: Int, contex
             context.viewportWidth - origin.x - glass.size.width,
             context.viewportHeight - origin.y - glass.size.height
         )
+        if panel {
+            motionPullHangs(glass.pull)
+        }
         motionPullPress(glass.pull, point.x, point.y, reduced)
-        motionGlowFit(glass.glow, glass.size.width, glass.size.height)
-        motionGlowPress(glass.glow, point.x, point.y)
+        if !panel || !context.heldOnControl {
+            motionGlowFit(glass.glow, glass.size.width, glass.size.height)
+            motionGlowPress(glass.glow, point.x, point.y)
+        }
     } else if held {
         motionPullMove(glass.pull, point.x, point.y, delta)
         motionGlowMove(glass.glow, point.x, point.y)
@@ -228,10 +249,11 @@ function interactivePress(layer: borrow mut CALayerDescription, key: Int, contex
 
     let centerX = glass.size.width * 0.5
     let centerY = glass.size.height * 0.5
-    let scaleX = pulled.pressScale * pulled.scaleX
-    let scaleY = pulled.pressScale * pulled.scaleY
-    layer.scaleX = layer.scaleX * pulled.pressScale
-    layer.scaleY = layer.scaleY * pulled.pressScale
+    let swell = panel ? 1.0 : pulled.pressScale
+    let scaleX = swell * pulled.scaleX
+    let scaleY = swell * pulled.scaleY
+    layer.scaleX = layer.scaleX * swell
+    layer.scaleY = layer.scaleY * swell
     layer.deformation = CADeformation {
         x: pulled.x,
         y: pulled.y,
@@ -251,7 +273,7 @@ function interactivePress(layer: borrow mut CALayerDescription, key: Int, contex
 }
 
 // Draws `light` in a piece of glass.
-function interactiveGlassLit(glass: borrow mut CAGlass, light: borrow MotionLight) {
+public function interactiveGlassLit(glass: borrow mut CAGlass, light: borrow MotionLight) {
     glass.glowX = light.x
     glass.glowY = light.y
     glass.glowRadius = light.radius
@@ -260,7 +282,7 @@ function interactiveGlassLit(glass: borrow mut CAGlass, light: borrow MotionLigh
 
 // A piece of Liquid Glass, as `liquidGlassDescription` draws it, that is
 // interactive under `key`. Whatever it holds is part of the piece.
-function interactiveGlassDescription(
+public function interactiveGlassDescription(
     context: borrow BuildContext,
     key: Int,
     layout: CALayoutIntent,
@@ -269,9 +291,10 @@ function interactiveGlassDescription(
     modifiers: borrow ModifierContext,
     sublayers: [CALayerDescription],
     variant: borrow Glass = .Regular,
+    panel: Bool = false,
 ) -> CALayerDescription {
     var layer = liquidGlassDescription(move layout, radius, shape, modifiers, move sublayers, variant)
-    let light = interactivePress(layer, key, context)
+    let light = interactivePress(layer, key, context, panel)
     var content = liquidGlassContent(shape, modifiers, variant)
     interactiveGlassLit(content, light)
     layer.content = .Glass(move content)

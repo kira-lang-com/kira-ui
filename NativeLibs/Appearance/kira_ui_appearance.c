@@ -60,10 +60,30 @@ int kira_ui_platform_appearance(void) {
 
 #if TARGET_OS_OSX
 
+#include <time.h>
+
 /* macOS writes `AppleInterfaceStyle` into the global domain only while the user
  * is in dark mode; its absence IS light mode, which is why this reads a missing
- * value as light rather than as no preference. */
+ * value as light rather than as no preference.
+ *
+ * Unlike the registry key, a preferences read is a round trip through cfprefsd's
+ * cache and its search list, and this is asked hundreds of times a rebuild. The
+ * answer is held for a tenth of a second: a window still follows the user to
+ * the new scheme within a few frames, and a rebuild pays for one read. */
+static int kira_ui_appearance_read(void);
+
 int kira_ui_platform_appearance(void) {
+    static uint64_t asked_at = 0;
+    static int answer = 0;
+    uint64_t now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+    if (answer == 0 || now - asked_at > 100000000ULL) {
+        answer = kira_ui_appearance_read();
+        asked_at = now;
+    }
+    return answer;
+}
+
+static int kira_ui_appearance_read(void) {
     CFPropertyListRef value = CFPreferencesCopyAppValue(CFSTR("AppleInterfaceStyle"),
                                                        kCFPreferencesCurrentApplication);
     if (value == NULL) {

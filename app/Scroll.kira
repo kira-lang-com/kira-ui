@@ -15,27 +15,639 @@ import KCoreAnimation
 // it, so nothing inside has to know it is being scrolled: a row is measured,
 // drawn and clicked exactly as it would be in a column that fit.
 //
-// How far it is scrolled belongs to the foundation rather than to a `@State`
-// here, because the two numbers that bound it — the content's height and the
-// window's — are only known once layout has run, and a wheel that counts past
-// the end of a list needs the same number of turns back before the list moves.
+// It moves as an iPad scroll view does, on UIKit's own curves: two fingers on
+// a trackpad or one on the glass drag it, resisted past either end; let go
+// fast enough it coasts and slows, and runs out past an end and is drawn back
+// to it; a wheel's notches ease it a step at a time. While it moves, a thin
+// bar along its trailing edge shows where in the content it is, swells under
+// a pointer that comes onto it, and scrubs through the content when held and
+// dragged; a second after it stops, the bar fades.
 //
-// The `key` is the application's, not a minted one, because where a list is
-// scrolled to has to survive the tree above it changing: a minted key is a
-// position in the build, so disclosing a folder in the panel above would
-// renumber this one and the list would jump back to its top.
-construct ScrollView(key: Int) extends Widget {
+// Where it is scrolled to belongs to the view it is in, not to its place in
+// the whole build: a scroll view is known by the page of a navigation stack
+// it is on and which scroll view of that page it is, so a page pushed over it
+// and popped again finds it where it was, and so does the page under a swipe
+// back while the swipe is still deciding.
+//
+// The first scroll view on a stack's page is the page's own. It runs up under
+// the bar, its content resting below it and passing beneath it as it scrolls,
+// and once anything has gone under it lays the bar's hard edge effect down
+// behind the bar's items. It carries the page's large title at the top of its
+// content: the title goes up with the content, and as soon as it meets the
+// bar it fades out while the bar's own title fades in, rising into place --
+// and back again once it comes out.
+public construct ScrollView() extends Widget {
     let content: some Widget
 
 
-    // A clipping, hittable window over the content; the scroll offset is applied
-    // by the input/layout stage that reads the region's key.
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        return CALayerDescription {
-            hittable: true,
+        let key = kiraUiScrollIdentity()
+        let indicatorKey = kiraUiTapSeqKey()
+        let page = kiraUiScrollClaimPage()
+        let document = content.describe(context, modifierContextForChildren(modifiers))
+
+        // Recovered in place rather than through a helper: a recovered value
+        // handed back out of a function is a copy, and the motion would be lost.
+        if kiraUiStateSlotHas(scrollViewSlotKey(key)) == false {
+            kiraUiStateSlotPut(scrollViewSlotKey(key), nativeUserData(nativeState(ScrollViewState {})))
+        }
+        var scroll = nativeRecover<ScrollViewState>(kiraUiStateSlotGet(scrollViewSlotKey(key)))
+        let bounds = MotionScrollBounds { contentLength: scroll.contentLength, viewportLength: scroll.viewportLength }
+        let delta = kiraUiClockDelta()
+        let metrics = scrollIndicatorMetrics
+
+        // What the fingers and the wheel did to it since the last frame, in the
+        // order they did it.
+        let input = kiraUiScrollTake(key)
+        if input.began {
+            motionScrollDragBegin(scroll.motion, 0.0, bounds, input.resistance)
+        }
+        if input.moved {
+            motionScrollDragMove(scroll.motion, input.travel, bounds)
+        }
+        if input.cancelled {
+            scroll.motion.velocity = 0.0
+        }
+        if input.ended || input.cancelled {
+            motionScrollDragEnd(scroll.motion, bounds, kiraUiReducedMotion())
+        }
+        if input.wheel != 0.0 {
+            motionScrollWheel(scroll.motion, input.wheel, bounds)
+        }
+
+        // Held, the bar scrubs: the content follows the pointer as far along
+        // its whole length as the pointer goes along the track the bar runs
+        // in, and let go it coasts on from however fast it was going.
+        let track = max(scroll.viewportLength - page.barInset, 0.0)
+        let length = scrollIndicatorLength(scroll.contentLength, track, metrics)
+        let scrubbing = context.heldControl == indicatorKey && indicatorKey != 0
+        if scrubbing && !scroll.scrubbing {
+            scroll.scrubFrom = scroll.motion.offset
+            scroll.scrubPointer = context.pointerY
+            motionScrollScrubBegin(scroll.motion)
+        }
+        if !scrubbing && scroll.scrubbing {
+            motionScrollScrubEnd(scroll.motion, bounds, kiraUiReducedMotion())
+        }
+        scroll.scrubbing = scrubbing
+        if scrubbing && track > length {
+            let reach = motionScrollMaxOffset(bounds) / (track - length)
+            motionScrollScrub(scroll.motion, scroll.scrubFrom + (context.pointerY - scroll.scrubPointer) * reach, bounds)
+        }
+
+        // Content that shrank under a surface at rest leaves it where the
+        // content still reaches.
+        if scroll.motion.phase == .Idle {
+            scroll.motion.offset = motionScrollClamp(scroll.motion.offset, bounds)
+        }
+        let moving = motionScrollAdvance(scroll.motion, delta, bounds)
+
+        // The bar shows while the surface moves or a pointer is on it, and a
+        // second after the last of either it fades.
+        let hovered = context.hoveredKey == indicatorKey && indicatorKey != 0
+        let scrollable = scroll.contentLength > scroll.viewportLength + 0.5
+        if moving || scrubbing || (hovered && scroll.opacity > 0.0) {
+            scroll.still = 0.0
+        } else {
+            scroll.still = scroll.still + delta
+        }
+        scroll.opacity = scrollable ? scrollIndicatorOpacity(scroll.still, metrics) : 0.0
+        let expanded = (hovered || scrubbing) && scroll.opacity > 0.0
+        let swelling = scrollIndicatorSwell(scroll, expanded, metrics, delta)
+        let offset = scroll.motion.offset
+        // The bar goes over to scrolled content all at once -- its edge effect
+        // in, and the large title out for the bar's own -- as soon as the
+        // content, or the large title leading it, meets the bar.
+        let reach = page.title.count > 0 ? largeTitleMetrics.topInset : 0.0
+        scroll.barFade = scrollFadeStep(scroll.barFade, page.barInset > 0.0 && offset > reach)
+        if moving || scroll.opacity > 0.0 || swelling || scrollFading(scroll.barFade) {
+            kiraUiClockStillMoving()
+        }
+        let barShown = motionEase(.EaseInOut, scroll.barFade)
+
+        let overshoot = motionScrollOvershoot(offset, bounds)
+        let thickness = scroll.thickness
+        let opacity = scroll.opacity
+
+        var moved = move document
+        if page.title.count > 0 {
+            moved = scrollLargeTitled(move moved, copy page.title, barShown, context, modifiers)
+        }
+        if page.barInset > 0.0 {
+            moved = CALayerDescription {
+                layout: CALayoutIntent {
+                    axis: .Column,
+                    heightFill: false,
+                    paddingTop: page.barInset
+                },
+                sublayers: [move moved]
+            }
+        }
+        moved.layout.offset = Point { x: moved.layout.offset.x, y: moved.layout.offset.y - offset }
+        // The surface moves its content itself, every frame.
+        moved.disablesActions = true
+
+        var indicator = scrollIndicator(
+            indicatorKey,
+            thickness,
+            scrollIndicatorShownLength(length, overshoot, metrics),
+            page.barInset + scrollIndicatorPosition(offset, bounds, track, length, overshoot, metrics),
+            opacity,
+            modifiers
+        )
+        var layers = [CALayerDescription {
             hitKey: key,
+            scrollAxis: .Column,
             clipsChildren: true,
-            sublayers: [content.describe(context, modifierContextForChildren(modifiers))]
+            sublayers: [move moved]
+        }]
+        if barShown > 0.0 {
+            layers.append(scrollEdgeEffect(page.barInset, barShown, modifiers))
+        }
+        layers.append(move indicator)
+        return CALayerDescription {
+            layout: CALayoutIntent {
+                flex: 1,
+                alignment: Point { x: 1.0, y: 0.0 }
+            },
+            sublayers: move layers
         }
     }
+}
+
+// The page's large title over `document`, going up with it, faded out as far
+// as the bar has gone over to its own title -- which `inline` is -- so it
+// never shows through the bar.
+public function scrollLargeTitled(
+    document: CALayerDescription,
+    title: String,
+    inline: Float,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    var heading = navigationLargeTitle(move title, context, modifiers)
+    kiraUiToolbarCollapseLargeTitle(inline)
+    heading.opacity = 1.0 - inline
+    heading.disablesActions = true
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            axis: .Column,
+            heightFill: false
+        },
+        sublayers: [move heading, move document]
+    }
+}
+
+// `fade` a frame further toward whole while `shown`, or toward nothing while
+// not, at the fixed pace the bar goes over at.
+public function scrollFadeStep(fade: Float, shown: Bool) -> Float {
+    if kiraUiReducedMotion() {
+        return shown ? 1.0 : 0.0
+    }
+    let step = kiraUiClockDelta() / largeTitleMetrics.fadeDuration
+    return shown ? min(fade + step, 1.0) : max(fade - step, 0.0)
+}
+
+// Whether a fade is partway, and wants another frame.
+public function scrollFading(fade: Float) -> Bool {
+    return fade > 0.0 && fade < 1.0
+}
+
+// The kit's hard scroll edge effect, `height` deep, faded to `opacity`: what
+// passes beneath it blurred and washed over, and a hairline along its bottom
+// edge. Glass with no edge of its own: only its blur and its wash.
+public function scrollEdgeEffect(height: Float, opacity: Float, modifiers: borrow ModifierContext) -> CALayerDescription {
+    let metrics = scrollEdgeMetrics
+    let appearance = modifierTheme(modifiers).appearance()
+    let wash = caColorFromFoundation(modifierColor(foundationColor(themeAdaptiveColor(scrollEdgeFillColor, appearance)), modifiers))
+    let hairline = caColorFromFoundation(modifierColor(foundationColor(themeAdaptiveColor(scrollEdgeBorderColor, appearance)), modifiers))
+    let radius = metrics.blurRadius
+    return CALayerDescription {
+        opacity: opacity,
+        disablesActions: true,
+        capturesBackdrop: true,
+        content: .Glass(caGlassEdgeless(CAGlass {
+            tint: wash,
+            sizing: CAGlassSizing {
+                blurRadius: CAGlassRamp { base: radius, minimum: radius, maximum: radius }
+            }
+        })),
+        layout: CALayoutIntent {
+            heightFill: false,
+            fixedHeight: height,
+            alignment: Point { x: 0.0, y: 1.0 }
+        },
+        sublayers: [CALayerDescription {
+            disablesActions: true,
+            content: .Solid(CASolid {
+                fill: hairline
+            }),
+            layout: CALayoutIntent {
+                heightFill: false,
+                fixedHeight: metrics.borderWidth
+            }
+        }]
+    }
+}
+
+// Where one scroll view is: its motion, the content and window lengths
+// layout last measured, its bar -- how long since anything moved it, how
+// opaque and how thick it is, and the press scrubbing it -- and how far the
+// window's bar over it has gone over to scrolled content: its edge effect in,
+// its large title out.
+public struct ScrollViewState {
+    var motion: MotionScrollState = MotionScrollState {}
+    var contentLength: Float = 0.0
+    var viewportLength: Float = 0.0
+    var still: Float = 1000000.0
+    var opacity: Float = 0.0
+    var thickness: Float = 0.0
+    var thicknessVelocity: Float = 0.0
+    var swell: MotionSpringState = MotionSpringState {}
+    var scrubbing: Bool = false
+    var scrubFrom: Float = 0.0
+    var scrubPointer: Float = 0.0
+    var barFade: Float = 0.0
+}
+
+public function scrollViewSlotKey(key: Int) -> String {
+    return kiraUiSlotKey("kiraui.scroll.", key)
+}
+
+// Layout's answer for the scroll view under `key`: how long its content came
+// out and how long the window onto it is. The motion reads it on the next
+// frame.
+public function kiraUiScrollMeasured(key: Int, contentLength: Float, viewportLength: Float) {
+    if kiraUiStateSlotHas(scrollViewSlotKey(key)) == false {
+        return
+    }
+    var scroll = nativeRecover<ScrollViewState>(kiraUiStateSlotGet(scrollViewSlotKey(key)))
+    scroll.contentLength = contentLength
+    scroll.viewportLength = viewportLength
+    return
+}
+
+// --- The scroll indicator ------------------------------------------------------
+//
+// UIKit's: as long against its track as the window is against the content,
+// never shorter than its minimum, and as far along the track as the surface is
+// through its range. Pulled past an end it stays at that end and is squeezed
+// by however far past it the surface is.
+
+public function scrollIndicatorLength(contentLength: Float, track: Float, metrics: borrow ScrollIndicatorMetrics) -> Float {
+    if contentLength <= 0.0 {
+        return track
+    }
+    return min(max(round(track * track / contentLength), metrics.minimumLength), track)
+}
+
+public function scrollIndicatorShownLength(length: Float, overshoot: Float, metrics: borrow ScrollIndicatorMetrics) -> Float {
+    return max(length - abs(overshoot), metrics.overscrolledLength)
+}
+
+public function scrollIndicatorPosition(
+    offset: Float,
+    bounds: borrow MotionScrollBounds,
+    track: Float,
+    length: Float,
+    overshoot: Float,
+    metrics: borrow ScrollIndicatorMetrics,
+) -> Float {
+    if overshoot > 0.0 {
+        return track - scrollIndicatorShownLength(length, overshoot, metrics)
+    }
+    let limit = motionScrollMaxOffset(bounds)
+    if overshoot < 0.0 || limit <= 0.0 {
+        return 0.0
+    }
+    return (track - length) * clamp(offset / limit, 0.0, 1.0)
+}
+
+// Opaque until its delay has passed since anything moved it, then fading, as
+// UIKit's default curve eases, to nothing.
+public function scrollIndicatorOpacity(still: Float, metrics: borrow ScrollIndicatorMetrics) -> Float {
+    if still < metrics.hideDelay {
+        return 1.0
+    }
+    return 1.0 - motionEase(.EaseInOut, (still - metrics.hideDelay) / metrics.fadeDuration)
+}
+
+// Swells the bar to its held thickness, or thins it back, on the critically
+// damped spring UIKit fits into each one's duration. Whether it is still
+// changing.
+public function scrollIndicatorSwell(
+    scroll: borrow mut ScrollViewState,
+    expanded: Bool,
+    metrics: borrow ScrollIndicatorMetrics,
+    delta: Float,
+) -> Bool {
+    let wanted = expanded ? metrics.expandedThickness : metrics.thickness
+    if scroll.thickness == 0.0 {
+        scroll.thickness = wanted
+        scroll.swell = motionSpringStart(MotionSpring { target: wanted }, wanted, 0.0)
+        return false
+    }
+    if scroll.swell.spring.target != wanted {
+        let duration = expanded ? metrics.expandDuration : metrics.collapseDuration
+        scroll.swell = motionSpringStart(MotionSpring {
+            response: scrollIndicatorSpringResponse(duration),
+            damping: 1.0,
+            target: wanted
+        }, scroll.thickness, scroll.thicknessVelocity)
+    }
+    if scroll.thickness == wanted {
+        return false
+    }
+    let sample = motionSpringAdvance(scroll.swell, delta)
+    if motionSpringSettled(scroll.swell, sample, motionSpringEpsilon()) {
+        scroll.thickness = wanted
+        scroll.thicknessVelocity = 0.0
+        return false
+    }
+    scroll.thickness = sample.value
+    scroll.thicknessVelocity = sample.velocity
+    return true
+}
+
+// The response of the critically damped spring UIKit fits into a duration:
+// one within a thousandth of home where ωt reaches 9.23.
+public function scrollIndicatorSpringResponse(duration: Float) -> Float {
+    return 6.283185307179586 * duration / 9.23
+}
+
+// The bar, `thickness` across and `length` along, `position` down its track,
+// in a box that takes a pointer a little way beyond it on every side. It sits
+// against the trailing edge, and swells inward from it.
+public function scrollIndicator(
+    key: Int,
+    thickness: Float,
+    length: Float,
+    position: Float,
+    opacity: Float,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let metrics = scrollIndicatorMetrics
+    let across = metrics.hitOutsetAcross
+    let along = metrics.hitOutsetAlong
+    let ink = caColorFromFoundation(modifierColor(foundationColor(themeAdaptiveColor(scrollIndicatorColor, modifierTheme(modifiers).appearance())), modifiers))
+    return CALayerDescription {
+        opacity: opacity,
+        hittable: opacity > 0.0,
+        hitKey: key,
+        disablesActions: true,
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedWidth: thickness + across * 2.0,
+            fixedHeight: length + along * 2.0,
+            paddingLeading: across,
+            paddingTop: along,
+            paddingTrailing: across,
+            paddingBottom: along,
+            offset: Point { x: across, y: position - along }
+        },
+        sublayers: [CALayerDescription {
+            disablesActions: true,
+            content: .Solid(CASolid {
+                fill: ink,
+                cornerRadius: thickness * 0.5
+            })
+        }]
+    }
+}
+
+// --- Identity --------------------------------------------------------------------
+//
+// A scroll view is known by the scope it is built in -- a stack's page, by the
+// path it belongs to and how deep on it the page is -- and by how many scroll
+// views the scope has built before it. Outside any page the whole window is
+// one scope. The numbers stand clear of every key the build mints.
+
+public struct ScrollScope {
+    var scope: Int = 0
+    var built: Int = 0
+    // Whether the scope is a stack's page, whose first scroll view is the
+    // page's own -- running under the bar, `barInset` deep, and carrying the
+    // page's large title -- and whether one has claimed it.
+    var page: Bool = false
+    var pageTaken: Bool = false
+    var barInset: Float = 0.0
+}
+
+// What a page hands the scroll view that claims it: its large title, empty
+// when it sets none, and how deep the bar stands over the page's top edge.
+public struct ScrollPage {
+    var title: String = ""
+    var barInset: Float = 0.0
+}
+
+public function scrollScopeSlotKey() -> String {
+    return "kiraui.scroll.scope"
+}
+
+public function kiraUiScrollScopeEnsure() {
+    if kiraUiStateSlotHas(scrollScopeSlotKey()) == false {
+        kiraUiStateSlotPut(scrollScopeSlotKey(), nativeUserData(nativeState(ScrollScope {})))
+    }
+    return
+}
+
+// A new build starts in the window's scope.
+public function kiraUiScrollScopeReset() {
+    kiraUiScrollScopeEnsure()
+    var current = nativeRecover<ScrollScope>(kiraUiStateSlotGet(scrollScopeSlotKey()))
+    current.scope = 0
+    current.built = 0
+    current.page = false
+    current.pageTaken = false
+    current.barInset = 0.0
+    return
+}
+
+// A stack's page starts lowering in `scope`, under a bar `barInset` deep. What
+// was in effect comes back, to hand to the leave.
+public function kiraUiScrollScopeEnter(scope: Int, barInset: Float) -> ScrollScope {
+    kiraUiScrollScopeEnsure()
+    var current = nativeRecover<ScrollScope>(kiraUiStateSlotGet(scrollScopeSlotKey()))
+    let previous = ScrollScope {
+        scope: current.scope,
+        built: current.built,
+        page: current.page,
+        pageTaken: current.pageTaken,
+        barInset: current.barInset
+    }
+    current.scope = scope
+    current.built = 0
+    current.page = true
+    current.pageTaken = false
+    current.barInset = barInset
+    return previous
+}
+
+// The page has lowered. Whether one of its scroll views claimed it.
+public function kiraUiScrollScopeLeave(previous: ScrollScope) -> Bool {
+    kiraUiScrollScopeEnsure()
+    var current = nativeRecover<ScrollScope>(kiraUiStateSlotGet(scrollScopeSlotKey()))
+    let taken = current.pageTaken
+    current.scope = previous.scope
+    current.built = previous.built
+    current.page = previous.page
+    current.pageTaken = previous.pageTaken
+    current.barInset = previous.barInset
+    return taken
+}
+
+// The next scroll view's identity in the scope being built.
+public function kiraUiScrollIdentity() -> Int {
+    kiraUiScrollScopeEnsure()
+    var current = nativeRecover<ScrollScope>(kiraUiStateSlotGet(scrollScopeSlotKey()))
+    current.built = current.built + 1
+    return 1000000000 + current.scope * 1000 + current.built
+}
+
+// The page, for the first scroll view on it; nothing for any other, nor for
+// one outside a page.
+public function kiraUiScrollClaimPage() -> ScrollPage {
+    kiraUiScrollScopeEnsure()
+    var current = nativeRecover<ScrollScope>(kiraUiStateSlotGet(scrollScopeSlotKey()))
+    if !current.page || current.pageTaken {
+        return ScrollPage {}
+    }
+    current.pageTaken = true
+    return ScrollPage {
+        title: kiraUiToolbarColumnTitle(),
+        barInset: current.barInset
+    }
+}
+
+// --- Input -----------------------------------------------------------------------
+//
+// What the pointer and the fingers did to a scroll view since its last build:
+// the runner gathers it as it arrives, against the scroll view under the
+// pointer, and the scroll view takes it as it is built.
+
+public struct ScrollInput {
+    // The scroll view the gesture belongs to.
+    var target: Int = 0
+    // Whether a drag began, moved, ended, or was taken from the surface by
+    // something else -- a swipe back -- since the last build.
+    var began: Bool = false
+    var moved: Bool = false
+    var ended: Bool = false
+    var cancelled: Bool = false
+    // How far the fingers have carried the content since the drag began, and
+    // how hard an end resists them.
+    var travel: Float = 0.0
+    var resistance: Float = 0.55
+    // How far the wheel's notches have asked the surface to go.
+    var wheel: Float = 0.0
+}
+
+public function scrollInputSlotKey() -> String {
+    return "kiraui.scroll.input"
+}
+
+public function kiraUiScrollInputEnsure() {
+    if kiraUiStateSlotHas(scrollInputSlotKey()) == false {
+        kiraUiStateSlotPut(scrollInputSlotKey(), nativeUserData(nativeState(ScrollInput {})))
+    }
+    return
+}
+
+// Fingers come down over the scroll view under `target`, resisted past an end
+// by `resistance`.
+public function kiraUiScrollDragBegin(target: Int, resistance: Float) {
+    kiraUiScrollInputEnsure()
+    var input = nativeRecover<ScrollInput>(kiraUiStateSlotGet(scrollInputSlotKey()))
+    input.target = target
+    input.began = target != 0
+    input.moved = false
+    input.ended = false
+    input.cancelled = false
+    input.travel = 0.0
+    input.resistance = resistance
+    input.wheel = 0.0
+    return
+}
+
+// The fingers carried the content this far down.
+public function kiraUiScrollDragMove(distance: Float) {
+    kiraUiScrollInputEnsure()
+    var input = nativeRecover<ScrollInput>(kiraUiStateSlotGet(scrollInputSlotKey()))
+    if input.target == 0 {
+        return
+    }
+    input.travel = input.travel + distance
+    input.moved = true
+    return
+}
+
+// The fingers lifted.
+public function kiraUiScrollDragEnd() {
+    kiraUiScrollInputEnsure()
+    var input = nativeRecover<ScrollInput>(kiraUiStateSlotGet(scrollInputSlotKey()))
+    if input.target != 0 {
+        input.ended = true
+    }
+    return
+}
+
+// Something else took the fingers: the surface stops where it is, or goes
+// back inside an end it was pulled past, and throws nothing.
+public function kiraUiScrollDragCancel() {
+    kiraUiScrollInputEnsure()
+    var input = nativeRecover<ScrollInput>(kiraUiStateSlotGet(scrollInputSlotKey()))
+    if input.target != 0 && !input.ended {
+        input.cancelled = true
+    }
+    return
+}
+
+// A wheel turned over the scroll view under `target`, asking it this far down
+// its content.
+public function kiraUiScrollWheel(target: Int, distance: Float) {
+    kiraUiScrollInputEnsure()
+    var input = nativeRecover<ScrollInput>(kiraUiStateSlotGet(scrollInputSlotKey()))
+    if target == 0 {
+        return
+    }
+    if input.target != target {
+        input.began = false
+        input.moved = false
+        input.ended = false
+        input.cancelled = false
+        input.wheel = 0.0
+    }
+    input.target = target
+    input.wheel = input.wheel + distance
+    return
+}
+
+// What has happened to the scroll view under `key` since it was last built,
+// and nothing more from then on. A drag still under way stays its own.
+public function kiraUiScrollTake(key: Int) -> ScrollInput {
+    kiraUiScrollInputEnsure()
+    var input = nativeRecover<ScrollInput>(kiraUiStateSlotGet(scrollInputSlotKey()))
+    if input.target != key {
+        return ScrollInput {}
+    }
+    let taken = ScrollInput {
+        target: input.target,
+        began: input.began,
+        moved: input.moved,
+        ended: input.ended,
+        cancelled: input.cancelled,
+        travel: input.travel,
+        resistance: input.resistance,
+        wheel: input.wheel
+    }
+    input.began = false
+    input.moved = false
+    input.wheel = 0.0
+    if input.ended || input.cancelled {
+        input.target = 0
+        input.ended = false
+        input.cancelled = false
+    }
+    return taken
 }

@@ -15,7 +15,7 @@ import KCoreAnimation
 //     Form {
 //         Section {
 //             LabeledContent(label = "Blur", symbol = .Drop) {
-//                 Toggle(isOn = blurOn).onClick(toggleBlur)
+//                 Toggle(isOn = blurOn, onChange = setBlur)
 //                 ValueField(text = "50", unit = "%").onScrub(scrubBlur)
 //             }
 //
@@ -35,15 +35,17 @@ import KCoreAnimation
 
 // The sections of a form, which on iPad is a list in the inset grouped style:
 // each section a header over a card of rows over a footer, down one readable
-// column on the grouped canvas.
-construct Form() extends Widget {
+// column on the grouped canvas, scrolling as one.
+public construct Form() extends Widget {
     let children: [some Widget]
 
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let list = InsetGroupedList() {
-            For(section in children) {
-                section
+        let list = ScrollView() {
+            InsetGroupedList() {
+                For(section in children) {
+                    section
+                }
             }
         }
         return list.describe(context, modifiers)
@@ -60,7 +62,7 @@ construct Form() extends Widget {
 // the row's LABEL and GLYPH and nothing else, which is the distinction the ink
 // actually carries: the switch that turns the property back on has to stay
 // legible and accented while the property is off.
-construct LabeledContent(
+public construct LabeledContent(
     label: String = "",
     symbol: Symbol = .None,
     active: Bool = true,
@@ -111,7 +113,7 @@ construct LabeledContent(
 // How far a row holds its content off the card's edges: the card's own corner
 // radius when a card said so, and the size class's inset for a row standing on
 // its own.
-function rowInset(
+public function rowInset(
     metrics: borrow ControlMetricsImplementation,
     modifiers: borrow ModifierContext,
 ) -> Float {
@@ -121,14 +123,14 @@ function rowInset(
     return metrics.rowInset
 }
 
-function rowLabelInk(active: Bool) -> PrimaryColor {
+public function rowLabelInk(active: Bool) -> PrimaryColor {
     if active {
         return .Primary
     }
     return .Quaternary
 }
 
-function rowGlyphInk(active: Bool) -> PrimaryColor {
+public function rowGlyphInk(active: Bool) -> PrimaryColor {
     if active {
         return .Secondary
     }
@@ -148,7 +150,7 @@ function rowGlyphInk(active: Bool) -> PrimaryColor {
 // it can be changed at all is `.onScrub(...)`; whether it is live is
 // `.disabled(...)`. A field with neither is a readout, and it looks like one
 // without being told to.
-construct ValueField(text: String, unit: String = "") extends Widget {
+public construct ValueField(text: String, unit: String = "") extends Widget {
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let tokens = modifierTokens(modifiers)
@@ -195,7 +197,7 @@ construct ValueField(text: String, unit: String = "") extends Widget {
 // off whatever the person was doing, so `.focused(true)` is how one is asked
 // for. It carries no unit, which is the other half of that split: a unit
 // belongs beside a number nobody is typing over.
-construct NumberField(key: Int, text: String, onSubmit: () -> Void) extends Widget {
+public construct NumberField(key: Int, text: String, onSubmit: () -> Void) extends Widget {
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let metrics = resolvedControlMetrics(modifiers)
@@ -214,7 +216,7 @@ construct NumberField(key: Int, text: String, onSubmit: () -> Void) extends Widg
 }
 
 // Whether a field asks for the keyboard as it appears: only when it was told to.
-function fieldTakesFocus(modifiers: borrow ModifierContext) -> Bool {
+public function fieldTakesFocus(modifiers: borrow ModifierContext) -> Bool {
     if modifiers.hasFocused {
         return modifiers.focused
     }
@@ -224,7 +226,7 @@ function fieldTakesFocus(modifiers: borrow ModifierContext) -> Bool {
 // A word that qualifies a field rather than a property: the axis a pair of
 // fields runs along, a unit outside the fill. Quieter than a label and set at
 // the same size as a unit inside a field.
-construct FieldCaption(text: String) extends Widget {
+public construct FieldCaption(text: String) extends Widget {
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let caption = Text(content: text)
@@ -234,14 +236,14 @@ construct FieldCaption(text: String) extends Widget {
     }
 }
 
-function fieldValueInk(disabled: Bool) -> PrimaryColor {
+public function fieldValueInk(disabled: Bool) -> PrimaryColor {
     if disabled {
         return .Quaternary
     }
     return .Primary
 }
 
-function fieldUnitInk(disabled: Bool) -> PrimaryColor {
+public function fieldUnitInk(disabled: Bool) -> PrimaryColor {
     if disabled {
         return .Quaternary
     }
@@ -254,7 +256,7 @@ function fieldUnitInk(disabled: Bool) -> PrimaryColor {
 // center guide is the origin it is read against, and the ruler along the bottom
 // edge is the scale. Both axes run 0...1, and `.onScrub(...)` reports both at
 // once.
-construct XYPad(x: Float, y: Float) extends Widget {
+public construct XYPad(x: Float, y: Float) extends Widget {
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let pad = ZStack(alignment: .TopLeading) {
@@ -271,15 +273,15 @@ construct XYPad(x: Float, y: Float) extends Widget {
 // How many ticks the ruler carries, and how many dashes the center guide is
 // drawn from: the pad's extent over the tick pitch, so the ruler stays evenly
 // spaced at every size class instead of being a count someone read off a mock.
-function padTickCount(metrics: borrow ControlMetricsImplementation, pitch: Float) -> Int {
+public function padTickCount(metrics: borrow ControlMetricsImplementation, pitch: Float) -> Int {
     return Int(metrics.padWidth / pitch) - 1
 }
 
-function padGuideCount(metrics: borrow ControlMetricsImplementation) -> Int {
+public function padGuideCount(metrics: borrow ControlMetricsImplementation) -> Int {
     return Int(metrics.padHeight / (metrics.padTick * 2.0)) - 1
 }
 
-construct PadFace() extends Widget {
+public construct PadFace() extends Widget {
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let metrics = resolvedControlMetrics(modifiers)
@@ -301,7 +303,7 @@ construct PadFace() extends Widget {
     }
 }
 
-construct PadRuler() extends Widget {
+public construct PadRuler() extends Widget {
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let metrics = resolvedControlMetrics(modifiers)
@@ -322,7 +324,7 @@ construct PadRuler() extends Widget {
     }
 }
 
-construct PadKnob(x: Float, y: Float) extends Widget {
+public construct PadKnob(x: Float, y: Float) extends Widget {
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let metrics = resolvedControlMetrics(modifiers)

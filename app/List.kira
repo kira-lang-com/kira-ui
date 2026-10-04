@@ -22,31 +22,35 @@ import KCoreAnimation
 // How a list is drawn, matching SwiftUI's list styles. `Automatic` is the
 // platform's answer for where the list is: the sidebar style in a split view's
 // sidebar column, inset grouped everywhere else, as on iPad.
-enum ListStyle {
+public enum ListStyle {
     Automatic
     Plain
     InsetGrouped
     Sidebar
 }
 
-construct List() extends Widget {
+public construct List() extends Widget {
     let children: [some Widget]
 
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         match modifiers.listStyle {
             Sidebar -> {
-                let rows = VStack(spacing: .None) {
-                    For(child in children) {
-                        child
+                let rows = ScrollView() {
+                    VStack(spacing: .None) {
+                        For(child in children) {
+                            child
+                        }
                     }
                 }
                 return rows.describe(context, modifierContextPresenting(modifiers, .Sidebar))
             }
             Plain -> {
-                let rows = VStack(spacing: .None) {
-                    For(child in children) {
-                        child
+                let rows = ScrollView() {
+                    VStack(spacing: .None) {
+                        For(child in children) {
+                            child
+                        }
                     }
                 }
                 return rows.describe(context, modifiers)
@@ -54,9 +58,11 @@ construct List() extends Widget {
             InsetGrouped -> {}
             Automatic -> {}
         }
-        let grouped = InsetGroupedList() {
-            For(child in children) {
-                child
+        let grouped = ScrollView() {
+            InsetGroupedList() {
+                For(child in children) {
+                    child
+                }
             }
         }
         return grouped.describe(context, modifiers)
@@ -67,7 +73,7 @@ construct List() extends Widget {
 // the room it has and held off its edges by the column's margin, on the
 // grouped canvas. The canvas is also what it asks the column around it to be
 // painted with, so the band under the bar is the same gray.
-construct InsetGroupedList() extends Widget {
+public construct InsetGroupedList() extends Widget {
     let children: [some Widget]
 
 
@@ -87,6 +93,7 @@ construct InsetGroupedList() extends Widget {
                 paddingLeading: modifiers.contentMargin,
                 paddingTop: listMetrics.topInset,
                 paddingTrailing: modifiers.contentMargin,
+                paddingBottom: listMetrics.topInset,
                 alignment: Point { x: 0.5, y: 0.0 }
             },
             content: .Solid(CASolid {
@@ -105,7 +112,7 @@ construct InsetGroupedList() extends Widget {
 // secondary ink; both start where the rows' content does. Every row is at
 // least the list's row height with its content centered in it, and every row
 // after the first carries a hairline across its top, inset like its content.
-function insetGroupedSection(
+public function insetGroupedSection(
     rows: [CALayerDescription],
     header: CALayerDescription,
     footer: CALayerDescription,
@@ -177,7 +184,7 @@ function insetGroupedSection(
 // A row whose content can be pressed is pressed as a whole: the hit region is
 // lifted off the content onto the row, and the row lights edge to edge while
 // it is held, clipped by the card's corners. It does not light on hover.
-function insetGroupedRow(
+public function insetGroupedRow(
     content: CALayerDescription,
     separated: Bool,
     context: borrow BuildContext,
@@ -229,14 +236,14 @@ function insetGroupedRow(
 // What lights a row: the list's highlight while it is held. A row on the
 // platform does not answer the pointer resting on it; only a press lights it,
 // and the tree lays the highlight on the row pressed.
-function insetGroupedRowWash(pressable: Bool, modifiers: borrow ModifierContext) -> CAColor {
+public function insetGroupedRowWash(pressable: Bool, modifiers: borrow ModifierContext) -> CAColor {
     if !pressable {
         return CAColor { a: 0.0 }
     }
     return caColorFromFoundation(modifierColor(foundationColor(themeAdaptiveColor(listRowHighlight, modifierTheme(modifiers).appearance())), modifiers))
 }
 
-construct ListStyleLayer(style: ListStyle) extends Widget {
+public construct ListStyleLayer(style: ListStyle) extends Widget {
     let content: some Widget
 
 
@@ -248,7 +255,7 @@ construct ListStyleLayer(style: ListStyle) extends Widget {
 // A section's title in a sidebar: its own row, the title held off the column's
 // edge and low in the row, close to the rows it heads, in the body face and
 // the secondary ink.
-construct SidebarSectionHeader() extends Widget {
+public construct SidebarSectionHeader() extends Widget {
     let content: some Widget
 
 
@@ -276,7 +283,7 @@ construct SidebarSectionHeader() extends Widget {
 // further in, the same distance from the edge whether or not the band is
 // behind it. Selection lands at once, as a sidebar cell's does: the band and
 // the emphasis switch rows, they do not fade between them.
-construct SidebarRow(selected: Bool, action: () -> Void) extends Widget {
+public construct SidebarRow(selected: Bool, action: () -> Void) extends Widget {
     let content: some Widget
 
 
@@ -316,7 +323,7 @@ construct SidebarRow(selected: Bool, action: () -> Void) extends Widget {
     }
 }
 
-function sidebarRowWeight(selected: Bool) -> FontWeight {
+public function sidebarRowWeight(selected: Bool) -> FontWeight {
     if selected {
         return .SemiBold
     }
@@ -325,7 +332,7 @@ function sidebarRowWeight(selected: Bool) -> FontWeight {
 
 // The band behind a sidebar row: the sidebar's selection wash when the row is
 // selected, nothing otherwise.
-function sidebarRowBand(selected: Bool, modifiers: borrow ModifierContext) -> Color {
+public function sidebarRowBand(selected: Bool, modifiers: borrow ModifierContext) -> Color {
     if selected {
         return themeAdaptiveColor(sidebarSelection, modifierTheme(modifiers).appearance())
     }
