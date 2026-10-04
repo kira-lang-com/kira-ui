@@ -200,6 +200,11 @@ public struct KiraUiNavigationPathState {
     // that starts somewhere else -- choosing another sidebar row -- starts a
     // new run: its views are new views, not the old ones changed.
     var generation: Int = 0
+    // Which view a stacked sidebar has gone on to. Every one of them stands in
+    // the detail's place, and each is a new view there: going on to Symbols
+    // after coming back from Controls must not find Controls' layers, still
+    // going off, and turn them into it.
+    var detailRun: Int = 0
     // The path as it was last settled, while changes made since have not
     // been: everything one action does to the path lands as one change, as
     // SwiftUI's does, moving from this to `values`.
@@ -323,6 +328,9 @@ public function kiraUiNavigationSettle() {
     // the sidebar is the root, and a path that empties is going back to it --
     // and one that fills from empty is going on from it.
     let fromSidebar = kiraUiNavigationRootDepth() == 0 && (before.count == 0 || after.count == 0)
+    if fromSidebar && before.count == 0 && after.count > 0 {
+        state.detailRun = state.detailRun + 1
+    }
     if navigationRootType(before) != navigationRootType(after) && !fromSidebar {
         kiraUiNavigationTransitionCancel()
         state.generation = state.generation + 1
@@ -355,6 +363,14 @@ public function navigationRootType(values: borrow [Any NavigationValue]) -> Stri
         return ""
     }
     return values[0].navigationType()
+}
+
+public function kiraUiNavigationDetailRun() -> Int {
+    kiraUiNavigationEnsure()
+    let state = nativeRecover<KiraUiNavigationPathState>(
+        kiraUiStateSlotGet(kiraUiNavigationSlotKey())
+    )
+    return state.detailRun
 }
 
 public function kiraUiNavigationGeneration() -> Int {
@@ -614,7 +630,7 @@ public construct NavigationLink(value: Any NavigationValue) extends Widget {
             return row.describe(context, modifiers)
         }
         if modifiers.controlPresentation == .InsetGrouped {
-            let face = modifierTheme(modifiers).typography(.body)
+            let face = modifierTypography(modifiers, .body)
             let row = HStack(spacing: .None, alignment: .Center, spacingLength: listMetrics.accessorySpacing) {
                 label
 
@@ -764,8 +780,8 @@ public construct NavigationStack(path: NavigationPath = NavigationPath {}) exten
             let animation = navigationTransitionAnimation(transition, context.frameCount)
             kiraUiToolbarEndCovered(move top, mark, transition.shown, copy animation)
             kiraUiNavigationStore(move current)
-            pages.append(navigationCoveredPage(move under, transition.shown, context.viewportWidth, popping, copy animation))
-            pages.append(navigationMovingPage(move front, transition.shown, context.viewportWidth, popping, move animation))
+            pages.append(navigationCoveredPage(move under, transition.shown, navigationTransitionFrom(transition), context.viewportWidth, popping, copy animation))
+            pages.append(navigationMovingPage(move front, transition.shown, navigationTransitionFrom(transition), context.viewportWidth, popping, move animation))
         } else {
             var page = self.page(context, modifiers, columnModifiers, kiraUiNavigationValues().count, 0.0)
             // The frame a motion lands on puts the page where it rests at once:
@@ -880,17 +896,23 @@ public function navigationStackedRoot(
 // way toward the leading edge. Nothing on it answers a press while it is being
 // covered or swiped toward; being uncovered by a pop, it is the view the stack
 // has gone back to, and answers at once.
-public function navigationCoveredPage(page: CALayerDescription, progress: Float, width: Float, popping: Bool, animation: CALayerAnimation) -> CALayerDescription {
+public function navigationCoveredPage(page: CALayerDescription, progress: Float, from: Float, width: Float, popping: Bool, animation: CALayerAnimation) -> CALayerDescription {
     let metrics = navigationTransitionMetrics
     var covered = move page
     if !popping {
         layerInert(covered)
     }
     covered.layout.offset = Point { x: 0.0 - (1.0 - progress) * width * metrics.coveredParallax, y: 0.0 }
+    // A page coming back into view enters from where the motion starts.
+    covered.entrance = CAEntrance {
+        active: true,
+        offset: Point { x: (from - progress) * width * metrics.coveredParallax, y: 0.0 }
+    }
     // The page and its dimming move in the transition's own transaction.
     covered.animation = move animation
     covered.sublayers.append(CALayerDescription {
         opacity: metrics.coveredDim * (1.0 - progress),
+        entrance: CAEntrance { active: true, opacity: metrics.coveredDim * (1.0 - from) },
         content: .Solid(CASolid {
             fill: CAColor { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }
         })
@@ -900,13 +922,18 @@ public function navigationCoveredPage(page: CALayerDescription, progress: Float,
 
 // The page moving over another: slid toward the trailing edge by how far it
 // has gone across the stack's width. Going off in a pop it is no longer in the
-// path, and a press passes through it to the view it uncovers.
-public function navigationMovingPage(page: CALayerDescription, progress: Float, width: Float, popping: Bool, animation: CALayerAnimation) -> CALayerDescription {
+// path, and a press passes through it to the view it uncovers. Coming in, it
+// enters from where the motion starts.
+public function navigationMovingPage(page: CALayerDescription, progress: Float, from: Float, width: Float, popping: Bool, animation: CALayerAnimation) -> CALayerDescription {
     var moving = move page
     if popping {
         layerInert(moving)
     }
     moving.layout.offset = Point { x: progress * width, y: 0.0 }
+    moving.entrance = CAEntrance {
+        active: true,
+        offset: Point { x: (from - progress) * width, y: 0.0 }
+    }
     moving.animation = move animation
     return moving
 }
@@ -914,7 +941,7 @@ public function navigationMovingPage(page: CALayerDescription, progress: Float, 
 // A stack's title set large under the bar, at the column's margin, in the
 // emphasized large title face.
 public function navigationLargeTitle(title: String, context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-    let face = modifierTheme(modifiers).typography(.largeTitle)
+    let face = modifierTypography(modifiers, .largeTitle)
     var text = Text(content: move title)
         .font(size: face.size, weight: .Bold)
         .describe(context, modifiers)
@@ -1077,13 +1104,13 @@ public construct NavigationSplitView(
                 kiraUiToolbarShowPageTitle(rootTitle)
             }
             root.key = 1
-            detailDesc.key = 2
+            detailDesc.key = kiraUiNavigationDetailRun() + 2
             var columns: [CALayerDescription] = []
             if slides {
                 let popping = navigationTransitionPopping(transition)
                 let animation = navigationTransitionAnimation(transition, context.frameCount)
-                columns.append(navigationCoveredPage(move root, transition.shown, context.viewportWidth, popping, copy animation))
-                columns.append(navigationMovingPage(move detailDesc, transition.shown, context.viewportWidth, popping, move animation))
+                columns.append(navigationCoveredPage(move root, transition.shown, navigationTransitionFrom(transition), context.viewportWidth, popping, copy animation))
+                columns.append(navigationMovingPage(move detailDesc, transition.shown, navigationTransitionFrom(transition), context.viewportWidth, popping, move animation))
             } else if kiraUiNavigationValues().count == 0 {
                 columns.append(move root)
             } else {
@@ -1164,7 +1191,7 @@ public construct NavigationSplitView(
 // shadow it casts falls back inside along that edge. It runs past the
 // window's `height` at both ends, so the shadow does not thin out at them.
 public function sidebarShadow(width: Float, height: Float, modifiers: borrow ModifierContext) -> CALayerDescription {
-    let ink = caColorFromFoundation(modifierColor(foundationColor(themeAdaptiveColor(sidebarShadowColor, modifierTheme(modifiers).appearance())), modifiers))
+    let ink = caColorFromFoundation(modifierColor(foundationColor(themeAdaptiveColor(sidebarShadowColor, modifierAppearance(modifiers))), modifiers))
     let radius = sidebarMetrics.shadowRadius
     return CALayerDescription {
         disablesActions: true,

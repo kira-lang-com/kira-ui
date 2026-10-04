@@ -73,9 +73,9 @@ def main():
     with open(OUT + "SymbolAssets.kira", "w") as f:
         f.write(HEADER_ASSETS)
         for n in ordered:
-            f.write('        %s -> return "%s"\n'
-                    % (camel(n), svgs[n].replace("\\", "\\\\").replace('"', '\\"')))
-        f.write("    }\n}\n")
+            f.write(',\n        "%s"'
+                    % svgs[n].replace("\\", "\\\\").replace('"', '\\"'))
+        f.write("\n    ]\n}\n")
     write_variants([camel(n) for n in ordered])
     print("wrote %d icons" % len(ordered))
 
@@ -115,7 +115,7 @@ HEADER_VARIANTS = '''import Foundation
 // A symbol the set draws only outlined answers itself, as SF Symbols does for
 // a symbol with no fill: the variant is a preference, not a requirement.
 
-function symbolFilled(symbol: borrow Symbol) -> Symbol {
+public function symbolFilled(symbol: borrow Symbol) -> Symbol {
     match symbol {
         None -> return .None
 '''
@@ -130,7 +130,7 @@ HEADER_NAMES = '''import Foundation
 // of this set over a generic one -- a menu copying an iOS menu can ask for the
 // glyph by the name Apple gives it instead of settling for the nearest shape.
 
-enum Symbol {
+public enum Symbol {
     None
 '''
 
@@ -141,11 +141,13 @@ HEADER_ASSETS = '''import Foundation
 //
 // Every glyph carries the SAME viewBox -- the font's em box -- and that is
 // load-bearing rather than incidental. See the generator's docstring.
+//
+// The drawings stand in the order `Symbol` declares its cases, so a symbol's
+// drawing is the one at `code(symbol)`.
 
-function symbolAsset(symbol: borrow Symbol) -> String {
-    match symbol {
-        None -> return ""
-'''
+public function symbolAssetTable() -> [String] {
+    return [
+        ""'''
 
 if __name__ == "__main__":
     sys.exit(main())

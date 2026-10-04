@@ -1,5 +1,19 @@
 #include "kira_ui_appearance.h"
 
+#include <stdlib.h>
+#include <string.h>
+
+int kira_ui_appearance_override(void) {
+    static int answer = -1;
+    if (answer < 0) {
+        const char *requested = getenv("KIRA_UI_APPEARANCE");
+        answer = 0;
+        if (requested != NULL && strcmp(requested, "light") == 0) answer = 1;
+        if (requested != NULL && strcmp(requested, "dark") == 0) answer = 2;
+    }
+    return answer;
+}
+
 /* Every platform keeps its colour scheme somewhere different, and none of them
  * expose it through the C standard library, so this is the one place the four
  * answers live. */
@@ -114,8 +128,6 @@ int kira_ui_platform_appearance(void) {
  * D-Bus conversation rather than a library entry point. `GTK_THEME` is the one
  * value a process can read without one, and a name ending in `:dark` is the
  * convention every toolkit that reads it follows. */
-#include <string.h>
-#include <stdlib.h>
 
 int kira_ui_platform_appearance(void) {
     const char *theme = getenv("GTK_THEME");

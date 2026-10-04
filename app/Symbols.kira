@@ -32,6 +32,27 @@ public struct StyleSymbolTokens {
     let overrides: [SymbolOverride] = []
 }
 
+// The library's drawings, built once and kept: a match across every case
+// walked them in order, and copied the drawing out, on each lookup.
+struct KiraUiSymbolAssets {
+    var drawings: [String] = []
+}
+
+function kiraUiSymbolAssetsKey() -> String {
+    return "kiraui.symbol.assets"
+}
+
+// The library's own drawing of a symbol.
+public function symbolAsset(symbol: borrow Symbol) -> String {
+    var slot = kiraUiStateSlotGet(kiraUiSymbolAssetsKey())
+    if slot == RawPtr.null {
+        kiraUiStateSlotPut(kiraUiSymbolAssetsKey(), nativeUserData(nativeState(KiraUiSymbolAssets { drawings: symbolAssetTable() })))
+        slot = kiraUiStateSlotGet(kiraUiSymbolAssetsKey())
+    }
+    let assets = nativeRecover<KiraUiSymbolAssets>(slot)
+    return assets.drawings[code(symbol)]
+}
+
 public function styleSymbol(symbols: borrow StyleSymbolTokens, symbol: borrow Symbol) -> String {
     for entry in symbols.overrides {
         if entry.symbol == symbol {
@@ -46,9 +67,9 @@ public function styleSymbol(symbols: borrow StyleSymbolTokens, symbol: borrow Sy
 // resolves by.
 public function symbolImplementation(symbol: Symbol, modifiers: borrow ModifierContext) -> String {
     if modifiers.symbolVariant == .Fill {
-        return modifierTheme(modifiers).symbol(symbolFilled(symbol))
+        return modifierSymbol(modifiers, symbolFilled(symbol))
     }
-    return modifierTheme(modifiers).symbol(symbol)
+    return modifierSymbol(modifiers, symbol)
 }
 
 // SwiftUI's `SymbolVariants`: the drawing of a symbol a subtree asks for. A

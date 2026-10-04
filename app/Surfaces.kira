@@ -19,16 +19,39 @@ import KCoreAnimation
 // through. Sniffing the environment here independently is how a light token set
 // used to end up washed over a dark glass stack.
 public function surfaceGlassScheme(modifiers: borrow ModifierContext) -> FoundationScheme {
-    match modifierTheme(modifiers).appearance() {
+    match modifierAppearance(modifiers) {
         Light -> return .Light
         Dark -> return .Dark
     }
 }
 
 public function surfaceGlassStack(modifiers: borrow ModifierContext) -> FoundationTintStack {
-    let scheme = surfaceGlassScheme(modifiers)
-    let platform = foundationLiquidGlassTint(scheme)
-    return foundationTintStackShaded(platform, foundationColor(modifierTokens(modifiers).glassTint))
+    return surfaceGlassStackFor(modifierTokens(modifiers), modifiers)
+}
+
+// The wash stack under tokens already resolved: a piece of glass asks for its
+// stack, its fill and its material, and each resolving the theme again was
+// most of what describing the glass cost.
+public function surfaceGlassStackFor(tokens: borrow ThemeTokens, modifiers: borrow ModifierContext) -> FoundationTintStack {
+    let platform = foundationLiquidGlassTint(surfaceGlassScheme(modifiers))
+    return foundationTintStackShaded(platform, foundationColor(tokens.glassTint))
+}
+
+// Liquid Glass's material over its stack: UI Foundation's canonical path
+// exactly -- the element owns its measured rim and shadow stack, and the
+// default border inks are not replaced just because the appearance is dark.
+public function layeredGlassMaterial(stack: borrow FoundationTintStack, tokens: borrow ThemeTokens) -> CAGlassMaterial {
+    let tinted = foundationGlassMaterialWithTint(CAGlassMaterial {}, stack)
+    return foundationGlassMaterialEdgeLit(tinted, tokens.glassEdgeLighting)
+}
+
+// Liquid Glass's own wash, through the opacity in effect; an explicit fill
+// stays an intentional override.
+public function layeredGlassFill(stack: borrow FoundationTintStack, modifiers: borrow ModifierContext) -> FoundationColor {
+    if modifiers.hasFill == false {
+        return modifierColor(foundationTintFill(stack), modifiers)
+    }
+    return modifierSurfaceFill(foundationColor(Color {}), modifiers)
 }
 
 public function surfaceGlassMaterial(
@@ -37,15 +60,8 @@ public function surfaceGlassMaterial(
 ) -> CAGlassMaterial {
     match material {
         LayeredGlass -> {
-            let stack = surfaceGlassStack(modifiers)
-            // Match UI Foundation's canonical Liquid Glass path exactly: the
-            // element owns its measured rim/shadow stack. Do not replace the
-            // default border inks here just because the appearance is dark.
-            let tinted = foundationGlassMaterialWithTint(CAGlassMaterial {}, stack)
-            return foundationGlassMaterialEdgeLit(
-                tinted,
-                modifierTokens(modifiers).glassEdgeLighting
-            )
+            let tokens = modifierTokens(modifiers)
+            return layeredGlassMaterial(surfaceGlassStackFor(tokens, modifiers), tokens)
         }
         Flat -> return CAGlassMaterial {}
         Frosted -> return CAGlassMaterial {}
@@ -160,7 +176,7 @@ public construct Section(spacing: Spacing = .ExtraSmall) extends Widget {
         // In an inset grouped list the section is a header over a card of rows
         // over a footer, laid out the list's way.
         if modifiers.controlPresentation == .InsetGrouped {
-            let face = modifierTheme(modifiers).typography(.title2)
+            let face = modifierTypography(modifiers, .title2)
             let headerLayer = header
                 .font(size: face.size, weight: .Bold)
                 .foregroundColor(.Primary)
