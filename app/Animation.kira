@@ -21,13 +21,22 @@ import KCoreAnimation
 // already owns its own state — keyed by the same auto-minted key it hit-tests
 // with — and advances it while it lowers. Nothing needs a list of who is moving,
 // only whether ANYONE is.
-struct KiraUiClock {
+public struct KiraUiClock {
     // How long the last presented frame took, in seconds. Read during a build;
     // written from the frame hook, which is the only place a `RenderFrame` — and
     // therefore the real elapsed time — is in scope.
     var delta: Float = 0.0
     // Whether anything advanced during the last build and has not settled.
     var moving: Bool = false
+    // The frame's time, in seconds on the compositor's clock: what a motion
+    // handed to the compositor is measured from, so the two agree on where it
+    // stands.
+    var now: Float = 0.0
+    // When something the compositor is carrying ends and the interface has to
+    // be built again to drop what it showed only for the motion; zero when
+    // nothing waits. A motion on the compositor costs no build per frame, but
+    // its end is a change of what is described.
+    var wakeAt: Float = 0.0
     // Whether something in the build is resizing the window's content the way
     // the window resizing would, a sidebar sliding in or out: the content
     // takes each frame's layout at once, as in a live resize.
@@ -48,14 +57,14 @@ struct KiraUiClock {
     var slowdown: Int = 0
 }
 
-function kiraUiClockSlotKey() -> String {
+public function kiraUiClockSlotKey() -> String {
     return "kiraui.clock"
 }
 
 // The clock's slot, made the first time it is asked for. A writer recovers the
 // clock in place after this: a recovered value handed back out of a function is
 // a copy, and what was written to it would be lost.
-function kiraUiClockEnsure() {
+public function kiraUiClockEnsure() {
     if kiraUiStateSlotHas(kiraUiClockSlotKey()) == false {
         kiraUiStateSlotPut(kiraUiClockSlotKey(), nativeUserData(nativeState(KiraUiClock {})))
     }
@@ -63,7 +72,7 @@ function kiraUiClockEnsure() {
 }
 
 // The clock as it stands, to read.
-function kiraUiClockState() -> KiraUiClock {
+public function kiraUiClockState() -> KiraUiClock {
     kiraUiClockEnsure()
     return nativeRecover<KiraUiClock>(kiraUiStateSlotGet(kiraUiClockSlotKey()))
 }
@@ -75,17 +84,17 @@ function kiraUiClockState() -> KiraUiClock {
 // spring handed either integrates to somewhere it was never going to be — the
 // long one visibly, as a transition that teleports on the frame after a hitch.
 // Clamping is what makes the motion the same motion on a slow machine.
-function kiraUiClockFloor() -> Float {
+public function kiraUiClockFloor() -> Float {
     return 1.0 / 240.0
 }
 
-function kiraUiClockCeiling() -> Float {
+public function kiraUiClockCeiling() -> Float {
     return 1.0 / 20.0
 }
 
 // Records how long the frame took. The frame hook runs before the UI pass, so
 // what a build reads is this frame's duration and not the previous one's.
-function kiraUiClockTick(frame: borrow KiraGraphics.RenderFrame) {
+public function kiraUiClockTick(frame: borrow KiraGraphics.RenderFrame) {
     kiraUiClockEnsure()
     var clock = nativeRecover<KiraUiClock>(kiraUiStateSlotGet(kiraUiClockSlotKey()))
     if clock.slowdown <= 0 {
@@ -94,23 +103,52 @@ function kiraUiClockTick(frame: borrow KiraGraphics.RenderFrame) {
     }
     let delta = min(max(foundationFrameDuration(frame), kiraUiClockFloor()), kiraUiClockCeiling())
     clock.delta = delta / Float(clock.slowdown)
+    clock.now = kiraUiClockTime(frame)
     return
+}
+
+// The frame's time on the compositor's clock, in seconds.
+public function kiraUiClockTime(frame: borrow KiraGraphics.RenderFrame) -> Float {
+    return Float(frame.monotonicNanoseconds()) / 1000000000.0
+}
+
+// The frame's time as the last build read it.
+public function kiraUiClockNow() -> Float {
+    return kiraUiClockState().now
 }
 
 // Clears the moving flag. The interactive root calls this once at the top of
 // every build, beside the tap-sequence reset, so the flag describes the build
 // that is about to happen rather than accumulating across all of them.
-function kiraUiClockBeginFrame() {
+public function kiraUiClockBeginFrame() {
     kiraUiClockEnsure()
     var clock = nativeRecover<KiraUiClock>(kiraUiStateSlotGet(kiraUiClockSlotKey()))
     clock.moving = false
     clock.resizing = false
+    clock.wakeAt = 0.0
     return
+}
+
+// "Build again at `time`": said by a widget while it lowers, for a motion the
+// compositor carries until then. The earliest asked for wins.
+public function kiraUiClockWakeAt(time: Float) {
+    kiraUiClockEnsure()
+    var clock = nativeRecover<KiraUiClock>(kiraUiStateSlotGet(kiraUiClockSlotKey()))
+    if clock.wakeAt <= 0.0 || time < clock.wakeAt {
+        clock.wakeAt = time
+    }
+    return
+}
+
+// Whether a build asked to happen by `now` is due.
+public function kiraUiClockWakeDue(now: Float) -> Bool {
+    let wakeAt = kiraUiClockState().wakeAt
+    return wakeAt > 0.0 && now >= wakeAt
 }
 
 // "I am resizing the content this frame." Said by a widget while it lowers;
 // see `resizing`.
-function kiraUiClockResizing() {
+public function kiraUiClockResizing() {
     kiraUiClockEnsure()
     var clock = nativeRecover<KiraUiClock>(kiraUiStateSlotGet(kiraUiClockSlotKey()))
     clock.resizing = true
@@ -119,13 +157,13 @@ function kiraUiClockResizing() {
 }
 
 // The frame delta a transition advances by.
-function kiraUiClockDelta() -> Float {
+public function kiraUiClockDelta() -> Float {
     return kiraUiClockState().delta
 }
 
 // "I advanced and I have not finished." Said by a widget while it lowers, which
 // is what keeps the frames coming until it has.
-function kiraUiClockStillMoving() {
+public function kiraUiClockStillMoving() {
     kiraUiClockEnsure()
     var clock = nativeRecover<KiraUiClock>(kiraUiStateSlotGet(kiraUiClockSlotKey()))
     clock.moving = true
@@ -133,16 +171,16 @@ function kiraUiClockStillMoving() {
 }
 
 // What an interactive app passes as `needsRebuild`.
-function kiraUiClockRunning() -> Bool {
+public function kiraUiClockRunning() -> Bool {
     return kiraUiClockState().moving
 }
 
 // Whether transitions should be shortened. See `reducedMotion` above.
-function kiraUiReducedMotion() -> Bool {
+public function kiraUiReducedMotion() -> Bool {
     return kiraUiClockState().reducedMotion
 }
 
-function kiraUiSetReducedMotion(value: Bool) {
+public function kiraUiSetReducedMotion(value: Bool) {
     kiraUiClockEnsure()
     var clock = nativeRecover<KiraUiClock>(kiraUiStateSlotGet(kiraUiClockSlotKey()))
     clock.reducedMotion = value

@@ -12,11 +12,15 @@ import KCoreAnimation
 // reports interaction; the runner's per-frame rebuild shows the write on the
 // next frame.
 
-function kiraUiNoopFloat(value: Float) {
+public function kiraUiNoopFloat(value: Float) {
     return
 }
 
-function controlClamp01(value: Float) -> Float {
+public function kiraUiNoopBool(value: Bool) {
+    return
+}
+
+public function controlClamp01(value: Float) -> Float {
     if value < 0.0 {
         return 0.0
     }
@@ -34,7 +38,7 @@ function controlClamp01(value: Float) -> Float {
 // switch that turns the property back on has to stay accented while it does —
 // the two are different decisions and were the same value for as long as this
 // read `foregroundColor`.
-function controlActiveColor(modifiers: borrow ModifierContext) -> FoundationColor {
+public function controlActiveColor(modifiers: borrow ModifierContext) -> FoundationColor {
     if modifiers.hasTint {
         return modifierPrimaryColor(modifiers.tint, modifiers)
     }
@@ -42,7 +46,7 @@ function controlActiveColor(modifiers: borrow ModifierContext) -> FoundationColo
 }
 
 // A white capsule knob, as a switch and a slider both carry.
-function controlKnobDescription(width: Float, height: Float, modifiers: borrow ModifierContext) -> CALayerDescription {
+public function controlKnobDescription(width: Float, height: Float, modifiers: borrow ModifierContext) -> CALayerDescription {
     let radius = min(width, height) / 2.0
     return CALayerDescription {
         layout: CALayoutIntent {
@@ -62,7 +66,7 @@ function controlKnobDescription(width: Float, height: Float, modifiers: borrow M
 // How opaque a switch or slider stands: the catalog's disabled opacity while it
 // is disabled, fully otherwise. The control fades as one picture, so its knob
 // still hides the track under it.
-function controlOpacity(modifiers: borrow ModifierContext) -> Float {
+public function controlOpacity(modifiers: borrow ModifierContext) -> Float {
     if modifiers.disabled {
         return disabledControlOpacity
     }
@@ -72,7 +76,7 @@ function controlOpacity(modifiers: borrow ModifierContext) -> Float {
 // A slider's knob as it rests: a white capsule under its two shadows. A
 // layer casts one, so the soft shadow is cast by a holder of the knob's own
 // shape and the tight one by the knob.
-function sliderKnobDescription(width: Float, height: Float, modifiers: borrow ModifierContext) -> CALayerDescription {
+public function sliderKnobDescription(width: Float, height: Float, modifiers: borrow ModifierContext) -> CALayerDescription {
     let metrics = sliderMetrics
     let ink = caColorFromFoundation(modifierColor(foundationColor(themeAdaptiveColor(knobShadow, modifierTheme(modifiers).appearance())), modifiers))
     var knob = controlKnobDescription(width, height, modifiers)
@@ -103,7 +107,7 @@ function sliderKnobDescription(width: Float, height: Float, modifiers: borrow Mo
 
 // How a slider's knob is moving: lifted into glass while it is held, and
 // stretched along the track by how fast it is dragged.
-struct SliderKnob {
+public struct SliderKnob {
     var lift: MotionSpringState = MotionSpringState {}
     var lifted: Float = 0.0
     var held: Bool = false
@@ -111,21 +115,26 @@ struct SliderKnob {
     var stretch: Float = 0.0
 }
 
-function sliderKnobSlotKey(key: Int) -> String {
+public function sliderKnobSlotKey(key: Int) -> String {
     return kiraUiSlotKey("kiraui.slider.", key)
 }
 
 // A switch: a capsule track with the knob held at its leading end when off and
-// its trailing end when on. The caller owns the state and `.onClick(...)`
-// flips it; the knob slides between its ends because it is the same layer in
-// a new place.
-construct Toggle(isOn: Bool) extends Widget {
+// its trailing end when on. It is its own press, as SwiftUI's is: tapped, it
+// hands `onChange` the value it flips to, for the caller to store -- and
+// lights nothing, since a switch answers by moving. The knob slides between
+// its ends because it is the same layer in a new place.
+public construct Toggle(isOn: Bool, onChange: (Bool) -> Void = kiraUiNoopBool) extends Widget {
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        let k = kiraUiTapSeqKey()
+        kiraUiLayerActionRegister(k, toggleFlipFn(isOn, onChange))
         let metrics = switchMetrics
         let radius = metrics.height / 2.0
         let knob = controlKnobDescription(metrics.knobWidth, metrics.height - metrics.knobInset * 2.0, modifiers)
         return CALayerDescription {
+            hittable: !modifiers.disabled,
+            hitKey: k,
             layout: CALayoutIntent {
                 widthFill: false,
                 heightFill: false,
@@ -148,9 +157,20 @@ construct Toggle(isOn: Bool) extends Widget {
     }
 }
 
+// What tapping a switch does: hand on the value it flips to.
+public function toggleFlipFn(isOn: Bool, onChange: (Bool) -> Void) -> () -> Void {
+    let change = onChange
+    let flipped = !isOn
+    let press: () -> Void = { in
+        change(flipped)
+        return
+    }
+    return press
+}
+
 // A switch's track: the tint when one is set and the switch is on, the
 // platform's green otherwise, and the gray wash when off.
-function toggleTrackColor(isOn: Bool, modifiers: borrow ModifierContext) -> FoundationColor {
+public function toggleTrackColor(isOn: Bool, modifiers: borrow ModifierContext) -> FoundationColor {
     let appearance = modifierTheme(modifiers).appearance()
     if !isOn {
         return foundationColor(themeAdaptiveColor(switchOff, appearance))
@@ -168,7 +188,7 @@ function toggleTrackColor(isOn: Bool, modifiers: borrow ModifierContext) -> Foun
 // The slider is an interactive surface, so while it is held the runner hands it
 // the pointer in its own coordinates: the knob follows the pointer at once and
 // `onChange` receives the clamped value for the caller to store.
-construct Slider(
+public construct Slider(
     value: Float,
     width: Float = 0.0,
     onChange: (Float) -> Void = kiraUiNoopFloat,
@@ -267,7 +287,7 @@ construct Slider(
 // swells into a larger piece of clear glass the track shows through, and
 // dragged fast it stretches along the track and thins; let go, it springs
 // back into the capsule.
-function sliderKnobLayers(context: borrow BuildContext, key: Int, held: Bool, modifiers: borrow ModifierContext) -> [CALayerDescription] {
+public function sliderKnobLayers(context: borrow BuildContext, key: Int, held: Bool, modifiers: borrow ModifierContext) -> [CALayerDescription] {
     let metrics = sliderMetrics
     if kiraUiStateSlotHas(sliderKnobSlotKey(key)) == false {
         kiraUiStateSlotPut(sliderKnobSlotKey(key), nativeUserData(nativeState(SliderKnob {})))

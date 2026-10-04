@@ -142,6 +142,12 @@ path.append(value = ProjectOverviewRoute())
 path.append(value = ProjectFilesRoute())
 ```
 
+Everything one action does to the path lands as one change, as in SwiftUI,
+judged by how it leaves the path against how it found it: a path that now
+starts somewhere else is replaced outright, the way choosing a sidebar row
+replaces it, so the deep link above opens on the files page with Projects
+selected; a path that grew pushes; one that shrank goes back.
+
 On a wide window, the sidebar remains visible while the detail stack changes.
 On a compact window, `NavigationSplitView` presents that same detail stack as a
 phone-style push flow with Back navigation.

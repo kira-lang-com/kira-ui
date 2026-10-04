@@ -13,7 +13,7 @@ import KCoreAnimation
 // the text at the caret and placing a thin bar between the two halves. Return
 // fires onSubmit; the text stays, and `textFieldText(key)` reads it.
 
-struct KiraUiTextFieldState {
+public struct KiraUiTextFieldState {
     var codes: [Int] = []
     var caret: Int = 0
     // Selection anchor. anchor == caret means no selection; otherwise the
@@ -22,14 +22,14 @@ struct KiraUiTextFieldState {
     var seeded: Bool = false
 }
 
-function textFieldSelMin(anchor: Int, caret: Int) -> Int {
+public function textFieldSelMin(anchor: Int, caret: Int) -> Int {
     if anchor < caret {
         return anchor
     }
     return caret
 }
 
-function textFieldSelMax(anchor: Int, caret: Int) -> Int {
+public function textFieldSelMax(anchor: Int, caret: Int) -> Int {
     if anchor > caret {
         return anchor
     }
@@ -37,18 +37,18 @@ function textFieldSelMax(anchor: Int, caret: Int) -> Int {
 }
 
 // Per-field slot key.
-function textFieldSlotKey(key: Int) -> String {
+public function textFieldSlotKey(key: Int) -> String {
     return kiraUiSlotKey("kiraui.tf.", key)
 }
 
-function textFieldEnsure(key: Int) {
+public function textFieldEnsure(key: Int) {
     if kiraUiStateSlotHas(textFieldSlotKey(key)) == false {
         kiraUiStateSlotPut(textFieldSlotKey(key), nativeUserData(nativeState(KiraUiTextFieldState {})))
     }
     return
 }
 
-function textFieldSeed(key: Int, initial: borrow String) {
+public function textFieldSeed(key: Int, initial: borrow String) {
     textFieldEnsure(key)
     var st = nativeRecover<KiraUiTextFieldState>(kiraUiStateSlotGet(textFieldSlotKey(key)))
     if st.seeded == false {
@@ -60,13 +60,13 @@ function textFieldSeed(key: Int, initial: borrow String) {
     return
 }
 
-function textFieldText(key: Int) -> String {
+public function textFieldText(key: Int) -> String {
     textFieldEnsure(key)
     let st = nativeRecover<KiraUiTextFieldState>(kiraUiStateSlotGet(textFieldSlotKey(key)))
     return foundationStringFromCodepoints(st.codes, 0, st.codes.count)
 }
 
-function textFieldReset(key: Int) {
+public function textFieldReset(key: Int) {
     textFieldEnsure(key)
     var st = nativeRecover<KiraUiTextFieldState>(kiraUiStateSlotGet(textFieldSlotKey(key)))
     var empty: [Int] = []
@@ -78,7 +78,7 @@ function textFieldReset(key: Int) {
 }
 
 // Delete the selected range (if any), collapsing the caret to its start.
-function textFieldDeleteSelection(key: Int) {
+public function textFieldDeleteSelection(key: Int) {
     textFieldEnsure(key)
     var st = nativeRecover<KiraUiTextFieldState>(kiraUiStateSlotGet(textFieldSlotKey(key)))
     if st.anchor == st.caret {
@@ -100,7 +100,7 @@ function textFieldDeleteSelection(key: Int) {
     return
 }
 
-function textFieldSelectAll(key: Int) {
+public function textFieldSelectAll(key: Int) {
     textFieldEnsure(key)
     var st = nativeRecover<KiraUiTextFieldState>(kiraUiStateSlotGet(textFieldSlotKey(key)))
     st.anchor = 0
@@ -108,7 +108,7 @@ function textFieldSelectAll(key: Int) {
     return
 }
 
-function textFieldInsert(key: Int, cp: Int) {
+public function textFieldInsert(key: Int, cp: Int) {
     if cp < 32 {
         return
     }
@@ -133,7 +133,7 @@ function textFieldInsert(key: Int, cp: Int) {
     return
 }
 
-function textFieldBackspace(key: Int) {
+public function textFieldBackspace(key: Int) {
     textFieldEnsure(key)
     var st = nativeRecover<KiraUiTextFieldState>(kiraUiStateSlotGet(textFieldSlotKey(key)))
     // A selection is deleted whole.
@@ -159,7 +159,7 @@ function textFieldBackspace(key: Int) {
     return
 }
 
-function textFieldDeleteForward(key: Int) {
+public function textFieldDeleteForward(key: Int) {
     textFieldEnsure(key)
     var st = nativeRecover<KiraUiTextFieldState>(kiraUiStateSlotGet(textFieldSlotKey(key)))
     if st.anchor != st.caret {
@@ -182,7 +182,7 @@ function textFieldDeleteForward(key: Int) {
     return
 }
 
-function textFieldNav(key: Int, keyCode: Int) {
+public function textFieldNav(key: Int, keyCode: Int) {
     if keyCode == 261 {
         textFieldDeleteForward(key)
         return
@@ -228,7 +228,7 @@ function textFieldNav(key: Int, keyCode: Int) {
 
 // Click-to-position: map the press x (relative to the field's text start) to the
 // nearest caret index by measuring codepoint prefixes.
-function textFieldClickCaret(key: Int, size: Float, leftPad: Float) {
+public function textFieldClickCaret(key: Int, size: Float, leftPad: Float) {
     textFieldEnsure(key)
     var st = nativeRecover<KiraUiTextFieldState>(kiraUiStateSlotGet(textFieldSlotKey(key)))
     let relX = kiraUiPointerX() - kiraUiPressBoundsX() - leftPad
@@ -265,7 +265,7 @@ function textFieldClickCaret(key: Int, size: Float, leftPad: Float) {
 
 // --- Closure builders (capture locals, never widget fields). ---
 
-function textFieldInsertFn(key: Int) -> (Int) -> Void {
+public function textFieldInsertFn(key: Int) -> (Int) -> Void {
     let k = key
     let f: (Int) -> Void = { cp in
         textFieldInsert(k, cp)
@@ -274,7 +274,7 @@ function textFieldInsertFn(key: Int) -> (Int) -> Void {
     return f
 }
 
-function textFieldBackspaceFn(key: Int) -> () -> Void {
+public function textFieldBackspaceFn(key: Int) -> () -> Void {
     let k = key
     let f: () -> Void = { in
         textFieldBackspace(k)
@@ -283,7 +283,7 @@ function textFieldBackspaceFn(key: Int) -> () -> Void {
     return f
 }
 
-function textFieldNavFn(key: Int) -> (Int) -> Void {
+public function textFieldNavFn(key: Int) -> (Int) -> Void {
     let k = key
     let f: (Int) -> Void = { kc in
         textFieldNav(k, kc)
@@ -294,7 +294,7 @@ function textFieldNavFn(key: Int) -> (Int) -> Void {
 
 // The keys a focused field answers: Return submits, Delete removes behind the
 // caret, and the rest move it.
-function textFieldCommandFn(key: Int, onSubmit: () -> Void) -> (Int) -> Void {
+public function textFieldCommandFn(key: Int, onSubmit: () -> Void) -> (Int) -> Void {
     let k = key
     let submit = onSubmit
     let f: (Int) -> Void = { code in
@@ -311,7 +311,7 @@ function textFieldCommandFn(key: Int, onSubmit: () -> Void) -> (Int) -> Void {
 }
 
 // One run of a field's text, in the field's size and the primary ink.
-function textFieldRun(
+public function textFieldRun(
     content: String,
     size: Float,
     context: borrow BuildContext,
@@ -324,7 +324,7 @@ function textFieldRun(
 }
 
 // The insertion point: the catalog's bar in the accent.
-function textFieldCaret(modifiers: borrow ModifierContext) -> CALayerDescription {
+public function textFieldCaret(modifiers: borrow ModifierContext) -> CALayerDescription {
     let metrics = caretMetrics
     return CALayerDescription {
         layout: CALayoutIntent {
@@ -341,7 +341,7 @@ function textFieldCaret(modifiers: borrow ModifierContext) -> CALayerDescription
     }
 }
 
-function textFieldPressFn(key: Int, size: Float, leftPad: Float) -> () -> Void {
+public function textFieldPressFn(key: Int, size: Float, leftPad: Float) -> () -> Void {
     let k = key
     let sz = size
     let lp = leftPad
@@ -352,11 +352,11 @@ function textFieldPressFn(key: Int, size: Float, leftPad: Float) -> () -> Void {
     return f
 }
 
-function textFieldColor(c: borrow FoundationColor) -> FoundationColor {
+public function textFieldColor(c: borrow FoundationColor) -> FoundationColor {
     return foundationRgba(c.r, c.g, c.b, c.a)
 }
 
-function textFieldColorWithOpacity(
+public function textFieldColorWithOpacity(
     c: borrow FoundationColor,
     opacity: Float,
 ) -> FoundationColor {
@@ -368,11 +368,11 @@ function textFieldColorWithOpacity(
 // One value, named once, because the caret is placed by measuring PREFIXES of
 // the same string the field draws: a measurement at one weight and a draw at
 // another puts the caret beside the glyph it belongs to rather than against it.
-function textFieldWeight() -> Float {
+public function textFieldWeight() -> Float {
     return 400.0
 }
 
-function textFieldTextSize(modifiers: borrow ModifierContext) -> Float {
+public function textFieldTextSize(modifiers: borrow ModifierContext) -> Float {
     if modifiers.hasFont {
         return modifiers.fontSize
     }
@@ -382,18 +382,18 @@ function textFieldTextSize(modifiers: borrow ModifierContext) -> Float {
     return modifierTokens(modifiers).bodySize
 }
 
-function textFieldPlaceholderColor(modifiers: borrow ModifierContext) -> FoundationColor {
+public function textFieldPlaceholderColor(modifiers: borrow ModifierContext) -> FoundationColor {
     return modifierColor(foundationColor(modifierTokens(modifiers).foreground.tertiary), modifiers)
 }
 
 // The selection band is the accent at reading strength — opaque accent would
 // bury the glyphs it is drawn behind.
-function textFieldSelectionColor(modifiers: borrow ModifierContext) -> FoundationColor {
+public function textFieldSelectionColor(modifiers: borrow ModifierContext) -> FoundationColor {
     let accent = modifierTokens(modifiers).tint.accent
     return modifierColor(foundationColor(colorWithAlpha(accent, 0.35)), modifiers)
 }
 
-function textFieldRadius(modifiers: borrow ModifierContext) -> Float {
+public function textFieldRadius(modifiers: borrow ModifierContext) -> Float {
     return modifierTokens(modifiers).controlRadius
 }
 
@@ -405,7 +405,7 @@ function textFieldRadius(modifiers: borrow ModifierContext) -> Float {
 // Overrides remain available through the ordinary modifiers: `.background(...)`
 // or `.fill(...)` for the field's background, `.themeColor(...)` /
 // `.textColor(...)` for the ink, `.typography(...)` / `.font(...)` for the size.
-construct TextField(
+public construct TextField(
     key: Int,
     initial: String,
     placeholder: String,

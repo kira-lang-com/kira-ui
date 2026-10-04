@@ -39,7 +39,7 @@ import KCoreAnimation
 // correctly be drawn.
 
 // One element's journey.
-struct KiraUiHero {
+public struct KiraUiHero {
     // Where it last came out, which is where a flight starts from.
     var fromX: Float = 0.0
     var fromY: Float = 0.0
@@ -64,14 +64,14 @@ struct KiraUiHero {
     var placed: Bool = false
 }
 
-function heroSlotKey(id: Int) -> String {
+public function heroSlotKey(id: Int) -> String {
     return kiraUiSlotKey("kiraui.hero.", id)
 }
 
 // The slot, made the first time it is asked for. A writer recovers it in
 // place after this: a recovered value handed back out of a function is a
 // copy, and what was written to it would be lost.
-function heroEnsure(id: Int) {
+public function heroEnsure(id: Int) {
     if kiraUiStateSlotHas(heroSlotKey(id)) == false {
         kiraUiStateSlotPut(heroSlotKey(id), nativeUserData(nativeState(KiraUiHero {})))
     }
@@ -79,7 +79,7 @@ function heroEnsure(id: Int) {
 }
 
 // The state as it stands, to read.
-function heroState(id: Int) -> KiraUiHero {
+public function heroState(id: Int) -> KiraUiHero {
     heroEnsure(id)
     return nativeRecover<KiraUiHero>(kiraUiStateSlotGet(heroSlotKey(id)))
 }
@@ -90,13 +90,13 @@ function heroState(id: Int) -> KiraUiHero {
 // Derived from the id rather than minted from the build sequence: a sequence key
 // changes the moment the element is declared somewhere else in the tree, which
 // is precisely the frame a hero needs its identity to survive.
-function heroKey(id: Int) -> Int {
+public function heroKey(id: Int) -> Int {
     return 700000 + id
 }
 
 // The curve an element travels on. Critically damped — a photograph that
 // overshoots the frame it is opening into reads as dropped rather than placed.
-function heroCurve() -> MotionCurveName {
+public function heroCurve() -> MotionCurveName {
     return .Reposition
 }
 
@@ -109,7 +109,7 @@ function heroCurve() -> MotionCurveName {
 //   * placed, not moved   -> take it as given; the common case, and free
 //   * placed, moved       -> begin a flight from where it was
 //   * flying              -> advance, and report the interpolated rectangle
-function heroAdvance(id: Int, destination: borrow Rect) -> Rect {
+public function heroAdvance(id: Int, destination: borrow Rect) -> Rect {
     heroEnsure(id)
     var hero = nativeRecover<KiraUiHero>(kiraUiStateSlotGet(heroSlotKey(id)))
 
@@ -158,7 +158,7 @@ function heroAdvance(id: Int, destination: borrow Rect) -> Rect {
 }
 
 // Points the two extent springs at a new size, from whatever size they are.
-function heroSizeTo(hero: borrow mut KiraUiHero, width: Float, height: Float) {
+public function heroSizeTo(hero: borrow mut KiraUiHero, width: Float, height: Float) {
     let nowW = motionSpringSample(hero.width, hero.width.elapsed)
     let nowH = motionSpringSample(hero.height, hero.height.elapsed)
     var fromW = nowW.value
@@ -176,7 +176,7 @@ function heroSizeTo(hero: borrow mut KiraUiHero, width: Float, height: Float) {
     return
 }
 
-function heroSizeAdvance(hero: borrow mut KiraUiHero) -> Bool {
+public function heroSizeAdvance(hero: borrow mut KiraUiHero) -> Bool {
     let sampleW = motionSpringAdvance(hero.width, kiraUiClockDelta())
     let sampleH = motionSpringAdvance(hero.height, kiraUiClockDelta())
     hero.currentW = sampleW.value
@@ -192,7 +192,7 @@ function heroSizeAdvance(hero: borrow mut KiraUiHero) -> Bool {
 }
 
 // Whether this element is currently between two places.
-function kiraUiHeroFlying(id: Int) -> Bool {
+public function kiraUiHeroFlying(id: Int) -> Bool {
     return heroState(id).flying
 }
 
@@ -203,7 +203,7 @@ function kiraUiHeroFlying(id: Int) -> Bool {
 // in transit it is drawn in the overlay at the rectangle the springs report and
 // its slot in the tree is held open at the same size, so neither parent reflows
 // around a hole.
-construct MatchedGeometry(id: Int) extends Widget {
+public construct MatchedGeometry(id: Int) extends Widget {
     let content: some Widget
 
 

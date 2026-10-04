@@ -23,7 +23,7 @@ import KCoreAnimation
 // each build via kiraUiTapSeqReset) yields stable, collision-free keys. Base
 // 600000 sits above app "sequence" ranges and the 100000-499999 band apps use
 // for semantic edTapKey-style keys, so auto keys never alias a decodable key.
-struct KiraUiTapSeq {
+public struct KiraUiTapSeq {
     var next: Int = 0
     // The counter for content being lowered into an OVERLAY, and whether we are
     // currently in one.
@@ -47,13 +47,13 @@ struct KiraUiTapSeq {
     var inCovered: Bool = false
 }
 
-function kiraUiTapSeqSlotKey() -> String {
+public function kiraUiTapSeqSlotKey() -> String {
     return "kiraui.tapseq"
 }
 
 // Reset the auto-key counter. An interactive app root calls this once at the top
 // of every frame's build so each frame gets the same stable key assignment.
-function kiraUiTapSeqReset() {
+public function kiraUiTapSeqReset() {
     if kiraUiStateSlotHas(kiraUiTapSeqSlotKey()) == false {
         kiraUiStateSlotPut(kiraUiTapSeqSlotKey(), nativeUserData(nativeState(KiraUiTapSeq {})))
     }
@@ -67,7 +67,7 @@ function kiraUiTapSeqReset() {
 }
 
 // Next auto key in the current build.
-function kiraUiTapSeqKey() -> Int {
+public function kiraUiTapSeqKey() -> Int {
     if kiraUiStateSlotHas(kiraUiTapSeqSlotKey()) == false {
         kiraUiStateSlotPut(kiraUiTapSeqSlotKey(), nativeUserData(nativeState(KiraUiTapSeq {})))
     }
@@ -89,7 +89,7 @@ function kiraUiTapSeqKey() -> Int {
 // off. Answers whether the band was already in use, to be handed back to
 // `kiraUiTapSeqLeaveOverlay`: a submenu presented from inside a menu that is
 // itself presented leaves the band only when the outer one does.
-function kiraUiTapSeqEnterOverlay() -> Bool {
+public function kiraUiTapSeqEnterOverlay() -> Bool {
     if kiraUiStateSlotHas(kiraUiTapSeqSlotKey()) == false {
         kiraUiStateSlotPut(kiraUiTapSeqSlotKey(), nativeUserData(nativeState(KiraUiTapSeq {})))
     }
@@ -99,7 +99,7 @@ function kiraUiTapSeqEnterOverlay() -> Bool {
     return was
 }
 
-function kiraUiTapSeqLeaveOverlay(was: Bool) {
+public function kiraUiTapSeqLeaveOverlay(was: Bool) {
     if kiraUiStateSlotHas(kiraUiTapSeqSlotKey()) == false {
         return
     }
@@ -110,7 +110,7 @@ function kiraUiTapSeqLeaveOverlay(was: Bool) {
 
 // Draw keys from the covered band while a stack lowers the view under the one
 // moving over it.
-function kiraUiTapSeqEnterCovered() {
+public function kiraUiTapSeqEnterCovered() {
     if kiraUiStateSlotHas(kiraUiTapSeqSlotKey()) == false {
         kiraUiStateSlotPut(kiraUiTapSeqSlotKey(), nativeUserData(nativeState(KiraUiTapSeq {})))
     }
@@ -119,7 +119,7 @@ function kiraUiTapSeqEnterCovered() {
     return
 }
 
-function kiraUiTapSeqLeaveCovered() {
+public function kiraUiTapSeqLeaveCovered() {
     if kiraUiStateSlotHas(kiraUiTapSeqSlotKey()) == false {
         return
     }
@@ -131,7 +131,7 @@ function kiraUiTapSeqLeaveCovered() {
 // The wash a pressable region lights with while the pointer rests on it: the
 // theme's hover fill. The region only states it; the compositor knows what the
 // pointer is over and lays it on that region alone.
-function kiraUiHoverColor(modifiers: borrow ModifierContext) -> CAColor {
+public function kiraUiHoverColor(modifiers: borrow ModifierContext) -> CAColor {
     return caColorFromFoundation(modifierColor(modifierBackgroundStyle(.Hover, modifiers), modifiers))
 }
 
@@ -149,7 +149,7 @@ function kiraUiHoverColor(modifiers: borrow ModifierContext) -> CAColor {
 //
 // The key is minted from the build sequence, so nothing at the call site carries
 // one and two controls cannot collide over it.
-construct ClickLayer(action: () -> Void) extends Widget {
+public construct ClickLayer(action: () -> Void) extends Widget {
     let content: some Widget
 
 
@@ -177,7 +177,7 @@ construct ClickLayer(action: () -> Void) extends Widget {
 // A widget whose value is changed by dragging across it: the numeric field a
 // pro tool scrubs, the pad an aim is set on. The callback carries the CUMULATIVE
 // offset from the press point.
-construct ScrubLayer(action: (Float, Float) -> Void) extends Widget {
+public construct ScrubLayer(action: (Float, Float) -> Void) extends Widget {
     let content: some Widget
 
 
@@ -199,7 +199,7 @@ construct ScrubLayer(action: (Float, Float) -> Void) extends Widget {
 // FROM the key — needs to state that key, and a minted one takes the decode
 // away. `radius` is here for the same reason: the hover wash follows the shape
 // the control is drawn with, and a tile's corner is not a row's.
-construct ClickRegion(
+public construct ClickRegion(
     key: Int,
     onPress: () -> Void,
     radius: CornerRadius = .Small,
@@ -235,7 +235,7 @@ construct ClickRegion(
 //
 // `key` must be nonzero and stable across frames. Drag callbacks carry
 // CUMULATIVE deltas from the press point, not per-move increments.
-construct DragRegion(
+public construct DragRegion(
     key: Int,
     onDragStart: (Float, Float) -> Void,
     onDragMove: (Float, Float) -> Void,
@@ -264,7 +264,7 @@ construct DragRegion(
 // entire window for as long as the overlay is open. So this is its own leaf:
 // same HitArea node, no `backgroundFill`, and a transparent Fill/Fill Surface
 // child so the region has something to size against.
-construct DismissArea(key: Int, onPress: () -> Void) extends Widget {
+public construct DismissArea(key: Int, onPress: () -> Void) extends Widget {
 
     // A window-filling hit region that paints nothing; a press runs the dismiss
     // action the key is bound to.
@@ -286,7 +286,7 @@ construct DismissArea(key: Int, onPress: () -> Void) extends Widget {
 // threshold drives `onDragStart` / `onDragMove` / `onDragEnd` (dx/dy deltas).
 // The texture fills whatever box the layout gives it; the whole region flexes
 // like a Fill leaf. `key` must be nonzero and stable across frames.
-construct GestureTextureView(
+public construct GestureTextureView(
     key: Int,
     texture: TextureHandle,
     radius: CornerRadius = .None,

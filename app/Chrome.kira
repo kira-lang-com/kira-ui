@@ -20,13 +20,30 @@ import KCoreAnimation
 // pressed is a glyph with `.onClick(...)` on it.
 
 // The three window controls, in the standard order and the standard colors.
-enum WindowControlGlyph {
+public enum WindowControlGlyph {
     Close
     Minimize
     Maximize
 }
 
-construct WindowControls(spacing: Spacing = .ExtraSmall) extends Widget {
+// Whether this build's windows have close, minimize and zoom buttons on the
+// bar. Answered by the compiler for the platform being built: macOS draws them
+// over the bar, a Wayland client draws its own there, and an iPhone or iPad
+// window has none, so its bar starts at the screen's edge.
+comptime macro platformDrawsWindowControls {
+    kind { function }
+    expand(input: Syntax) -> Syntax {
+        let _ = input
+        if Build.platform() == "macos" { return quote { true } }
+        return quote { false }
+    }
+}
+
+public function windowHasControls() -> Bool {
+    return platformDrawsWindowControls!() || graphicsUsesWaylandClientWindowControls()
+}
+
+public construct WindowControls(spacing: Spacing = .ExtraSmall) extends Widget {
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         if graphicsUsesWaylandClientWindowControls() == false {
@@ -68,7 +85,7 @@ construct WindowControls(spacing: Spacing = .ExtraSmall) extends Widget {
     }
 }
 
-construct WindowButton(
+public construct WindowButton(
     key: Int,
     ink: PrimaryColor,
     glyph: WindowControlGlyph,
@@ -103,7 +120,7 @@ construct WindowButton(
 // Tiny geometric marks rather than general-purpose symbol artwork: these live
 // inside a twelve-point face, and a library icon's text-sized layout box can
 // extend across neighboring controls even when its ink is requested smaller.
-construct WindowControlMark(kind: WindowControlGlyph) extends Widget {
+public construct WindowControlMark(kind: WindowControlGlyph) extends Widget {
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let mark = ZStack(alignment: .Center) {
@@ -134,7 +151,7 @@ construct WindowControlMark(kind: WindowControlGlyph) extends Widget {
 // against the box's top edge rather than in the middle of it. Every fixed-size
 // control needs the opposite, and every one of them was arriving at it its own
 // way.
-construct CenteredContent() extends Widget {
+public construct CenteredContent() extends Widget {
     let content: some Widget
 
 
@@ -146,7 +163,7 @@ construct CenteredContent() extends Widget {
 
 // A control-sized box around a glyph: the toolbar item, one segment of a group.
 // It carries the pressed-in fill a mode item holds while its mode is on.
-construct ControlSlot(active: Bool = false, radius: CornerRadius = .Small) extends Widget {
+public construct ControlSlot(active: Bool = false, radius: CornerRadius = .Small) extends Widget {
     let content: some Widget
 
 
@@ -163,7 +180,7 @@ construct ControlSlot(active: Bool = false, radius: CornerRadius = .Small) exten
     }
 }
 
-function controlSlotSurface(active: Bool) -> BackgroundStyle {
+public function controlSlotSurface(active: Bool) -> BackgroundStyle {
     if active {
         return .Control
     }
@@ -172,7 +189,7 @@ function controlSlotSurface(active: Bool) -> BackgroundStyle {
 
 // The ink a chrome glyph takes: the accent while its mode is on, secondary
 // otherwise.
-function controlStateInk(active: Bool) -> PrimaryColor {
+public function controlStateInk(active: Bool) -> PrimaryColor {
     if active {
         return .Accent
     }
@@ -182,7 +199,7 @@ function controlStateInk(active: Bool) -> PrimaryColor {
 // A capsule of controls that belong together: the appearance previews on a
 // toolbar, a run of mode glyphs. It is a container, not a control — what each
 // item does is that item's own `.onClick(...)`.
-construct ControlGroup(spacing: Spacing = .ExtraSmall) extends Widget {
+public construct ControlGroup(spacing: Spacing = .ExtraSmall) extends Widget {
     let children: [some Widget]
 
 
@@ -230,7 +247,7 @@ construct ControlGroup(spacing: Spacing = .ExtraSmall) extends Widget {
 // The column on the other side of the document: the properties of whatever is
 // selected, as a form of sections. It takes its width from the metrics table, so
 // a window states neither it nor the split view's sidebar width.
-construct Inspector(
+public construct Inspector(
     background: BackgroundStyle = .Surface,
     material: Material = .Flat,
 ) extends Widget {
@@ -261,7 +278,7 @@ construct Inspector(
 //
 // A selected row paints its content in the inverse ink, so nothing inside it has
 // to know that it is selected.
-construct ListRow(
+public construct ListRow(
     selected: Bool = false,
     level: Int = 0,
     spacing: Spacing = .Small,
@@ -288,7 +305,7 @@ construct ListRow(
     }
 }
 
-function listRowModifiers(modifiers: borrow ModifierContext, selected: Bool) -> ModifierContext {
+public function listRowModifiers(modifiers: borrow ModifierContext, selected: Bool) -> ModifierContext {
     if selected == false {
         return modifierContextApply(modifiers, ModifierDelta {})
     }
@@ -302,14 +319,14 @@ function listRowModifiers(modifiers: borrow ModifierContext, selected: Bool) -> 
 // against, or a wash over the surface, which it must not — white on a pale wash
 // is a row a light interface cannot read. Hardcoding the inverse ink here is
 // what made the selected row disappear the moment a theme washed its selection.
-function listRowSelectedInk(modifiers: borrow ModifierContext) -> PrimaryColor {
+public function listRowSelectedInk(modifiers: borrow ModifierContext) -> PrimaryColor {
     if modifierTokens(modifiers).fill.selection.a >= 0.6 {
         return .Inverse
     }
     return .Primary
 }
 
-function listRowSurface(selected: Bool) -> BackgroundStyle {
+public function listRowSurface(selected: Bool) -> BackgroundStyle {
     if selected {
         return .Selection
     }
