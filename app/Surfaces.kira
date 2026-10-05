@@ -155,23 +155,36 @@ public construct Section(spacing: Spacing = .ExtraSmall) extends Widget {
     let footer: some Widget = EmptyView()
 
 
-    // The header/footer bands around a raised card of rows. The inter-row
-    // dividers `sectionRowViews` inserts are a later refinement; describe carries
-    // the rows and the card surface.
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         // In a sidebar the section is its title over its rows, on the column's
-        // glass: no card, no footer.
+        // glass: no card, no footer. Every row sits in the sidebar's cell, so
+        // a plain view lines up with the links beside it; a section without a
+        // header is held off the one before it by the column's margin alone.
         if modifiers.controlPresentation == .Sidebar {
-            let sidebarSection = VStack(spacing: .None) {
-                SidebarSectionHeader() {
-                    header
-                }
-
-                For(child in children) {
-                    child
+            let headerLayer = SidebarSectionHeader() {
+                header
+            }
+            .describe(context, modifiers)
+            let headed = !describesNothing(headerLayer)
+            var layers: [CALayerDescription] = []
+            if headed {
+                layers.append(move headerLayer)
+            }
+            let cellModifiers = modifierContextPresenting(modifiers, .SidebarCell)
+            for child in children {
+                let row = child.describe(context, cellModifiers)
+                if !describesNothing(row) {
+                    layers.append(sidebarRowCell(move row))
                 }
             }
-            return sidebarSection.describe(context, modifiers)
+            return CALayerDescription {
+                layout: CALayoutIntent {
+                    axis: .Column,
+                    heightFill: false,
+                    paddingTop: headed ? 0.0 : sidebarMetrics.selectionInset
+                },
+                sublayers: move layers
+            }
         }
         // In an inset grouped list the section is a header over a card of rows
         // over a footer, laid out the list's way.

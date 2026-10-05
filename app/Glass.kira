@@ -229,7 +229,7 @@ public function interactivePress(layer: borrow mut CALayerDescription, key: Int,
         }
         motionPullPress(glass.pull, point.x, point.y, reduced)
         if !panel || !context.heldOnControl {
-            motionGlowFit(glass.glow, glass.size.width, glass.size.height)
+            motionGlowFit(glass.glow, glass.size.width, glass.size.height, glassTouchLightReach(context))
             motionGlowPress(glass.glow, point.x, point.y)
         }
     } else if held {
@@ -272,12 +272,29 @@ public function interactivePress(layer: borrow mut CALayerDescription, key: Int,
     }
 }
 
-// Draws `light` in a piece of glass.
-public function interactiveGlassLit(glass: borrow mut CAGlass, light: borrow MotionLight) {
+// Draws `light` in a piece of glass, as bright as the appearance takes it.
+public function interactiveGlassLit(glass: borrow mut CAGlass, light: borrow MotionLight, modifiers: borrow ModifierContext) {
     glass.glowX = light.x
     glass.glowY = light.y
     glass.glowRadius = light.radius
-    glass.glowStrength = light.strength
+    glass.glowStrength = light.strength / motionGlowLevel() * glassTouchLightLevel(modifierAppearance(modifiers))
+}
+
+// The touch light at its center, white added to the glass. Faint, and fainter
+// in the dark, where the same white over a dark material reads far brighter:
+// the glass lifts under the finger, it does not shine.
+public function glassTouchLightLevel(appearance: Appearance) -> Float {
+    match appearance {
+        Light -> return 0.16
+        Dark -> return 0.10
+    }
+}
+
+// How far the touch light reaches, across: past the window, so it falls off
+// over the whole of it -- one light that a large surface still catches a trace
+// of at its far edge, not a spot on a small one.
+public function glassTouchLightReach(context: borrow BuildContext) -> Float {
+    return hypot(context.viewportWidth, context.viewportHeight) * 2.4
 }
 
 // A piece of Liquid Glass, as `liquidGlassDescription` draws it, that is
@@ -296,7 +313,7 @@ public function interactiveGlassDescription(
     var layer = liquidGlassDescription(move layout, radius, shape, modifiers, move sublayers, variant)
     let light = interactivePress(layer, key, context, panel)
     var content = liquidGlassContent(shape, modifiers, variant)
-    interactiveGlassLit(content, light)
+    interactiveGlassLit(content, light, modifiers)
     layer.content = .Glass(move content)
     return layer
 }

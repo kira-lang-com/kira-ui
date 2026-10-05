@@ -1,0 +1,441 @@
+import Foundation
+import KiraGraphics
+import KiraLayout
+import KCoreAnimation
+
+// --- a bar's menu, growing out of its button ----------------------------------
+
+// The springs a bar's menu rides, each way; see `MenuMorphMetrics`.
+public function menuMorphSpring(response: Float, damping: Float, target: Float) -> MotionSpring {
+    return MotionSpring { response: response, damping: damping, target: target }
+}
+
+// Sends a bar's menu out of its button or home into it, from wherever it is.
+// The button is recorded at the press, and only when the menu is all the way
+// home: until then the button is under the card and the press landed on it.
+// Only a menu leaving from home starts round; one caught on its way home goes
+// back out the shape it is.
+public function menuMorphRetarget(key: Int, opening: Bool) {
+    menuRevealEnsure(key)
+    var reveal = nativeRecover<KiraUiMenuReveal>(kiraUiStateSlotGet(menuRevealSlotKey(key)))
+    let metrics = menuMorphMetrics
+    if opening && reveal.amount <= 0.0 {
+        reveal.anchorX = foundationPressBoundsX()
+        reveal.anchorY = foundationPressBoundsY()
+        reveal.anchorW = foundationPressBoundsW()
+        reveal.anchorH = foundationPressBoundsH()
+        reveal.corner = MotionSpringState {}
+        reveal.cornered = 0.0
+    }
+    reveal.opening = opening
+    if opening {
+        menuRetarget(reveal.progress, 1.0, menuMorphSpring(metrics.growthResponse, metrics.growthDamping, 1.0))
+        menuRetarget(reveal.height, 1.0, menuMorphSpring(metrics.heightResponse, metrics.heightDamping, 1.0))
+        menuRetarget(reveal.across, 1.0, menuMorphSpring(metrics.growthResponse, metrics.growthDamping, 1.0))
+        menuRetarget(reveal.fall, 1.0, menuMorphSpring(metrics.dropResponse, metrics.dropDamping, 1.0), metrics.dropLaunch)
+        menuRetarget(reveal.corner, 1.0, menuMorphSpring(metrics.cornerResponse, 1.0, 1.0))
+    } else {
+        reveal.homeward = 0.0
+        menuRetarget(reveal.progress, 0.0, menuMorphSpring(metrics.closeResponse, metrics.closeDamping, 0.0))
+        menuRetarget(reveal.height, 0.0, menuMorphSpring(metrics.closeResponse, metrics.closeDamping, 0.0))
+        menuRetarget(reveal.across, 0.0, menuMorphSpring(metrics.flightResponse, metrics.flightDamping, 0.0))
+        menuRetarget(reveal.fall, 0.0, menuMorphSpring(metrics.flightResponse, metrics.flightDamping, 0.0))
+        menuRetarget(reveal.corner, 0.0, menuMorphSpring(metrics.closeCornerResponse, 1.0, 0.0))
+    }
+    return
+}
+
+// Advances a bar's menu by a frame and answers where it is. The fall is left
+// unclamped: overshooting the card is its whole motion.
+public function menuMorphAdvance(key: Int) -> KiraUiMenuReveal {
+    menuRevealEnsure(key)
+    var reveal = nativeRecover<KiraUiMenuReveal>(kiraUiStateSlotGet(menuRevealSlotKey(key)))
+    let delta = kiraUiClockDelta()
+    let growth = motionSpringAdvance(reveal.progress, delta)
+    let height = motionSpringAdvance(reveal.height, delta)
+    let across = motionSpringAdvance(reveal.across, delta)
+    let fall = motionSpringAdvance(reveal.fall, delta)
+    let corner = motionSpringAdvance(reveal.corner, delta)
+    reveal.amount = min(max(growth.value, 0.0), 1.0)
+    reveal.widthAmount = growth.value
+    reveal.heightAmount = height.value
+    reveal.acrossAmount = across.value
+    reveal.fallen = fall.value
+    reveal.cornered = min(max(corner.value, 0.0), 1.0)
+    if !reveal.opening {
+        reveal.homeward = reveal.homeward + delta
+    }
+    let grown = motionSpringSettled(reveal.progress, growth, motionSpringEpsilon())
+    let risen = motionSpringSettled(reveal.height, height, motionSpringEpsilon())
+    let crossed = motionSpringSettled(reveal.across, across, motionSpringEpsilon())
+    let landed = motionSpringSettled(reveal.fall, fall, motionSpringEpsilon())
+    let squared = motionSpringSettled(reveal.corner, corner, motionSpringEpsilon())
+    // Home, the button's glass leading the menu there runs on its own time,
+    // and the menu stays out until it has run it: let go when the springs
+    // land, the two would still be apart and the glyph not yet back.
+    let arrived = reveal.opening || reveal.homeward >= menuMorphMetrics.closeDuration
+    if grown && risen && crossed && landed && squared && arrived {
+        reveal.amount = min(max(reveal.progress.spring.target, 0.0), 1.0)
+        reveal.widthAmount = reveal.progress.spring.target
+        reveal.heightAmount = reveal.height.spring.target
+        reveal.acrossAmount = reveal.across.spring.target
+        reveal.fallen = reveal.fall.spring.target
+        reveal.cornered = min(max(reveal.corner.spring.target, 0.0), 1.0)
+        return copy reveal
+    }
+    kiraUiClockStillMoving()
+    return copy reveal
+}
+
+// Whether a bar button's glass is out with its menu: from the press that opens
+// the menu until the menu is home again. The bar draws that button bare, since
+// the glass it would sit on is the menu's.
+public function kiraUiMenuHoldsGlass(key: Int) -> Bool {
+    if key == 0 || kiraUiStateSlotHas(menuRevealSlotKey(key)) == false {
+        return false
+    }
+    return kiraUiMenuState().presentedKey == key || menuRevealState(key).amount > 0.0
+}
+
+// Advances this submenu's reveal by a frame and answers where it is.
+//
+// Reports to the clock while it is unfinished, which is what keeps the frames
+// coming: an interactive app only rebuilds when something happened, and a
+// spring settling is the one thing that happens while nothing does.
+public function menuRevealAdvance(key: Int) -> Float {
+    menuRevealEnsure(key)
+    var reveal = nativeRecover<KiraUiMenuReveal>(kiraUiStateSlotGet(menuRevealSlotKey(key)))
+    let delta = kiraUiClockDelta()
+    let sample = motionSpringAdvance(reveal.progress, delta)
+    let thrown = motionSpringAdvance(reveal.rise, delta)
+    // Past open as the spring overshoots, which is the card's bounce; never
+    // past shut, which would be a card smaller than its row.
+    reveal.amount = max(sample.value, 0.0)
+    reveal.risen = thrown.value
+    if motionSpringSettled(reveal.progress, sample, motionSpringEpsilon()) && motionSpringSettled(reveal.rise, thrown, motionSpringEpsilon()) {
+        // Landed exactly. A card left 0.999 open is one drawn a fraction short
+        // of its own height for as long as it is on screen.
+        reveal.amount = min(max(reveal.progress.spring.target, 0.0), 1.0)
+        reveal.risen = reveal.rise.spring.target
+        return reveal.amount
+    }
+    kiraUiClockStillMoving()
+    return reveal.amount
+}
+
+// What the menu behind an open submenu is drawn with at one moment: its ink,
+// its size, and the point it shrinks about.
+public struct MenuRecession {
+    var ink: Float = 1.0
+    var scale: Float = 1.0
+    var anchor: StackAlignment = .Top
+    // The point it shrinks toward, on the screen, when it is known.
+    var pivot: Point = Point {}
+    var pivoted: Bool = false
+}
+
+// The point a menu shrinks about: its top, at the side of the screen it stands
+// on. A menu out at the trailing edge holds that edge and comes in from the
+// leading one, the side with room, as Music's does; one in the middle third of
+// the screen comes in from both, half on each.
+public function menuRecessionAnchor(sideX: Float, viewportWidth: Float) -> StackAlignment {
+    let third = viewportWidth / 3.0
+    if sideX < third {
+        return .TopLeading
+    }
+    if sideX > viewportWidth - third {
+        return .TopTrailing
+    }
+    return .Top
+}
+
+// Advances the shared recession, once per frame however many cards ask, and
+// answers where it stands.
+public function kiraUiMenuRecession(context: borrow BuildContext) -> MenuRecession {
+    kiraUiMenuEnsure()
+    var state = nativeRecover<KiraUiMenuState>(kiraUiStateSlotGet(kiraUiMenuSlotKey()))
+    if state.advancedOn != context.frameCount {
+        state.advancedOn = context.frameCount
+        let delta = kiraUiClockDelta()
+        state.shrunk = menuRecessionStep(state.shrink, delta)
+        // Held: the ink stays exactly where it is and its spring's clock does
+        // not start. Reported as still moving, because a hold is part of the
+        // transition and the frames have to keep coming or it would end here.
+        if state.holdRemaining > 0.0 {
+            state.holdRemaining = state.holdRemaining - delta
+            kiraUiClockStillMoving()
+        } else {
+            state.receded = menuRecessionStep(state.recede, delta)
+        }
+    }
+    let metrics = menuSubmenuMetrics
+    return MenuRecession {
+        ink: 1.0 - (1.0 - metrics.recededOpacity) * min(state.receded, 1.0),
+        scale: 1.0 - (1.0 - metrics.recedeScale) * state.shrunk,
+        anchor: menuRecessionAnchor(state.sideX, context.viewportWidth),
+        pivot: state.pivot,
+        pivoted: state.pivoted
+    }
+}
+
+// The receding menu says the point it shrinks toward, so a submenu open in
+// it can fall back with it rather than hang still while the menu moves under
+// it.
+public function kiraUiMenuRecedesFrom(pivot: Point) {
+    kiraUiMenuEnsure()
+    var state = nativeRecover<KiraUiMenuState>(kiraUiStateSlotGet(kiraUiMenuSlotKey()))
+    state.pivot = pivot
+    state.pivoted = true
+    return
+}
+
+// One frame of one of the recession's springs, landing exactly on its end.
+// Past its end as the spring overshoots -- the menu shrinking a touch further
+// than it rests -- and never back past where it started.
+public function menuRecessionStep(state: borrow mut MotionSpringState, delta: Float) -> Float {
+    let sample = motionSpringAdvance(state, delta)
+    if motionSpringSettled(state, sample, motionSpringEpsilon()) {
+        return min(max(state.spring.target, 0.0), 1.0)
+    }
+    kiraUiClockStillMoving()
+    return max(sample.value, 0.0)
+}
+
+// The glass of a bar's menu at one moment, in a box the card's size whose top
+// trailing corner is the button's.
+//
+// The menu is the button's own glass, growing: its width and its center across
+// go from the button's to the card's with the growth, its height with a spring
+// of its own, and its center down with the fall. Out of the button it is an
+// ellipse, the circle the button is stretched to the box, and once its corner
+// spring is far enough along it squares off into the card, one shape the whole
+// way. Home it is two: it shrinks to the button's size, rounds and flies home,
+// while the button's own glass comes up out of it and leads it there, fused,
+// until both land as one.
+//
+// The button's glyph rides the glass at its center, gone as the glass grows
+// and back before it lands. The rows are drawn twice: under the glass, where
+// it bends and blurs them as it bends what is behind it, and on it, clear,
+// once it has grown round them.
+public function menuMorphDescription(
+    context: borrow BuildContext,
+    key: Int,
+    items: CALayerDescription,
+    glyph: CALayerDescription,
+    reveal: borrow KiraUiMenuReveal,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let metrics = menuMorphMetrics
+    let card = caMeasure(items, 100000.0)
+    let buttonW = reveal.anchorW
+    let buttonH = reveal.anchorH
+    let buttonX = card.width - buttonW
+    let grown = reveal.amount
+    let width = max(buttonW + (card.width - buttonW) * reveal.widthAmount, 1.0)
+    let height = max(buttonH + (card.height - buttonH) * reveal.heightAmount, 1.0)
+    let centerX = buttonX + buttonW * 0.5 + (card.width * 0.5 - buttonX - buttonW * 0.5) * reveal.acrossAmount
+    let centerY = buttonH * 0.5 + (card.height - buttonH) * 0.5 * reveal.fallen
+    let x = centerX - width * 0.5
+    let y = centerY - height * 0.5
+    // One radius runs the whole shape: the long half side is the ellipse,
+    // and coming down from it the ends straighten and the corners close in
+    // to the card's. Home it stays the card's, which the shrinking box,
+    // shorter than it at the last, widens back into the button's circle.
+    let long = max(width, height) * 0.5
+    let cardRadius = menuCardRadius(modifiers)
+    let squared = menuMorphPhase(reveal.cornered, metrics.roundness, 1.0)
+    let radius = min(long + (cardRadius - long) * squared, long)
+    var glass = liquidGlassContent(.Squircle(radius), modifiers)
+    glass.shapeKind = 2
+    // A menu is the platform's large glass whatever its size, blurring as far
+    // as glass blurs; the button's glass blurs out to it as it grows.
+    let button = caGlassRampAt(glass.sizing.blurRadius, buttonW, buttonH)
+    let farthest = button + (glass.sizing.blurRadius.maximum - button) * min(max(grown, 0.0), 1.0)
+    glass.sizing.blurRadius = CAGlassRamp { base: farthest, minimum: farthest, maximum: farthest }
+
+    // Home, the button's own glass is back as a second shape, the button's
+    // size, on the line from the card's center to the button. It comes up
+    // out of the menu's glass and leads it home, the two fused, and is drawn
+    // back into it as both land; see `menuMorphLead`.
+    let homeward = min(reveal.homeward / metrics.closeDuration, 1.0)
+    var lead = Point { x: centerX, y: centerY }
+    if !reveal.opening {
+        let lineX = buttonX + buttonW * 0.5 - card.width * 0.5
+        let lineY = buttonH * 0.5 - card.height * 0.5
+        let line = max(sqrt(lineX * lineX + lineY * lineY), 0.0001)
+        let along = menuMorphLead(width * 0.5, height * 0.5, radius, buttonW * 0.5, buttonH * 0.5, lineX / line, lineY / line, homeward)
+        lead = Point { x: centerX + lineX / line * along, y: centerY + lineY / line * along }
+        glass.morphWidth = buttonW
+        glass.morphHeight = buttonH
+        glass.morphX = lead.x - buttonW * 0.5 - x
+        glass.morphY = lead.y - buttonH * 0.5 - y
+        // The long half side, which the wide corner draws as the button's
+        // round; the short one would be its squircle, and the button would
+        // round off under it the moment the menu left.
+        glass.morphRadius = max(buttonW, buttonH) * 0.5
+        // Two shapes on top of each other fuse into one larger than either,
+        // so the reach lets go as they close in: landed, the glass is the
+        // button's own size and nothing changes when the menu leaves.
+        let apart = sqrt((lead.x - centerX) * (lead.x - centerX) + (lead.y - centerY) * (lead.y - centerY))
+        glass.morphBlend = metrics.homeBlend * menuMorphPhase(apart, 0.0, metrics.homeBlend)
+    }
+
+    // The rows are there well before the glass has grown round them, under a
+    // blur that clears as it finishes, and larger than their own size until
+    // the glass has squared off. Home they fade early, at their own size.
+    let shown = reveal.opening ? menuMorphPhase(grown, metrics.contentOpen, 1.0) : 1.0 - menuMorphPhase(homeward, 0.0, metrics.contentClose)
+    let zoom = reveal.opening ? 1.0 + metrics.contentZoom * (1.0 - menuMorphPhase(reveal.cornered, 0.8, 1.0)) : 1.0
+    let offset = Point { x: (width - card.width) * 0.5, y: (height - card.height) * 0.5 }
+    let bent = reveal.opening ? menuMorphPhase(grown, metrics.glyphGone, metrics.glyphReturn) : 0.0
+    var under = copy items
+    under.opacity = under.opacity * bent * (1.0 - shown)
+    under.scaleX = zoom
+    under.scaleY = zoom
+    under.layout.widthFill = false
+    under.layout.heightFill = false
+    under.layout.offset = offset
+    var content = move items
+    content.opacity = content.opacity * (reveal.opening ? menuMorphPhase(shown, 0.0, 0.4) : shown)
+    content.blur = reveal.opening ? metrics.contentBlur * (1.0 - shown) : 0.0
+    content.scaleX = zoom
+    content.scaleY = zoom
+    content.layout.widthFill = false
+    content.layout.heightFill = false
+    content.layout.offset = offset
+
+    let shapeKind = glass.shapeKind
+    let box = CALayoutIntent {
+        widthFill: false,
+        heightFill: false,
+        fixedWidth: width,
+        fixedHeight: height,
+        offset: Point { x: x, y: y }
+    }
+    let rows = CALayerDescription {
+        layout: copy box,
+        cornerRadius: radius,
+        clipsChildren: true,
+        content: .Solid(CASolid { fill: CAColor { a: 0.0 }, cornerRadius: radius, shapeKind: shapeKind }),
+        sublayers: [move under]
+    }
+    // Open, the glass is interactive glass, the rows on it part of it.
+    var surface = CALayerDescription {
+        layout: move box,
+        cornerRadius: radius,
+        clipsChildren: true,
+        capturesBackdrop: true,
+        sublayers: [move content]
+    }
+    let light = interactivePress(surface, key, context, true)
+    interactiveGlassLit(glass, light, modifiers)
+    surface.content = .Glass(move glass)
+    var layers: [CALayerDescription] = [move rows]
+    // The button's glyph rides the glass out at its center, gone as it grows,
+    // and comes back home on the button's glass, out of a blur.
+    if reveal.opening {
+        surface.sublayers.append(menuMorphGlyph(
+            move glyph,
+            Point { x: (width - buttonW) * 0.5, y: (height - buttonH) * 0.5 },
+            buttonW,
+            buttonH,
+            1.0 - menuMorphPhase(grown, 0.0, metrics.glyphGone)
+        ))
+        layers.append(move surface)
+    } else {
+        layers.append(move surface)
+        let back = menuMorphPhase(homeward, 0.0, metrics.glyphBack)
+        var returning = menuMorphGlyph(move glyph, Point { x: lead.x - buttonW * 0.5, y: lead.y - buttonH * 0.5 }, buttonW, buttonH, back)
+        returning.blur = metrics.glyphBlur * (1.0 - back)
+        layers.append(move returning)
+    }
+    var morph = CALayerDescription {
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedWidth: card.width,
+            fixedHeight: card.height
+        },
+        sublayers: move layers
+    }
+    layerImmediate(morph)
+    return morph
+}
+
+// How far along the stretch from `start` to `end` a value is, eased in and out
+// at both ends: what each part of a bar's menu that comes or goes partway
+// through the motion rides, so none of them starts or stops on a corner.
+public function menuMorphPhase(value: Float, start: Float, end: Float) -> Float {
+    let t = min(max((value - start) / max(end - start, 0.0001), 0.0), 1.0)
+    return t * t * (3.0 - 2.0 * t)
+}
+
+// How far out along the line home from the menu's center the button's glass
+// sits, `progress` of the way through the way home, after Telegram's fit of
+// UIKit's (LensTransitionContainer). Its gap to the menu's edge along the line
+// starts deep inside, `homeDepth` plus its own length past it, and comes up to
+// just inside the edge over the first `homeSurface`; from `homeLead` on it
+// pushes out past the edge, toward `homeReach` ahead of it, while being drawn
+// back toward the menu's center, all the way by the end.
+public function menuMorphLead(
+    halfWidth: Float,
+    halfHeight: Float,
+    radius: Float,
+    buttonHalfWidth: Float,
+    buttonHalfHeight: Float,
+    lineX: Float,
+    lineY: Float,
+    progress: Float,
+) -> Float {
+    let metrics = menuMorphMetrics
+    let edge = menuMorphReach(halfWidth, halfHeight, radius, lineX, lineY)
+    let extent = abs(lineX) * buttonHalfWidth + abs(lineY) * buttonHalfHeight
+    let left = 1.0 - progress
+    let inside = menuMorphEaseOut(left / (1.0 - metrics.homeLead))
+    let below = menuMorphEaseOut((left - (1.0 - metrics.homeSurface)) / metrics.homeSurface)
+    let surfacing = metrics.homeReach - inside * (metrics.homeReach + min(buttonHalfWidth, buttonHalfHeight))
+    let sunk = surfacing + (0.0 - metrics.homeDepth - extent * 2.0 - surfacing) * below
+    let gap = min(sunk + (0.0 - edge - extent - sunk) * menuMorphEaseOut(progress), metrics.homeReach)
+    return edge + gap + extent
+}
+
+// How far from its center a rounded box of these half sides reaches along the
+// unit direction (`x`, `y`): to a side, or round a corner.
+public function menuMorphReach(halfWidth: Float, halfHeight: Float, radius: Float, x: Float, y: Float) -> Float {
+    let across = abs(x)
+    let down = abs(y)
+    let corner = min(radius, min(halfWidth, halfHeight))
+    let toSide = across > 0.0001 ? halfWidth / across : 100000.0
+    let toTop = down > 0.0001 ? halfHeight / down : 100000.0
+    let flat = min(toSide, toTop)
+    let innerX = halfWidth - corner
+    let innerY = halfHeight - corner
+    if across * flat <= innerX || down * flat <= innerY {
+        return flat
+    }
+    let middle = across * innerX + down * innerY
+    let rest = innerX * innerX + innerY * innerY - corner * corner
+    return middle + sqrt(max(middle * middle - rest, 0.0))
+}
+
+// A cubic ease out of the stretch from 0 to 1.
+public function menuMorphEaseOut(value: Float) -> Float {
+    let rest = 1.0 - min(max(value, 0.0), 1.0)
+    return 1.0 - rest * rest * rest
+}
+
+// The button's glyph in a box the button's size, centered as the button
+// centers it, at `origin` in the glass.
+public function menuMorphGlyph(glyph: CALayerDescription, origin: Point, width: Float, height: Float, opacity: Float) -> CALayerDescription {
+    return CALayerDescription {
+        opacity: opacity,
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedWidth: width,
+            fixedHeight: height,
+            alignment: Point { x: 0.5, y: 0.5 },
+            offset: origin
+        },
+        sublayers: [move glyph]
+    }
+}

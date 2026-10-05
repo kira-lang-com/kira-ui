@@ -108,6 +108,21 @@ cd Examples/basic-kira-ui-app
 kira run
 ```
 
+### Which `kira`
+
+These commands want **`kk`**, the native frontend of the
+[Kira Language Framework](https://github.com/kira-lang-com/klf-kira), which
+`klf build .` produces in that repository. `kk`'s binary is also called `kira`,
+so the two are told apart by which one is on your `PATH`, not by the name you
+type.
+
+Build with `kk`, not the oracle compiler from
+[kira-lang-com/kira](https://github.com/kira-lang-com/kira). On this codebase
+the oracle aborts partway through semantic analysis — `index out of bounds` in
+`kira-semantics/src/analyze/scope.rs` — where `kk` compiles the same sources and
+the suite passes. The oracle also refuses to resolve `Button(title:action:)` to
+`Button`'s `init`, which `kk` resolves.
+
 ## Colors
 
 Preset colors for common UI needs — White, Beige, Taupe, Green, Blue, Purple, Cyan, Yellow, plus text and border variants (DarkText, SecondaryText, MutedText, BorderSoft, MutedGreen, MutedBlue, MutedOrange).

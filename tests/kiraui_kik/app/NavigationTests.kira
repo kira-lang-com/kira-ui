@@ -1,0 +1,65 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// A split view's detail is the view of the sidebar's selection: a different
+// row selected is a new view, keyed apart from the old one, with nothing
+// carried over, and simply there in its place.
+
+construct KuiSplitWindow(chosen: Int) extends Widget {
+    body {
+        NavigationSplitView {
+            List {
+                SidebarRow(selected: chosen == 0, action: kuiNoAction) {
+                    Text(content: "Library")
+                }
+                SidebarRow(selected: chosen == 1, action: kuiNoAction) {
+                    Text(content: "Settings")
+                }
+            }
+        } detail: {
+            Text(content: chosen == 0 ? "Games" : "Preferences")
+        }
+    }
+}
+
+function kuiDescribeWide(root: Any Widget) -> CALayerDescription {
+    let widgetContext = buildContext(FoundationUiContext { viewport: Size { width: 1100.0, height: 720.0 } })
+    return root.describe(widgetContext, ModifierContext {})
+}
+
+function kuiTimed(layer: borrow CALayerDescription) -> Bool {
+    var timed = false
+    match layer.animation {
+        Inherit -> {}
+        Timed(t) -> timed = true
+    }
+    return timed
+}
+
+construct KuiASidebarSelectionKeysTheDetail() extends Test {
+    test {
+        let first = kuiDescribeWide(KuiSplitWindow(chosen: 0)).sublayers[0]
+        let again = kuiDescribeWide(KuiSplitWindow(chosen: 0)).sublayers[0]
+        let other = kuiDescribeWide(KuiSplitWindow(chosen: 1)).sublayers[0]
+        let settled = kuiDescribeWide(KuiSplitWindow(chosen: 1)).sublayers[0]
+        var out = 0
+        // The same row selected is the same view.
+        if first.key == again.key {
+            out = out + 1
+        }
+        // Another row's view is a new layer, there at once: nothing fades.
+        if other.key != again.key && !other.entrance.active && other.removal.duration == 0.0 && !kuiTimed(other) {
+            out = out + 10
+        }
+        // Once there, it stays that view.
+        if settled.key == other.key {
+            out = out + 100
+        }
+        return out
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok(111)
+        return expected
+    }
+}

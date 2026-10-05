@@ -1,0 +1,91 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's `ContentUnavailableView`: what a screen shows when it has nothing
+// to show, centered in the space it is given. A symbol in the secondary ink
+// heads a bold title, the description sits under the title, and the actions
+// come last, a step further down and one over another: `ContentUnavailableView(
+// title: …, systemImage: …) description: { … } actions: { … }`. Each part
+// states only what it has.
+public construct ContentUnavailableView(title: String, systemImage: Symbol = .None) extends Widget {
+    let description: some Widget = EmptyView()
+    let actions: [some Widget] = []
+
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        let metrics = contentUnavailableMetrics
+        let heading = VStack(spacing: .None, alignment: .Center, spacingLength: metrics.symbolSpacing) {
+            if systemImage != .None {
+                Icon(symbol: systemImage)
+                    .font(size: metrics.symbolSize)
+                    .foregroundColor(.Secondary)
+            }
+
+            VStack(spacing: .None, alignment: .Center, spacingLength: metrics.descriptionSpacing) {
+                Text(content: title)
+                    .typography(.title2)
+                    .fontWeight(.Bold)
+
+                description
+                    .typography(.body)
+                    .foregroundColor(.Secondary)
+                    .multilineTextAlignment(.Center)
+            }
+            .hugWidth()
+        }
+        .hugWidth()
+        .describe(context, modifiers)
+        var parts: [CALayerDescription] = [move heading]
+        let buttons = describedChildren(context, modifiers, actions)
+        if buttons.count > 0 {
+            parts.append(contentUnavailableColumn(metrics.descriptionSpacing, -1.0, move buttons))
+        }
+        let block = contentUnavailableColumn(metrics.actionsSpacing, metrics.width, move parts)
+        // The block sits between two spacers that split the height it leaves.
+        return CALayerDescription {
+            layout: CALayoutIntent {
+                axis: .Column,
+                alignment: Point { x: 0.5, y: 0.0 },
+                paddingLeading: metrics.margin,
+                paddingTop: metrics.margin,
+                paddingTrailing: metrics.margin,
+                paddingBottom: metrics.margin
+            },
+            sublayers: [Spacer().describe(context, modifiers), move block, Spacer().describe(context, modifiers)]
+        }
+    }
+}
+
+// A centered column around its parts, no wider than `maxWidth` when that is
+// not negative.
+function contentUnavailableColumn(spacing: Float, maxWidth: Float, parts: [CALayerDescription]) -> CALayerDescription {
+    var column = CALayerDescription {
+        layout: CALayoutIntent {
+            axis: .Column,
+            spacing: spacing,
+            widthFill: false,
+            heightFill: false,
+            alignment: Point { x: 0.5, y: 0.0 }
+        },
+        sublayers: move parts
+    }
+    if maxWidth >= 0.0 {
+        column.layout.maxWidth = maxWidth
+    }
+    return column
+}
+
+// The lengths `ContentUnavailableView` is set with: the symbol's size and the
+// gap under it, the gap between title and description (and between actions)
+// and the one above the actions, the widest the block runs, and its margin to
+// the edges around it.
+public struct ContentUnavailableMetrics {
+    let symbolSize: Float = 48.0
+    let symbolSpacing: Float = 16.0
+    let descriptionSpacing: Float = 8.0
+    let actionsSpacing: Float = 20.0
+    let width: Float = 420.0
+    let margin: Float = 20.0
+}
+
+public let contentUnavailableMetrics = ContentUnavailableMetrics {}

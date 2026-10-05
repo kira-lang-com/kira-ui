@@ -20,6 +20,9 @@ public enum ControlPresentation {
     // is a row that carries the selection band, and a label sets its glyph in
     // the accent.
     Sidebar
+    // The content of one row of a sidebar section, whose cell the section draws:
+    // a row states its press and its selection band and the section insets it.
+    SidebarCell
     // A list in the inset grouped style, which is what a `Form` is: a section
     // is a header over a card of rows over a footer, a link is a row that
     // drills in, and a button is a row set in the accent.
@@ -69,267 +72,6 @@ public enum PrimaryColor {
     Black
     White
     Clear
-}
-
-// --- Resolved tokens ---------------------------------------------------------
-// The appearance-resolved view of a style, grouped the same way the style
-// groups its tokens. Widgets consume these; they never resolve an
-// AdaptiveColor themselves.
-
-public struct PaletteColors {
-    let red: Color
-    let orange: Color
-    let yellow: Color
-    let green: Color
-    let mint: Color
-    let teal: Color
-    let cyan: Color
-    let blue: Color
-    let indigo: Color
-    let purple: Color
-    let pink: Color
-    let brown: Color
-    let gray: Color
-}
-
-public struct ForegroundColors {
-    let primary: Color
-    let secondary: Color
-    let tertiary: Color
-    let quaternary: Color
-    let inverse: Color
-}
-
-public struct BackgroundColors {
-    let canvas: Color
-    let surface: Color
-    let raised: Color
-    let overlay: Color
-}
-
-public struct FillColors {
-    let control: Color
-    let hover: Color
-    let selection: Color
-}
-
-public struct TintColors {
-    let accent: Color
-    let success: Color
-    let warning: Color
-    let danger: Color
-}
-
-public struct ResolvedBorder {
-    let color: Color
-    let width: Float
-}
-
-public struct BorderTokens {
-    let subtle: ResolvedBorder
-    let standard: ResolvedBorder
-    let strong: ResolvedBorder
-    let focus: ResolvedBorder
-}
-
-public struct ThemeTokens {
-    let palette: PaletteColors
-    let foreground: ForegroundColors
-    let background: BackgroundColors
-    let fill: FillColors
-    let tint: TintColors
-    let border: BorderTokens
-    let glassTint: Color
-    let glassEdgeLighting: Bool
-    let controlRadius: Float
-    let bodySize: Float
-    let bodyWeight: FontWeight
-    let controlSize: Float
-    let controlWeight: FontWeight
-    let titleSize: Float
-    let titleWeight: FontWeight
-}
-
-public function themeAdaptiveColor(color: borrow AdaptiveColor, appearance: borrow Appearance) -> Color {
-    match appearance {
-        Light -> return color.light
-        Dark -> return color.dark
-    }
-}
-
-public function resolvedBorder(border: borrow BorderImplementation, appearance: borrow Appearance) -> ResolvedBorder {
-    return ResolvedBorder {
-        color: themeAdaptiveColor(border.color, appearance),
-        width: border.width
-    }
-}
-
-// The one place a style becomes resolved tokens. Theme.tokens() and the
-// no-theme fallback both come through here, so a widget cannot see two
-// different resolution rules.
-public function styleThemeTokens(style: Any StyleImplementation) -> ThemeTokens {
-    let appearance = resolvedAppearance(style.appearance)
-    let palette = style.palette
-    let foregrounds = style.foregrounds
-    let backgrounds = style.backgrounds
-    let fills = style.fills
-    let tints = style.tints
-    let borders = style.borders
-    let materials = style.materials
-    let radii = style.cornerRadii
-    let typography = style.typography
-    return ThemeTokens {
-        palette: PaletteColors {
-            red: themeAdaptiveColor(palette.red, appearance),
-            orange: themeAdaptiveColor(palette.orange, appearance),
-            yellow: themeAdaptiveColor(palette.yellow, appearance),
-            green: themeAdaptiveColor(palette.green, appearance),
-            mint: themeAdaptiveColor(palette.mint, appearance),
-            teal: themeAdaptiveColor(palette.teal, appearance),
-            cyan: themeAdaptiveColor(palette.cyan, appearance),
-            blue: themeAdaptiveColor(palette.blue, appearance),
-            indigo: themeAdaptiveColor(palette.indigo, appearance),
-            purple: themeAdaptiveColor(palette.purple, appearance),
-            pink: themeAdaptiveColor(palette.pink, appearance),
-            brown: themeAdaptiveColor(palette.brown, appearance),
-            gray: themeAdaptiveColor(palette.gray, appearance)
-        },
-        foreground: ForegroundColors {
-            primary: themeAdaptiveColor(foregrounds.primary, appearance),
-            secondary: themeAdaptiveColor(foregrounds.secondary, appearance),
-            tertiary: themeAdaptiveColor(foregrounds.tertiary, appearance),
-            quaternary: themeAdaptiveColor(foregrounds.quaternary, appearance),
-            inverse: themeAdaptiveColor(foregrounds.inverse, appearance)
-        },
-        background: BackgroundColors {
-            canvas: themeAdaptiveColor(backgrounds.canvas, appearance),
-            surface: themeAdaptiveColor(backgrounds.surface, appearance),
-            raised: themeAdaptiveColor(backgrounds.raised, appearance),
-            overlay: themeAdaptiveColor(backgrounds.overlay, appearance)
-        },
-        fill: FillColors {
-            control: themeAdaptiveColor(fills.control, appearance),
-            hover: themeAdaptiveColor(fills.hover, appearance),
-            selection: themeAdaptiveColor(fills.selection, appearance)
-        },
-        tint: TintColors {
-            accent: themeAdaptiveColor(tints.accent, appearance),
-            success: themeAdaptiveColor(tints.success, appearance),
-            warning: themeAdaptiveColor(tints.warning, appearance),
-            danger: themeAdaptiveColor(tints.danger, appearance)
-        },
-        border: BorderTokens {
-            subtle: resolvedBorder(borders.subtle, appearance),
-            standard: resolvedBorder(borders.standard, appearance),
-            strong: resolvedBorder(borders.strong, appearance),
-            focus: resolvedBorder(borders.focus, appearance)
-        },
-        glassTint: themeAdaptiveColor(materials.glassTint, appearance),
-        glassEdgeLighting: materials.liquidGlass.edgeLighting,
-        controlRadius: radii.small,
-        bodySize: typography.body.size,
-        bodyWeight: typography.body.weight,
-        controlSize: typography.control.size,
-        controlWeight: typography.control.weight,
-        titleSize: typography.title.size,
-        titleWeight: typography.title.weight
-    }
-}
-
-public construct Theme {
-    @Required let style: Any StyleImplementation
-
-    function appearance() -> Appearance {
-        return resolvedAppearance(self.style.appearance)
-    }
-
-    function tokens() -> ThemeTokens {
-        return styleThemeTokens(self.style)
-    }
-
-    function typography(style: borrow TypographyStyle) -> FontImplementation {
-        match style {
-            caption -> return self.style.typography.caption
-            body -> return self.style.typography.body
-            control -> return self.style.typography.control
-            subheadline -> return self.style.typography.subheadline
-            callout -> return self.style.typography.callout
-            caption2 -> return self.style.typography.caption2
-            bodyEmphasis -> return self.style.typography.bodyEmphasis
-            footnote -> return self.style.typography.footnote
-            overline -> return self.style.typography.overline
-            label -> return self.style.typography.label
-            section -> return self.style.typography.section
-            headline -> return self.style.typography.headline
-            title -> return self.style.typography.title
-            title1 -> return self.style.typography.title1
-            title2 -> return self.style.typography.title2
-            title3 -> return self.style.typography.title3
-            largeTitle -> return self.style.typography.largeTitle
-        }
-    }
-
-    function cornerRadius(style: borrow CornerRadius) -> Float {
-        match style {
-            None -> return self.style.cornerRadii.none
-            Small -> return self.style.cornerRadii.small
-            Medium -> return self.style.cornerRadii.medium
-            Large -> return self.style.cornerRadii.large
-            ExtraLarge -> return self.style.cornerRadii.extraLarge
-            Capsule -> return self.style.cornerRadii.capsule
-        }
-    }
-
-    function symbol(name: borrow Symbol) -> String {
-        return styleSymbol(self.style.symbols, name)
-    }
-
-    function controlMetrics(size: borrow ControlSize) -> ControlMetricsImplementation {
-        match size {
-            Mini -> return self.style.metrics.mini
-            Small -> return self.style.metrics.small
-            Regular -> return self.style.metrics.regular
-            Large -> return self.style.metrics.large
-        }
-    }
-
-    function spacing(style: borrow Spacing) -> Float {
-        match style {
-            None -> return self.style.spacing.none
-            Micro -> return self.style.spacing.micro
-            ExtraSmall -> return self.style.spacing.extraSmall
-            Small -> return self.style.spacing.small
-            Medium -> return self.style.spacing.medium
-            Large -> return self.style.spacing.large
-            ExtraLarge -> return self.style.spacing.extraLarge
-            Section -> return self.style.spacing.section
-        }
-    }
-}
-
-public construct DefaultTheme() extends Theme {
-    let style = DefaultStyle {}
-}
-
-// The library's own theme, built once. Every context and every modifier holds
-// a theme whether or not one was applied, and an unthemed tree asks for this
-// one at nearly every widget.
-public let defaultTheme: Any Theme = DefaultTheme {}
-
-// The theme in effect here: the applied one, or the library's own when nothing
-// applied a theme.
-//
-// Every resolution goes through this, so a themed tree and an unthemed one
-// differ in their TOKENS and in nothing else. Asking `hasTheme` at a call site
-// and reaching for a literal on the other branch is what left an application
-// with no theme drawing near-white text on a light surface and asking
-// `.backgroundStyle(.Surface)` for a color that came back transparent: two
-// defaults that were never authored together.
-public function modifierTheme(modifiers: borrow ModifierContext) -> Any Theme {
-    if modifiers.hasTheme {
-        return copy modifiers.theme
-    }
-    return copy defaultTheme
 }
 
 // What `.background(...)` paints with: a style, named after what it IS rather
@@ -398,6 +140,19 @@ public struct ModifierDelta {
     let hasFont: Bool = false
     let fontSize: Float = 16.0
     let fontWeight: FontWeight = .Regular
+    // `.fontWeight(...)`: a weight over whichever font is in effect, until a
+    // `.font(...)` inside it names a weight of its own.
+    let hasWeightOverride: Bool = false
+    let weightOverride: FontWeight = .Regular
+    // `.multilineTextAlignment(...)`: where the lines of wrapped text sit.
+    let hasTextAlignment: Bool = false
+    let textAlignment: TextAlignment = .Leading
+    // `.buttonStyle(...)`: how the buttons in this subtree are drawn.
+    let hasButtonStyle: Bool = false
+    let buttonStyle: ButtonStyle = .Automatic
+    // `.buttonBorderShape(...)`: the outline a bordered button is drawn in.
+    let hasButtonBorderShape: Bool = false
+    let buttonBorderShape: ButtonBorderShape = .Automatic
     // Opacity is a per-modifier visual composition, not a theme token.
     let hasOpacity: Bool = false
     let opacity: Float = 1.0
@@ -459,6 +214,11 @@ public struct ModifierContext {
     let fontSize: Float = 16.0
     let fontWeight: FontWeight = .Regular
     let hasFont: Bool = false
+    let weightOverride: FontWeight = .Regular
+    let hasWeightOverride: Bool = false
+    let textAlignment: TextAlignment = .Leading
+    let buttonStyle: ButtonStyle = .Automatic
+    let buttonBorderShape: ButtonBorderShape = .Automatic
     let hasOpacity: Bool = false
     let opacity: Float = 1.0
     let disabled: Bool = false
@@ -502,7 +262,7 @@ public function modifierContextApply(
         textColor: delta.hasTextColor ? delta.textColor : context.textColor,
         hasTextColor: delta.hasTextColor ? true : context.hasTextColor,
         typography: delta.hasTypography ? delta.typography : context.typography,
-        hasTypography: delta.hasTypography ? true : context.hasTypography,
+        hasTypography: delta.hasTypography ? true : (delta.hasFont ? false : context.hasTypography),
         controlSize: delta.hasControlSize ? delta.controlSize : context.controlSize,
         hasControlSize: delta.hasControlSize ? true : context.hasControlSize,
         imageScale: delta.hasImageScale ? delta.imageScale : context.imageScale,
@@ -517,7 +277,12 @@ public function modifierContextApply(
         hasContentMargin: delta.hasContentMargin ? true : context.hasContentMargin,
         fontSize: delta.hasFont ? delta.fontSize : context.fontSize,
         fontWeight: delta.hasFont ? delta.fontWeight : context.fontWeight,
-        hasFont: delta.hasFont ? true : context.hasFont,
+        hasFont: delta.hasFont ? true : (delta.hasTypography ? false : context.hasFont),
+        weightOverride: delta.hasWeightOverride ? delta.weightOverride : context.weightOverride,
+        hasWeightOverride: delta.hasWeightOverride ? true : (delta.hasFont ? false : context.hasWeightOverride),
+        textAlignment: delta.hasTextAlignment ? delta.textAlignment : context.textAlignment,
+        buttonStyle: delta.hasButtonStyle ? delta.buttonStyle : context.buttonStyle,
+        buttonBorderShape: delta.hasButtonBorderShape ? delta.buttonBorderShape : context.buttonBorderShape,
         hasOpacity: delta.hasOpacity ? true : context.hasOpacity,
         opacity: context.opacity * (delta.hasOpacity ? delta.opacity : 1.0),
         disabled: context.disabled || delta.disabled,
@@ -579,6 +344,11 @@ public function modifierContextForOverlay(context: borrow ModifierContext) -> Mo
         fontSize: inherited.fontSize,
         fontWeight: inherited.fontWeight,
         hasFont: inherited.hasFont,
+        weightOverride: inherited.weightOverride,
+        hasWeightOverride: inherited.hasWeightOverride,
+        textAlignment: inherited.textAlignment,
+        buttonStyle: inherited.buttonStyle,
+        buttonBorderShape: inherited.buttonBorderShape,
         // Full strength, whatever the presenter currently is.
         hasOpacity: false,
         opacity: 1.0,
@@ -630,6 +400,11 @@ public function modifierContextPresenting(
         fontSize: inherited.fontSize,
         fontWeight: inherited.fontWeight,
         hasFont: inherited.hasFont,
+        weightOverride: inherited.weightOverride,
+        hasWeightOverride: inherited.hasWeightOverride,
+        textAlignment: inherited.textAlignment,
+        buttonStyle: inherited.buttonStyle,
+        buttonBorderShape: inherited.buttonBorderShape,
         hasOpacity: inherited.hasOpacity,
         opacity: inherited.opacity,
         disabled: inherited.disabled,
@@ -673,6 +448,11 @@ public function modifierContextForChildren(context: borrow ModifierContext) -> M
         fontSize: context.fontSize,
         fontWeight: context.fontWeight,
         hasFont: context.hasFont,
+        weightOverride: context.weightOverride,
+        hasWeightOverride: context.hasWeightOverride,
+        textAlignment: context.textAlignment,
+        buttonStyle: context.buttonStyle,
+        buttonBorderShape: context.buttonBorderShape,
         hasOpacity: context.hasOpacity,
         opacity: context.opacity,
         disabled: context.disabled,
@@ -720,6 +500,11 @@ public function modifierContextForPresentation(context: borrow ModifierContext) 
         fontSize: context.fontSize,
         fontWeight: context.fontWeight,
         hasFont: context.hasFont,
+        weightOverride: context.weightOverride,
+        hasWeightOverride: context.hasWeightOverride,
+        textAlignment: context.textAlignment,
+        buttonStyle: context.buttonStyle,
+        buttonBorderShape: context.buttonBorderShape,
         hasOpacity: context.hasOpacity,
         opacity: context.opacity,
         disabled: context.disabled,
@@ -840,6 +625,34 @@ public function modifierDeltaFont(size: Float, weight: FontWeight) -> ModifierDe
         hasFont: true,
         fontSize: size,
         fontWeight: weight
+    }
+}
+
+public function modifierDeltaFontWeight(weight: FontWeight) -> ModifierDelta {
+    return ModifierDelta {
+        hasWeightOverride: true,
+        weightOverride: weight
+    }
+}
+
+public function modifierDeltaTextAlignment(alignment: TextAlignment) -> ModifierDelta {
+    return ModifierDelta {
+        hasTextAlignment: true,
+        textAlignment: alignment
+    }
+}
+
+public function modifierDeltaButtonStyle(style: ButtonStyle) -> ModifierDelta {
+    return ModifierDelta {
+        hasButtonStyle: true,
+        buttonStyle: style
+    }
+}
+
+public function modifierDeltaButtonBorderShape(shape: ButtonBorderShape) -> ModifierDelta {
+    return ModifierDelta {
+        hasButtonBorderShape: true,
+        buttonBorderShape: shape
     }
 }
 

@@ -60,10 +60,12 @@ public construct ScrollView() extends Widget {
         // order they did it.
         let input = kiraUiScrollTake(key)
         if input.began {
-            motionScrollDragBegin(scroll.motion, 0.0, bounds, input.resistance)
+            motionScrollDragBegin(scroll.motion, 0.0, bounds, input.resistance, input.beganAt)
         }
         if input.moved {
-            motionScrollDragMove(scroll.motion, input.travel, bounds)
+            for index in 0..input.reports.count {
+                motionScrollDragMove(scroll.motion, input.reports[index], bounds, input.reportTimes[index])
+            }
         }
         if input.cancelled {
             scroll.motion.velocity = 0.0
@@ -538,6 +540,12 @@ public struct ScrollInput {
     // How far the fingers have carried the content since the drag began, and
     // how hard an end resists them.
     var travel: Float = 0.0
+    // When the fingers came down, and each report since the last build -- how
+    // far they had carried the content by then, and when -- in order, so the
+    // surface measures its speed report by report, on the input's own clock.
+    var beganAt: Float = -1.0
+    var reports: [Float] = []
+    var reportTimes: [Float] = []
     var resistance: Float = 0.55
     // How far the wheel's notches have asked the surface to go.
     var wheel: Float = 0.0
@@ -556,7 +564,7 @@ public function kiraUiScrollInputEnsure() {
 
 // Fingers come down over the scroll view under `target`, resisted past an end
 // by `resistance`.
-public function kiraUiScrollDragBegin(target: Int, resistance: Float) {
+public function kiraUiScrollDragBegin(target: Int, resistance: Float, time: Float = -1.0) {
     kiraUiScrollInputEnsure()
     var input = nativeRecover<ScrollInput>(kiraUiStateSlotGet(scrollInputSlotKey()))
     input.target = target
@@ -567,11 +575,15 @@ public function kiraUiScrollDragBegin(target: Int, resistance: Float) {
     input.travel = 0.0
     input.resistance = resistance
     input.wheel = 0.0
+    input.beganAt = time
+    input.reports = []
+    input.reportTimes = []
     return
 }
 
-// The fingers carried the content this far down.
-public function kiraUiScrollDragMove(distance: Float) {
+// The fingers carried the content this far down, at `time` on the input's
+// clock where it says.
+public function kiraUiScrollDragMove(distance: Float, time: Float = -1.0) {
     kiraUiScrollInputEnsure()
     var input = nativeRecover<ScrollInput>(kiraUiStateSlotGet(scrollInputSlotKey()))
     if input.target == 0 {
@@ -579,6 +591,8 @@ public function kiraUiScrollDragMove(distance: Float) {
     }
     input.travel = input.travel + distance
     input.moved = true
+    input.reports.append(input.travel)
+    input.reportTimes.append(time)
     return
 }
 
@@ -639,10 +653,15 @@ public function kiraUiScrollTake(key: Int) -> ScrollInput {
         cancelled: input.cancelled,
         travel: input.travel,
         resistance: input.resistance,
-        wheel: input.wheel
+        wheel: input.wheel,
+        beganAt: input.beganAt,
+        reports: copy input.reports,
+        reportTimes: copy input.reportTimes
     }
     input.began = false
     input.moved = false
+    input.reports = []
+    input.reportTimes = []
     input.wheel = 0.0
     if input.ended || input.cancelled {
         input.target = 0

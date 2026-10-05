@@ -228,7 +228,7 @@ public function textFieldNav(key: Int, keyCode: Int) {
 
 // Click-to-position: map the press x (relative to the field's text start) to the
 // nearest caret index by measuring codepoint prefixes.
-public function textFieldClickCaret(key: Int, size: Float, leftPad: Float) {
+public function textFieldClickCaret(key: Int, size: Float, weight: Float, leftPad: Float) {
     textFieldEnsure(key)
     var st = nativeRecover<KiraUiTextFieldState>(kiraUiStateSlotGet(textFieldSlotKey(key)))
     let relX = kiraUiPointerX() - kiraUiPressBoundsX() - leftPad
@@ -243,7 +243,7 @@ public function textFieldClickCaret(key: Int, size: Float, leftPad: Float) {
     var placed = false
     while k <= n && placed == false {
         let prefix = foundationStringFromCodepoints(st.codes, 0, k)
-        let w = foundationTextRunWidth(prefix, size, textFieldWeight())
+        let w = foundationTextRunWidth(prefix, size, weight)
         if w >= relX {
             if k > 0 && (relX - prevW) < (w - relX) {
                 st.caret = k - 1
@@ -310,23 +310,71 @@ public function textFieldCommandFn(key: Int, onSubmit: () -> Void) -> (Int) -> V
     return f
 }
 
-// One run of a field's text, in the field's size and the primary ink.
+// One run of a field's text, in the field's size and `ink`, keyed `key`.
+//
+// A field is one line: its runs never wrap, and they land where typing or the
+// caret puts them at once -- a run eased to its new width would break onto
+// further lines on the way there.
 public function textFieldRun(
     content: String,
     size: Float,
+    key: Int,
+    ink: PrimaryColor,
     context: borrow BuildContext,
     modifiers: borrow ModifierContext,
 ) -> CALayerDescription {
-    return Text(content)
-        .font(size: size)
-        .foregroundColor(.Primary)
-        .describe(context, modifiers)
+    return textFieldLine(Text(content)
+        .font(size: size, weight: .Axis(textFieldWeight(modifiers)))
+        .foregroundColor(move ink)
+        .describe(context, modifiers), key)
 }
+
+// A described run, made one of a field's lines.
+public function textFieldLine(described: CALayerDescription, key: Int) -> CALayerDescription {
+    var run = move described
+    run.key = key
+    run.disablesActions = true
+    match run.content {
+        Text(t) -> {
+            var line = copy t
+            line.wraps = false
+            run.content = .Text(move line)
+        }
+        Empty -> {}
+        Solid(s) -> {}
+        Texture(x) -> {}
+        Icon(i) -> {}
+        Glass(g) -> {}
+        Gradient(g) -> {}
+    }
+    return run
+}
+
+// The field's runs are keyed by what they are, not where they fall: the caret
+// comes and goes beside the text and the placeholder, and a run matched by
+// position would hand one's layer to the other and animate between them.
+public function textFieldPlaceholderKey() -> Int {
+    return 1
+}
+
+public function textFieldLeadKey() -> Int {
+    return 2
+}
+
+public function textFieldCaretKey() -> Int {
+    return 3
+}
+
+public function textFieldTrailKey() -> Int {
+    return 4
+}
+
 
 // The insertion point: the catalog's bar in the accent.
 public function textFieldCaret(modifiers: borrow ModifierContext) -> CALayerDescription {
     let metrics = caretMetrics
     return CALayerDescription {
+        key: textFieldCaretKey(),
         layout: CALayoutIntent {
             widthFill: false,
             heightFill: false,
@@ -334,6 +382,7 @@ public function textFieldCaret(modifiers: borrow ModifierContext) -> CALayerDesc
             fixedHeight: metrics.height
         },
         cornerRadius: metrics.width / 2.0,
+        disablesActions: true,
         content: .Solid(CASolid {
             fill: caColorFromFoundation(modifierColor(foundationColor(modifierTokens(modifiers).tint.accent), modifiers)),
             cornerRadius: metrics.width / 2.0
@@ -341,12 +390,13 @@ public function textFieldCaret(modifiers: borrow ModifierContext) -> CALayerDesc
     }
 }
 
-public function textFieldPressFn(key: Int, size: Float, leftPad: Float) -> () -> Void {
+public function textFieldPressFn(key: Int, size: Float, weight: Float, leftPad: Float) -> () -> Void {
     let k = key
     let sz = size
+    let wt = weight
     let lp = leftPad
     let f: () -> Void = { in
-        textFieldClickCaret(k, sz, lp)
+        textFieldClickCaret(k, sz, wt, lp)
         return
     }
     return f
@@ -363,13 +413,13 @@ public function textFieldColorWithOpacity(
     return foundationRgba(c.r, c.g, c.b, c.a * opacity)
 }
 
-// The weight editable text is set at.
+// The weight editable text is set at: the weight of the type in effect.
 //
-// One value, named once, because the caret is placed by measuring PREFIXES of
+// One value, resolved once, because the caret is placed by measuring PREFIXES of
 // the same string the field draws: a measurement at one weight and a draw at
 // another puts the caret beside the glyph it belongs to rather than against it.
-public function textFieldWeight() -> Float {
-    return 400.0
+public function textFieldWeight(modifiers: borrow ModifierContext) -> Float {
+    return modifierTextWeight(modifiers)
 }
 
 public function textFieldTextSize(modifiers: borrow ModifierContext) -> Float {
@@ -432,16 +482,13 @@ public construct TextField(
             if focused {
                 runs.append(textFieldCaret(modifiers))
             }
-            runs.append(Text(placeholder)
-                .font(size: size)
-                .foregroundColor(.Tertiary)
-                .describe(context, modifiers))
+            runs.append(textFieldRun(placeholder, size, textFieldPlaceholderKey(), .Tertiary, context, modifiers))
         } else if focused {
-            runs.append(textFieldRun(foundationStringFromCodepoints(st.codes, 0, st.caret), size, context, modifiers))
+            runs.append(textFieldRun(foundationStringFromCodepoints(st.codes, 0, st.caret), size, textFieldLeadKey(), .Primary, context, modifiers))
             runs.append(textFieldCaret(modifiers))
-            runs.append(textFieldRun(foundationStringFromCodepoints(st.codes, st.caret, st.codes.count), size, context, modifiers))
+            runs.append(textFieldRun(foundationStringFromCodepoints(st.codes, st.caret, st.codes.count), size, textFieldTrailKey(), .Primary, context, modifiers))
         } else {
-            runs.append(textFieldRun(foundationStringFromCodepoints(st.codes, 0, st.codes.count), size, context, modifiers))
+            runs.append(textFieldRun(foundationStringFromCodepoints(st.codes, 0, st.codes.count), size, textFieldLeadKey(), .Primary, context, modifiers))
         }
         let grouped = modifiers.controlPresentation == .InsetGrouped
         var fill = transparentFoundationColor()
@@ -450,7 +497,7 @@ public construct TextField(
         }
         let radius = textFieldRadius(modifiers)
         let inset = grouped ? 0.0 : radius
-        kiraUiLayerActionRegister(key, textFieldPressFn(key, size, inset))
+        kiraUiLayerActionRegister(key, textFieldPressFn(key, size, textFieldWeight(modifiers), inset))
         return CALayerDescription {
             layout: CALayoutIntent {
                 axis: .Row,

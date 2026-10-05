@@ -1,0 +1,264 @@
+import KiraLayout
+import KiraGraphics
+import Foundation
+import KCoreAnimation
+
+public enum ButtonRole {
+    Normal
+    Destructive
+}
+
+// SwiftUI's `ButtonStyle`, set with `.buttonStyle(...)` and inherited by every
+// button under it. `.Automatic` is the platform's choice for where the button
+// is: a menu's row, the bar's glass, a grouped list's accent words, and
+// borderless anywhere else. `.Borderless` is the label alone in the accent,
+// `.Plain` the label in its own ink, `.Bordered` the accent's words on a wash
+// of it in a capsule, and `.BorderedProminent` a capsule of the accent with
+// white words.
+public enum ButtonStyle {
+    Automatic
+    Borderless
+    Plain
+    Bordered
+    BorderedProminent
+}
+
+// SwiftUI's button is a LABEL and an action, and the label is a view:
+//
+//     Button(action: copy) {
+//         Label("Copy", systemImage: .DocOnDoc)
+//     }
+//
+// with `Button("Copy", action: copy)` as the shorthand for the case where the
+// label is only a run of text. Those are not two widgets — the second builds the
+// first's label out of a `Text` and hands it straight over — so they are one
+// name with two ways in, which is what an `init` on a construct-backed
+// declaration is. A widget that only ever took a String could not put a glyph,
+// a badge or a two-line label on a button at all. The cascading
+// `.foregroundColor(...)` names the label's ink, as it does on a bare Text.
+public construct Button(
+    role: ButtonRole = .Normal,
+    action: () -> Void,
+) extends Widget {
+    let label: some Widget
+
+    init(title: String, action: () -> Void) {
+        return Button(role: .Normal, action: action) {
+            Text(content: title)
+        }
+    }
+
+    init(title: String, role: ButtonRole, action: () -> Void) {
+        return Button(role: role, action: action) {
+            Text(content: title)
+        }
+    }
+
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        let k = kiraUiTapSeqKey()
+        if modifiers.buttonStyle == .Automatic {
+            // In a menu a button is the menu's row or action: no fill of its
+            // own, the highlight is the menu's, and choosing it dismisses the
+            // menu.
+            match modifiers.controlPresentation {
+                MenuRow -> {
+                    kiraUiLayerActionRegister(k, kiraUiMenuChooseFn(action))
+                    match role {
+                        Normal -> {}
+                        // A destructive row is set in the danger ink, glyph and title.
+                        Destructive -> {
+                            return menuRowDescription(context, modifierContextApply(modifiers, modifierDeltaForegroundColor(.Danger)), k, label)
+                        }
+                    }
+                    return menuRowDescription(context, modifiers, k, label)
+                }
+                MenuAction -> {
+                    kiraUiLayerActionRegister(k, kiraUiMenuChooseFn(action))
+                    return menuActionDescription(context, modifiers, k, label)
+                }
+                Toolbar -> {
+                    kiraUiLayerActionRegister(k, action)
+                    return toolbarButtonDescription(context, modifiers, k, label)
+                }
+                InsetGrouped -> {}
+                Sidebar -> {}
+                SidebarCell -> {}
+                Standalone -> {}
+            }
+        }
+        kiraUiLayerActionRegister(k, action)
+        let labelModifiers = modifierContextForPresentation(modifiers)
+        match modifiers.buttonStyle {
+            Bordered -> return borderedButtonDescription(context, labelModifiers, k, role, false, label)
+            BorderedProminent -> return borderedButtonDescription(context, labelModifiers, k, role, true, label)
+            Plain -> return bareButtonDescription(context, labelModifiers, k, label)
+            Automatic -> {}
+            Borderless -> {}
+        }
+        var inked = labelModifiers
+        if !modifiers.hasForegroundColor && !modifiers.hasTextColor {
+            inked = modifierContextApply(labelModifiers, modifierDeltaForegroundColor(buttonInk(role, modifiers.disabled)))
+        }
+        return bareButtonDescription(context, inked, k, label)
+    }
+}
+
+// A button's accent ink, where the ink is all it has: the accent, the danger
+// tint for a destructive role, and the tertiary ink while disabled.
+public function buttonInk(role: borrow ButtonRole, disabled: Bool) -> PrimaryColor {
+    if disabled {
+        return .Tertiary
+    }
+    match role {
+        Normal -> return .Accent
+        Destructive -> return .Danger
+    }
+}
+
+// The label alone as the button, its press on the label's own box.
+function bareButtonDescription(
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+    key: Int,
+    label: borrow Any Widget,
+) -> CALayerDescription {
+    var button = label.describe(context, buttonPressedModifiers(modifiers, key, context, buttonPressedTextOpacity))
+    button.hittable = !modifiers.disabled
+    button.hitKey = key
+    buttonPressTiming(button, key, context)
+    return button
+}
+
+// A capsule around the label: a wash of the button's ink under the ink's own
+// words, or, prominent, the ink itself under white words.
+function borderedButtonDescription(
+    context: borrow BuildContext,
+    unpressed: borrow ModifierContext,
+    key: Int,
+    role: borrow ButtonRole,
+    prominent: Bool,
+    label: borrow Any Widget,
+) -> CALayerDescription {
+    let modifiers = buttonPressedModifiers(unpressed, key, context, buttonPressedBorderedOpacity)
+    let metrics = resolvedControlMetrics(modifiers)
+    let ink = modifierPrimaryColor(buttonInk(role, modifiers.disabled), modifiers)
+    var fill = foundationRgba(ink.r, ink.g, ink.b, ink.a * buttonWashOpacity)
+    var words: PrimaryColor = buttonInk(role, modifiers.disabled)
+    if prominent {
+        fill = copy ink
+        words = .White
+    }
+    var labelModifiers = copy modifiers
+    if !modifiers.hasForegroundColor && !modifiers.hasTextColor {
+        labelModifiers = modifierContextApply(modifiers, modifierDeltaForegroundColor(move words))
+    }
+    let radius = buttonBorderRadius(modifiers.buttonBorderShape, modifiers)
+    let described = label.describe(context, labelModifiers)
+    var horizontalInset = metrics.buttonHorizontalInset
+    var side = 0.0
+    // A circle stands as wide as it is tall, around the longer side of its label.
+    if modifiers.buttonBorderShape == .Circle {
+        horizontalInset = metrics.buttonVerticalInset
+        side = max(described.layout.intrinsicWidth, described.layout.intrinsicHeight) + metrics.buttonVerticalInset * 2.0
+    }
+    var button = CALayerDescription {
+        layout: CALayoutIntent {
+            axis: .Row,
+            widthFill: false,
+            heightFill: false,
+            minWidth: side,
+            minHeight: side,
+            paddingLeading: horizontalInset,
+            paddingTop: metrics.buttonVerticalInset,
+            paddingTrailing: horizontalInset,
+            paddingBottom: metrics.buttonVerticalInset,
+            alignment: Point { x: 0.5, y: 0.5 }
+        },
+        hittable: !modifiers.disabled,
+        hitKey: key,
+        cornerRadius: radius,
+        content: .Solid(CASolid {
+            fill: caColorFromFoundation(modifierSurfaceFill(move fill, modifiers)),
+            cornerRadius: radius
+        }),
+        sublayers: [move described]
+    }
+    buttonPressTiming(button, key, context)
+    return button
+}
+
+// Whether the button under `key` is held down with the pointer still on it.
+function buttonHeld(key: Int, context: borrow BuildContext) -> Bool {
+    return key != 0 && context.pressedKey == key
+}
+
+// A held button, as the platform highlights one: its own inks -- the label's,
+// and a bordered one's fill -- lighten to `pressed` of themselves. The inks
+// carry it, not a pass over the whole layer, so the label stays its hue.
+function buttonPressedModifiers(modifiers: borrow ModifierContext, key: Int, context: borrow BuildContext, pressed: Float) -> ModifierContext {
+    if !buttonHeld(key, context) {
+        return copy modifiers
+    }
+    return modifierContextApply(modifiers, modifierDeltaOpacity(pressed))
+}
+
+// Held, it dims at once; let go, it eases back.
+function buttonPressTiming(button: borrow mut CALayerDescription, key: Int, context: borrow BuildContext) {
+    if buttonHeld(key, context) {
+        button.animation = .Timed(caImmediateTiming())
+    }
+    return
+}
+
+// How far a held button dims: a text-only one to a lighter step of its ink, a
+// bordered one only a step.
+let buttonPressedTextOpacity: Float = 0.6
+let buttonPressedBorderedOpacity: Float = 0.7
+
+// How strong the wash of its ink a bordered button is drawn on.
+let buttonWashOpacity: Float = 0.15
+
+
+public construct ButtonStyleLayer(style: ButtonStyle) extends Widget {
+    let content: some Widget
+
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        let delta = modifierDeltaButtonStyle(style)
+        let resolved = modifierContextApply(modifiers, move delta)
+        return content.describe(context, resolved)
+    }
+}
+
+// SwiftUI's `ButtonBorderShape`: the outline of a bordered button.
+// `.Automatic` is the theme's small rounded rectangle; `.RoundedRectangleRadius`
+// names the radius.
+public enum ButtonBorderShape {
+    Automatic
+    Capsule
+    RoundedRectangle
+    RoundedRectangleRadius: Float
+    Circle
+}
+
+public function buttonBorderRadius(shape: borrow ButtonBorderShape, modifiers: borrow ModifierContext) -> Float {
+    match shape {
+        Automatic -> return cornerRadiusImplementation(.Small, modifiers)
+        RoundedRectangle -> return cornerRadiusImplementation(.Small, modifiers)
+        RoundedRectangleRadius(radius) -> return radius
+        Capsule -> return containerShapeUnbounded()
+        Circle -> return containerShapeUnbounded()
+    }
+}
+
+public construct ButtonBorderShapeLayer(shape: ButtonBorderShape) extends Widget {
+    let content: some Widget
+
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        let delta = modifierDeltaButtonBorderShape(shape)
+        let resolved = modifierContextApply(modifiers, move delta)
+        return content.describe(context, resolved)
+    }
+}

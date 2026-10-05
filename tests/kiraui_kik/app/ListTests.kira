@@ -1,0 +1,104 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// A sidebar's sections and a text field's runs, as the layers they describe.
+
+function kuiDescribeInSidebar(root: Any Widget) -> CALayerDescription {
+    let widgetContext = buildContext(FoundationUiContext {})
+    return root.describe(widgetContext, modifierContextPresenting(ModifierContext {}, .Sidebar))
+}
+
+function kuiNoAction() {
+    return
+}
+
+// The leading edge of the text a sidebar row draws, from the section's edge.
+function kuiSidebarRowTextX(section: borrow CALayerDescription, row: Int) -> Float {
+    let cell = section.sublayers[row]
+    let band = cell.sublayers[0]
+    return cell.position.x + band.position.x + band.sublayers[0].position.x
+}
+
+// A sidebar section without a header is its rows alone: no band is held for a
+// title that is not there.
+construct KuiAHeaderlessSidebarSectionIsItsRows() extends Test {
+    test {
+        let described = kuiDescribeInSidebar(Section() {
+            Text(content: "Settings")
+        })
+        return described.sublayers.count
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok(1)
+        return expected
+    }
+}
+
+// A sidebar section with a header puts its title over its rows.
+construct KuiASidebarSectionHeaderSitsOverItsRows() extends Test {
+    test {
+        let described = kuiDescribeInSidebar(Section() {
+            Text(content: "Ocean")
+        } header: {
+            Text(content: "Games")
+        })
+        return described.sublayers.count
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok(2)
+        return expected
+    }
+}
+
+// A plain view in a sidebar section starts where a row's title does, as every
+// row of a SwiftUI sidebar list sits in the same cell.
+construct KuiAPlainSidebarRowLinesUpWithARow() extends Test {
+    test {
+        var described = kuiDescribeInSidebar(Section() {
+            SidebarRow(selected: false, action: kuiNoAction) {
+                Text(content: "Settings")
+            }
+
+            Text(content: "No saves yet")
+        })
+        caLayoutTree(described, 320.0, 480.0)
+        var out = 0
+        if described.sublayers.count == 2 {
+            let row = kuiSidebarRowTextX(described, 0)
+            let plain = kuiSidebarRowTextX(described, 1)
+            if row > 0.0 && abs(row - plain) < 0.0001 {
+                out = 1
+            }
+        }
+        return out
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok(1)
+        return expected
+    }
+}
+
+// Focusing an empty field puts the caret beside the placeholder under keys of
+// their own, so the caret never takes over the placeholder's layer and grows
+// out of its width.
+construct KuiAFocusedFieldKeysItsCaretApartFromItsPlaceholder() extends Test {
+    test {
+        let field = TextField(key: 9101, initial: "", placeholder: "Client ID", width: 200.0, height: 32.0, onSubmit: kuiNoAction)
+        let idle = field.describe(buildContext(FoundationUiContext {}), ModifierContext {})
+        let focused = field.describe(buildContext(FoundationUiContext { focusedKey: 9101 }), ModifierContext {})
+        var out = 0
+        if idle.sublayers.count == 1 && focused.sublayers.count == 2 {
+            if idle.sublayers[0].key == textFieldPlaceholderKey()
+                && focused.sublayers[0].key == textFieldCaretKey()
+                && focused.sublayers[1].key == textFieldPlaceholderKey() {
+                out = 1
+            }
+        }
+        return out
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok(1)
+        return expected
+    }
+}

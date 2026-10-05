@@ -1,0 +1,262 @@
+import Foundation
+
+// --- Resolved tokens ---------------------------------------------------------
+// The appearance-resolved view of a style, grouped the same way the style
+// groups its tokens. Widgets consume these; they never resolve an
+// AdaptiveColor themselves.
+
+public struct PaletteColors {
+    let red: Color
+    let orange: Color
+    let yellow: Color
+    let green: Color
+    let mint: Color
+    let teal: Color
+    let cyan: Color
+    let blue: Color
+    let indigo: Color
+    let purple: Color
+    let pink: Color
+    let brown: Color
+    let gray: Color
+}
+
+public struct ForegroundColors {
+    let primary: Color
+    let secondary: Color
+    let tertiary: Color
+    let quaternary: Color
+    let inverse: Color
+}
+
+public struct BackgroundColors {
+    let canvas: Color
+    let surface: Color
+    let raised: Color
+    let overlay: Color
+}
+
+public struct FillColors {
+    let control: Color
+    let hover: Color
+    let selection: Color
+}
+
+public struct TintColors {
+    let accent: Color
+    let success: Color
+    let warning: Color
+    let danger: Color
+}
+
+public struct ResolvedBorder {
+    let color: Color
+    let width: Float
+}
+
+public struct BorderTokens {
+    let subtle: ResolvedBorder
+    let standard: ResolvedBorder
+    let strong: ResolvedBorder
+    let focus: ResolvedBorder
+}
+
+public struct ThemeTokens {
+    let palette: PaletteColors
+    let foreground: ForegroundColors
+    let background: BackgroundColors
+    let fill: FillColors
+    let tint: TintColors
+    let border: BorderTokens
+    let glassTint: Color
+    let glassEdgeLighting: Bool
+    let controlRadius: Float
+    let bodySize: Float
+    let bodyWeight: FontWeight
+    let controlSize: Float
+    let controlWeight: FontWeight
+    let titleSize: Float
+    let titleWeight: FontWeight
+}
+
+public function themeAdaptiveColor(color: borrow AdaptiveColor, appearance: borrow Appearance) -> Color {
+    match appearance {
+        Light -> return color.light
+        Dark -> return color.dark
+    }
+}
+
+public function resolvedBorder(border: borrow BorderImplementation, appearance: borrow Appearance) -> ResolvedBorder {
+    return ResolvedBorder {
+        color: themeAdaptiveColor(border.color, appearance),
+        width: border.width
+    }
+}
+
+// The one place a style becomes resolved tokens. Theme.tokens() and the
+// no-theme fallback both come through here, so a widget cannot see two
+// different resolution rules.
+public function styleThemeTokens(style: Any StyleImplementation) -> ThemeTokens {
+    let appearance = resolvedAppearance(style.appearance)
+    let palette = style.palette
+    let foregrounds = style.foregrounds
+    let backgrounds = style.backgrounds
+    let fills = style.fills
+    let tints = style.tints
+    let borders = style.borders
+    let materials = style.materials
+    let radii = style.cornerRadii
+    let typography = style.typography
+    return ThemeTokens {
+        palette: PaletteColors {
+            red: themeAdaptiveColor(palette.red, appearance),
+            orange: themeAdaptiveColor(palette.orange, appearance),
+            yellow: themeAdaptiveColor(palette.yellow, appearance),
+            green: themeAdaptiveColor(palette.green, appearance),
+            mint: themeAdaptiveColor(palette.mint, appearance),
+            teal: themeAdaptiveColor(palette.teal, appearance),
+            cyan: themeAdaptiveColor(palette.cyan, appearance),
+            blue: themeAdaptiveColor(palette.blue, appearance),
+            indigo: themeAdaptiveColor(palette.indigo, appearance),
+            purple: themeAdaptiveColor(palette.purple, appearance),
+            pink: themeAdaptiveColor(palette.pink, appearance),
+            brown: themeAdaptiveColor(palette.brown, appearance),
+            gray: themeAdaptiveColor(palette.gray, appearance)
+        },
+        foreground: ForegroundColors {
+            primary: themeAdaptiveColor(foregrounds.primary, appearance),
+            secondary: themeAdaptiveColor(foregrounds.secondary, appearance),
+            tertiary: themeAdaptiveColor(foregrounds.tertiary, appearance),
+            quaternary: themeAdaptiveColor(foregrounds.quaternary, appearance),
+            inverse: themeAdaptiveColor(foregrounds.inverse, appearance)
+        },
+        background: BackgroundColors {
+            canvas: themeAdaptiveColor(backgrounds.canvas, appearance),
+            surface: themeAdaptiveColor(backgrounds.surface, appearance),
+            raised: themeAdaptiveColor(backgrounds.raised, appearance),
+            overlay: themeAdaptiveColor(backgrounds.overlay, appearance)
+        },
+        fill: FillColors {
+            control: themeAdaptiveColor(fills.control, appearance),
+            hover: themeAdaptiveColor(fills.hover, appearance),
+            selection: themeAdaptiveColor(fills.selection, appearance)
+        },
+        tint: TintColors {
+            accent: themeAdaptiveColor(tints.accent, appearance),
+            success: themeAdaptiveColor(tints.success, appearance),
+            warning: themeAdaptiveColor(tints.warning, appearance),
+            danger: themeAdaptiveColor(tints.danger, appearance)
+        },
+        border: BorderTokens {
+            subtle: resolvedBorder(borders.subtle, appearance),
+            standard: resolvedBorder(borders.standard, appearance),
+            strong: resolvedBorder(borders.strong, appearance),
+            focus: resolvedBorder(borders.focus, appearance)
+        },
+        glassTint: themeAdaptiveColor(materials.glassTint, appearance),
+        glassEdgeLighting: materials.liquidGlass.edgeLighting,
+        controlRadius: radii.small,
+        bodySize: typography.body.size,
+        bodyWeight: typography.body.weight,
+        controlSize: typography.control.size,
+        controlWeight: typography.control.weight,
+        titleSize: typography.title.size,
+        titleWeight: typography.title.weight
+    }
+}
+
+public construct Theme {
+    @Required let style: Any StyleImplementation
+
+    function appearance() -> Appearance {
+        return resolvedAppearance(self.style.appearance)
+    }
+
+    function tokens() -> ThemeTokens {
+        return styleThemeTokens(self.style)
+    }
+
+    function typography(style: borrow TypographyStyle) -> FontImplementation {
+        match style {
+            caption -> return self.style.typography.caption
+            body -> return self.style.typography.body
+            control -> return self.style.typography.control
+            subheadline -> return self.style.typography.subheadline
+            callout -> return self.style.typography.callout
+            caption2 -> return self.style.typography.caption2
+            bodyEmphasis -> return self.style.typography.bodyEmphasis
+            footnote -> return self.style.typography.footnote
+            overline -> return self.style.typography.overline
+            label -> return self.style.typography.label
+            section -> return self.style.typography.section
+            headline -> return self.style.typography.headline
+            title -> return self.style.typography.title
+            title1 -> return self.style.typography.title1
+            title2 -> return self.style.typography.title2
+            title3 -> return self.style.typography.title3
+            largeTitle -> return self.style.typography.largeTitle
+        }
+    }
+
+    function cornerRadius(style: borrow CornerRadius) -> Float {
+        match style {
+            None -> return self.style.cornerRadii.none
+            Small -> return self.style.cornerRadii.small
+            Medium -> return self.style.cornerRadii.medium
+            Large -> return self.style.cornerRadii.large
+            ExtraLarge -> return self.style.cornerRadii.extraLarge
+            Capsule -> return self.style.cornerRadii.capsule
+        }
+    }
+
+    function symbol(name: borrow Symbol) -> String {
+        return styleSymbol(self.style.symbols, name)
+    }
+
+    function controlMetrics(size: borrow ControlSize) -> ControlMetricsImplementation {
+        match size {
+            Mini -> return self.style.metrics.mini
+            Small -> return self.style.metrics.small
+            Regular -> return self.style.metrics.regular
+            Large -> return self.style.metrics.large
+        }
+    }
+
+    function spacing(style: borrow Spacing) -> Float {
+        match style {
+            None -> return self.style.spacing.none
+            Micro -> return self.style.spacing.micro
+            ExtraSmall -> return self.style.spacing.extraSmall
+            Small -> return self.style.spacing.small
+            Medium -> return self.style.spacing.medium
+            Large -> return self.style.spacing.large
+            ExtraLarge -> return self.style.spacing.extraLarge
+            Section -> return self.style.spacing.section
+        }
+    }
+}
+
+public construct DefaultTheme() extends Theme {
+    let style = DefaultStyle {}
+}
+
+// The library's own theme, built once. Every context and every modifier holds
+// a theme whether or not one was applied, and an unthemed tree asks for this
+// one at nearly every widget.
+public let defaultTheme: Any Theme = DefaultTheme {}
+
+// The theme in effect here: the applied one, or the library's own when nothing
+// applied a theme.
+//
+// Every resolution goes through this, so a themed tree and an unthemed one
+// differ in their TOKENS and in nothing else. Asking `hasTheme` at a call site
+// and reaching for a literal on the other branch is what left an application
+// with no theme drawing near-white text on a light surface and asking
+// `.backgroundStyle(.Surface)` for a color that came back transparent: two
+// defaults that were never authored together.
+public function modifierTheme(modifiers: borrow ModifierContext) -> Any Theme {
+    if modifiers.hasTheme {
+        return copy modifiers.theme
+    }
+    return copy defaultTheme
+}
