@@ -255,7 +255,7 @@ public function kiraLayerDispatchScroll(userData: RawPtr, event: borrow AppEvent
         let state = nativeRecover<KiraLayerAppState>(userData)
         let hit = caHitTestTree(state.compositor.tree, event.pointerX, event.pointerY)
         kiraUiNavigationSwipeBegin(event.pointerX, event.pointerY, hit.hit)
-        kiraUiScrollDragBegin(hit.scrollKey, motionRubberBandConstantTrackpad())
+        kiraUiScrollDragBegin(hit.scrollKey, motionRubberBandConstantTrackpad(), event.timestamp)
     }
     if event.scrollPhase == .Began || event.scrollPhase == .Changed {
         // The deltas follow the fingers under natural scrolling and run
@@ -265,7 +265,7 @@ public function kiraLayerDispatchScroll(userData: RawPtr, event: borrow AppEvent
         if kiraUiNavigationSwipeMove(across, event.scrollY) {
             kiraUiScrollDragCancel()
         } else {
-            kiraUiScrollDragMove(event.scrollY)
+            kiraUiScrollDragMove(event.scrollY, event.timestamp)
         }
     }
     if event.scrollPhase == .Ended || event.scrollPhase == .Cancelled {
@@ -328,7 +328,7 @@ public function kiraLayerDispatchTouch(userData: RawPtr, event: borrow AppEvent)
             if abs(down) > navigationTransitionMetrics.swipeSlop && abs(down) > abs(across) {
                 state.touchScrolling = true
                 scrollDistance = down
-                kiraUiScrollDragBegin(state.touchScrollTarget, motionRubberBandConstantTrackpad())
+                kiraUiScrollDragBegin(state.touchScrollTarget, motionRubberBandConstantTrackpad(), event.timestamp)
             }
         }
         if state.touchScrolling || state.touchNavigating {
@@ -340,7 +340,7 @@ public function kiraLayerDispatchTouch(userData: RawPtr, event: borrow AppEvent)
             state.pressSlides = false
             foundationWriteInputSnapshot(state.ui)
         }
-        if state.touchScrolling { kiraUiScrollDragMove(scrollDistance) }
+        if state.touchScrolling { kiraUiScrollDragMove(scrollDistance, event.timestamp) }
         state.touchPosition = Point { x: x, y: y }
         return
     }

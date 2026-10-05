@@ -1,0 +1,180 @@
+import Foundation
+import KCoreAnimation
+
+// The type a run of text is set in: the named weights, the theme's styles at
+// the size class around them, and the modifiers that choose among them. Of
+// `.font(...)` and `.typography(...)` the innermost names the font; a
+// `.fontWeight(...)` sets the weight of whichever is in effect until a
+// `.font(...)` inside it names its own.
+
+public enum FontWeight {
+    Regular
+    Medium
+    SemiBold
+    Bold
+    // A point on the variable font's weight axis, for a label carried between
+    // two of the named weights by the same value that moves everything else.
+    Axis: Float
+}
+
+public function foundationFontWeight(weight: borrow FontWeight) -> Float {
+    match weight {
+        Regular -> return 400.0
+        // SF Pro's Medium instance sits at 510 on its weight axis, not 500.
+        Medium -> return 510.0
+        SemiBold -> return 600.0
+        Bold -> return 700.0
+        Axis(value) -> return value
+    }
+}
+
+// The weight `amount` of the way from one weight to another, along the axis.
+public function fontWeightBetween(from: borrow FontWeight, to: borrow FontWeight, amount: Float) -> FontWeight {
+    let start = foundationFontWeight(from)
+    return .Axis(start + (foundationFontWeight(to) - start) * amount)
+}
+
+public function scaledTypography(
+    font: FontImplementation,
+    modifiers: borrow ModifierContext,
+) -> FontImplementation {
+    let scale = resolvedControlMetrics(modifiers).typeScale
+    return FontImplementation {
+        size: font.size * scale,
+        weight: font.weight,
+        lineHeight: font.lineHeight * scale,
+        tracking: font.tracking
+    }
+}
+
+// A role's font, at the size the region around it is drawn in.
+//
+// The size class scales the WHOLE scale rather than each role separately, so the
+// relationships a theme authored — a header quieter than a label, a title well
+// above both — survive being drawn small. A per-role size per class would let
+// those relationships drift apart between classes, which is the thing a type
+// scale exists to prevent.
+public function typographyImplementation(
+    style: TypographyStyle,
+    modifiers: borrow ModifierContext,
+) -> FontImplementation {
+    return scaledTypography(modifierTypography(modifiers, style), modifiers)
+}
+
+// The size a run of text is set at: the `.font(...)` or `.typography(...)` in
+// effect, else the body style.
+public function modifierTextSize(modifiers: borrow ModifierContext) -> Float {
+    if modifiers.hasFont {
+        return modifiers.fontSize
+    }
+    var style: TypographyStyle = .body
+    if modifiers.hasTypography {
+        style = modifiers.typography
+    }
+    return typographyImplementation(move style, modifiers).size
+}
+
+// The weight a run of text is set at, on the font's weight axis: a
+// `.fontWeight(...)`, else the weight of the font in effect.
+public function modifierTextWeight(modifiers: borrow ModifierContext) -> Float {
+    if modifiers.hasWeightOverride {
+        return foundationFontWeight(modifiers.weightOverride)
+    }
+    if modifiers.hasFont {
+        return foundationFontWeight(modifiers.fontWeight)
+    }
+    var style: TypographyStyle = .body
+    if modifiers.hasTypography {
+        style = modifiers.typography
+    }
+    return foundationFontWeight(typographyImplementation(move style, modifiers).weight)
+}
+
+public construct Text(content: String) extends Widget {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        let textSize = modifierTextSize(modifiers)
+        let textWeight = modifierTextWeight(modifiers)
+        let measured = foundationTextMeasure(content, textSize, textWeight)
+        return CALayerDescription {
+            layout: CALayoutIntent {
+                widthFill: false,
+                heightFill: false,
+                intrinsicWidth: measured.width,
+                intrinsicHeight: measured.height
+            },
+            content: .Text(CAText {
+                content: content,
+                color: caColorFromFoundation(modifierColor(modifierTextColor(modifiers), modifiers)),
+                size: textSize,
+                weight: textWeight,
+                inkLeft: foundationTextRunInkLeft(content: content, size: textSize, weight: textWeight),
+                inkRight: foundationTextRunInkRight(content: content, size: textSize, weight: textWeight),
+                inkTop: foundationTextRunInkTop(content: content, size: textSize, weight: textWeight),
+                inkBottom: foundationTextRunInkBottom(content: content, size: textSize, weight: textWeight),
+                wraps: true,
+                alignment: textAlignmentUnit(modifiers.textAlignment)
+            })
+        }
+    }
+}
+
+public construct FontLayer(size: Float, weight: FontWeight) extends Widget {
+    let content: some Widget
+
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        let delta = modifierDeltaFont(size, weight)
+        let resolved = modifierContextApply(modifiers, move delta)
+        return content.describe(context, resolved)
+    }
+}
+
+public construct TypographyLayer(style: TypographyStyle) extends Widget {
+    let content: some Widget
+
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        let delta = modifierDeltaTypography(style)
+        let resolved = modifierContextApply(modifiers, move delta)
+        return content.describe(context, resolved)
+    }
+}
+
+public construct FontWeightLayer(weight: FontWeight) extends Widget {
+    let content: some Widget
+
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        let delta = modifierDeltaFontWeight(weight)
+        let resolved = modifierContextApply(modifiers, move delta)
+        return content.describe(context, resolved)
+    }
+}
+
+// SwiftUI's `TextAlignment`: where the lines of a run that wraps sit across
+// its width.
+public enum TextAlignment {
+    Leading
+    Center
+    Trailing
+}
+
+public function textAlignmentUnit(alignment: borrow TextAlignment) -> Float {
+    match alignment {
+        Leading -> return 0.0
+        Center -> return 0.5
+        Trailing -> return 1.0
+    }
+}
+
+public construct TextAlignmentLayer(alignment: TextAlignment) extends Widget {
+    let content: some Widget
+
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        let delta = modifierDeltaTextAlignment(alignment)
+        let resolved = modifierContextApply(modifiers, move delta)
+        return content.describe(context, resolved)
+    }
+}

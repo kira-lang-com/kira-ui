@@ -1,0 +1,146 @@
+import Foundation
+import KiraGraphics
+import KiraLayout
+import KCoreAnimation
+
+// --- a control's presentation inside a menu ----------------------------------
+
+// What `Button` describes when the environment says it is in a menu: a row.
+//
+// Full width, the panel's own ink, no fill, and the standard row height — so a
+// run of them reads as a list rather than as a stack of controls. The press
+// region is the whole row, which is what a menu is: you aim at the line, not at
+// the words on it.
+public function menuRowDescription(
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+    key: Int,
+    label: some Widget,
+) -> CALayerDescription {
+    // The menu's own type size, stated here so a plain `Button(title:)` in a
+    // menu is set exactly as the platform sets one.
+    let labelModifiers = modifierContextApply(
+        modifierContextForPresentation(modifiers),
+        modifierDeltaFont(menuLabelSize(modifiers), .Regular)
+    )
+    // A one-line row stands at the menu's pitch with its line centered; a title
+    // that wraps keeps that same air above and below and the row grows.
+    let pitch = menuRowPitch(modifiers)
+    let air = max((pitch - foundationTextLineBox(menuLabelSize(modifiers), foundationFontWeight(.Regular))) / 2.0, 0.0)
+    return menuRowPill(key, label.describe(context, labelModifiers), air, modifiers)
+}
+
+// A menu's row as it is held: a rounded pill stood in from the card's edges,
+// as tall as the row however many lines its title takes, the row's content in
+// it at the row's own inset. The tree lays the wash on the row pressed, so
+// nothing rebuilds to show it, and slides it from row to row under a finger.
+public function menuRowPill(key: Int, content: CALayerDescription, air: Float, modifiers: borrow ModifierContext) -> CALayerDescription {
+    let inset = menuPillInset(modifiers)
+    let radius = menuRowRadius(modifiers)
+    let pill = CALayerDescription {
+        hittable: !modifiers.disabled,
+        hitKey: key,
+        cornerRadius: radius,
+        layout: CALayoutIntent {
+            axis: .Row,
+            heightFill: false,
+            minHeight: menuRowPitch(modifiers),
+            paddingLeading: menuRowLeading(modifiers) - inset,
+            paddingTrailing: menuRowTrailing(modifiers) - inset,
+            paddingTop: air,
+            paddingBottom: air,
+            alignment: Point { x: 0.0, y: 0.5 }
+        },
+        content: .Solid(CASolid {
+            fill: caColorFromFoundation(transparentFoundationColor()),
+            cornerRadius: radius,
+            shapeKind: 1
+        }),
+        pressColor: menuRowWash(modifiers),
+        sublayers: [move content]
+    }
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            heightFill: false,
+            paddingLeading: inset,
+            paddingTrailing: inset
+        },
+        sublayers: [pill]
+    }
+}
+
+// What lights a held menu row, unless it is disabled.
+public function menuRowWash(modifiers: borrow ModifierContext) -> CAColor {
+    if modifiers.disabled {
+        return CAColor { a: 0.0 }
+    }
+    return caColorFromFoundation(modifierColor(foundationColor(themeAdaptiveColor(menuRowHighlight, modifierAppearance(modifiers))), modifiers))
+}
+
+// What `Button` describes in the group of actions across the top of a menu.
+//
+// An equal COLUMN, its glyph above its title — `.frame(maxWidth: .infinity)` on
+// a `VStack { Image; Text }`. Equal rather than hugging is the whole point: the
+// actions stand on equal shares of the panel whatever their titles are, so
+// "Duplicate" does not push "Hide" off its share.
+public function menuActionDescription(
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+    key: Int,
+    label: some Widget,
+) -> CALayerDescription {
+    let pad = menuActionPad(modifiers)
+    let radius = menuRowRadius(modifiers)
+    // Held, it lights as a row does, in a rounded box its own size.
+    return CALayerDescription {
+        hittable: !modifiers.disabled,
+        hitKey: key,
+        cornerRadius: radius,
+        layout: CALayoutIntent {
+            heightFill: false,
+            paddingLeading: pad,
+            paddingTrailing: pad,
+            flex: 1
+        },
+        content: .Solid(CASolid {
+            fill: caColorFromFoundation(transparentFoundationColor()),
+            cornerRadius: radius,
+            shapeKind: 1
+        }),
+        pressColor: menuRowWash(modifiers),
+        sublayers: [label.describe(context, modifierContextForPresentation(modifiers))]
+    }
+}
+
+public function menuActionPad(modifiers: borrow ModifierContext) -> Float {
+    return resolvedControlMetrics(modifiers).menuActionPadding
+}
+
+// A press region for a menu row, with NO wash of its own.
+//
+// The generic click layer paints a white hover highlight behind whatever it
+// wraps. Under glass that is not a highlight, it is fuel: the wash lands in the
+// backdrop the card captures, the material's dodge layers take it, and an eight
+// percent white comes back out as a solid white bar across the row. Measured on
+// the row under the pointer while a submenu closes — 254 against the 85 the same
+// row reads when the pointer is anywhere else.
+//
+// So a menu row states its own highlight (see `MenuHeader`, and `menuRowView`
+// for the ordinary rows) and takes a press region that draws nothing. This is
+// the same reason `DismissArea` is its own leaf rather than an `.onClick`.
+public function menuHeaderLightFill(strength: Float) -> Color {
+    return Color { r: 1.0, g: 1.0, b: 1.0, a: 0.16 * strength }
+}
+
+// How far the lit pill stands in from the card's edge.
+public function menuPillInset(modifiers: borrow ModifierContext) -> Float {
+    return resolvedControlMetrics(modifiers).menuPillInset
+}
+
+// The corner of the highlight a menu row lights up with: a rounded pill inset in
+// the panel rather than a band across it, its corner concentric with the
+// card's -- the card's corner less the inset -- so a one-line row lights
+// nearly as a capsule and a taller one keeps the same round ends.
+public function menuRowRadius(modifiers: borrow ModifierContext) -> Float {
+    return max(menuCardRadius(modifiers) - menuPillInset(modifiers), 0.0)
+}

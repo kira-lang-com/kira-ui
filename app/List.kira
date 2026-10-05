@@ -254,7 +254,8 @@ public construct ListStyleLayer(style: ListStyle) extends Widget {
 
 // A section's title in a sidebar: its own row, the title held off the column's
 // edge and low in the row, close to the rows it heads, in the body face and
-// the secondary ink.
+// the secondary ink. A header that is nothing takes no room, as a sidebar
+// section without a header has none in SwiftUI.
 public construct SidebarSectionHeader() extends Widget {
     let content: some Widget
 
@@ -263,6 +264,10 @@ public construct SidebarSectionHeader() extends Widget {
         let title = content
             .typography(.body)
             .foregroundColor(.Secondary)
+            .describe(context, modifiers)
+        if describesNothing(title) {
+            return title
+        }
         return CALayerDescription {
             layout: CALayoutIntent {
                 axis: .Row,
@@ -272,54 +277,76 @@ public construct SidebarSectionHeader() extends Widget {
                 paddingTop: sidebarMetrics.headerTopInset,
                 paddingTrailing: sidebarMetrics.headerInset
             },
-            sublayers: [title.describe(context, modifiers)]
+            sublayers: [move title]
         }
     }
 }
 
-// One row of a sidebar: the column's width at the row height, pressed as a
-// whole. The selected row carries a band held in from the column's edges with
-// a continuous corner and sets its title emphasized; the content starts
-// further in, the same distance from the edge whether or not the band is
-// behind it. Selection lands at once, as a sidebar cell's does: the band and
-// the emphasis switch rows, they do not fade between them.
+// One row of a sidebar. Under `.SidebarCell` the section around it draws the
+// cell, so the row is its title carrying its press and its selection band as
+// the layer's background; anywhere else it is its own cell.
 public construct SidebarRow(selected: Bool, action: () -> Void) extends Widget {
     let content: some Widget
 
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        kiraUiSidebarSelectionRow(selected)
         let key = kiraUiTapSeqKey()
         kiraUiLayerActionRegister(key, action)
-        let gutter = sidebarMetrics.rowInset - sidebarMetrics.selectionInset
-        let radius = sidebarMetrics.selectionRadius
         let face = modifierTypography(modifiers, .body)
+        let cell = modifiers.controlPresentation == .SidebarCell
         let title = content.font(size: face.size, weight: sidebarRowWeight(selected))
-        return CALayerDescription {
-            layout: CALayoutIntent {
-                heightFill: false,
-                fixedHeight: sidebarMetrics.rowHeight,
-                paddingLeading: sidebarMetrics.selectionInset,
-                paddingTrailing: sidebarMetrics.selectionInset
-            },
-            hittable: !modifiers.disabled,
-            hitKey: key,
-            sublayers: [CALayerDescription {
-                layout: CALayoutIntent {
-                    axis: .Row,
-                    paddingLeading: gutter,
-                    paddingTrailing: gutter,
-                    alignment: Point { x: 0.0, y: 0.5 }
-                },
-                cornerRadius: radius,
-                disablesActions: true,
-                content: .Solid(CASolid {
-                    fill: caColorFromFoundation(modifierColor(foundationColor(sidebarRowBand(selected, modifiers)), modifiers)),
-                    cornerRadius: radius,
-                    shapeKind: 1
-                }),
-                sublayers: [title.describe(context, modifiers)]
-            }]
+        var row = cell ? title.describe(context, modifierContextPresenting(modifiers, .Sidebar)) : title.describe(context, modifiers)
+        row.hittable = !modifiers.disabled
+        row.hitKey = key
+        row.backgroundColor = caColorFromFoundation(modifierColor(foundationColor(sidebarRowBand(selected, modifiers)), modifiers))
+        if cell {
+            return row
         }
+        return sidebarRowCell(move row)
+    }
+}
+
+// The cell every row of a sidebar sits in: the column's width, at least the
+// row height, its content further in than the band a selected row carries.
+// The content's press and background are lifted onto the band, so the whole
+// row is pressed and the band spans it with a continuous corner. Selection
+// lands at once, as a sidebar cell's does: the band does not fade between rows.
+public function sidebarRowCell(content: CALayerDescription) -> CALayerDescription {
+    var inner = content
+    let key = inner.hitKey
+    let pressable = inner.hittable
+    let band = inner.backgroundColor
+    inner.hittable = false
+    inner.hitKey = 0
+    inner.backgroundColor = CAColor { a: 0.0 }
+    let gutter = sidebarMetrics.rowInset - sidebarMetrics.selectionInset
+    let radius = sidebarMetrics.selectionRadius
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            heightFill: false,
+            minHeight: sidebarMetrics.rowHeight,
+            paddingLeading: sidebarMetrics.selectionInset,
+            paddingTrailing: sidebarMetrics.selectionInset
+        },
+        hittable: pressable,
+        hitKey: pressable ? key : 0,
+        sublayers: [CALayerDescription {
+            layout: CALayoutIntent {
+                axis: .Row,
+                paddingLeading: gutter,
+                paddingTrailing: gutter,
+                alignment: Point { x: 0.0, y: 0.5 }
+            },
+            cornerRadius: radius,
+            disablesActions: true,
+            content: .Solid(CASolid {
+                fill: band,
+                cornerRadius: radius,
+                shapeKind: 1
+            }),
+            sublayers: [move inner]
+        }]
     }
 }
 

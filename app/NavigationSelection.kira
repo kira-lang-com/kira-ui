@@ -1,0 +1,83 @@
+import Foundation
+import KCoreAnimation
+
+// Which row a split view's sidebar has selected, as SwiftUI's
+// `List(selection:)` knows it. Rows are counted in the order the sidebar
+// describes them, and the selected one is remembered from build to build: a
+// different row selected, or a path that starts somewhere else, is a new run
+// of the detail -- a new view, keyed apart from the old one.
+public struct KiraUiSidebarSelectionState {
+    var counting: Bool = false
+    var ordinal: Int = 0
+    var selected: Int = -1
+    var shown: Int = -2
+    var navigationGeneration: Int = 0
+    var run: Int = 0
+}
+
+public function kiraUiSidebarSelectionSlotKey() -> String {
+    return "kiraui.navigation.sidebar-selection"
+}
+
+public function kiraUiSidebarSelectionEnsure() {
+    if kiraUiStateSlotHas(kiraUiSidebarSelectionSlotKey()) == false {
+        kiraUiStateSlotPut(
+            kiraUiSidebarSelectionSlotKey(),
+            nativeUserData(nativeState(KiraUiSidebarSelectionState {}))
+        )
+    }
+    return
+}
+
+public function kiraUiSidebarSelectionState() -> KiraUiSidebarSelectionState {
+    kiraUiSidebarSelectionEnsure()
+    return nativeRecover<KiraUiSidebarSelectionState>(kiraUiStateSlotGet(kiraUiSidebarSelectionSlotKey()))
+}
+
+// The sidebar is about to be described: count its rows from the top.
+public function kiraUiSidebarSelectionBegin() {
+    kiraUiSidebarSelectionEnsure()
+    var state = nativeRecover<KiraUiSidebarSelectionState>(kiraUiStateSlotGet(kiraUiSidebarSelectionSlotKey()))
+    state.counting = true
+    state.ordinal = 0
+    state.selected = -1
+    return
+}
+
+// A row of the sidebar, and whether it is the selected one.
+public function kiraUiSidebarSelectionRow(selected: Bool) {
+    kiraUiSidebarSelectionEnsure()
+    var state = nativeRecover<KiraUiSidebarSelectionState>(kiraUiStateSlotGet(kiraUiSidebarSelectionSlotKey()))
+    if !state.counting {
+        return
+    }
+    if selected && state.selected < 0 {
+        state.selected = state.ordinal
+    }
+    state.ordinal = state.ordinal + 1
+    return
+}
+
+// The sidebar has been described: settle which run of the detail it selects.
+public function kiraUiSidebarSelectionEnd() {
+    kiraUiSidebarSelectionEnsure()
+    var state = nativeRecover<KiraUiSidebarSelectionState>(kiraUiStateSlotGet(kiraUiSidebarSelectionSlotKey()))
+    state.counting = false
+    let generation = kiraUiNavigationGeneration()
+    if state.selected != state.shown || generation != state.navigationGeneration {
+        state.run = state.run + 1
+        state.shown = state.selected
+        state.navigationGeneration = generation
+    }
+    return
+}
+
+// The detail of a split view as the view of one selection: keyed by its run,
+// so the tree takes a new selection's view as a new layer -- nothing of the
+// old one carried over or moved into it -- simply there in its place.
+public function navigationSelectedDetail(detail: CALayerDescription) -> CALayerDescription {
+    let state = kiraUiSidebarSelectionState()
+    var page = detail
+    page.key = state.run + 1
+    return page
+}

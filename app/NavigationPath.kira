@@ -1,0 +1,340 @@
+import Foundation
+import KiraGraphics
+import KiraLayout
+import KCoreAnimation
+
+// --- Typed navigation values and path --------------------------------------
+
+// Every application route declaration is backed by this family. The family
+// value is the type-erased element stored by NavigationPath, just as Apple's
+// NavigationPath can hold heterogeneous Hashable values.
+public construct NavigationValue {
+    @Required function navigationType() -> String
+}
+
+public struct KiraUiNavigationPathState {
+    var values: [Any NavigationValue] = []
+    // Which run of views the path is showing. Replacing the path with one
+    // that starts somewhere else -- choosing another sidebar row -- starts a
+    // new run: its views are new views, not the old ones changed.
+    var generation: Int = 0
+    // Which view a stacked sidebar has gone on to. Every one of them stands in
+    // the detail's place, and each is a new view there: going on to Symbols
+    // after coming back from Controls must not find Controls' layers, still
+    // going off, and turn them into it.
+    var detailRun: Int = 0
+    // The path as it was last settled, while changes made since have not
+    // been: everything one action does to the path lands as one change, as
+    // SwiftUI's does, moving from this to `values`.
+    var settled: [Any NavigationValue] = []
+    var unsettled: Bool = false
+}
+
+// NavigationPath is an empty value-shaped handle over the app navigation state.
+// The state slot is fixed because one active app navigation path is the
+// default, while the values themselves remain typed NavigationValue family
+// members. Keeping the handle empty also lets a view pass it through several
+// NavigationStack and NavigationSplitView layers without ownership friction.
+public struct NavigationPath {
+    function values() -> [Any NavigationValue] {
+        return kiraUiNavigationValues()
+    }
+
+    function isEmpty() -> Bool {
+        return self.values().count == 0
+    }
+
+    // Whether the path runs through this value first: what makes a sidebar's
+    // row the selected one.
+    function startsWith(value: borrow Any NavigationValue) -> Bool {
+        let current = self.values()
+        if current.count == 0 {
+            return false
+        }
+        return current[0].navigationType() == value.navigationType()
+    }
+
+    function lastMatches(value: borrow Any NavigationValue) -> Bool {
+        let current = self.values()
+        if current.count == 0 {
+            return false
+        }
+        return current[current.count - 1].navigationType() == value.navigationType()
+    }
+
+    function append(value: Any NavigationValue) {
+        kiraUiNavigationPush(move value)
+        return
+    }
+
+    function removeLast() {
+        kiraUiNavigationPop()
+        return
+    }
+
+    function removeAll() {
+        kiraUiNavigationClear()
+        return
+    }
+}
+
+public function kiraUiNavigationSlotKey() -> String {
+    return "kiraui.navigation.path"
+}
+
+public function kiraUiNavigationEnsure() {
+    if kiraUiStateSlotHas(kiraUiNavigationSlotKey()) == false {
+        kiraUiStateSlotPut(
+            kiraUiNavigationSlotKey(),
+            nativeUserData(nativeState(KiraUiNavigationPathState {}))
+        )
+    }
+    return
+}
+
+public function kiraUiNavigationValues() -> [Any NavigationValue] {
+    kiraUiNavigationEnsure()
+    let state = nativeRecover<KiraUiNavigationPathState>(
+        kiraUiStateSlotGet(kiraUiNavigationSlotKey())
+    )
+    return state.values
+}
+
+// The path, replaced as it is: nothing moves.
+public function kiraUiNavigationStore(values: [Any NavigationValue]) {
+    kiraUiNavigationEnsure()
+    var state = nativeRecover<KiraUiNavigationPathState>(
+        kiraUiStateSlotGet(kiraUiNavigationSlotKey())
+    )
+    state.values = move values
+    return
+}
+
+// The path changed to `values`. Nothing moves yet: the change is settled
+// with every other change the same action made, when the next frame begins.
+public function kiraUiNavigationChange(values: [Any NavigationValue]) {
+    kiraUiNavigationEnsure()
+    var state = nativeRecover<KiraUiNavigationPathState>(
+        kiraUiStateSlotGet(kiraUiNavigationSlotKey())
+    )
+    if !state.unsettled {
+        state.settled = copy state.values
+        state.unsettled = true
+    }
+    state.values = move values
+    return
+}
+
+// The changes made to the path since it was last settled, landed as one, the
+// way they leave it against the way they found it. A path that starts
+// somewhere else is replaced outright, as choosing a sidebar's row replaces
+// it: a new run of views, simply there, and whatever was moving stops. One
+// that grew pushes its new view in over the old; one that shrank takes the
+// old view off the one under it.
+public function kiraUiNavigationSettle() {
+    kiraUiNavigationEnsure()
+    var state = nativeRecover<KiraUiNavigationPathState>(
+        kiraUiStateSlotGet(kiraUiNavigationSlotKey())
+    )
+    if !state.unsettled {
+        return
+    }
+    state.unsettled = false
+    let before = copy state.settled
+    let after = copy state.values
+    // A path that starts elsewhere replaces what was showing. Stacked, though,
+    // the sidebar is the root, and a path that empties is going back to it --
+    // and one that fills from empty is going on from it.
+    let fromSidebar = kiraUiNavigationRootDepth() == 0 && (before.count == 0 || after.count == 0)
+    if fromSidebar && before.count == 0 && after.count > 0 {
+        state.detailRun = state.detailRun + 1
+    }
+    if navigationRootType(before) != navigationRootType(after) && !fromSidebar {
+        kiraUiNavigationTransitionCancel()
+        state.generation = state.generation + 1
+        kiraUiMenuDismissAll()
+    } else if after.count < before.count {
+        kiraUiNavigationTransitionPop(move before, move after)
+    } else if after.count > before.count || !navigationSamePath(before, after) {
+        kiraUiNavigationTransitionPush(move before, move after)
+    }
+    return
+}
+
+// Whether two paths run through the same values, by type.
+public function navigationSamePath(a: borrow [Any NavigationValue], b: borrow [Any NavigationValue]) -> Bool {
+    if a.count != b.count {
+        return false
+    }
+    for index in 0..a.count {
+        if a[index].navigationType() != b[index].navigationType() {
+            return false
+        }
+    }
+    return true
+}
+
+// What a path starts at, by the type of its first value; empty for an empty
+// path.
+public function navigationRootType(values: borrow [Any NavigationValue]) -> String {
+    if values.count == 0 {
+        return ""
+    }
+    return values[0].navigationType()
+}
+
+public function kiraUiNavigationDetailRun() -> Int {
+    kiraUiNavigationEnsure()
+    let state = nativeRecover<KiraUiNavigationPathState>(
+        kiraUiStateSlotGet(kiraUiNavigationSlotKey())
+    )
+    return state.detailRun
+}
+
+public function kiraUiNavigationGeneration() -> Int {
+    kiraUiNavigationEnsure()
+    let state = nativeRecover<KiraUiNavigationPathState>(
+        kiraUiStateSlotGet(kiraUiNavigationSlotKey())
+    )
+    return state.generation
+}
+
+// A value pushed.
+public function kiraUiNavigationPush(value: Any NavigationValue) {
+    var next = kiraUiNavigationValues()
+    next.append(move value)
+    kiraUiNavigationChange(move next)
+    return
+}
+
+// The last value popped.
+public function kiraUiNavigationPop() {
+    let current = kiraUiNavigationValues()
+    if current.count == 0 {
+        return
+    }
+    var next: [Any NavigationValue] = []
+    for index in 0..current.count - 1 {
+        next.append(copy current[index])
+    }
+    kiraUiNavigationChange(move next)
+    return
+}
+
+public function kiraUiNavigationClear() {
+    var empty: [Any NavigationValue] = []
+    kiraUiNavigationChange(move empty)
+    return
+}
+
+public function navigationPath() -> NavigationPath {
+    return NavigationPath {}
+}
+
+// --- Ambient container environment -----------------------------------------
+
+public struct KiraUiNavigationEnvironment {
+    var split: Bool = false
+    // What the view a stack is showing asked its column to be painted with, as
+    // SwiftUI's `containerBackground(_:for: .navigation)` asks. A grouped list
+    // asks for its grouped canvas, so the column under the bar is the list's
+    // gray rather than a band of the window's own.
+    var hasBackground: Bool = false
+    var background: Color = Color {}
+}
+
+public function kiraUiNavigationEnvironmentKey() -> String {
+    return "kiraui.navigation.environment"
+}
+
+public function kiraUiNavigationEnvironment() -> KiraUiNavigationEnvironment {
+    if kiraUiStateSlotHas(kiraUiNavigationEnvironmentKey()) == false {
+        kiraUiStateSlotPut(
+            kiraUiNavigationEnvironmentKey(),
+            nativeUserData(nativeState(KiraUiNavigationEnvironment {}))
+        )
+    }
+    return nativeRecover<KiraUiNavigationEnvironment>(
+        kiraUiStateSlotGet(kiraUiNavigationEnvironmentKey())
+    )
+}
+
+public function kiraUiNavigationEnter(split: Bool) -> KiraUiNavigationEnvironment {
+    let previous = kiraUiNavigationEnvironment()
+    var current = nativeRecover<KiraUiNavigationEnvironment>(
+        kiraUiStateSlotGet(kiraUiNavigationEnvironmentKey())
+    )
+    current.split = split
+    return previous
+}
+
+public function kiraUiNavigationSetBackground(color: Color) {
+    kiraUiNavigationEnvironment()
+    var current = nativeRecover<KiraUiNavigationEnvironment>(
+        kiraUiStateSlotGet(kiraUiNavigationEnvironmentKey())
+    )
+    current.hasBackground = true
+    current.background = move color
+    return
+}
+
+public function kiraUiNavigationClearBackground() {
+    kiraUiNavigationEnvironment()
+    var current = nativeRecover<KiraUiNavigationEnvironment>(
+        kiraUiStateSlotGet(kiraUiNavigationEnvironmentKey())
+    )
+    current.hasBackground = false
+    return
+}
+
+// The column's canvas: what the view in it asked for, or the window's own.
+public function navigationColumnCanvas(modifiers: borrow ModifierContext) -> FoundationColor {
+    let environment = kiraUiNavigationEnvironment()
+    if environment.hasBackground {
+        return foundationColor(environment.background)
+    }
+    return navigationCanvas(modifiers)
+}
+
+public function kiraUiNavigationLeave(previous: borrow KiraUiNavigationEnvironment) {
+    var current = nativeRecover<KiraUiNavigationEnvironment>(
+        kiraUiStateSlotGet(kiraUiNavigationEnvironmentKey())
+    )
+    current.split = previous.split
+    return
+}
+
+// --- Links and destinations -------------------------------------------------
+
+public function navigationPushAction(value: Any NavigationValue) -> () -> Void {
+    // A mutable capture lets the typed family value survive in the action. The
+    // value itself is the route; there is no numeric route discriminator.
+    var targetValue = move value
+    let action: () -> Void = { in
+        let path = NavigationPath {}
+        path.append(value: copy targetValue)
+        return
+    }
+    return action
+}
+
+// What choosing a sidebar's row does: the path becomes that value alone, so
+// the detail shows it and nothing pushed under the row chosen before.
+public function navigationSelectAction(value: Any NavigationValue) -> () -> Void {
+    var targetValue = move value
+    let action: () -> Void = { in
+        var chosen: [Any NavigationValue] = []
+        chosen.append(copy targetValue)
+        kiraUiNavigationChange(move chosen)
+        return
+    }
+    return action
+}
+
+public function navigationPopAction() -> () -> Void {
+    let action: () -> Void = { in
+        kiraUiNavigationBack()
+        return
+    }
+    return action
+}

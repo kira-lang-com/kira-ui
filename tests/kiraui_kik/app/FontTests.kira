@@ -1,0 +1,182 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// The type a run is set in, as the layer carries it to the compositor: of
+// `.font` and `.typography` the innermost names the font, and `.fontWeight`
+// sets the weight of whichever is in effect until a `.font` inside names its
+// own. The width a run is laid out at is measured at the weight it draws at.
+
+// The size and weight of a text layer, or zeros for any other content.
+function kuiTextRun(layer: borrow CALayerDescription) -> CAText {
+    var run = CAText {}
+    match layer.content {
+        Text(text) -> run = copy text
+        Empty -> {}
+        Solid(s) -> {}
+        Texture(x) -> {}
+        Icon(i) -> {}
+        Glass(g) -> {}
+        Gradient(g) -> {}
+    }
+    return run
+}
+
+construct KuiFontWeightSetsTheBodyWeight() extends Test {
+    test {
+        let run = kuiTextRun(kuiDescribe(Text(content: "Sync").fontWeight(.Bold)))
+        return run.weight == 700.0 && run.size == kuiDescribeBodySize()
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok(true)
+        return expected
+    }
+}
+
+construct KuiFontWeightKeepsTheStyleSize() extends Test {
+    test {
+        let run = kuiTextRun(kuiDescribe(Text(content: "Sync").typography(.caption).fontWeight(.SemiBold)))
+        let caption = typographyImplementation(.caption, ModifierContext {})
+        return run.weight == 600.0 && run.size == caption.size
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok(true)
+        return expected
+    }
+}
+
+// A `.font` inside a `.fontWeight` names its own weight.
+construct KuiAnInnerFontNamesItsOwnWeight() extends Test {
+    test {
+        let run = kuiTextRun(kuiDescribe(Text(content: "Sync").font(size: 20.0).fontWeight(.Bold)))
+        return run.weight == 400.0 && run.size == 20.0
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok(true)
+        return expected
+    }
+}
+
+// A `.fontWeight` inside a `.font` sets that font's weight.
+construct KuiAnInnerFontWeightOverridesTheFont() extends Test {
+    test {
+        let run = kuiTextRun(kuiDescribe(Text(content: "Sync").fontWeight(.Medium).font(size: 20.0, weight: .Bold)))
+        return run.weight == 510.0 && run.size == 20.0
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok(true)
+        return expected
+    }
+}
+
+// The innermost of `.font` and `.typography` names the font, whichever way
+// round they are nested.
+construct KuiTheInnermostFontWins() extends Test {
+    test {
+        let caption = typographyImplementation(.caption, ModifierContext {})
+        let styled = kuiTextRun(kuiDescribe(Text(content: "Sync").typography(.caption).font(size: 30.0, weight: .Bold)))
+        let sized = kuiTextRun(kuiDescribe(Text(content: "Sync").font(size: 30.0, weight: .Bold).typography(.caption)))
+        return styled.size == caption.size && sized.size == 30.0 && sized.weight == 700.0
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok(true)
+        return expected
+    }
+}
+
+// A run is laid out at the width of the weight it draws at.
+construct KuiABolderRunIsMeasuredWider() extends Test {
+    test {
+        let regular = kuiDescribe(Text(content: "Animal Crossing"))
+        let bold = kuiDescribe(Text(content: "Animal Crossing").fontWeight(.Bold))
+        return bold.layout.intrinsicWidth > regular.layout.intrinsicWidth
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok(true)
+        return expected
+    }
+}
+
+// A field draws its text, and places its caret, at the weight in effect.
+construct KuiAFieldTakesTheWeightInEffect() extends Test {
+    test {
+        let field = TextField(key: 9102, initial: "", placeholder: "Server", width: 200.0, height: 32.0, onSubmit: kuiNoAction)
+            .fontWeight(.SemiBold)
+        let described = kuiDescribe(move field)
+        var weight = 0.0
+        if described.sublayers.count == 1 {
+            weight = kuiTextRun(described.sublayers[0]).weight
+        }
+        return weight
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok(600.0)
+        return expected
+    }
+}
+
+// An empty state is its symbol over its title and description, then its
+// actions, with the title set bold in the second title style.
+construct KuiContentUnavailableStacksItsParts() extends Test {
+    test {
+        let described = kuiDescribe(ContentUnavailableView(title: "Not connected", systemImage: .WifiSlash) {
+            Text(content: "Ryubing has not been run on this Mac yet.")
+        } actions: {
+            Button(title: "Open Settings", action: kuiNoAction)
+        })
+        // One block between two spacers: the heading over the actions.
+        var out = 0
+        if described.sublayers.count == 3 && described.sublayers[1].sublayers.count == 2 {
+            let heading = described.sublayers[1].sublayers[0]
+            let words = heading.sublayers[1]
+            let title = kuiTextRun(words.sublayers[0])
+            let title2 = typographyImplementation(.title2, ModifierContext {})
+            if heading.sublayers.count == 2 && words.sublayers.count == 2
+                && title.content == "Not connected" && title.weight == 700.0 && title.size == title2.size {
+                out = 1
+            }
+        }
+        return out
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok(1)
+        return expected
+    }
+}
+
+// Without a symbol, description or actions, an empty state is its title.
+construct KuiContentUnavailableStatesOnlyWhatItHas() extends Test {
+    test {
+        let described = kuiDescribe(ContentUnavailableView(title: "No saves yet"))
+        let block = described.sublayers[1]
+        let heading = block.sublayers[0]
+        return block.sublayers.count * 100 + heading.sublayers.count * 10 + heading.sublayers[0].sublayers.count
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok(111)
+        return expected
+    }
+}
+
+function kuiDescribeBodySize() -> Float {
+    return typographyImplementation(.body, ModifierContext {}).size
+}
+
+// A field's text is one line that lands where typing puts it: its run never
+// wraps, and a change to it is not eased.
+construct KuiAFieldRunIsOneImmediateLine() extends Test {
+    test {
+        let field = TextField(key: 9103, initial: "Animal Crossing New Horizons", placeholder: "Search", width: 60.0, height: 32.0, onSubmit: kuiNoAction)
+        let described = kuiDescribe(move field)
+        var out = false
+        if described.sublayers.count == 1 {
+            let run = described.sublayers[0]
+            out = !kuiTextRun(run).wraps && run.disablesActions && kuiTextRun(run).content == "Animal Crossing New Horizons"
+        }
+        return out
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok(true)
+        return expected
+    }
+}
