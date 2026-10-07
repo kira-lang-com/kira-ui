@@ -1,0 +1,441 @@
+import Foundation
+import KCoreUI
+
+// The lengths menus, tab bars, switches, sliders, progress bars and text
+// fields are laid out and moved with, and the colors they are painted with,
+// resolved once for each interface mode as the chrome's are.
+
+// --- Menus -------------------------------------------------------------------
+
+// A menu's card and what is in it, at the regular control size: its rows,
+// held off the card's edges, and the type in them; the card's width, the air
+// at its top and bottom and its corner; the rule between two groups; the
+// pill a row lights in and the chevron that opens a submenu; the column a
+// row's glyph is centered in and the gap before its title; and the actions
+// across the top -- their glyph and caption, and the air around and between
+// them. A computer's menu is the platform's dense one, a touch screen's has
+// rows a finger lands on.
+public struct MenuMetrics {
+    let rowHeight: Float
+    let leadingInset: Float
+    let trailingInset: Float
+    let labelSize: Float
+    let cardWidth: Float
+    let cardPadding: Float
+    let cardRadius: Float
+    let dividerInset: Float
+    let dividerVerticalInset: Float
+    let actionPadding: Float
+    let pillInset: Float
+    let chevronBox: Float
+    let chevronSize: Float
+    let iconColumn: Float
+    let iconGap: Float
+    let actionIconSize: Float
+    let actionLabelSize: Float
+    let actionSpacing: Float
+    let actionsTopInset: Float
+    let actionsBottomInset: Float
+    let actionsInset: Float
+    let actionsGap: Float
+
+    // This geometry drawn `scale` times as large, as a size class draws it.
+    function scaled(scale: Float) -> MenuMetrics {
+        return MenuMetrics {
+            rowHeight: rowHeight * scale,
+            leadingInset: leadingInset * scale,
+            trailingInset: trailingInset * scale,
+            labelSize: labelSize * scale,
+            cardWidth: cardWidth * scale,
+            cardPadding: cardPadding * scale,
+            cardRadius: cardRadius * scale,
+            dividerInset: dividerInset * scale,
+            dividerVerticalInset: dividerVerticalInset * scale,
+            actionPadding: actionPadding * scale,
+            pillInset: pillInset * scale,
+            chevronBox: chevronBox * scale,
+            chevronSize: chevronSize * scale,
+            iconColumn: iconColumn * scale,
+            iconGap: iconGap * scale,
+            actionIconSize: actionIconSize * scale,
+            actionLabelSize: actionLabelSize * scale,
+            actionSpacing: actionSpacing * scale,
+            actionsTopInset: actionsTopInset * scale,
+            actionsBottomInset: actionsBottomInset * scale,
+            actionsInset: actionsInset * scale,
+            actionsGap: actionsGap * scale
+        }
+    }
+}
+
+public function catalogMenuMetrics(mode: InterfaceMode) -> MenuMetrics {
+    return MenuMetrics {
+        rowHeight: catalogMetric(kiraUICatalogStack, metricMenuRowHeight(), mode),
+        leadingInset: catalogMetric(kiraUICatalogStack, metricMenuLeadingInset(), mode),
+        trailingInset: catalogMetric(kiraUICatalogStack, metricMenuTrailingInset(), mode),
+        labelSize: catalogMetric(kiraUICatalogStack, metricMenuLabelSize(), mode),
+        cardWidth: catalogMetric(kiraUICatalogStack, metricMenuCardWidth(), mode),
+        cardPadding: catalogMetric(kiraUICatalogStack, metricMenuCardPadding(), mode),
+        cardRadius: catalogMetric(kiraUICatalogStack, metricMenuCardRadius(), mode),
+        dividerInset: catalogMetric(kiraUICatalogStack, metricMenuDividerInset(), mode),
+        dividerVerticalInset: catalogMetric(kiraUICatalogStack, metricMenuDividerVerticalInset(), mode),
+        actionPadding: catalogMetric(kiraUICatalogStack, metricMenuActionPadding(), mode),
+        pillInset: catalogMetric(kiraUICatalogStack, metricMenuPillInset(), mode),
+        chevronBox: catalogMetric(kiraUICatalogStack, metricMenuChevronBox(), mode),
+        chevronSize: catalogMetric(kiraUICatalogStack, metricMenuChevronSize(), mode),
+        iconColumn: catalogMetric(kiraUICatalogStack, metricMenuIconColumn(), mode),
+        iconGap: catalogMetric(kiraUICatalogStack, metricMenuIconGap(), mode),
+        actionIconSize: catalogMetric(kiraUICatalogStack, metricMenuActionIconSize(), mode),
+        actionLabelSize: catalogMetric(kiraUICatalogStack, metricMenuActionLabelSize(), mode),
+        actionSpacing: catalogMetric(kiraUICatalogStack, metricMenuActionSpacing(), mode),
+        actionsTopInset: catalogMetric(kiraUICatalogStack, metricMenuActionsTopInset(), mode),
+        actionsBottomInset: catalogMetric(kiraUICatalogStack, metricMenuActionsBottomInset(), mode),
+        actionsInset: catalogMetric(kiraUICatalogStack, metricMenuActionsInset(), mode),
+        actionsGap: catalogMetric(kiraUICatalogStack, metricMenuActionsGap(), mode)
+    }
+}
+
+let desktopMenuMetrics = catalogMenuMetrics(.AdaptiveDesktop)
+let mobileMenuMetrics = catalogMenuMetrics(.AdaptiveMobile)
+
+// The menu geometry in effect here: the interface's, at the cascaded
+// `.controlSize(...)`.
+public function menuMetrics(modifiers: borrow ModifierContext) -> MenuMetrics {
+    let metrics = interfaceMode() == .AdaptiveDesktop ? desktopMenuMetrics : mobileMenuMetrics
+    return metrics.scaled(resolvedControlMetrics(modifiers).menuScale)
+}
+
+// A bar's menu growing out of its button's glass and going home into it: the
+// springs its width, height and fall ride out and how hard the fall is
+// launched, the spring it squares off on and how far along it starts, when it
+// shows its rows and how magnified they arrive, and when the button's glyph
+// goes. Home: the springs it shrinks, flies and rounds on, how long the way
+// home takes, and how the button's own glass leads it there -- how deep in
+// the menu it starts, how far out of it it leads, when it surfaces and when
+// it starts to lead, the reach that fuses the two, and when the rows go and
+// the glyph comes back, out of how much blur.
+public struct MenuMorphMetrics {
+    let growthResponse: Float
+    let growthDamping: Float
+    let heightResponse: Float
+    let heightDamping: Float
+    let dropResponse: Float
+    let dropDamping: Float
+    let dropLaunch: Float
+    let closeResponse: Float
+    let closeDamping: Float
+    let flightResponse: Float
+    let flightDamping: Float
+    let cornerResponse: Float
+    let closeCornerResponse: Float
+    let closeDuration: Float
+    let roundness: Float
+    let contentOpen: Float
+    let contentClose: Float
+    let contentZoom: Float
+    let contentBlur: Float
+    let glyphGone: Float
+    let glyphReturn: Float
+    let glyphBack: Float
+    let glyphBlur: Float
+    let homeReach: Float
+    let homeDepth: Float
+    let homeSurface: Float
+    let homeLead: Float
+    let homeBlend: Float
+}
+
+public function catalogMenuMorphMetrics(mode: InterfaceMode) -> MenuMorphMetrics {
+    return MenuMorphMetrics {
+        growthResponse: catalogMetric(kiraUICatalogStack, metricMenuMorphGrowthResponse(), mode),
+        growthDamping: catalogMetric(kiraUICatalogStack, metricMenuMorphGrowthDamping(), mode),
+        heightResponse: catalogMetric(kiraUICatalogStack, metricMenuMorphHeightResponse(), mode),
+        heightDamping: catalogMetric(kiraUICatalogStack, metricMenuMorphHeightDamping(), mode),
+        dropResponse: catalogMetric(kiraUICatalogStack, metricMenuMorphDropResponse(), mode),
+        dropDamping: catalogMetric(kiraUICatalogStack, metricMenuMorphDropDamping(), mode),
+        dropLaunch: catalogMetric(kiraUICatalogStack, metricMenuMorphDropLaunch(), mode),
+        closeResponse: catalogMetric(kiraUICatalogStack, metricMenuMorphCloseResponse(), mode),
+        closeDamping: catalogMetric(kiraUICatalogStack, metricMenuMorphCloseDamping(), mode),
+        flightResponse: catalogMetric(kiraUICatalogStack, metricMenuMorphFlightResponse(), mode),
+        flightDamping: catalogMetric(kiraUICatalogStack, metricMenuMorphFlightDamping(), mode),
+        cornerResponse: catalogMetric(kiraUICatalogStack, metricMenuMorphCornerResponse(), mode),
+        closeCornerResponse: catalogMetric(kiraUICatalogStack, metricMenuMorphCloseCornerResponse(), mode),
+        closeDuration: catalogMetric(kiraUICatalogStack, metricMenuMorphCloseDuration(), mode),
+        roundness: catalogMetric(kiraUICatalogStack, metricMenuMorphRoundness(), mode),
+        contentOpen: catalogMetric(kiraUICatalogStack, metricMenuMorphContentOpen(), mode),
+        contentClose: catalogMetric(kiraUICatalogStack, metricMenuMorphContentClose(), mode),
+        contentZoom: catalogMetric(kiraUICatalogStack, metricMenuMorphContentZoom(), mode),
+        contentBlur: catalogMetric(kiraUICatalogStack, metricMenuMorphContentBlur(), mode),
+        glyphGone: catalogMetric(kiraUICatalogStack, metricMenuMorphGlyphGone(), mode),
+        glyphReturn: catalogMetric(kiraUICatalogStack, metricMenuMorphGlyphReturn(), mode),
+        glyphBack: catalogMetric(kiraUICatalogStack, metricMenuMorphGlyphBack(), mode),
+        glyphBlur: catalogMetric(kiraUICatalogStack, metricMenuMorphGlyphBlur(), mode),
+        homeReach: catalogMetric(kiraUICatalogStack, metricMenuMorphHomeReach(), mode),
+        homeDepth: catalogMetric(kiraUICatalogStack, metricMenuMorphHomeDepth(), mode),
+        homeSurface: catalogMetric(kiraUICatalogStack, metricMenuMorphHomeSurface(), mode),
+        homeLead: catalogMetric(kiraUICatalogStack, metricMenuMorphHomeLead(), mode),
+        homeBlend: catalogMetric(kiraUICatalogStack, metricMenuMorphHomeBlend(), mode)
+    }
+}
+
+let desktopMenuMorphMetrics = catalogMenuMorphMetrics(.AdaptiveDesktop)
+let mobileMenuMorphMetrics = catalogMenuMorphMetrics(.AdaptiveMobile)
+
+public function menuMorphMetrics() -> MenuMorphMetrics {
+    return interfaceMode() == .AdaptiveDesktop ? desktopMenuMorphMetrics : mobileMenuMorphMetrics
+}
+
+// A submenu coming out of its row over the menu it is in: the springs its card
+// grows and shrinks on; how the menu behind it falls back -- how far, how dim,
+// after how long, and on which springs, going and coming back, and the one
+// spring it shrinks and grows back on; how far the card rests above its row,
+// past where the menu's fall carries it, and how hard it is thrown up past
+// that as it opens; where the
+// header sits in the card; and at what point of the growth the chevron has
+// turned, the glass shows and goes, and the items show and go.
+public struct MenuSubmenuMetrics {
+    let openResponse: Float
+    let openDamping: Float
+    let closeResponse: Float
+    let closeDamping: Float
+    let recededOpacity: Float
+    let recedeScale: Float
+    let recedeHold: Float
+    let dwell: Float
+    let widen: Float
+    let recedeInResponse: Float
+    let recedeInDamping: Float
+    let recedeOutResponse: Float
+    let recedeOutDamping: Float
+    let shrinkResponse: Float
+    let shrinkDamping: Float
+    let rise: Float
+    let riseLaunch: Float
+    let headerCenter: Float
+    let chevronTurn: Float
+    let cardAppear: Float
+    let cardAppearSpan: Float
+    let cardVanish: Float
+    let itemsAppear: Float
+    let itemsAppearSpan: Float
+    let itemsVanish: Float
+    let itemsVanishSpan: Float
+}
+
+public function catalogMenuSubmenuMetrics(mode: InterfaceMode) -> MenuSubmenuMetrics {
+    return MenuSubmenuMetrics {
+        openResponse: catalogMetric(kiraUICatalogStack, metricMenuSubmenuOpenResponse(), mode),
+        openDamping: catalogMetric(kiraUICatalogStack, metricMenuSubmenuOpenDamping(), mode),
+        closeResponse: catalogMetric(kiraUICatalogStack, metricMenuSubmenuCloseResponse(), mode),
+        closeDamping: catalogMetric(kiraUICatalogStack, metricMenuSubmenuCloseDamping(), mode),
+        recededOpacity: catalogMetric(kiraUICatalogStack, metricMenuSubmenuRecededOpacity(), mode),
+        recedeScale: catalogMetric(kiraUICatalogStack, metricMenuSubmenuRecedeScale(), mode),
+        recedeHold: catalogMetric(kiraUICatalogStack, metricMenuSubmenuRecedeHold(), mode),
+        dwell: catalogMetric(kiraUICatalogStack, metricMenuSubmenuDwell(), mode),
+        widen: catalogMetric(kiraUICatalogStack, metricMenuSubmenuWiden(), mode),
+        recedeInResponse: catalogMetric(kiraUICatalogStack, metricMenuSubmenuRecedeInResponse(), mode),
+        recedeInDamping: catalogMetric(kiraUICatalogStack, metricMenuSubmenuRecedeInDamping(), mode),
+        recedeOutResponse: catalogMetric(kiraUICatalogStack, metricMenuSubmenuRecedeOutResponse(), mode),
+        recedeOutDamping: catalogMetric(kiraUICatalogStack, metricMenuSubmenuRecedeOutDamping(), mode),
+        shrinkResponse: catalogMetric(kiraUICatalogStack, metricMenuSubmenuShrinkResponse(), mode),
+        shrinkDamping: catalogMetric(kiraUICatalogStack, metricMenuSubmenuShrinkDamping(), mode),
+        rise: catalogMetric(kiraUICatalogStack, metricMenuSubmenuRise(), mode),
+        riseLaunch: catalogMetric(kiraUICatalogStack, metricMenuSubmenuRiseLaunch(), mode),
+        headerCenter: catalogMetric(kiraUICatalogStack, metricMenuSubmenuHeaderCenter(), mode),
+        chevronTurn: catalogMetric(kiraUICatalogStack, metricMenuSubmenuChevronTurn(), mode),
+        cardAppear: catalogMetric(kiraUICatalogStack, metricMenuSubmenuCardAppear(), mode),
+        cardAppearSpan: catalogMetric(kiraUICatalogStack, metricMenuSubmenuCardAppearSpan(), mode),
+        cardVanish: catalogMetric(kiraUICatalogStack, metricMenuSubmenuCardVanish(), mode),
+        itemsAppear: catalogMetric(kiraUICatalogStack, metricMenuSubmenuItemsAppear(), mode),
+        itemsAppearSpan: catalogMetric(kiraUICatalogStack, metricMenuSubmenuItemsAppearSpan(), mode),
+        itemsVanish: catalogMetric(kiraUICatalogStack, metricMenuSubmenuItemsVanish(), mode),
+        itemsVanishSpan: catalogMetric(kiraUICatalogStack, metricMenuSubmenuItemsVanishSpan(), mode)
+    }
+}
+
+let desktopMenuSubmenuMetrics = catalogMenuSubmenuMetrics(.AdaptiveDesktop)
+let mobileMenuSubmenuMetrics = catalogMenuSubmenuMetrics(.AdaptiveMobile)
+
+public function menuSubmenuMetrics() -> MenuSubmenuMetrics {
+    return interfaceMode() == .AdaptiveDesktop ? desktopMenuSubmenuMetrics : mobileMenuSubmenuMetrics
+}
+
+// --- Tab bar -----------------------------------------------------------------
+
+// The capsule a `TabView` floats in the toolbar's row and the tabs in it.
+public struct TabBarMetrics {
+    let height: Float
+    let inset: Float
+    let tabHeight: Float
+    let labelInset: Float
+    let symbolInset: Float
+}
+
+public function catalogTabBarMetrics(mode: InterfaceMode) -> TabBarMetrics {
+    return TabBarMetrics {
+        height: catalogMetric(kiraUICatalogStack, metricTabBarHeight(), mode),
+        inset: catalogMetric(kiraUICatalogStack, metricTabBarInset(), mode),
+        tabHeight: catalogMetric(kiraUICatalogStack, metricTabHeight(), mode),
+        labelInset: catalogMetric(kiraUICatalogStack, metricTabLabelInset(), mode),
+        symbolInset: catalogMetric(kiraUICatalogStack, metricTabSymbolInset(), mode)
+    }
+}
+
+let desktopTabBarMetrics = catalogTabBarMetrics(.AdaptiveDesktop)
+let mobileTabBarMetrics = catalogTabBarMetrics(.AdaptiveMobile)
+
+public function tabBarMetrics() -> TabBarMetrics {
+    return interfaceMode() == .AdaptiveDesktop ? desktopTabBarMetrics : mobileTabBarMetrics
+}
+
+// An unselected tab's title, and the capsule behind the selected one, whose
+// title takes the accent.
+public let tabLabel = catalogAdaptive(kiraUICatalogStack, "tabLabel")
+public let tabSelection = catalogAdaptive(kiraUICatalogStack, "tabSelection")
+
+// --- Switches, sliders and progress bars --------------------------------------
+
+// A switch's capsule track and the knob held inside it, off its ends.
+public struct SwitchMetrics {
+    let width: Float
+    let height: Float
+    let knobWidth: Float
+    let knobInset: Float
+}
+
+public function catalogSwitchMetrics(mode: InterfaceMode) -> SwitchMetrics {
+    return SwitchMetrics {
+        width: catalogMetric(kiraUICatalogStack, metricSwitchWidth(), mode),
+        height: catalogMetric(kiraUICatalogStack, metricSwitchHeight(), mode),
+        knobWidth: catalogMetric(kiraUICatalogStack, metricSwitchKnobWidth(), mode),
+        knobInset: catalogMetric(kiraUICatalogStack, metricSwitchKnobInset(), mode)
+    }
+}
+
+let desktopSwitchMetrics = catalogSwitchMetrics(.AdaptiveDesktop)
+let mobileSwitchMetrics = catalogSwitchMetrics(.AdaptiveMobile)
+
+public function switchMetrics() -> SwitchMetrics {
+    return interfaceMode() == .AdaptiveDesktop ? desktopSwitchMetrics : mobileSwitchMetrics
+}
+
+// A slider's height, the track through its middle, the knob that rides it and
+// the two shadows the knob casts: a soft one falling away from it and a tight
+// one where it meets the track.
+public struct SliderMetrics {
+    let height: Float
+    let trackHeight: Float
+    let knobWidth: Float
+    let knobHeight: Float
+    // How far in from either end of the track the knob's center stops.
+    let knobInset: Float
+    let heldKnobWidth: Float
+    let heldKnobHeight: Float
+    let knobShadowRadius: Float
+    let knobShadowOffset: Float
+    let knobContactShadowRadius: Float
+    let knobContactShadowOffset: Float
+}
+
+public function catalogSliderMetrics(mode: InterfaceMode) -> SliderMetrics {
+    return SliderMetrics {
+        height: catalogMetric(kiraUICatalogStack, metricSliderHeight(), mode),
+        trackHeight: catalogMetric(kiraUICatalogStack, metricSliderTrackHeight(), mode),
+        knobWidth: catalogMetric(kiraUICatalogStack, metricSliderKnobWidth(), mode),
+        knobHeight: catalogMetric(kiraUICatalogStack, metricSliderKnobHeight(), mode),
+        knobInset: catalogMetric(kiraUICatalogStack, metricSliderKnobInset(), mode),
+        heldKnobWidth: catalogMetric(kiraUICatalogStack, metricSliderHeldKnobWidth(), mode),
+        heldKnobHeight: catalogMetric(kiraUICatalogStack, metricSliderHeldKnobHeight(), mode),
+        knobShadowRadius: catalogMetric(kiraUICatalogStack, metricKnobShadowRadius(), mode),
+        knobShadowOffset: catalogMetric(kiraUICatalogStack, metricKnobShadowOffset(), mode),
+        knobContactShadowRadius: catalogMetric(kiraUICatalogStack, metricKnobContactShadowRadius(), mode),
+        knobContactShadowOffset: catalogMetric(kiraUICatalogStack, metricKnobContactShadowOffset(), mode)
+    }
+}
+
+let desktopSliderMetrics = catalogSliderMetrics(.AdaptiveDesktop)
+let mobileSliderMetrics = catalogSliderMetrics(.AdaptiveMobile)
+
+public function sliderMetrics() -> SliderMetrics {
+    return interfaceMode() == .AdaptiveDesktop ? desktopSliderMetrics : mobileSliderMetrics
+}
+
+// How opaque a switch or slider stands while it is disabled.
+public function catalogDisabledControlOpacity(mode: InterfaceMode) -> Float {
+    return catalogMetric(kiraUICatalogStack, metricDisabledControlOpacity(), mode)
+}
+
+let desktopDisabledControlOpacity = catalogDisabledControlOpacity(.AdaptiveDesktop)
+let mobileDisabledControlOpacity = catalogDisabledControlOpacity(.AdaptiveMobile)
+
+public function disabledControlOpacity() -> Float {
+    return interfaceMode() == .AdaptiveDesktop ? desktopDisabledControlOpacity : mobileDisabledControlOpacity
+}
+
+// A progress bar's track.
+public function catalogProgressTrackHeight(mode: InterfaceMode) -> Float {
+    return catalogMetric(kiraUICatalogStack, metricProgressTrackHeight(), mode)
+}
+
+let desktopProgressTrackHeight = catalogProgressTrackHeight(.AdaptiveDesktop)
+let mobileProgressTrackHeight = catalogProgressTrackHeight(.AdaptiveMobile)
+
+public function progressTrackHeight() -> Float {
+    return interfaceMode() == .AdaptiveDesktop ? desktopProgressTrackHeight : mobileProgressTrackHeight
+}
+
+// A switch's track on and off, the knob a switch and a slider share and the
+// shadow a slider's knob casts, the wash in a held slider knob's glass, and the
+// tracks under a slider's knob and a progress bar's fill.
+public let switchOn = catalogAdaptive(kiraUICatalogStack, "switchOn")
+public let switchOff = catalogAdaptive(kiraUICatalogStack, "switchOff")
+public let controlKnob = catalogAdaptive(kiraUICatalogStack, "controlKnob")
+public let knobShadow = catalogAdaptive(kiraUICatalogStack, "knobShadow")
+public let sliderTrack = catalogAdaptive(kiraUICatalogStack, "sliderTrack")
+public let sliderKnobGlass = catalogAdaptive(kiraUICatalogStack, "sliderKnobGlass")
+public let progressTrack = catalogAdaptive(kiraUICatalogStack, "progressTrack")
+
+// The shadow a menu's card casts, and the wash under the row a press is on.
+public let menuShadow = catalogAdaptive(kiraUICatalogStack, "menuShadow")
+public let menuRowHighlight = catalogAdaptive(kiraUICatalogStack, "menuRowHighlight")
+// How far a menu's shadow blurs and how far below the card it falls.
+public struct MenuShadowMetrics {
+    let radius: Float
+    let offset: Float
+}
+
+public function catalogMenuShadowMetrics(mode: InterfaceMode) -> MenuShadowMetrics {
+    return MenuShadowMetrics {
+        radius: catalogMetric(kiraUICatalogStack, metricMenuShadowRadius(), mode),
+        offset: catalogMetric(kiraUICatalogStack, metricMenuShadowOffset(), mode)
+    }
+}
+
+let desktopMenuShadowMetrics = catalogMenuShadowMetrics(.AdaptiveDesktop)
+let mobileMenuShadowMetrics = catalogMenuShadowMetrics(.AdaptiveMobile)
+
+public function menuShadowMetrics() -> MenuShadowMetrics {
+    return interfaceMode() == .AdaptiveDesktop ? desktopMenuShadowMetrics : mobileMenuShadowMetrics
+}
+
+// --- Text fields --------------------------------------------------------------
+
+// The insertion point a focused field draws in the accent.
+public struct CaretMetrics {
+    let width: Float
+    let height: Float
+}
+
+public function catalogCaretMetrics(mode: InterfaceMode) -> CaretMetrics {
+    return CaretMetrics {
+        width: catalogMetric(kiraUICatalogStack, metricCaretWidth(), mode),
+        height: catalogMetric(kiraUICatalogStack, metricCaretHeight(), mode)
+    }
+}
+
+let desktopCaretMetrics = catalogCaretMetrics(.AdaptiveDesktop)
+let mobileCaretMetrics = catalogCaretMetrics(.AdaptiveMobile)
+
+public function caretMetrics() -> CaretMetrics {
+    return interfaceMode() == .AdaptiveDesktop ? desktopCaretMetrics : mobileCaretMetrics
+}

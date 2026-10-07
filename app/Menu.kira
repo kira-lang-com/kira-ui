@@ -48,32 +48,31 @@ import KCoreAnimation
 // From Apple's iOS and iPadOS 27 design kit, its iPad menu: a 238pt card with
 // ten points of air top and bottom, 36pt rows held 16pt off its edges, a 28pt
 // glyph column eight points before 15pt titles, and separators that are a line
-// in a 16pt band.
+// in a 16pt band. On a computer the menu is the platform's dense one.
 
-// Menu geometry resolves through the active control-size table. The regular
-// defaults are the kit's; Mini/Small/Large are theme-owned variants in
-// Metrics.kira.
+// Menu geometry is the interface's, from the catalog, drawn at the size class
+// in effect; see `menuMetrics`.
 public function menuRowPitch(modifiers: borrow ModifierContext) -> Float {
-    return resolvedControlMetrics(modifiers).menuRowHeight
+    return menuMetrics(modifiers).rowHeight
 }
 
 public function menuRowLeading(modifiers: borrow ModifierContext) -> Float {
-    return resolvedControlMetrics(modifiers).menuLeadingInset
+    return menuMetrics(modifiers).leadingInset
 }
 
 public function menuRowTrailing(modifiers: borrow ModifierContext) -> Float {
-    return resolvedControlMetrics(modifiers).menuTrailingInset
+    return menuMetrics(modifiers).trailingInset
 }
 
 public function menuLabelSize(modifiers: borrow ModifierContext) -> Float {
-    return resolvedControlMetrics(modifiers).menuLabelSize
+    return menuMetrics(modifiers).labelSize
 }
 
 // The corner every menu card takes -- the panel and the submenu that opens over
 // it alike. It is part of menu presentation geometry, so it resolves through the
 // active metric table rather than living as a private literal here.
 public function menuCardRadius(modifiers: borrow ModifierContext) -> Float {
-    return resolvedControlMetrics(modifiers).menuCardRadius
+    return menuMetrics(modifiers).cardRadius
 }
 
 // --- the submenu's motion ---------------------------------------------------
@@ -83,7 +82,7 @@ public function menuCardRadius(modifiers: borrow ModifierContext) -> Float {
 
 // The submenu's card growing out of its row, and going back into it.
 public function menuSubmenuSpring(opening: Bool) -> MotionSpring {
-    let metrics = menuSubmenuMetrics
+    let metrics = menuSubmenuMetrics()
     if opening {
         return MotionSpring { response: metrics.openResponse, damping: metrics.openDamping, target: 1.0 }
     }
@@ -93,13 +92,13 @@ public function menuSubmenuSpring(opening: Bool) -> MotionSpring {
 // The menu behind it falling back. Slow, and it starts late -- see
 // `recedeHold`.
 public function menuRecedeInSpring() -> MotionSpring {
-    return MotionSpring { response: menuSubmenuMetrics.recedeInResponse, damping: menuSubmenuMetrics.recedeInDamping, target: 1.0 }
+    return MotionSpring { response: menuSubmenuMetrics().recedeInResponse, damping: menuSubmenuMetrics().recedeInDamping, target: 1.0 }
 }
 
 // The menu behind it coming back. Nothing like the same motion, and no hold at
 // all: the thing you are returning to does not wait.
 public function menuRecedeOutSpring() -> MotionSpring {
-    return MotionSpring { response: menuSubmenuMetrics.recedeOutResponse, damping: menuSubmenuMetrics.recedeOutDamping, target: 0.0 }
+    return MotionSpring { response: menuSubmenuMetrics().recedeOutResponse, damping: menuSubmenuMetrics().recedeOutDamping, target: 0.0 }
 }
 
 // --- the menu row ------------------------------------------------------------
@@ -122,14 +121,14 @@ public function menuChevronTurn(amount: Float) -> Float {
 // How far a header has gone from its row's weight to its card's, on the
 // chevron's schedule.
 public function menuHeaderEmphasis(amount: Float) -> Float {
-    return min(max(amount / menuSubmenuMetrics.chevronTurn, 0.0), 1.0)
+    return min(max(amount / menuSubmenuMetrics().chevronTurn, 0.0), 1.0)
 }
 
 // The box the chevron is centered in. A turning glyph sweeps its own diagonal, so
 // the box is squared and large enough to hold it at every angle rather than at
 // the two it rests at.
 public function menuChevronBox(modifiers: borrow ModifierContext) -> Float {
-    return resolvedControlMetrics(modifiers).menuChevronBox
+    return menuMetrics(modifiers).chevronBox
 }
 
 // A submenu's header: the row that owns it, which stays put while the card grows
@@ -152,7 +151,7 @@ public construct MenuHeader(title: String, systemImage: Symbol, amount: Float, k
 
             ZStack(alignment: .Center) {
                 Icon(symbol: .ChevronRight)
-                    .font(size: resolvedControlMetrics(modifiers).menuChevronSize)
+                    .font(size: menuMetrics(modifiers).chevronSize)
                     .foregroundColor(.Secondary)
                     .rotationEffect(menuChevronTurn(amount))
             }
@@ -343,15 +342,15 @@ public function menuSubmenuWidth(reveal: borrow KiraUiMenuReveal, modifiers: bor
 }
 
 public function menuSubmenuWidening(reveal: borrow KiraUiMenuReveal) -> Float {
-    return menuSubmenuMetrics.widen * min(max(reveal.amount, 0.0), 1.0)
+    return menuSubmenuMetrics().widen * min(max(reveal.amount, 0.0), 1.0)
 }
 
 // Where an open submenu's card tops out: so the header is where its row was,
 // the card's air above it, unless the card would run off the bottom of the
 // window -- then as far up as it has to go, and never off the top.
 public function menuSubmenuTop(reveal: borrow KiraUiMenuReveal, full: Float, viewportHeight: Float) -> Float {
-    let margin = windowChromeMetrics.edgeInset
-    let inset = menuSubmenuMetrics.headerCenter - reveal.anchorH * 0.5
+    let margin = windowChromeMetrics().edgeInset
+    let inset = menuSubmenuMetrics().headerCenter - reveal.anchorH * 0.5
     return max(min(reveal.anchorY - inset, viewportHeight - margin - full), margin)
 }
 
@@ -374,7 +373,7 @@ public function menuSubmenuCard(
     reveal: borrow KiraUiMenuReveal,
     modifiers: borrow ModifierContext,
 ) -> CALayerDescription {
-    let metrics = menuSubmenuMetrics
+    let metrics = menuSubmenuMetrics()
     let width = menuSubmenuWidth(reveal, modifiers)
     let rowHeight = reveal.anchorH
     let inset = metrics.headerCenter - rowHeight * 0.5
@@ -505,9 +504,9 @@ public construct ContextMenu() extends Widget {
         .glassEffect(glass = .Regular, shape = .Squircle(menuCardRadius(modifiers)), interactive = true)
         .shadow(
             color: themeAdaptiveColor(menuShadow, modifierAppearance(modifiers)),
-            radius: menuShadowRadius,
+            radius: menuShadowMetrics().radius,
             x: 0.0,
-            y: menuShadowOffset
+            y: menuShadowMetrics().offset
         )
         .scaleEffect(recession.scale, anchor: recession.anchor)
         var described = card.describe(context, modifierContextPresenting(modifiers, .MenuRow))
@@ -529,16 +528,16 @@ public construct MenuItems() extends Widget {
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let recession = kiraUiMenuRecession(context)
-        let metrics = resolvedControlMetrics(modifiers)
+        let menu = menuMetrics(modifiers)
         let rows = VStack(spacing: .None) {
             For(item in children) {
                 item
             }
         }
         .opacity(recession.ink)
-        .width(metrics.menuCardWidth)
+        .width(menu.cardWidth)
         var described = rows.describe(context, modifierContextPresenting(modifiers, .MenuRow))
-        described.layout.paddingTop = metrics.menuCardPadding
+        described.layout.paddingTop = menu.cardPadding
         menuCardFoot(described, modifiers)
         return described
     }
@@ -547,6 +546,6 @@ public construct MenuItems() extends Widget {
 // A menu card's rows end on the card's padding, whichever card they are in:
 // a menu's own, or a submenu's under its header.
 public function menuCardFoot(rows: borrow mut CALayerDescription, modifiers: borrow ModifierContext) {
-    rows.layout.paddingBottom = resolvedControlMetrics(modifiers).menuCardPadding
+    rows.layout.paddingBottom = menuMetrics(modifiers).cardPadding
     return
 }

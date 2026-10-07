@@ -1,0 +1,92 @@
+import Foundation
+import KiraGraphics
+import KiraLayout
+import KCoreAnimation
+
+// The items a view puts on the window's bar, matching SwiftUI's
+// `ToolbarItem`, `ToolbarItemGroup` and `ToolbarSpacer`.
+
+// One item on the window's bar, matching SwiftUI's `ToolbarItem(placement:)`.
+//
+// It lowers to nothing where it is written: the view it produces goes to the
+// bar, and what stands in its place is empty. That is what lets a column declare
+// its bar items beside the content they belong to without the items appearing
+// inside the column.
+public construct ToolbarItem(placement: ToolbarItemPlacement = .Automatic) extends Widget {
+    let content: some Widget
+
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        let group = kiraUiToolbarOpenGroup()
+        kiraUiToolbarDeclare(placement, group, content.describe(context, modifiers))
+        return CALayerDescription {}
+    }
+}
+
+// One described item onto the bar. The shared-background flag is taken right
+// after the item's content described, which is the one moment a
+// `.sharedBackgroundVisibility(...)` written inside it can belong to it.
+public function kiraUiToolbarDeclare(placement: ToolbarItemPlacement, group: Int, described: CALayerDescription) {
+    kiraUiToolbarAppendEntry(move placement, KiraUiToolbarEntry {
+        content: move described,
+        shared: kiraUiToolbarTakePendingShared(),
+        group: group
+    })
+    return
+}
+
+// Several items, each with its own placement, matching SwiftUI's
+// `ToolbarContent`: what a view hands to `.toolbar(...)` when it has more than
+// one thing to put on the bar.
+public construct ToolbarContent() extends Widget {
+    let children: [some Widget]
+
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        return CALayerDescription {
+            sublayers: describedChildren(context, modifiers, children)
+        }
+    }
+}
+
+// Several items at one placement on one piece of glass, matching SwiftUI's
+// `ToolbarItemGroup`: the items read as one control with a seam between them.
+public construct ToolbarItemGroup(placement: ToolbarItemPlacement = .Automatic) extends Widget {
+    let children: [some Widget]
+
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        let group = kiraUiToolbarOpenGroup()
+        for child in children {
+            kiraUiToolbarDeclare(placement, group, child.describe(context, modifiers))
+        }
+        return CALayerDescription {}
+    }
+}
+
+// The space that splits one run of toolbar items into two, matching SwiftUI's
+// `ToolbarSpacer`.
+//
+// A fixed spacer holds the platform's spacer width between the pieces of glass
+// either side of it. `.Flexible` takes whatever room is left, which is what
+// pushes a trailing group to the far end.
+// SwiftUI takes the sizing UNLABELED and first — `ToolbarSpacer(.fixed,
+// placement: .primaryAction)` — so it is first here too. Kira binds by position
+// and treats a label as decoration, which means the order is the API.
+public construct ToolbarSpacer(
+    sizing: SpacerSizing = .Fixed,
+    placement: ToolbarItemPlacement = .Automatic,
+) extends Widget {
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        kiraUiToolbarAppendSpacer(placement, sizing)
+        return CALayerDescription {}
+    }
+}
+
+// The transaction the bar changes in this build; see `motion`.
+public function kiraUiToolbarMotion() -> CALayerAnimation {
+    kiraUiToolbarSinkEnsure()
+    let sink = nativeRecover<KiraUiToolbarSink>(kiraUiStateSlotGet(kiraUiToolbarSinkKey()))
+    return copy sink.motion
+}

@@ -1,0 +1,265 @@
+import Foundation
+import KiraLayout
+import KCoreAnimation
+
+// A workspace's cards: the panels at one edge on one raised surface, a strip
+// of their tabs across its top and the selected one's content under it.
+//
+// The strip is a tab view's bar: its tabs in one capsule of glass, the
+// selected one on the selection capsule in the primary ink, and the add menu in
+// glass of its own at the far end. A tab is its panel's label, so a
+// `.labelStyle(...)` on the workspace says whether its strips show titles,
+// symbols or both. A tab is pressed to select its panel, closed from the
+// cross that shows while it is selected or the pointer is on it, and dragged
+// to dock its panel at another edge. The add menu holds every panel that has
+// been closed, and brings one back here.
+
+// The inset the strip holds its glass in from the card's edges.
+public function workspaceStripInset() -> Float {
+    return workspaceMetrics().stripInset
+}
+
+// A card's corner, concentric with the strip it holds as SwiftUI's concentric
+// shapes are: the bar's own, out by the inset the card holds it in.
+public function workspacePanelRadius() -> Float {
+    return tabBarMetrics().height / 2.0 + workspaceStripInset()
+}
+
+// One edge's card: its strip over the selected panel's content, which takes
+// the rest of the card. The center has one too, naming what it shows, as
+// every card does.
+public function workspaceCard(
+    state: borrow KiraUiWorkspaceState,
+    edge: borrow PanelEdge,
+    shown: borrow [String],
+    panels: borrow [KiraUiPanelDeclaration],
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let selected = state.edges[panelEdgeIndex(edge)].selected
+    var layers: [CALayerDescription] = []
+    layers.append(workspaceStrip(state, edge, shown, panels, selected, context, modifiers))
+    let index = kiraUiWorkspaceDeclarationIndex(panels, selected)
+    if index >= 0 {
+        layers.append(CALayerDescription {
+            key: index + 1,
+            clipsChildren: true,
+            layout: CALayoutIntent {
+                flex: 1
+            },
+            sublayers: [copy panels[index].content]
+        })
+    }
+    let radius = workspacePanelRadius()
+    return CALayerDescription {
+        cornerRadius: radius,
+        clipsChildren: true,
+        content: .Solid(CASolid {
+            fill: workspacePanelFill(modifiers),
+            cornerRadius: radius
+        }),
+        layout: CALayoutIntent {
+            axis: .Column
+        },
+        sublayers: move layers
+    }
+}
+
+// The strip across a card's top: the capsule of tabs at its leading end and
+// the add menu at the far one.
+public function workspaceStrip(
+    state: borrow KiraUiWorkspaceState,
+    edge: borrow PanelEdge,
+    shown: borrow [String],
+    panels: borrow [KiraUiPanelDeclaration],
+    selected: borrow String,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let inset = workspaceStripInset()
+    var tabs: [CALayerDescription] = []
+    for panel in shown {
+        let index = kiraUiWorkspaceDeclarationIndex(panels, panel)
+        if index >= 0 {
+            let placement = kiraUiWorkspacePlacementIndex(state, panel)
+            let closable = placement >= 0 && !state.placements[placement].pinned
+            let lifted = state.drag.kind == .Tab && state.drag.moving && state.drag.panel == panel
+            tabs.append(workspaceTab(panels[index], index, panel == selected, closable, lifted, context, modifiers))
+        }
+    }
+    var parts: [CALayerDescription] = [tabBarCapsule(move tabs, context, modifiers)]
+    parts.append(Spacer().describe(context, modifiers))
+    let closed = workspaceClosedPanels(state, panels)
+    if closed.count > 0 && (edge != .Center || state.center == .AcceptsPanels) {
+        parts.append(workspaceAddMenu(closed, edge, context, modifiers))
+    }
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            axis: .Row,
+            heightFill: false,
+            fixedHeight: tabBarMetrics().height + inset,
+            paddingLeading: inset,
+            paddingTop: inset,
+            paddingTrailing: inset,
+            alignment: Point { x: 0.0, y: 0.5 }
+        },
+        sublayers: move parts
+    }
+}
+
+// A tab: its panel's label on the bar's tab, and the cross that closes it.
+// The pointer resting on it lights it. Its key is its panel's place among the
+// declarations, so the press and the drag on it are read back as that
+// panel's whatever the strip holds around it.
+public function workspaceTab(
+    declaration: borrow KiraUiPanelDeclaration,
+    index: Int,
+    selected: Bool,
+    closable: Bool,
+    lifted: Bool,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let key = workspaceTabKey(index)
+    let close = workspaceCloseKey(index)
+    kiraUiLayerActionRegister(key, workspaceSelectAction(copy declaration.panel))
+    var tab = workspaceTabFace(declaration, selected, context, modifiers)
+    tab.key = index + 1
+    tab.opacity = lifted ? 0.4 : 1.0
+    tab.hittable = !modifiers.disabled
+    tab.hitKey = key
+    tab.hoverColor = kiraUiHoverColor(modifiers)
+    let hovered = context.hoveredKey == key || context.hoveredKey == close
+    if closable && (selected || hovered) {
+        tab.layout.spacing = workspaceMetrics().tabSpacing * 2.0
+        tab.layout.paddingTrailing = tab.layout.paddingTrailing / 2.0
+        tab.sublayers.append(workspaceCloseButton(copy declaration.panel, close, selected, context, modifiers))
+    }
+    return tab
+}
+
+// What a tab looks like, with nothing to press: the tab itself, and the one
+// under the pointer while it is dragged.
+public function workspaceTabFace(
+    declaration: borrow KiraUiPanelDeclaration,
+    selected: Bool,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    return tabBarItemFace(tabBarItemLabel(declaration.title, declaration.systemImage, selected, context, modifiers), selected, modifiers)
+}
+
+// The cross that takes a panel out of the workspace, in its tab's ink.
+public function workspaceCloseButton(
+    panel: String,
+    key: Int,
+    selected: Bool,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let metrics = workspaceMetrics()
+    kiraUiLayerActionRegister(key, workspaceHideAction(move panel))
+    let side = tabBarMetrics().tabHeight - metrics.tabSpacing * 4.0
+    let glyph = Icon(symbol: .Xmark)
+        .imageScale(.Small)
+        .describe(context, tabBarItemInk(selected, modifiers))
+    return CALayerDescription {
+        hittable: !modifiers.disabled,
+        hitKey: key,
+        hoverColor: kiraUiHoverColor(modifiers),
+        cornerRadius: side / 2.0,
+        content: .Solid(CASolid {
+            fill: CAColor { a: 0.0 },
+            cornerRadius: side / 2.0
+        }),
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedWidth: side,
+            fixedHeight: side,
+            alignment: Point { x: 0.5, y: 0.5 }
+        },
+        sublayers: [glyph]
+    }
+}
+
+// The panels that have been closed, in the order they were declared.
+public function workspaceClosedPanels(
+    state: borrow KiraUiWorkspaceState,
+    panels: borrow [KiraUiPanelDeclaration],
+) -> [KiraUiPanelDeclaration] {
+    var closed: [KiraUiPanelDeclaration] = []
+    for declaration in panels {
+        let placement = kiraUiWorkspacePlacementIndex(state, declaration.panel)
+        if placement >= 0 && !state.placements[placement].shown {
+            closed.append(KiraUiPanelDeclaration {
+                panel: copy declaration.panel,
+                title: copy declaration.title,
+                systemImage: declaration.systemImage
+            })
+        }
+    }
+    return closed
+}
+
+// The strip's add menu: every closed panel, each brought back to this edge.
+// It is a bar's menu in a circle of glass the strip's height.
+public function workspaceAddMenu(
+    closed: borrow [KiraUiPanelDeclaration],
+    edge: borrow PanelEdge,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let menu = Menu(title: "Add Panel", systemImage: .Plus) {
+        For(declaration in closed) {
+            Button(action: workspaceDockAction(copy declaration.panel, edge)) {
+                Label(title: copy declaration.title, systemImage: declaration.systemImage)
+            }
+        }
+    }
+    let metrics = tabBarMetrics()
+    var button = menu.describe(context, modifierContextPresenting(modifiers, .Toolbar))
+    button.layout.fixedWidth = metrics.tabHeight
+    button.layout.fixedHeight = metrics.tabHeight
+    button.layout.minWidth = metrics.tabHeight
+    return interactiveGlassDescription(
+        context,
+        kiraUiTapSeqKey(),
+        CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedWidth: metrics.height,
+            fixedHeight: metrics.height,
+            alignment: Point { x: 0.5, y: 0.5 }
+        },
+        metrics.height / 2.0,
+        .Circle,
+        modifiers,
+        [button]
+    )
+}
+
+public function workspaceSelectAction(panel: String) -> () -> Void {
+    let chosen = move panel
+    return { in
+        kiraUiWorkspaceSelect(copy chosen)
+        return
+    }
+}
+
+public function workspaceHideAction(panel: String) -> () -> Void {
+    let closing = move panel
+    return { in
+        kiraUiWorkspaceHide(copy closing)
+        return
+    }
+}
+
+public function workspaceDockAction(panel: String, edge: borrow PanelEdge) -> () -> Void {
+    let docking = move panel
+    let to = copy edge
+    return { in
+        kiraUiWorkspaceDock(copy docking, to)
+        return
+    }
+}

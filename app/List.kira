@@ -80,20 +80,20 @@ public construct InsetGroupedList() extends Widget {
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let canvas = themeAdaptiveColor(groupedBackground, modifierAppearance(modifiers))
         kiraUiNavigationSetBackground(copy canvas)
-        let sections = VStack(spacing: .None, spacingLength: listMetrics.sectionSpacing) {
+        let sections = VStack(spacing: .None, spacingLength: listMetrics().sectionSpacing) {
             For(section in children) {
                 section
             }
         }
         var column = sections.describe(context, modifierContextPresenting(modifiers, .InsetGrouped))
-        column.layout.maxWidth = listMetrics.readableWidth
+        column.layout.maxWidth = listMetrics().readableWidth
         return CALayerDescription {
             layout: CALayoutIntent {
                 axis: .Column,
                 paddingLeading: modifiers.contentMargin,
-                paddingTop: listMetrics.topInset,
+                paddingTop: listMetrics().topInset,
                 paddingTrailing: modifiers.contentMargin,
-                paddingBottom: listMetrics.topInset,
+                paddingBottom: listMetrics().topInset,
                 alignment: Point { x: 0.5, y: 0.0 }
             },
             content: .Solid(CASolid {
@@ -118,7 +118,7 @@ public function insetGroupedSection(
     footer: CALayerDescription,
     modifiers: borrow ModifierContext,
 ) -> CALayerDescription {
-    let radius = listMetrics.cornerRadius
+    let radius = listMetrics().cornerRadius
     let card = CALayerDescription {
         layout: CALayoutIntent {
             axis: .Column,
@@ -138,10 +138,10 @@ public function insetGroupedSection(
         group.append(CALayerDescription {
             layout: CALayoutIntent {
                 heightFill: false,
-                paddingLeading: listMetrics.rowInset,
-                paddingTop: listMetrics.headerPadding,
-                paddingTrailing: listMetrics.rowInset,
-                paddingBottom: listMetrics.headerPadding
+                paddingLeading: listMetrics().rowInset,
+                paddingTop: listMetrics().headerPadding,
+                paddingTrailing: listMetrics().rowInset,
+                paddingBottom: listMetrics().headerPadding
             },
             sublayers: [move header]
         })
@@ -151,7 +151,7 @@ public function insetGroupedSection(
     parts.append(CALayerDescription {
         layout: CALayoutIntent {
             axis: .Column,
-            spacing: listMetrics.sectionSpacing,
+            spacing: listMetrics().sectionSpacing,
             heightFill: false
         },
         sublayers: move group
@@ -160,10 +160,10 @@ public function insetGroupedSection(
         parts.append(CALayerDescription {
             layout: CALayoutIntent {
                 heightFill: false,
-                paddingLeading: listMetrics.rowInset,
-                paddingTop: listMetrics.footerTopInset,
-                paddingTrailing: listMetrics.rowInset,
-                paddingBottom: listMetrics.footerBottomInset
+                paddingLeading: listMetrics().rowInset,
+                paddingTop: listMetrics().footerTopInset,
+                paddingTrailing: listMetrics().rowInset,
+                paddingBottom: listMetrics().footerBottomInset
             },
             sublayers: [move footer]
         })
@@ -183,7 +183,8 @@ public function insetGroupedSection(
 //
 // A row whose content can be pressed is pressed as a whole: the hit region is
 // lifted off the content onto the row, and the row lights edge to edge while
-// it is held, clipped by the card's corners. It does not light on hover.
+// it is held, clipped by the card's corners. On a desktop it also lights while
+// the pointer rests on it.
 public function insetGroupedRow(
     content: CALayerDescription,
     separated: Bool,
@@ -198,7 +199,7 @@ public function insetGroupedRow(
     layers.append(CALayerDescription {
         layout: CALayoutIntent {
             heightFill: false,
-            minHeight: listMetrics.rowHeight,
+            minHeight: listMetrics().rowHeight,
             alignment: Point { x: 0.0, y: 0.5 }
         },
         sublayers: [move inner]
@@ -209,7 +210,7 @@ public function insetGroupedRow(
         layers.append(CALayerDescription {
             layout: CALayoutIntent {
                 heightFill: false,
-                fixedHeight: listMetrics.separatorThickness,
+                fixedHeight: listMetrics().separatorThickness,
                 followsGuide: guideTag(ListRowSeparatorLeading())
             },
             content: .Solid(CASolid {
@@ -220,22 +221,22 @@ public function insetGroupedRow(
     return CALayerDescription {
         layout: CALayoutIntent {
             heightFill: false,
-            paddingLeading: listMetrics.rowInset,
-            paddingTrailing: listMetrics.rowInset
+            paddingLeading: listMetrics().rowInset,
+            paddingTrailing: listMetrics().rowInset
         },
         hittable: pressable,
         hitKey: pressable ? key : 0,
         content: .Solid(CASolid {
             fill: caColorFromFoundation(transparentFoundationColor())
         }),
+        hoverColor: pressable ? kiraUiHoverColor(modifiers) : CAColor { a: 0.0 },
         pressColor: insetGroupedRowWash(pressable, modifiers),
         sublayers: move layers
     }
 }
 
-// What lights a row: the list's highlight while it is held. A row on the
-// platform does not answer the pointer resting on it; only a press lights it,
-// and the tree lays the highlight on the row pressed.
+// What lights a row: the list's highlight while it is held, which the tree
+// lays on the row pressed.
 public function insetGroupedRowWash(pressable: Bool, modifiers: borrow ModifierContext) -> CAColor {
     if !pressable {
         return CAColor { a: 0.0 }
@@ -272,10 +273,10 @@ public construct SidebarSectionHeader() extends Widget {
             layout: CALayoutIntent {
                 axis: .Row,
                 heightFill: false,
-                fixedHeight: sidebarMetrics.headerHeight,
-                paddingLeading: sidebarMetrics.headerInset,
-                paddingTop: sidebarMetrics.headerTopInset,
-                paddingTrailing: sidebarMetrics.headerInset
+                fixedHeight: sidebarMetrics().headerHeight,
+                paddingLeading: sidebarMetrics().headerInset,
+                paddingTop: sidebarMetrics().headerTopInset,
+                paddingTrailing: sidebarMetrics().headerInset
             },
             sublayers: [move title]
         }
@@ -303,7 +304,7 @@ public construct SidebarRow(selected: Bool, action: () -> Void) extends Widget {
         if cell {
             return row
         }
-        return sidebarRowCell(move row)
+        return sidebarRowCell(move row, modifiers)
     }
 }
 
@@ -312,25 +313,30 @@ public construct SidebarRow(selected: Bool, action: () -> Void) extends Widget {
 // The content's press and background are lifted onto the band, so the whole
 // row is pressed and the band spans it with a continuous corner. Selection
 // lands at once, as a sidebar cell's does: the band does not fade between rows.
-public function sidebarRowCell(content: CALayerDescription) -> CALayerDescription {
+//
+// On a phone or a tablet the press is the cell's, the column's whole width. On
+// a desktop the row also lights under the pointer, and a wash lights the layer
+// pressed, so the press is the band's: the one layer shaped like the row.
+public function sidebarRowCell(content: CALayerDescription, modifiers: borrow ModifierContext) -> CALayerDescription {
     var inner = content
     let key = inner.hitKey
     let pressable = inner.hittable
     let band = inner.backgroundColor
+    let onBand = interfaceHovers()
     inner.hittable = false
     inner.hitKey = 0
     inner.backgroundColor = CAColor { a: 0.0 }
-    let gutter = sidebarMetrics.rowInset - sidebarMetrics.selectionInset
-    let radius = sidebarMetrics.selectionRadius
+    let gutter = sidebarMetrics().rowInset - sidebarMetrics().selectionInset
+    let radius = sidebarMetrics().selectionRadius
     return CALayerDescription {
         layout: CALayoutIntent {
             heightFill: false,
-            minHeight: sidebarMetrics.rowHeight,
-            paddingLeading: sidebarMetrics.selectionInset,
-            paddingTrailing: sidebarMetrics.selectionInset
+            minHeight: sidebarMetrics().rowHeight,
+            paddingLeading: sidebarMetrics().selectionInset,
+            paddingTrailing: sidebarMetrics().selectionInset
         },
-        hittable: pressable,
-        hitKey: pressable ? key : 0,
+        hittable: pressable && !onBand,
+        hitKey: pressable && !onBand ? key : 0,
         sublayers: [CALayerDescription {
             layout: CALayoutIntent {
                 axis: .Row,
@@ -338,6 +344,9 @@ public function sidebarRowCell(content: CALayerDescription) -> CALayerDescriptio
                 paddingTrailing: gutter,
                 alignment: Point { x: 0.0, y: 0.5 }
             },
+            hittable: pressable && onBand,
+            hitKey: pressable && onBand ? key : 0,
+            hoverColor: kiraUiHoverColor(modifiers),
             cornerRadius: radius,
             disablesActions: true,
             content: .Solid(CASolid {

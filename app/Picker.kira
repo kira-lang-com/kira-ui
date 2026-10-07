@@ -46,20 +46,28 @@ import KCoreAnimation
 public construct Label(title: String, systemImage: Symbol = .None) extends Widget {
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        // A style that keeps one half is that half alone, wherever the label
+        // stands.
+        if modifiers.labelStyle == .TitleOnly {
+            return Text(content: title).describe(context, modifiers)
+        }
+        if modifiers.labelStyle == .IconOnly {
+            return Icon(symbol: systemImage).describe(context, modifiers)
+        }
         // Across the top of a menu a label STACKS: the glyph over the title,
         // centered, because the actions are columns rather than rows. Same
         // declaration; the environment decides which way it reads. The
         // platform sets these heavier than a row: the glyph filled, the title
         // semibold.
-        let metrics = resolvedControlMetrics(modifiers)
+        let menu = menuMetrics(modifiers)
         if modifiers.controlPresentation == .MenuAction {
-            let stacked = VStack(spacing: .None, alignment: .Center, spacingLength: metrics.menuActionSpacing) {
+            let stacked = VStack(spacing: .None, alignment: .Center, spacingLength: menu.actionSpacing) {
                 Icon(symbol: systemImage)
                     .symbolVariant(.Fill)
-                    .font(size: metrics.menuActionIconSize, weight: .SemiBold)
+                    .font(size: menu.actionIconSize, weight: .SemiBold)
 
                 Text(content: title)
-                    .font(size: metrics.menuActionLabelSize, weight: .SemiBold)
+                    .font(size: menu.actionLabelSize, weight: .SemiBold)
             }
             .fillWidth()
             return stacked.describe(context, modifiers)
@@ -76,15 +84,19 @@ public construct Label(title: String, systemImage: Symbol = .None) extends Widge
         // the shared gutter.
         // A menu's glyph is drawn a cut heavier than its title, as the
         // platform's are: its strokes read as the title's stems do.
+        //
+        // A label with no glyph is its title alone, flush with the rows a
+        // plain button titles.
         if modifiers.controlPresentation == .MenuRow {
-            let row = HStack(spacing: .None, alignment: .Center, spacingLength: metrics.menuIconGap) {
+            if systemImage == .None {
+                return Text(content: title).describe(context, modifiers)
+            }
+            let row = HStack(spacing: .None, alignment: .Center, spacingLength: menu.iconGap) {
                 ZStack(alignment: .Center) {
-                    if systemImage != .None {
-                        Icon(symbol: systemImage)
-                            .font(size: metrics.menuLabelSize, weight: .SemiBold)
-                    }
+                    Icon(symbol: systemImage)
+                        .font(size: menu.labelSize, weight: .SemiBold)
                 }
-                .width(metrics.menuIconColumn)
+                .width(menu.iconColumn)
 
                 Text(content: title)
             }
@@ -93,15 +105,15 @@ public construct Label(title: String, systemImage: Symbol = .None) extends Widge
         }
         // In a sidebar the glyph is the accent, in the sidebar's own column.
         if modifiers.controlPresentation == .Sidebar || modifiers.controlPresentation == .SidebarCell {
-            let row = HStack(spacing: .None, alignment: .Center, spacingLength: sidebarMetrics.titleSpacing) {
+            let row = HStack(spacing: .None, alignment: .Center, spacingLength: sidebarMetrics().titleSpacing) {
                 ZStack(alignment: .Center) {
                     if systemImage != .None {
                         Icon(symbol: systemImage)
-                            .font(size: sidebarMetrics.symbolSize)
+                            .font(size: sidebarMetrics().symbolSize)
                             .foregroundColor(.Accent)
                     }
                 }
-                .width(sidebarMetrics.iconColumn)
+                .width(sidebarMetrics().iconColumn)
 
                 Text(content: title)
             }
@@ -113,14 +125,14 @@ public construct Label(title: String, systemImage: Symbol = .None) extends Widge
         // of its lists. The row's separator starts at the title, as SwiftUI's
         // does under a label.
         if modifiers.controlPresentation == .InsetGrouped {
-            let row = HStack(spacing: .None, alignment: .Center, spacingLength: sidebarMetrics.titleSpacing) {
+            let row = HStack(spacing: .None, alignment: .Center, spacingLength: sidebarMetrics().titleSpacing) {
                 if systemImage != .None {
                     ZStack(alignment: .Center) {
                         Icon(symbol: systemImage)
-                            .font(size: sidebarMetrics.symbolSize)
+                            .font(size: sidebarMetrics().symbolSize)
                             .foregroundColor(.Accent)
                     }
-                    .width(sidebarMetrics.iconColumn)
+                    .width(sidebarMetrics().iconColumn)
                 }
 
                 Text(content: title)
@@ -134,19 +146,38 @@ public construct Label(title: String, systemImage: Symbol = .None) extends Widge
         // Anywhere else the glyph is in the title's own ink, centered in the
         // symbol column with the platform's gap before the title, as SwiftUI
         // sets a `Label` on its own.
-        let label = HStack(spacing: .None, alignment: .Center, spacingLength: sidebarMetrics.titleSpacing) {
+        let label = HStack(spacing: .None, alignment: .Center, spacingLength: sidebarMetrics().titleSpacing) {
             if systemImage != .None {
                 ZStack(alignment: .Center) {
                     Icon(symbol: systemImage)
-                        .font(size: sidebarMetrics.symbolSize)
+                        .font(size: sidebarMetrics().symbolSize)
                 }
-                .width(sidebarMetrics.iconColumn)
+                .width(sidebarMetrics().iconColumn)
             }
 
             Text(content: title)
         }
         .hugWidth()
         return label.describe(context, modifiers)
+    }
+}
+
+// SwiftUI's label styles: which halves of a label show. `Automatic` is the
+// platform's answer for where the label stands, which is both almost
+// everywhere.
+public enum LabelStyle {
+    Automatic
+    TitleAndIcon
+    TitleOnly
+    IconOnly
+}
+
+public construct LabelStyleLayer(style: LabelStyle) extends Widget {
+    let content: some Widget
+
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        return content.describe(context, modifierContextApply(modifiers, modifierDeltaLabelStyle(style)))
     }
 }
 

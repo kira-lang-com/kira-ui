@@ -1,0 +1,318 @@
+import Foundation
+import KCoreAnimation
+
+// What a workspace's panels are, where each one is, and the handle an
+// application holds on the arrangement.
+//
+// A workspace declares its panels and where each starts; from then on the
+// arrangement is the person's. They close a panel and it waits in the strip's
+// add menu, drag a tab to another edge and the panel lives there, drag a
+// divider until the edge folds away. The application keeps a `WorkspaceLayout`
+// beside the workspace, as it keeps a `NavigationPath` beside a stack, and asks
+// it what is where or changes it from a command of its own.
+
+// A panel's identity: a TYPE, as a navigation route is one. Each panel an
+// application declares is a construct of this family, so the arrangement keeps
+// the panel by what it is rather than by where it was declared.
+public construct PanelValue {
+    @Required function panelType() -> String
+}
+
+// Where a panel stands: down one side of the workspace, across its foot under
+// the center, or in the center itself.
+public enum PanelEdge {
+    Leading
+    Trailing
+    Bottom
+    Center
+}
+
+// Whether the center takes panels. A game engine's viewport is always what the
+// center shows, and a panel dropped there would cover it; an editor's center
+// is one more place a panel can sit, beside the document.
+public enum WorkspaceCenter {
+    Fixed
+    AcceptsPanels
+}
+
+public function panelEdgeIndex(edge: borrow PanelEdge) -> Int {
+    match edge {
+        Leading -> return 0
+        Trailing -> return 1
+        Bottom -> return 2
+        Center -> return 3
+    }
+}
+
+// One panel's place: its edge, whether it is in the workspace at all, and
+// whether it was declared at the center, which it never leaves.
+public struct KiraUiPanelPlacement {
+    var panel: String = ""
+    var edge: PanelEdge = .Leading
+    var shown: Bool = true
+    var pinned: Bool = false
+}
+
+// One edge: the panel its strip has selected, how far its divider was dragged
+// to -- zero until it is, which opens it at the catalog's extent -- and whether
+// it is folded away.
+public struct KiraUiWorkspaceEdge {
+    var selected: String = ""
+    var extent: Float = 0.0
+    var folded: Bool = false
+}
+
+// The arrangement. The placements are in tab order, so a panel docked at an
+// edge is the last tab there. `declared` is the panels the last build declared,
+// in order: a tab's key is its place there, and a press on a tab is read back
+// through it.
+public struct KiraUiWorkspaceState {
+    var placements: [KiraUiPanelPlacement] = []
+    var edges: [KiraUiWorkspaceEdge] = []
+    var declared: [String] = []
+    // A panel brought up before any build has declared it -- a document the
+    // application opened from a command -- which comes up selected the build
+    // it first appears in.
+    var awaited: String = ""
+    var center: WorkspaceCenter = .Fixed
+    var drag: KiraUiWorkspaceDrag = KiraUiWorkspaceDrag {}
+}
+
+public function kiraUiWorkspaceSlotKey() -> String {
+    return "kiraui.workspace"
+}
+
+public function kiraUiWorkspaceEnsure() {
+    if kiraUiStateSlotHas(kiraUiWorkspaceSlotKey()) == false {
+        kiraUiStateSlotPut(
+            kiraUiWorkspaceSlotKey(),
+            nativeUserData(nativeState(KiraUiWorkspaceState {
+                edges: kiraUiWorkspaceOpenEdges()
+            }))
+        )
+    }
+    return
+}
+
+// Every edge as a workspace first finds it: nothing selected, open at the
+// catalog's extent.
+public function kiraUiWorkspaceOpenEdges() -> [KiraUiWorkspaceEdge] {
+    var edges: [KiraUiWorkspaceEdge] = []
+    edges.append(KiraUiWorkspaceEdge {})
+    edges.append(KiraUiWorkspaceEdge {})
+    edges.append(KiraUiWorkspaceEdge {})
+    edges.append(KiraUiWorkspaceEdge {})
+    return edges
+}
+
+public function kiraUiWorkspaceState() -> KiraUiWorkspaceState {
+    kiraUiWorkspaceEnsure()
+    return nativeRecover<KiraUiWorkspaceState>(kiraUiStateSlotGet(kiraUiWorkspaceSlotKey()))
+}
+
+public function kiraUiWorkspacePlacementIndex(state: borrow KiraUiWorkspaceState, panel: borrow String) -> Int {
+    for index in 0..state.placements.count {
+        if state.placements[index].panel == panel {
+            return index
+        }
+    }
+    return -1
+}
+
+// The panels shown at an edge, in tab order.
+public function kiraUiWorkspacePanelsAt(state: borrow KiraUiWorkspaceState, edge: borrow PanelEdge) -> [String] {
+    var panels: [String] = []
+    for placement in state.placements {
+        if placement.shown && placement.edge == edge {
+            panels.append(copy placement.panel)
+        }
+    }
+    return panels
+}
+
+// Whether an edge is up: it has a panel to show and is not folded away. The
+// center always is.
+public function kiraUiWorkspaceEdgeVisible(state: borrow KiraUiWorkspaceState, edge: borrow PanelEdge) -> Bool {
+    if edge == .Center {
+        return true
+    }
+    if state.edges[panelEdgeIndex(edge)].folded {
+        return false
+    }
+    return kiraUiWorkspacePanelsAt(state, edge).count > 0
+}
+
+// How far an edge stands open: as far as its divider was dragged, or the
+// catalog's extent until it is.
+public function kiraUiWorkspaceExtent(state: borrow KiraUiWorkspaceState, edge: borrow PanelEdge) -> Float {
+    let dragged = state.edges[panelEdgeIndex(edge)].extent
+    return dragged > 0.0 ? dragged : workspaceOpeningExtent(edge)
+}
+
+// An edge whose selected panel has gone selects the first one still there.
+public function kiraUiWorkspaceReselect(state: borrow mut KiraUiWorkspaceState, edge: borrow PanelEdge) {
+    let index = panelEdgeIndex(edge)
+    let panels = kiraUiWorkspacePanelsAt(state, edge)
+    for panel in panels {
+        if panel == state.edges[index].selected {
+            return
+        }
+    }
+    state.edges[index].selected = panels.count > 0 ? copy panels[0] : ""
+    return
+}
+
+// Show a panel at the edge it is placed at, selected there, unfolding the edge.
+public function kiraUiWorkspaceShow(panel: String) {
+    kiraUiWorkspaceEnsure()
+    var state = nativeRecover<KiraUiWorkspaceState>(kiraUiStateSlotGet(kiraUiWorkspaceSlotKey()))
+    let index = kiraUiWorkspacePlacementIndex(state, panel)
+    if index < 0 {
+        state.awaited = move panel
+        return
+    }
+    state.placements[index].shown = true
+    let edge = panelEdgeIndex(state.placements[index].edge)
+    state.edges[edge].selected = move panel
+    state.edges[edge].folded = false
+    return
+}
+
+// Take a panel out of the workspace. One declared at the center stays.
+public function kiraUiWorkspaceHide(panel: String) {
+    kiraUiWorkspaceEnsure()
+    var state = nativeRecover<KiraUiWorkspaceState>(kiraUiStateSlotGet(kiraUiWorkspaceSlotKey()))
+    let index = kiraUiWorkspacePlacementIndex(state, panel)
+    if index < 0 || state.placements[index].pinned {
+        return
+    }
+    state.placements[index].shown = false
+    kiraUiWorkspaceReselect(state, state.placements[index].edge)
+    return
+}
+
+// Select a panel in its edge's strip.
+public function kiraUiWorkspaceSelect(panel: String) {
+    kiraUiWorkspaceEnsure()
+    var state = nativeRecover<KiraUiWorkspaceState>(kiraUiStateSlotGet(kiraUiWorkspaceSlotKey()))
+    let index = kiraUiWorkspacePlacementIndex(state, panel)
+    if index < 0 {
+        return
+    }
+    state.edges[panelEdgeIndex(state.placements[index].edge)].selected = move panel
+    return
+}
+
+// Move a panel to an edge, as the last tab there and the one selected. A panel
+// declared at the center never leaves it, and a fixed center takes none.
+public function kiraUiWorkspaceDock(panel: String, edge: borrow PanelEdge) {
+    kiraUiWorkspaceEnsure()
+    var state = nativeRecover<KiraUiWorkspaceState>(kiraUiStateSlotGet(kiraUiWorkspaceSlotKey()))
+    let index = kiraUiWorkspacePlacementIndex(state, panel)
+    if index < 0 || state.placements[index].pinned {
+        return
+    }
+    if edge == .Center && state.center == .Fixed {
+        return
+    }
+    let from = state.placements[index].edge
+    var moved = copy state.placements[index]
+    moved.edge = copy edge
+    moved.shown = true
+    var placements: [KiraUiPanelPlacement] = []
+    for other in 0..state.placements.count {
+        if other != index {
+            placements.append(copy state.placements[other])
+        }
+    }
+    placements.append(move moved)
+    state.placements = move placements
+    kiraUiWorkspaceReselect(state, from)
+    let to = panelEdgeIndex(edge)
+    state.edges[to].selected = move panel
+    state.edges[to].folded = false
+    return
+}
+
+// Fold an edge away, or bring it back.
+public function kiraUiWorkspaceToggle(edge: borrow PanelEdge) {
+    if edge == .Center {
+        return
+    }
+    kiraUiWorkspaceEnsure()
+    var state = nativeRecover<KiraUiWorkspaceState>(kiraUiStateSlotGet(kiraUiWorkspaceSlotKey()))
+    let index = panelEdgeIndex(edge)
+    state.edges[index].folded = !state.edges[index].folded
+    return
+}
+
+// Forget the arrangement: the next build lays the panels out where they were
+// declared.
+public function kiraUiWorkspaceReset() {
+    kiraUiWorkspaceEnsure()
+    var state = nativeRecover<KiraUiWorkspaceState>(kiraUiStateSlotGet(kiraUiWorkspaceSlotKey()))
+    var placements: [KiraUiPanelPlacement] = []
+    state.placements = move placements
+    state.edges = kiraUiWorkspaceOpenEdges()
+    return
+}
+
+// The application's handle on its workspace's arrangement, held beside the
+// workspace as a navigation path is held beside a stack:
+//
+//     @State var layout: WorkspaceLayout = WorkspaceLayout {}
+//
+//     Workspace(layout = layout) { … }
+//
+// Every question and change goes to the arrangement the person has made, so a
+// command of the application's -- a menu item that opens the console -- moves
+// the same panels a drag does.
+public struct WorkspaceLayout {
+    // Whether the panel is in the workspace, wherever it stands.
+    function isShown(panel: borrow Any PanelValue) -> Bool {
+        let state = kiraUiWorkspaceState()
+        let index = kiraUiWorkspacePlacementIndex(state, panel.panelType())
+        return index >= 0 && state.placements[index].shown
+    }
+
+    // Bring the panel up where it last stood, selected there. A panel no build
+    // has declared yet comes up selected in the build that first declares it.
+    function show(panel: borrow Any PanelValue) {
+        kiraUiWorkspaceShow(panel.panelType())
+        return
+    }
+
+    // Whether the panel is the one its edge's strip has in front.
+    function isSelected(panel: borrow Any PanelValue) -> Bool {
+        return kiraUiWorkspaceIsSelected(panel.panelType())
+    }
+
+    // Take the panel out; it waits in its edge's add menu.
+    function hide(panel: borrow Any PanelValue) {
+        kiraUiWorkspaceHide(panel.panelType())
+        return
+    }
+
+    // Move the panel to an edge, as a drag of its tab there does.
+    function dock(panel: borrow Any PanelValue, edge: borrow PanelEdge) {
+        kiraUiWorkspaceDock(panel.panelType(), edge)
+        return
+    }
+
+    // Whether the edge is up: it has a panel and is not folded away.
+    function isVisible(edge: borrow PanelEdge) -> Bool {
+        return kiraUiWorkspaceEdgeVisible(kiraUiWorkspaceState(), edge)
+    }
+
+    // Fold the edge away, or bring it back.
+    function toggle(edge: borrow PanelEdge) {
+        kiraUiWorkspaceToggle(edge)
+        return
+    }
+
+    // Put every panel back where it was declared.
+    function reset() {
+        kiraUiWorkspaceReset()
+        return
+    }
+}

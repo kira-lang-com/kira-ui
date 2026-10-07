@@ -10,11 +10,13 @@ import KCoreAnimation
 // Full width, the panel's own ink, no fill, and the standard row height — so a
 // run of them reads as a list rather than as a stack of controls. The press
 // region is the whole row, which is what a menu is: you aim at the line, not at
-// the words on it.
+// the words on it. A button with a keyboard shortcut has the shortcut set at
+// the row's trailing end, after the title's room.
 public function menuRowDescription(
     context: borrow BuildContext,
     modifiers: borrow ModifierContext,
     key: Int,
+    shortcut: borrow KeyboardShortcut,
     label: some Widget,
 ) -> CALayerDescription {
     // The menu's own type size, stated here so a plain `Button(title:)` in a
@@ -27,7 +29,21 @@ public function menuRowDescription(
     // that wraps keeps that same air above and below and the row grows.
     let pitch = menuRowPitch(modifiers)
     let air = max((pitch - foundationTextLineBox(menuLabelSize(modifiers), foundationFontWeight(.Regular))) / 2.0, 0.0)
-    return menuRowPill(key, label.describe(context, labelModifiers), air, modifiers)
+    let title = label.describe(context, labelModifiers)
+    if shortcut.isEmpty() {
+        return menuRowPill(key, move title, air, modifiers)
+    }
+    let row = CALayerDescription {
+        layout: CALayoutIntent {
+            axis: .Row,
+            spacing: menuRowTrailing(modifiers),
+            heightFill: false,
+            flex: 1,
+            alignment: Point { x: 0.0, y: 0.5 }
+        },
+        sublayers: [move title, toolbarFlexibleSpace(), menuShortcutDescription(context, shortcut, labelModifiers)]
+    }
+    return menuRowPill(key, move row, air, modifiers)
 }
 
 // A menu's row as it is held: a rounded pill stood in from the card's edges,
@@ -113,7 +129,7 @@ public function menuActionDescription(
 }
 
 public function menuActionPad(modifiers: borrow ModifierContext) -> Float {
-    return resolvedControlMetrics(modifiers).menuActionPadding
+    return menuMetrics(modifiers).actionPadding
 }
 
 // A press region for a menu row, with NO wash of its own.
@@ -134,7 +150,7 @@ public function menuHeaderLightFill(strength: Float) -> Color {
 
 // How far the lit pill stands in from the card's edge.
 public function menuPillInset(modifiers: borrow ModifierContext) -> Float {
-    return resolvedControlMetrics(modifiers).menuPillInset
+    return menuMetrics(modifiers).pillInset
 }
 
 // The corner of the highlight a menu row lights up with: a rounded pill inset in

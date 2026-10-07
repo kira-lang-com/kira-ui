@@ -1,0 +1,98 @@
+import Foundation
+import KiraGraphics
+import KiraLayout
+import KCoreAnimation
+
+// The modifiers a view says what is on the window's bar with: its items, its
+// title, and the margin its section keeps.
+
+public construct SharedBackgroundVisibilityLayer(visibility: SharedBackgroundVisibility) extends Widget {
+    let content: some Widget
+
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        if visibility == .Hidden {
+            kiraUiToolbarHideNextSharedBackground()
+        }
+        return content.describe(context, modifiers)
+    }
+}
+
+extend Widget {
+    // Whether this toolbar item is drawn on the glass its neighbors are drawn
+    // on, matching SwiftUI's `.sharedBackgroundVisibility(...)`.
+    //
+    // `.Hidden` takes the item off the shared background entirely — for a
+    // control that carries its own shape, an avatar, anything that would look
+    // wrong sharing an edge with the buttons beside it.
+    function sharedBackgroundVisibility(visibility: SharedBackgroundVisibility) -> Any Widget {
+        return SharedBackgroundVisibilityLayer(visibility: visibility) {
+            self
+        }
+    }
+
+    // The items this view puts on the window's toolbar, matching SwiftUI's
+    // `.toolbar { … }`. They are declared beside the content they belong to and
+    // drawn on the one bar the window has.
+    // SwiftUI writes this as a trailing block — `.toolbar { ToolbarItem { … } }`
+    // — and so does this, because the last parameter is a content parameter and
+    // a trailing block is what fills one. Taking the items as an ordinary
+    // argument forced a container to be named at every call site for no reason
+    // but the grammar.
+    function toolbar(items: [some Widget]) -> Any Widget {
+        return ToolbarLayer(items: ToolbarContent() {
+            For(item in items) {
+                item
+            }
+        }) {
+            self
+        }
+    }
+
+    // What this column is showing, matching SwiftUI's `.navigationTitle(...)`.
+    // The bar sets it, in the section over the column that declared it — a
+    // column names itself and says nothing about how a name is drawn.
+    function navigationTitle(title: String) -> Any Widget {
+        return NavigationTitleLayer(title: title) {
+            self
+        }
+    }
+}
+
+public construct ContentMarginLayer(value: Float) extends Widget {
+    let content: some Widget
+
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        kiraUiToolbarSetMargin(value)
+        let resolved = modifierContextApply(modifiers, modifierDeltaContentMargin(value))
+        return content.describe(context, resolved)
+    }
+}
+
+public construct NavigationTitleLayer(title: String) extends Widget {
+    let content: some Widget
+
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        kiraUiToolbarSetTitle(copy title)
+        return content.describe(context, modifiers)
+    }
+}
+
+public construct ToolbarLayer(items: Any Widget) extends Widget {
+    let content: some Widget
+
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        let childModifiers = modifierContextForChildren(modifiers)
+        let toolbarModifiers = modifierContextPresenting(modifiers, .Toolbar)
+        // The items put themselves on the bar as they lower; what they lower to
+        // is the bar's to draw. A toolbar's labels are set in the body face, as
+        // the platform's are.
+        items
+            .backgroundStyle(.Clear)
+            .describe(context, toolbarModifiers)
+        return content.describe(context, childModifiers)
+    }
+}

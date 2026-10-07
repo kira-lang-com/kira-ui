@@ -1,0 +1,293 @@
+import Foundation
+import KiraLayout
+import KCoreAnimation
+
+// Dragging in a workspace: a tab carried to another edge, and a divider moved
+// along the edge it bounds.
+//
+// Both are read off the press the window is holding, as a scroll view's bar is
+// scrubbed: while a tab or a divider is held, every build sees the pointer
+// where it is now and the workspace follows it; the first build after it is let
+// go settles what the drag did. A tab moves only once the pointer has gone
+// further than a press does by accident; a divider moves at once.
+
+public enum KiraUiWorkspaceDragKind {
+    None
+    Tab
+    Divider
+}
+
+// The drag under way: what is held and under which key, the panel a tab
+// carries or the edge a divider bounds, where the press went down and where
+// the pointer is now -- both in the workspace's own box -- the extent the
+// divider started from, whether the drag has begun to move, and the edge a
+// carried tab is over, -1 for none.
+public struct KiraUiWorkspaceDrag {
+    var kind: KiraUiWorkspaceDragKind = .None
+    var key: Int = 0
+    var panel: String = ""
+    var edge: PanelEdge = .Leading
+    var origin: Point = Point {}
+    var pointer: Point = Point {}
+    var startExtent: Float = 0.0
+    var moving: Bool = false
+    var target: Int = -1
+}
+
+// --- Keys --------------------------------------------------------------------
+
+// A workspace's controls answer under keys of their own, read back by what
+// they are: a divider by its edge, a tab and its cross by their panel's place
+// among the declarations. The band sits clear of the search field's key and
+// below the minted ones, so neither can alias a workspace's.
+public function workspaceDividerKey(edge: borrow PanelEdge) -> Int {
+    return 509990 + panelEdgeIndex(edge)
+}
+
+public function workspaceTabKey(index: Int) -> Int {
+    return 510000 + index * 2
+}
+
+public function workspaceCloseKey(index: Int) -> Int {
+    return 510001 + index * 2
+}
+
+public function panelEdgeAt(index: Int) -> PanelEdge {
+    if index == 0 {
+        return .Leading
+    }
+    if index == 1 {
+        return .Trailing
+    }
+    if index == 2 {
+        return .Bottom
+    }
+    return .Center
+}
+
+// --- Following the press -----------------------------------------------------
+
+// Follow the press the window holds. `origin` is where the workspace's box
+// stands in the window and `size` how large it is.
+public function workspaceDragAdvance(context: borrow BuildContext, origin: borrow Point, size: borrow Size) {
+    kiraUiWorkspaceEnsure()
+    var state = nativeRecover<KiraUiWorkspaceState>(kiraUiStateSlotGet(kiraUiWorkspaceSlotKey()))
+    let held = context.heldControl
+    let pointer = Point { x: context.pointerX - origin.x, y: context.pointerY - origin.y }
+    if state.drag.key != 0 && held != state.drag.key {
+        // Let go: a tab carried over another edge docks its panel there.
+        let carried = copy state.drag.panel
+        let target = state.drag.kind == .Tab && state.drag.moving ? state.drag.target : -1
+        state.drag = KiraUiWorkspaceDrag {}
+        if target >= 0 {
+            kiraUiWorkspaceDock(move carried, panelEdgeAt(target))
+        }
+        return
+    }
+    if state.drag.key == 0 {
+        workspaceDragBegin(state, held, pointer)
+        return
+    }
+    state.drag.pointer = copy pointer
+    let travel = max(abs(pointer.x - state.drag.origin.x), abs(pointer.y - state.drag.origin.y))
+    if travel > motionDragSlop() {
+        state.drag.moving = true
+    }
+    if !state.drag.moving {
+        return
+    }
+    if state.drag.kind == .Divider {
+        workspaceDividerFollow(state, pointer, size)
+        return
+    }
+    state.drag.target = workspaceDropTarget(state, size, pointer)
+    return
+}
+
+// A press just landed on a divider or a tab: the drag starts from here. A tab
+// declared at the center is the center, and is not carried anywhere.
+public function workspaceDragBegin(state: borrow mut KiraUiWorkspaceState, held: Int, pointer: borrow Point) {
+    if held >= workspaceDividerKey(.Leading) && held <= workspaceDividerKey(.Bottom) {
+        let edge = panelEdgeAt(held - workspaceDividerKey(.Leading))
+        state.drag = KiraUiWorkspaceDrag {
+            kind: .Divider,
+            key: held,
+            edge: copy edge,
+            origin: copy pointer,
+            pointer: copy pointer,
+            startExtent: kiraUiWorkspaceExtent(state, edge)
+        }
+        return
+    }
+    if held < workspaceTabKey(0) {
+        return
+    }
+    let index = (held - workspaceTabKey(0)) / 2
+    if held != workspaceTabKey(index) || index >= state.declared.count {
+        return
+    }
+    let panel = copy state.declared[index]
+    let placement = kiraUiWorkspacePlacementIndex(state, panel)
+    if placement < 0 || state.placements[placement].pinned {
+        return
+    }
+    state.drag = KiraUiWorkspaceDrag {
+        kind: .Tab,
+        key: held,
+        panel: move panel,
+        origin: copy pointer,
+        pointer: copy pointer
+    }
+    return
+}
+
+// A divider follows the pointer, as far as the edge's least and no further
+// than half the workspace. Dragged under half its least, the edge folds away;
+// brought back out, it opens again under the pointer.
+public function workspaceDividerFollow(state: borrow mut KiraUiWorkspaceState, pointer: borrow Point, size: borrow Size) {
+    let edge = copy state.drag.edge
+    var reach = state.drag.startExtent
+    var most = size.width * 0.5
+    if edge == .Leading {
+        reach = reach + pointer.x - state.drag.origin.x
+    } else if edge == .Trailing {
+        reach = reach - pointer.x + state.drag.origin.x
+    } else {
+        reach = reach - pointer.y + state.drag.origin.y
+        most = size.height * 0.7
+    }
+    let least = workspaceMinimumExtent(edge)
+    let index = panelEdgeIndex(edge)
+    state.edges[index].folded = reach < least * 0.5
+    if !state.edges[index].folded {
+        state.edges[index].extent = min(max(reach, least), max(most, least))
+    }
+    return
+}
+
+// The edge a carried tab would dock its panel at, -1 for none. Each side
+// reaches as far as its card when it is up, and a strip half its least wide
+// when it is not; the foot reaches up as far as its card or that strip; the
+// rest is the center, when it takes panels. The edge the panel already stands
+// at is no target: it is where the panel goes back to.
+public function workspaceDropTarget(state: borrow KiraUiWorkspaceState, size: borrow Size, pointer: borrow Point) -> Int {
+    if pointer.x < 0.0 || pointer.y < 0.0 || pointer.x > size.width || pointer.y > size.height {
+        return -1
+    }
+    let metrics = workspaceMetrics()
+    let geometry = workspaceGeometry(state, size, -1)
+    var edge = -1
+    let leadingReach = kiraUiWorkspaceEdgeVisible(state, .Leading) ? geometry.leading.x + geometry.leading.width : metrics.minimumWidth * 0.5
+    let trailingReach = kiraUiWorkspaceEdgeVisible(state, .Trailing) ? geometry.trailing.x : size.width - metrics.minimumWidth * 0.5
+    let bottomReach = kiraUiWorkspaceEdgeVisible(state, .Bottom) ? geometry.bottom.y : size.height - metrics.minimumHeight * 0.5
+    if pointer.x < leadingReach {
+        edge = panelEdgeIndex(.Leading)
+    } else if pointer.x > trailingReach {
+        edge = panelEdgeIndex(.Trailing)
+    } else if pointer.y > bottomReach {
+        edge = panelEdgeIndex(.Bottom)
+    } else if state.center == .AcceptsPanels {
+        edge = panelEdgeIndex(.Center)
+    }
+    let placement = kiraUiWorkspacePlacementIndex(state, state.drag.panel)
+    if placement >= 0 && edge == panelEdgeIndex(state.placements[placement].edge) {
+        return -1
+    }
+    return edge
+}
+
+// --- What a drag shows -------------------------------------------------------
+
+// The band a divider is grabbed by, down the middle of the gap it runs along
+// and wider than it. The pointer resting on it lights it; while it is held, a
+// hairline in the accent runs down its middle.
+public function workspaceDivider(
+    edge: borrow PanelEdge,
+    geometry: borrow WorkspaceGeometry,
+    state: borrow KiraUiWorkspaceState,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let metrics = workspaceMetrics()
+    let thickness = metrics.dividerThickness
+    let across = metrics.gap / 2.0 + thickness / 2.0
+    var band = Rect {}
+    if edge == .Leading {
+        band = Rect { x: geometry.leading.x + geometry.leading.width + metrics.gap / 2.0 - thickness / 2.0, y: geometry.leading.y, width: thickness, height: geometry.leading.height }
+    } else if edge == .Trailing {
+        band = Rect { x: geometry.trailing.x - across, y: geometry.trailing.y, width: thickness, height: geometry.trailing.height }
+    } else {
+        band = Rect { x: geometry.bottom.x, y: geometry.bottom.y - across, width: geometry.bottom.width, height: thickness }
+    }
+    let key = workspaceDividerKey(edge)
+    let held = state.drag.kind == .Divider && state.drag.key == key
+    let accent = caColorFromFoundation(modifierColor(foundationColor(modifierTokens(modifiers).tint.accent), modifiers))
+    let vertical = edge != .Bottom
+    var divider = CALayerDescription {
+        key: 20 + panelEdgeIndex(edge),
+        hittable: !modifiers.disabled,
+        hitKey: key,
+        hoverColor: kiraUiHoverColor(modifiers),
+        cornerRadius: thickness / 2.0,
+        content: .Solid(CASolid {
+            fill: CAColor { a: 0.0 },
+            cornerRadius: thickness / 2.0
+        }),
+        layout: CALayoutIntent {
+            alignment: Point { x: 0.5, y: 0.5 }
+        },
+        sublayers: [CALayerDescription {
+            opacity: held ? 1.0 : 0.0,
+            backgroundColor: accent,
+            cornerRadius: 1.0,
+            layout: CALayoutIntent {
+                widthFill: !vertical,
+                heightFill: vertical,
+                fixedWidth: vertical ? 2.0 : -1.0,
+                fixedHeight: vertical ? -1.0 : 2.0
+            }
+        }]
+    }
+    workspacePlace(divider, band)
+    return divider
+}
+
+// Where a carried tab's panel would land: the card it would join, washed in
+// the accent and ringed with it.
+public function workspaceDropZone(rect: borrow Rect, modifiers: borrow ModifierContext) -> CALayerDescription {
+    var accent = caColorFromFoundation(modifierColor(foundationColor(modifierTokens(modifiers).tint.accent), modifiers))
+    let ring = copy accent
+    accent.a = accent.a * 0.14
+    let radius = workspacePanelRadius()
+    var zone = CALayerDescription {
+        key: 30,
+        cornerRadius: radius,
+        content: .Solid(CASolid {
+            fill: accent,
+            border: ring,
+            borderWidth: 2.0,
+            cornerRadius: radius
+        }),
+        entrance: CAEntrance { active: true, opacity: 0.0 },
+        removal: CARemoval { opacity: 0.0, duration: 0.2 }
+    }
+    workspacePlace(zone, rect)
+    return zone
+}
+
+// The tab under the pointer while it is carried: its face lifted out of the
+// strip in a capsule of glass of its own, centered on the pointer and
+// following it exactly.
+public function workspaceDragGhost(
+    declaration: borrow KiraUiPanelDeclaration,
+    pointer: borrow Point,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    var ghost = tabBarCapsule([workspaceTabFace(declaration, true, context, modifiers)], context, modifiers)
+    let measured = caMeasure(ghost, context.viewportWidth)
+    ghost.key = 31
+    ghost.animation = .Timed(CATiming { disableActions: true })
+    ghost.layout.offset = Point { x: pointer.x - measured.width / 2.0, y: pointer.y - measured.height / 2.0 }
+    ghost.removal = CARemoval { opacity: 0.0, duration: 0.15 }
+    return ghost
+}

@@ -52,11 +52,13 @@ public struct KiraLayerAppState {
     var touchScrollTarget: Int = 0
     var touchScrolling: Bool = false
     var touchNavigating: Bool = false
-    // What the last rebuild was built from: the input it had seen and the
-    // color scheme it was drawn in. A frame that finds both as they were, and
-    // nothing moving, has nothing new to show and is not drawn at all.
+    // What the last rebuild was built from: the input it had seen, and the
+    // color scheme and interface mode it was drawn in. A frame that finds all
+    // three as they were, and nothing moving, has nothing new to show and is
+    // not drawn at all.
     var builtEventCount: Int = -1
     var builtScheme: Int = 0
+    var builtMode: InterfaceMode = .AdaptiveDesktop
     // Whether the retained tree was still animating on the last frame drawn,
     // so the frame it settles on is drawn too.
     var layersMoving: Bool = false
@@ -215,11 +217,20 @@ public function kiraLayerDraw(state: borrow mut KiraLayerAppState, frame: borrow
     return
 }
 
-// Forward the keyboard to the focused field: a typed character as text, any
-// other key as a command. Escape ends the editing instead.
+// Forward the keyboard: a key that is a button's shortcut presses the button,
+// and Escape puts the menu bar's menu away. Anything else goes to the focused
+// field: a typed character as text, any other key as a command. Escape ends
+// the editing instead.
 public function kiraLayerDispatchKeyboard(userData: RawPtr, event: borrow AppEvent) {
     var state = nativeRecover<KiraLayerAppState>(userData)
     let focused = state.ui.focusedKey
+    if event.kind == .KeyDown {
+        let pressed = kiraUiShortcutPerform(event.keyCode, event.modifiers, focused != 0)
+        if pressed || (event.keyCode == 256 && kiraUiMenuBarDismiss()) {
+            state.ui.eventCount = state.ui.eventCount + 1
+            return
+        }
+    }
     if focused == 0 {
         return
     }
@@ -312,7 +323,7 @@ public function kiraLayerDispatchTouch(userData: RawPtr, event: borrow AppEvent)
         state.touchNavigating = false
         // An edge back gesture can begin on a control; it takes the press only
         // after moving horizontally, just as an ordinary page swipe does.
-        kiraUiNavigationSwipeBegin(x, y, hit.hit && x > navigationTransitionMetrics.swipeSlop * 2.0)
+        kiraUiNavigationSwipeBegin(x, y, hit.hit && x > navigationTransitionMetrics().swipeSlop * 2.0)
         return
     }
     if event.kind == .TouchesMoved {
@@ -325,7 +336,7 @@ public function kiraLayerDispatchTouch(userData: RawPtr, event: borrow AppEvent)
         }
         var scrollDistance = deltaY
         if !state.touchNavigating && !state.touchScrolling && !state.pressSlides && state.touchScrollTarget != 0 {
-            if abs(down) > navigationTransitionMetrics.swipeSlop && abs(down) > abs(across) {
+            if abs(down) > navigationTransitionMetrics().swipeSlop && abs(down) > abs(across) {
                 state.touchScrolling = true
                 scrollDistance = down
                 kiraUiScrollDragBegin(state.touchScrollTarget, motionRubberBandConstantTrackpad(), event.timestamp)
@@ -393,6 +404,7 @@ public function RunKiraLayerApp(
         batch: UiBatch { storage: nativeState(UiBatchState {
             engine: nullPointer(),
             face: nullPointer(),
+            monoFace: nullPointer(),
             contentsPtr: nullPointer(),
             atlasPixels: nullPointer()
         }) },
@@ -410,7 +422,7 @@ public function RunKiraLayerApp(
         // one band the content runs under, and KiraUI draws what sits on it.
         titlebar: transparent ? .Standard : .Unified,
         // And its corner is the platform's window corner, not the desktop's.
-        cornerRadius: transparent ? 0.0 : windowChromeMetrics.cornerRadius,
+        cornerRadius: transparent ? 0.0 : windowChromeMetrics().cornerRadius,
         windowDragRegion: { x, y in
             return kiraLayerWindowDragRegion(runtimeUser, x, y)
         },
@@ -455,13 +467,14 @@ public function RunKiraLayerApp(
         }
 
         // An interface costs nothing while nothing changes. It is rebuilt when
-        // input arrived, the window changed size or scheme, something in the
+        // input arrived, the window changed size, scheme or mode, something in the
         // last build was still moving, or a motion the compositor carried has
         // ended; otherwise the retained tree is all there is, and it is drawn
         // only while its own animations run. A frame with nothing to draw
         // presents nothing, and the window keeps the last one.
         let scheme = kiraUiPlatformScheme()
-        let changed = state.ui.eventCount != state.builtEventCount || scheme != state.builtScheme
+        let mode = interfaceMode()
+        let changed = state.ui.eventCount != state.builtEventCount || scheme != state.builtScheme || mode != state.builtMode
         let waiting = kiraUiClockRunning() || kiraUiClockWakeDue(kiraUiClockTime(frame))
         if !rebuildsEveryFrame && state.frameCount > 0 && !resized && !changed && !waiting {
             let moving = caCompositorAdvance(state.compositor, frame)
@@ -474,6 +487,7 @@ public function RunKiraLayerApp(
         }
         state.builtEventCount = state.ui.eventCount
         state.builtScheme = scheme
+        state.builtMode = mode
 
         // Build the widget tree, lower it to a description, lay it out against the
         // window, and reconcile it into the retained tree. On the first frame the
@@ -515,22 +529,18 @@ public function RunKiraLayerApp(
             y: state.pressWindow.y - state.pressLocal.y
         }
         var described = CALayerDescription {}
-        // What floats is declared while the tree lowers and drawn over it.
-        kiraUiOverlayCollect()
         if state.transparent {
-            described = build().describe(widgetContext, ModifierContext {})
-        } else {
-            // A window with chrome: the tree declares its title and toolbar items
-            // while it lowers, and the chrome is drawn from them over the content,
-            // which is laid out against the band the chrome leaves.
-            widgetContext.safeArea.top = widgetContext.safeArea.top + windowChromeMetricsFor(widgetContext.viewportWidth).bandHeight
-            kiraUiToolbarCollect()
+            // What floats is declared while the tree lowers and drawn over it.
+            kiraUiOverlayCollect()
             let content = build().describe(widgetContext, ModifierContext {})
-            kiraUiToolbarStopCollecting()
-            described = windowDescription(move content, widgetContext, ModifierContext {})
+            kiraUiOverlayStopCollecting()
+            described = overlayStack(move content, kiraUiOverlaysThisFrame(), viewport.width, viewport.height)
+        } else {
+            // A window with chrome: the tree declares its commands and toolbar
+            // items while it lowers, and the chrome is drawn from them over the
+            // content, which is laid out against the rows the chrome leaves.
+            described = windowFrame(build(), copy title, move widgetContext, viewport)
         }
-        kiraUiOverlayStopCollecting()
-        described = overlayStack(move described, kiraUiOverlaysThisFrame(), viewport.width, viewport.height)
         caLayoutTree(described, viewport.width, viewport.height)
         if state.frameCount == 0 {
             caReconcileImmediate(state.compositor.tree, described)

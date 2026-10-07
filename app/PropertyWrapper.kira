@@ -9,18 +9,19 @@ import Foundation
 //   1. monomorphizes the template per wrapped field — `State` is renamed to `__pw_<Form>_<field>`
 //      (including internal self-references such as `nativeRecover<State>`), and the `Wrapped`
 //      placeholder type becomes the field's declared type, so ANY field type works;
-//   2. emits per-field get/set accessor functions that construct the monomorphized wrapper —
-//      seeded with the field's initializer and the stable identity key "<Form>.<field>" — and
-//      call its `get()` / `set(value)`;
-//   3. rewrites the form: the wrapped field is dropped, bare reads of the property route through
-//      the get accessor, and `property = value` writes route through the set accessor.
+//   2. replaces the wrapped field with a computed property of the same name and type whose
+//      `get` and `set(value)` build the monomorphized wrapper — seeded with the field's
+//      initializer and the stable identity key "<Form>.<field>" — and call its `get()` /
+//      `set(value)`. Reading the property calls the getter and assigning it calls the setter,
+//      wherever the form names it, closures included: the compiler resolves the name, so a
+//      local of the same name shadows it as it would any member.
 //
 // Storage policy lives entirely in the wrapper struct's own `get`/`set` (State persists through
 // the ambient native slot store, so state survives per-frame widget rebuilds). The wrapper
 // protocol a template must satisfy:
 //
 //   * a `wrappedValue` field (use the `Wrapped` placeholder type to be generic over field types)
-//   * a `key: String` field — the wrapper's stable identity, filled by the generated accessors
+//   * a `key: String` field — the wrapper's stable identity, filled by the generated property
 //   * `function get() -> Wrapped` and `function set(value: Wrapped)`
 //
 // Identity note: the key is "<Form>.<field>", so all instances of one form SHARE each wrapped
@@ -48,7 +49,7 @@ comptime macro PropertyWrapper {
                 return quote { }
             }
             if hasKey == false {
-                Diagnostics.error("a @PropertyWrapper struct requires a `key: String` field (its stable identity, filled by the generated accessors)", at: target.syntax)
+                Diagnostics.error("a @PropertyWrapper struct requires a `key: String` field (its stable identity, filled by the generated property)", at: target.syntax)
                 return quote { }
             }
             return quote {
@@ -58,8 +59,7 @@ comptime macro PropertyWrapper {
             }
         }
         var monos: [Syntax] = []
-        var accessors: [Syntax] = []
-        var rewritten: Syntax = target.syntax
+        var rewritten: Declaration = target
         for field in target.fields {
             if field.hasAnnotation(wrapper.name.asString()) {
                 if field.initializer == "" {
@@ -70,35 +70,29 @@ comptime macro PropertyWrapper {
                 var mono: Syntax = wrapper.syntax.replaceIdentifier(wrapper.name.asString(), monoName)
                 mono = mono.replaceIdentifier("Wrapped", field.type.asSyntax())
                 monos.append(mono)
-                accessors.append(quote {
-                    function __pw_#{target.name}_get_#{field.name}() -> #{field.type.asSyntax()} {
-                        let backing = __pw_#{target.name}_#{field.name} {
-                            wrappedValue: #{field.initializer},
-                            key: #{target.name.asString() + "." + field.name.asString()}
+                rewritten = rewritten.replaceField(field.name, quote {
+                    var #{field.name}: #{field.type.asSyntax()} {
+                        get {
+                            let backing = __pw_#{target.name}_#{field.name} {
+                                wrappedValue: #{field.initializer},
+                                key: #{target.name.asString() + "." + field.name.asString()}
+                            }
+                            return backing.get()
                         }
-                        return backing.get()
-                    }
-                    function __pw_#{target.name}_set_#{field.name}(value: #{field.type.asSyntax()}) {
-                        let backing = __pw_#{target.name}_#{field.name} {
-                            wrappedValue: #{field.initializer},
-                            key: #{target.name.asString() + "." + field.name.asString()}
+                        set(value) {
+                            let backing = __pw_#{target.name}_#{field.name} {
+                                wrappedValue: #{field.initializer},
+                                key: #{target.name.asString() + "." + field.name.asString()}
+                            }
+                            backing.set(move value)
                         }
-                        backing.set(move value)
-                        return
                     }
                 })
-                rewritten = rewritten.dropField(field.name)
-                rewritten = rewritten.rewriteProperty(
-                    field.name,
-                    quote { __pw_#{target.name}_get_#{field.name}() },
-                    quote { __pw_#{target.name}_set_#{field.name} }
-                )
             }
         }
         return quote {
             #{monos}
-            #{accessors}
-            #{rewritten}
+            #{rewritten.syntax}
         }
     }
 }

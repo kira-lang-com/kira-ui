@@ -144,6 +144,10 @@ public struct ModifierDelta {
     // `.font(...)` inside it names a weight of its own.
     let hasWeightOverride: Bool = false
     let weightOverride: FontWeight = .Regular
+    // `.fontDesign(...)`: the face text is set in, the system's or its
+    // monospaced cut.
+    let hasFontDesign: Bool = false
+    let fontDesign: FontDesign = .Default
     // `.multilineTextAlignment(...)`: where the lines of wrapped text sit.
     let hasTextAlignment: Bool = false
     let textAlignment: TextAlignment = .Leading
@@ -162,6 +166,9 @@ public struct ModifierDelta {
     let inMenu: Bool = false
     let hasListStyle: Bool = false
     let listStyle: ListStyle = .Automatic
+    // `.labelStyle(...)`: which halves of every label in this subtree show.
+    let hasLabelStyle: Bool = false
+    let labelStyle: LabelStyle = .Automatic
 }
 
 // The resolved context is traversal-local. It is passed by borrow to every
@@ -216,6 +223,7 @@ public struct ModifierContext {
     let hasFont: Bool = false
     let weightOverride: FontWeight = .Regular
     let hasWeightOverride: Bool = false
+    let fontDesign: FontDesign = .Default
     let textAlignment: TextAlignment = .Leading
     let buttonStyle: ButtonStyle = .Automatic
     let buttonBorderShape: ButtonBorderShape = .Automatic
@@ -236,6 +244,9 @@ public struct ModifierContext {
     // theme: the split view states it for its sidebar column and `.listStyle`
     // restates it anywhere below.
     let listStyle: ListStyle = .Automatic
+    // Which halves of a `Label` show, an environment value like the list
+    // style: `.labelStyle` states it and every label below it follows.
+    let labelStyle: LabelStyle = .Automatic
     // A kind rather than a Bool because there turned out to be three of them the
     // moment a `ControlGroup` was put in a menu: the group's children are in a
     // menu and are NOT rows, and a Bool can only say they are or they are not.
@@ -280,6 +291,7 @@ public function modifierContextApply(
         hasFont: delta.hasFont ? true : (delta.hasTypography ? false : context.hasFont),
         weightOverride: delta.hasWeightOverride ? delta.weightOverride : context.weightOverride,
         hasWeightOverride: delta.hasWeightOverride ? true : (delta.hasFont ? false : context.hasWeightOverride),
+        fontDesign: delta.hasFontDesign ? delta.fontDesign : context.fontDesign,
         textAlignment: delta.hasTextAlignment ? delta.textAlignment : context.textAlignment,
         buttonStyle: delta.hasButtonStyle ? delta.buttonStyle : context.buttonStyle,
         buttonBorderShape: delta.hasButtonBorderShape ? delta.buttonBorderShape : context.buttonBorderShape,
@@ -289,6 +301,7 @@ public function modifierContextApply(
         focused: delta.hasFocused ? delta.focused : context.focused,
         hasFocused: delta.hasFocused ? true : context.hasFocused,
         listStyle: delta.hasListStyle ? delta.listStyle : context.listStyle,
+        labelStyle: delta.hasLabelStyle ? delta.labelStyle : context.labelStyle,
         // Carried, not defaulted: a `.foregroundColor(...)` inside a menu would
         // otherwise rebuild the context without it and every control below that
         // modifier would present itself as though it were not in one.
@@ -346,6 +359,7 @@ public function modifierContextForOverlay(context: borrow ModifierContext) -> Mo
         hasFont: inherited.hasFont,
         weightOverride: inherited.weightOverride,
         hasWeightOverride: inherited.hasWeightOverride,
+        fontDesign: inherited.fontDesign,
         textAlignment: inherited.textAlignment,
         buttonStyle: inherited.buttonStyle,
         buttonBorderShape: inherited.buttonBorderShape,
@@ -356,6 +370,7 @@ public function modifierContextForOverlay(context: borrow ModifierContext) -> Mo
         focused: inherited.focused,
         hasFocused: inherited.hasFocused,
         listStyle: inherited.listStyle,
+        labelStyle: inherited.labelStyle,
         controlPresentation: inherited.controlPresentation
     }
 }
@@ -402,6 +417,7 @@ public function modifierContextPresenting(
         hasFont: inherited.hasFont,
         weightOverride: inherited.weightOverride,
         hasWeightOverride: inherited.hasWeightOverride,
+        fontDesign: inherited.fontDesign,
         textAlignment: inherited.textAlignment,
         buttonStyle: inherited.buttonStyle,
         buttonBorderShape: inherited.buttonBorderShape,
@@ -411,6 +427,7 @@ public function modifierContextPresenting(
         focused: inherited.focused,
         hasFocused: inherited.hasFocused,
         listStyle: inherited.listStyle,
+        labelStyle: inherited.labelStyle,
         controlPresentation: presentation
     }
 }
@@ -450,6 +467,7 @@ public function modifierContextForChildren(context: borrow ModifierContext) -> M
         hasFont: context.hasFont,
         weightOverride: context.weightOverride,
         hasWeightOverride: context.hasWeightOverride,
+        fontDesign: context.fontDesign,
         textAlignment: context.textAlignment,
         buttonStyle: context.buttonStyle,
         buttonBorderShape: context.buttonBorderShape,
@@ -459,6 +477,7 @@ public function modifierContextForChildren(context: borrow ModifierContext) -> M
         focused: false,
         hasFocused: false,
         listStyle: context.listStyle,
+        labelStyle: context.labelStyle,
         controlPresentation: context.controlPresentation
     }
 }
@@ -502,6 +521,7 @@ public function modifierContextForPresentation(context: borrow ModifierContext) 
         hasFont: context.hasFont,
         weightOverride: context.weightOverride,
         hasWeightOverride: context.hasWeightOverride,
+        fontDesign: context.fontDesign,
         textAlignment: context.textAlignment,
         buttonStyle: context.buttonStyle,
         buttonBorderShape: context.buttonBorderShape,
@@ -511,167 +531,7 @@ public function modifierContextForPresentation(context: borrow ModifierContext) 
         focused: false,
         hasFocused: false,
         listStyle: context.listStyle,
+        labelStyle: context.labelStyle,
         controlPresentation: context.controlPresentation
-    }
-}
-
-public function modifierDeltaTheme(theme: Any Theme) -> ModifierDelta {
-    return ModifierDelta {
-        hasTheme: true,
-        theme: move theme
-    }
-}
-
-public function modifierDeltaForegroundColor(color: PrimaryColor) -> ModifierDelta {
-    return ModifierDelta {
-        hasForegroundColor: true,
-        foregroundColor: color
-    }
-}
-
-public function modifierDeltaMaterial(material: Material) -> ModifierDelta {
-    return ModifierDelta {
-        hasMaterial: true,
-        material: material
-    }
-}
-
-public function modifierDeltaFill(color: Color) -> ModifierDelta {
-    return ModifierDelta {
-        hasFill: true,
-        fillColor: move color
-    }
-}
-
-public function modifierDeltaBackgroundStyle(surface: BackgroundStyle) -> ModifierDelta {
-    return ModifierDelta {
-        hasBackgroundStyle: true,
-        backgroundStyle: surface
-    }
-}
-
-public function modifierDeltaThemeBorder(border: ThemeBorder) -> ModifierDelta {
-    return ModifierDelta {
-        hasThemeBorder: true,
-        themeBorder: border
-    }
-}
-
-public function modifierDeltaTextColor(color: Color) -> ModifierDelta {
-    return ModifierDelta {
-        hasTextColor: true,
-        textColor: move color
-    }
-}
-
-public function modifierDeltaTypography(style: TypographyStyle) -> ModifierDelta {
-    return ModifierDelta {
-        hasTypography: true,
-        typography: style
-    }
-}
-
-public function modifierDeltaControlSize(size: ControlSize) -> ModifierDelta {
-    return ModifierDelta {
-        hasControlSize: true,
-        controlSize: size
-    }
-}
-
-public function modifierDeltaImageScale(scale: IconScale) -> ModifierDelta {
-    return ModifierDelta {
-        hasImageScale: true,
-        imageScale: scale
-    }
-}
-
-public function modifierDeltaSymbolVariant(variant: SymbolVariants) -> ModifierDelta {
-    return ModifierDelta {
-        hasSymbolVariant: true,
-        symbolVariant: variant
-    }
-}
-
-public function modifierDeltaContentMargin(length: Float) -> ModifierDelta {
-    return ModifierDelta {
-        hasContentMargin: true,
-        contentMargin: length
-    }
-}
-
-public function modifierDeltaListStyle(style: ListStyle) -> ModifierDelta {
-    return ModifierDelta {
-        hasListStyle: true,
-        listStyle: style
-    }
-}
-
-public function modifierDeltaContentInset(length: Float) -> ModifierDelta {
-    return ModifierDelta {
-        hasContentInset: true,
-        contentInset: length
-    }
-}
-
-public function modifierDeltaTint(color: PrimaryColor) -> ModifierDelta {
-    return ModifierDelta {
-        hasTint: true,
-        tint: color
-    }
-}
-
-public function modifierDeltaFont(size: Float, weight: FontWeight) -> ModifierDelta {
-    return ModifierDelta {
-        hasFont: true,
-        fontSize: size,
-        fontWeight: weight
-    }
-}
-
-public function modifierDeltaFontWeight(weight: FontWeight) -> ModifierDelta {
-    return ModifierDelta {
-        hasWeightOverride: true,
-        weightOverride: weight
-    }
-}
-
-public function modifierDeltaTextAlignment(alignment: TextAlignment) -> ModifierDelta {
-    return ModifierDelta {
-        hasTextAlignment: true,
-        textAlignment: alignment
-    }
-}
-
-public function modifierDeltaButtonStyle(style: ButtonStyle) -> ModifierDelta {
-    return ModifierDelta {
-        hasButtonStyle: true,
-        buttonStyle: style
-    }
-}
-
-public function modifierDeltaButtonBorderShape(shape: ButtonBorderShape) -> ModifierDelta {
-    return ModifierDelta {
-        hasButtonBorderShape: true,
-        buttonBorderShape: shape
-    }
-}
-
-public function modifierDeltaOpacity(value: Float) -> ModifierDelta {
-    return ModifierDelta {
-        hasOpacity: true,
-        opacity: value
-    }
-}
-
-public function modifierDeltaDisabled(value: Bool) -> ModifierDelta {
-    return ModifierDelta {
-        disabled: value
-    }
-}
-
-public function modifierDeltaFocused(value: Bool) -> ModifierDelta {
-    return ModifierDelta {
-        hasFocused: true,
-        focused: value
     }
 }

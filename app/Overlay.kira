@@ -66,8 +66,10 @@ public struct KiraUiOverlay {
     var alignment: Float = 0.0
     // The key a press anywhere off the view fires, zero when such a press
     // should reach whatever is underneath instead. A menu is dismissed this
-    // way.
+    // way. The press is taken from `dismissTop` down: what stands above it
+    // stays live while the view is out, as the menu bar does over its menu.
     var dismissKey: Int = 0
+    var dismissTop: Float = 0.0
 }
 
 // The layer a surface floats on.
@@ -168,14 +170,17 @@ public function kiraUiPressAnchor() -> KiraUiOverlay {
 // whenever a menu opened would be a different tree each time: every layer in
 // the window would be matched to another and animate into it.
 public function overlayStack(content: CALayerDescription, overlays: [KiraUiOverlay], width: Float, height: Float) -> CALayerDescription {
-    let margin = windowChromeMetrics.edgeInset
+    let margin = windowChromeMetrics().edgeInset
     var layers: [CALayerDescription] = []
     layers.append(move content)
     for i in overlayOrder(overlays) {
         if overlays[i].dismissKey != 0 {
             layers.append(CALayerDescription {
                 hittable: true,
-                hitKey: overlays[i].dismissKey
+                hitKey: overlays[i].dismissKey,
+                layout: CALayoutIntent {
+                    offset: Point { x: 0.0, y: overlays[i].dismissTop }
+                }
             })
         }
         var floating = copy overlays[i].content

@@ -157,6 +157,7 @@ function kuiFontIs(font: borrow FontImplementation, size: Float, lineHeight: Flo
 
 construct KuiTheTextMetricsKeepTheirAuthoredValues() extends Test {
     test {
+        setInterfaceMode(.AdaptiveMobile)
         let typography = kuiStyle().typography
         return kuiFontIs(typography.body, 17.0, 22.0, 0.0 - 0.43)
             && kuiFontIs(typography.caption, 12.0, 16.0, 0.0)
@@ -196,11 +197,63 @@ construct KuiTheTextWeightsSurviveTheNumericAxis() extends Test {
 // dropped here would still be a regression on screen.
 construct KuiResolvedTokensReachAWidgetUnchanged() extends Test {
     test {
+        setInterfaceMode(.AdaptiveMobile)
         let tokens = kuiTokens()
         let expectedPrimary = themeAdaptiveColor(kuiStyle().foregrounds.primary, resolvedAppearance(kuiStyle().appearance))
         return kuiRgba(tokens.foreground.primary.r, tokens.foreground.primary.g, tokens.foreground.primary.b, tokens.foreground.primary.a, expectedPrimary.r, expectedPrimary.g, expectedPrimary.b, expectedPrimary.a)
             && tokens.border.focus.width == 2.0
             && kuiNear(tokens.bodySize, 17.0)
+    }
+    expect { let e: Result<Any, TestFailure> = Result.Ok(true)
+        return e
+    }
+}
+
+// --- Interface modes ---------------------------------------------------------
+
+// A desktop sets the same styles at the Mac's size.
+construct KuiADesktopSetsTheTextAtTheMacsSize() extends Test {
+    test {
+        setInterfaceMode(.AdaptiveDesktop)
+        let typography = kuiStyle().typography
+        return kuiFontIs(typography.body, 13.0, 16.0, 0.0 - 0.08)
+            && kuiFontIs(typography.largeTitle, 26.0, 32.0, 0.22)
+            && typography.headline.weight == .Bold
+    }
+    expect { let e: Result<Any, TestFailure> = Result.Ok(true)
+        return e
+    }
+}
+
+// Switching the mode while a program runs changes what the next read answers,
+// lengths and text alike, and switching back restores them.
+construct KuiSwitchingTheModeResizesTheInterface() extends Test {
+    test {
+        setInterfaceMode(.AdaptiveMobile)
+        let mobileRow = sidebarMetrics().rowHeight
+        let mobileBody = kuiTokens().bodySize
+        setInterfaceMode(.AdaptiveDesktop)
+        let desktopRow = sidebarMetrics().rowHeight
+        let desktopBody = kuiTokens().bodySize
+        setInterfaceMode(.AdaptiveMobile)
+        return kuiNear(mobileRow, 44.0) && kuiNear(desktopRow, 28.0)
+            && kuiNear(mobileBody, 17.0) && kuiNear(desktopBody, 13.0)
+            && kuiNear(sidebarMetrics().rowHeight, 44.0)
+    }
+    expect { let e: Result<Any, TestFailure> = Result.Ok(true)
+        return e
+    }
+}
+
+// Only a desktop lights what the pointer rests on.
+construct KuiOnlyADesktopHovers() extends Test {
+    test {
+        let modifiers = ModifierContext {}
+        setInterfaceMode(.AdaptiveMobile)
+        let mobile = kiraUiHoverColor(modifiers)
+        setInterfaceMode(.AdaptiveDesktop)
+        let desktop = kiraUiHoverColor(modifiers)
+        return mobile.a == 0.0 && desktop.a > 0.0
     }
     expect { let e: Result<Any, TestFailure> = Result.Ok(true)
         return e

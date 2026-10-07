@@ -43,14 +43,19 @@ public let kiraUICatalogStack = loadKiraUICatalogStack()
 // The trait vector the toolkit resolves against.
 //
 // Appearance comes through `resolvedAppearance`, which is still the one place
-// the host override and the platform's own answer are reconciled. The rest is
-// what this build can observe; a trait the toolkit cannot yet read stays at its
-// default rather than being guessed.
-public function kiraUICatalogEnvironment(appearance: borrow Appearance) -> UIEnvironment {
+// the host override and the platform's own answer are reconciled. The idiom is
+// the interface mode's: the desktop's, or a tablet's, whose kit the catalog's
+// floor is read off. The rest is what this build can observe; a trait the
+// toolkit cannot yet read stays at its default rather than being guessed.
+public function kiraUICatalogEnvironment(appearance: borrow Appearance, mode: borrow InterfaceMode) -> UIEnvironment {
     var environment = UIEnvironment()
     match appearance {
         Light -> { environment.appearance = .Light }
         Dark -> { environment.appearance = .Dark }
+    }
+    match mode {
+        AdaptiveDesktop -> { environment.idiom = .Desktop }
+        AdaptiveMobile -> { environment.idiom = .Pad }
     }
     return environment
 }
@@ -58,8 +63,11 @@ public function kiraUICatalogEnvironment(appearance: borrow Appearance) -> UIEnv
 // KiraUI declares its own `Color`, distinct from the one a catalog answers
 // with, so the channels are carried across by hand. Two identical declarations
 // are two types, and that is the seam between them.
+//
+// A mode sizes an interface and does not paint it, so a color is read once, in
+// the mode the program starts in.
 public function catalogColorAt(stack: borrow CatalogStack, name: borrow String, appearance: borrow Appearance) -> Color {
-    let resolved = resolveColor(stack, name, kiraUICatalogEnvironment(appearance))
+    let resolved = resolveColor(stack, name, kiraUICatalogEnvironment(appearance, hostInterfaceMode()))
     return Color {
         r: resolved.r,
         g: resolved.g,
@@ -81,9 +89,9 @@ public function catalogAdaptive(stack: borrow CatalogStack, name: borrow String)
     }
 }
 
-// A catalog text style as the toolkit's own font shape.
-public function catalogFont(stack: borrow CatalogStack, name: borrow String) -> FontImplementation {
-    let resolved = resolveTypography(stack, name, kiraUICatalogEnvironment(.Light))
+// A catalog text style as the toolkit's own font shape, at `mode`'s size.
+public function catalogFont(stack: borrow CatalogStack, name: borrow String, mode: borrow InterfaceMode) -> FontImplementation {
+    let resolved = resolveTypography(stack, name, kiraUICatalogEnvironment(.Light, mode))
     return FontImplementation {
         size: resolved.value.size,
         weight: catalogFontWeight(resolved.value.weight),
@@ -184,25 +192,25 @@ public function catalogBorderTokens() -> StyleBorderTokens {
     }
 }
 
-public function catalogTypographyTokens() -> StyleTypographyTokens {
+public function catalogTypographyTokens(mode: InterfaceMode) -> StyleTypographyTokens {
     return StyleTypographyTokens {
-        caption: catalogFont(kiraUICatalogStack, textCaption()),
-        caption2: catalogFont(kiraUICatalogStack, textCaption2()),
-        callout: catalogFont(kiraUICatalogStack, textCallout()),
-        body: catalogFont(kiraUICatalogStack, textBody()),
-        control: catalogFont(kiraUICatalogStack, "control"),
-        title: catalogFont(kiraUICatalogStack, textTitle()),
-        bodyEmphasis: catalogFont(kiraUICatalogStack, "bodyEmphasis"),
-        subheadline: catalogFont(kiraUICatalogStack, textSubheadline()),
-        footnote: catalogFont(kiraUICatalogStack, textFootnote()),
-        overline: catalogFont(kiraUICatalogStack, "overline"),
-        label: catalogFont(kiraUICatalogStack, "label"),
-        section: catalogFont(kiraUICatalogStack, "section"),
-        headline: catalogFont(kiraUICatalogStack, textHeadline()),
-        title1: catalogFont(kiraUICatalogStack, "title1"),
-        title2: catalogFont(kiraUICatalogStack, textTitle2()),
-        title3: catalogFont(kiraUICatalogStack, textTitle3()),
-        largeTitle: catalogFont(kiraUICatalogStack, textLargeTitle())
+        caption: catalogFont(kiraUICatalogStack, textCaption(), mode),
+        caption2: catalogFont(kiraUICatalogStack, textCaption2(), mode),
+        callout: catalogFont(kiraUICatalogStack, textCallout(), mode),
+        body: catalogFont(kiraUICatalogStack, textBody(), mode),
+        control: catalogFont(kiraUICatalogStack, "control", mode),
+        title: catalogFont(kiraUICatalogStack, textTitle(), mode),
+        bodyEmphasis: catalogFont(kiraUICatalogStack, "bodyEmphasis", mode),
+        subheadline: catalogFont(kiraUICatalogStack, textSubheadline(), mode),
+        footnote: catalogFont(kiraUICatalogStack, textFootnote(), mode),
+        overline: catalogFont(kiraUICatalogStack, "overline", mode),
+        label: catalogFont(kiraUICatalogStack, "label", mode),
+        section: catalogFont(kiraUICatalogStack, "section", mode),
+        headline: catalogFont(kiraUICatalogStack, textHeadline(), mode),
+        title1: catalogFont(kiraUICatalogStack, "title1", mode),
+        title2: catalogFont(kiraUICatalogStack, textTitle2(), mode),
+        title3: catalogFont(kiraUICatalogStack, textTitle3(), mode),
+        largeTitle: catalogFont(kiraUICatalogStack, textLargeTitle(), mode)
     }
 }
 
@@ -213,558 +221,17 @@ public let catalogBackgrounds = catalogBackgroundTokens()
 public let catalogFills = catalogFillTokens()
 public let catalogTints = catalogTintTokens()
 public let catalogBorders = catalogBorderTokens()
-public let catalogTypography = catalogTypographyTokens()
 
-// --- Window chrome ---------------------------------------------------------
+// The text styles at each size, each read out of the catalog once.
+let desktopTypography = catalogTypographyTokens(.AdaptiveDesktop)
+let mobileTypography = catalogTypographyTokens(.AdaptiveMobile)
 
-// The lengths the window's chrome is laid out with, read once from the catalog.
-//
-// Every one is a catalog metric, so the bar is the platform's bar wherever the
-// catalog has measured it and an application overrides a length with a partial
-// blob rather than with code.
-public struct WindowChromeMetrics {
-    // The band the bar takes: the window kit's on a tablet or a computer, and
-    // the compact one under an iPhone's status bar. `windowChromeMetricsFor`
-    // says which a window of a given width is drawn with. The content is held
-    // under `bandHeight`, which on a computer is the bar's own height and on an
-    // iPhone runs past its row.
-    var toolbarHeight: Float
-    var bandHeight: Float
-    let compactToolbarHeight: Float
-    let compactBandHeight: Float
-    let itemHeight: Float
-    let itemWidth: Float
-    let groupSpacing: Float
-    let groupInset: Float
-    let itemSpacing: Float
-    let spacerWidth: Float
-    var edgeInset: Float
-    let compactEdgeInset: Float
-    let labelInset: Float
-    let symbolSize: Float
-    let symbolWeight: Float
-    let controlsLeading: Float
-    let controlDiameter: Float
-    let controlSpacing: Float
-    let controlsTrailing: Float
-    let backRemovalScale: Float
-    let searchWidth: Float
-    let searchLeading: Float
-    let searchTrailing: Float
-    let searchSpacing: Float
-    let backRemovalDuration: Float
-    // The window's own corner.
-    let cornerRadius: Float
-
-    // Where the bar's own content may start: past the close, minimize and zoom
-    // buttons and the room the platform leaves after them.
-    function controlsEnd() -> Float {
-        return controlsLeading + controlDiameter * 3.0 + controlSpacing * 2.0 + controlsTrailing
-    }
+// The default style's text styles, at the size the interface is drawn at.
+public function catalogTypography() -> StyleTypographyTokens {
+    return interfaceMode() == .AdaptiveDesktop ? desktopTypography : mobileTypography
 }
 
-public function catalogMetric(stack: borrow CatalogStack, name: borrow String) -> Float {
-    return resolveMetric(stack, name, kiraUICatalogEnvironment(.Light)).points
-}
-
-public function catalogWindowChromeMetrics() -> WindowChromeMetrics {
-    return WindowChromeMetrics {
-        toolbarHeight: catalogMetric(kiraUICatalogStack, metricToolbarHeight()),
-        bandHeight: catalogMetric(kiraUICatalogStack, metricToolbarHeight()),
-        compactToolbarHeight: catalogMetric(kiraUICatalogStack, metricToolbarCompactHeight()),
-        compactBandHeight: catalogMetric(kiraUICatalogStack, metricToolbarCompactBandHeight()),
-        itemHeight: catalogMetric(kiraUICatalogStack, metricToolbarItemHeight()),
-        itemWidth: catalogMetric(kiraUICatalogStack, metricToolbarItemWidth()),
-        groupSpacing: catalogMetric(kiraUICatalogStack, metricToolbarGroupSpacing()),
-        groupInset: catalogMetric(kiraUICatalogStack, metricToolbarGroupInset()),
-        itemSpacing: catalogMetric(kiraUICatalogStack, metricToolbarItemSpacing()),
-        spacerWidth: catalogMetric(kiraUICatalogStack, metricToolbarSpacerWidth()),
-        edgeInset: catalogMetric(kiraUICatalogStack, metricToolbarEdgeInset()),
-        compactEdgeInset: catalogMetric(kiraUICatalogStack, metricToolbarCompactEdgeInset()),
-        labelInset: catalogMetric(kiraUICatalogStack, metricToolbarItemLabelInset()),
-        symbolSize: catalogMetric(kiraUICatalogStack, metricToolbarSymbolSize()),
-        symbolWeight: catalogMetric(kiraUICatalogStack, metricToolbarSymbolWeight()),
-        controlsLeading: catalogMetric(kiraUICatalogStack, metricWindowControlsLeading()),
-        controlDiameter: catalogMetric(kiraUICatalogStack, metricWindowControlDiameter()),
-        controlSpacing: catalogMetric(kiraUICatalogStack, metricWindowControlSpacing()),
-        controlsTrailing: catalogMetric(kiraUICatalogStack, metricWindowControlsTrailing()),
-        backRemovalScale: catalogMetric(kiraUICatalogStack, metricToolbarBackRemovalScale()),
-        searchWidth: catalogMetric(kiraUICatalogStack, metricToolbarSearchWidth()),
-        searchLeading: catalogMetric(kiraUICatalogStack, metricToolbarSearchLeading()),
-        searchTrailing: catalogMetric(kiraUICatalogStack, metricToolbarSearchTrailing()),
-        searchSpacing: catalogMetric(kiraUICatalogStack, metricToolbarSearchSpacing()),
-        backRemovalDuration: catalogMetric(kiraUICatalogStack, metricToolbarBackRemovalDuration()),
-        cornerRadius: catalogMetric(kiraUICatalogStack, metricWindowCornerRadius())
-    }
-}
-
-public let windowChromeMetrics = catalogWindowChromeMetrics()
-
-// The chrome a window this wide is drawn with: on a phone, the compact bar.
-public function windowChromeMetricsFor(width: Float) -> WindowChromeMetrics {
-    var metrics = copy windowChromeMetrics
-    if resolvedNavigationDevice(width) == .Phone {
-        metrics.toolbarHeight = metrics.compactToolbarHeight
-        metrics.bandHeight = metrics.compactBandHeight
-        metrics.edgeInset = metrics.compactEdgeInset
-    }
-    return metrics
-}
-
-// The window title's typeface: a toolkit text style, since Apple names none.
-public let windowTitleFont = catalogFont(kiraUICatalogStack, "windowTitle")
-public let compactWindowTitleFont = catalogFont(kiraUICatalogStack, "windowTitleCompact")
-
-// The bar's title face for a window this wide: on a phone, the compact bar's.
-public function windowTitleFontFor(width: Float) -> FontImplementation {
-    if resolvedNavigationDevice(width) == .Phone {
-        return compactWindowTitleFont
-    }
-    return windowTitleFont
-}
-
-// --- Sidebar ---------------------------------------------------------------
-
-// The lengths a `List` in a split view's sidebar column is laid out with, all
-// of them from the column's own edge: the section title's row, where its text
-// starts and how far down, the rows and where their content starts, the
-// selection band and its corner, and the column the glyph is centered in before
-// the title -- and the spring the column slides in and out on when its toggle
-// is pressed, which does not bounce: a sidebar is a pane, not a card. Its
-// glass runs past the window's edges by `glassBleed`, so the edge a piece of
-// glass draws -- its rim, its antialiased border -- is off the window, and a
-// view sliding under the pane never shows through it there. Along its
-// trailing edge the detail casts a shadow into it, `shadowRadius` soft.
-public struct SidebarMetrics {
-    let headerHeight: Float
-    let headerInset: Float
-    let headerTopInset: Float
-    let rowHeight: Float
-    let rowInset: Float
-    let selectionInset: Float
-    let selectionRadius: Float
-    let iconColumn: Float
-    let titleSpacing: Float
-    let symbolSize: Float
-    let toggleResponse: Float
-    let toggleDamping: Float
-    let glassBleed: Float
-    let shadowRadius: Float
-}
-
-public function catalogSidebarMetrics() -> SidebarMetrics {
-    return SidebarMetrics {
-        headerHeight: catalogMetric(kiraUICatalogStack, metricSidebarHeaderHeight()),
-        headerInset: catalogMetric(kiraUICatalogStack, metricSidebarHeaderInset()),
-        headerTopInset: catalogMetric(kiraUICatalogStack, metricSidebarHeaderTopInset()),
-        rowHeight: catalogMetric(kiraUICatalogStack, metricSidebarRowHeight()),
-        rowInset: catalogMetric(kiraUICatalogStack, metricSidebarRowInset()),
-        selectionInset: catalogMetric(kiraUICatalogStack, metricSidebarSelectionInset()),
-        selectionRadius: catalogMetric(kiraUICatalogStack, metricSidebarSelectionRadius()),
-        iconColumn: catalogMetric(kiraUICatalogStack, metricSidebarIconColumn()),
-        titleSpacing: catalogMetric(kiraUICatalogStack, metricSidebarTitleSpacing()),
-        symbolSize: catalogMetric(kiraUICatalogStack, metricSidebarSymbolSize()),
-        toggleResponse: catalogMetric(kiraUICatalogStack, metricSidebarToggleResponse()),
-        toggleDamping: catalogMetric(kiraUICatalogStack, metricSidebarToggleDamping()),
-        glassBleed: catalogMetric(kiraUICatalogStack, metricSidebarGlassBleed()),
-        shadowRadius: catalogMetric(kiraUICatalogStack, metricSidebarShadowRadius())
-    }
-}
-
-public let sidebarMetrics = catalogSidebarMetrics()
-
-// The selected row's band: a wash over the column's glass, not the accent.
-public let sidebarSelection = catalogAdaptive(kiraUICatalogStack, "sidebarSelection")
-
-// The shadow the detail casts into the sidebar's glass along its trailing
-// edge.
-public let sidebarShadowColor = catalogAdaptive(kiraUICatalogStack, colorSidebarShadow())
-
-// --- Inset grouped list ------------------------------------------------------
-
-// The lengths `Form` and an inset grouped `List` are laid out with: the
-// readable column and the gaps down it, the card and its rows, and the room
-// around a header and a footer.
-public struct ListMetrics {
-    let readableWidth: Float
-    let sectionSpacing: Float
-    let topInset: Float
-    let cornerRadius: Float
-    let rowHeight: Float
-    let rowInset: Float
-    let separatorThickness: Float
-    let accessorySpacing: Float
-    let headerPadding: Float
-    let footerTopInset: Float
-    let footerBottomInset: Float
-}
-
-public function catalogListMetrics() -> ListMetrics {
-    return ListMetrics {
-        readableWidth: catalogMetric(kiraUICatalogStack, metricListReadableWidth()),
-        sectionSpacing: catalogMetric(kiraUICatalogStack, metricListSectionSpacing()),
-        topInset: catalogMetric(kiraUICatalogStack, metricListTopInset()),
-        cornerRadius: catalogMetric(kiraUICatalogStack, metricListCornerRadius()),
-        rowHeight: catalogMetric(kiraUICatalogStack, metricListRowHeight()),
-        rowInset: catalogMetric(kiraUICatalogStack, metricListRowInset()),
-        separatorThickness: catalogMetric(kiraUICatalogStack, metricListSeparatorThickness()),
-        accessorySpacing: catalogMetric(kiraUICatalogStack, metricListAccessorySpacing()),
-        headerPadding: catalogMetric(kiraUICatalogStack, metricListHeaderPadding()),
-        footerTopInset: catalogMetric(kiraUICatalogStack, metricListFooterTopInset()),
-        footerBottomInset: catalogMetric(kiraUICatalogStack, metricListFooterBottomInset())
-    }
-}
-
-public let listMetrics = catalogListMetrics()
-
-// What a grouped list is painted with: the canvas the sections sit on, the
-// card its rows share, and the hairline between two rows.
-public let groupedBackground = catalogAdaptive(kiraUICatalogStack, colorSystemGroupedBackground())
-public let groupedCardBackground = catalogAdaptive(kiraUICatalogStack, colorSecondarySystemGroupedBackground())
-public let listSeparator = catalogAdaptive(kiraUICatalogStack, colorSeparator())
-// A row held down lights in the fourth gray, as a cell does.
-public let listRowHighlight = catalogAdaptive(kiraUICatalogStack, colorSystemGray4())
-
-// --- Large title -------------------------------------------------------------
-
-// Where a column's large title sits under the bar, and the room it leaves
-// before the content; how long it takes to fade over to the bar's inline
-// title once it goes under, and how far the inline one rises and how blurred
-// it starts as it comes.
-public struct LargeTitleMetrics {
-    let topInset: Float
-    let bottomInset: Float
-    let fadeDuration: Float
-    let inlineTravel: Float
-    let inlineBlur: Float
-}
-
-public let largeTitleMetrics = LargeTitleMetrics {
-    topInset: catalogMetric(kiraUICatalogStack, metricLargeTitleTopInset()),
-    bottomInset: catalogMetric(kiraUICatalogStack, metricLargeTitleBottomInset()),
-    fadeDuration: catalogMetric(kiraUICatalogStack, metricLargeTitleFadeDuration()),
-    inlineTravel: catalogMetric(kiraUICatalogStack, metricLargeTitleInlineTravel()),
-    inlineBlur: catalogMetric(kiraUICatalogStack, metricLargeTitleInlineBlur())
-}
-
-// How a stack moves between its views: the moving view's corner, how dark
-// the view under it sits, and when a swipe back starts and goes
-// through.
-public struct NavigationTransitionMetrics {
-    let pageCornerRadius: Float
-    let coveredDim: Float
-    let coveredParallax: Float
-    let pushResponse: Float
-    let pushDamping: Float
-    let commitFraction: Float
-    let commitVelocity: Float
-    let swipeSlop: Float
-}
-
-public let navigationTransitionMetrics = NavigationTransitionMetrics {
-    pageCornerRadius: catalogMetric(kiraUICatalogStack, metricNavigationPageCornerRadius()),
-    coveredDim: catalogMetric(kiraUICatalogStack, metricNavigationCoveredDim()),
-    coveredParallax: catalogMetric(kiraUICatalogStack, metricNavigationCoveredParallax()),
-    pushResponse: catalogMetric(kiraUICatalogStack, metricNavigationPushResponse()),
-    pushDamping: catalogMetric(kiraUICatalogStack, metricNavigationPushDamping()),
-    commitFraction: catalogMetric(kiraUICatalogStack, metricNavigationSwipeCommitFraction()),
-    commitVelocity: catalogMetric(kiraUICatalogStack, metricNavigationSwipeCommitVelocity()),
-    swipeSlop: catalogMetric(kiraUICatalogStack, metricNavigationSwipeSlop())
-}
-
-// The bar a scroll view shows along its trailing edge while it scrolls: how
-// thick it is, and how thick under a pointer that holds it; the shortest it
-// gets over long content, and the shortest it squeezes to past an end; how far
-// beyond it a pointer still takes it, across and along; how long it stays once
-// scrolling stops and how long it fades; how long it swells and thins back;
-// and what it is painted with.
-public struct ScrollIndicatorMetrics {
-    let thickness: Float
-    let expandedThickness: Float
-    let minimumLength: Float
-    let overscrolledLength: Float
-    let hitOutsetAcross: Float
-    let hitOutsetAlong: Float
-    let hideDelay: Float
-    let fadeDuration: Float
-    let expandDuration: Float
-    let collapseDuration: Float
-}
-
-public let scrollIndicatorMetrics = ScrollIndicatorMetrics {
-    thickness: catalogMetric(kiraUICatalogStack, metricScrollIndicatorThickness()),
-    expandedThickness: catalogMetric(kiraUICatalogStack, metricScrollIndicatorExpandedThickness()),
-    minimumLength: catalogMetric(kiraUICatalogStack, metricScrollIndicatorMinimumLength()),
-    overscrolledLength: catalogMetric(kiraUICatalogStack, metricScrollIndicatorOverscrolledLength()),
-    hitOutsetAcross: catalogMetric(kiraUICatalogStack, metricScrollIndicatorHitOutsetAcross()),
-    hitOutsetAlong: catalogMetric(kiraUICatalogStack, metricScrollIndicatorHitOutsetAlong()),
-    hideDelay: catalogMetric(kiraUICatalogStack, metricScrollIndicatorHideDelay()),
-    fadeDuration: catalogMetric(kiraUICatalogStack, metricScrollIndicatorFadeDuration()),
-    expandDuration: catalogMetric(kiraUICatalogStack, metricScrollIndicatorExpandDuration()),
-    collapseDuration: catalogMetric(kiraUICatalogStack, metricScrollIndicatorCollapseDuration())
-}
-
-public let scrollIndicatorColor = catalogAdaptive(kiraUICatalogStack, colorScrollIndicator())
-
-// The hard scroll edge effect a scroll view lays under the bar once its
-// content runs under it: how far it blurs what passes beneath, the hairline
-// along its bottom edge, and what each is painted with.
-public struct ScrollEdgeMetrics {
-    let blurRadius: Float
-    let borderWidth: Float
-}
-
-public let scrollEdgeMetrics = ScrollEdgeMetrics {
-    blurRadius: catalogMetric(kiraUICatalogStack, metricScrollEdgeBlurRadius()),
-    borderWidth: catalogMetric(kiraUICatalogStack, metricScrollEdgeBorderWidth())
-}
-
-public let scrollEdgeFillColor = catalogAdaptive(kiraUICatalogStack, colorScrollEdgeFill())
-public let scrollEdgeBorderColor = catalogAdaptive(kiraUICatalogStack, colorScrollEdgeBorder())
-
-// A bar's menu growing out of its button's glass and going home into it: the
-// springs its width, height and fall ride out and how hard the fall is
-// launched, the spring it squares off on and how far along it starts, when it
-// shows its rows and how magnified they arrive, and when the button's glyph
-// goes. Home: the springs it shrinks, flies and rounds on, how long the way
-// home takes, and how the button's own glass leads it there -- how deep in
-// the menu it starts, how far out of it it leads, when it surfaces and when
-// it starts to lead, the reach that fuses the two, and when the rows go and
-// the glyph comes back, out of how much blur.
-public struct MenuMorphMetrics {
-    let growthResponse: Float
-    let growthDamping: Float
-    let heightResponse: Float
-    let heightDamping: Float
-    let dropResponse: Float
-    let dropDamping: Float
-    let dropLaunch: Float
-    let closeResponse: Float
-    let closeDamping: Float
-    let flightResponse: Float
-    let flightDamping: Float
-    let cornerResponse: Float
-    let closeCornerResponse: Float
-    let closeDuration: Float
-    let roundness: Float
-    let contentOpen: Float
-    let contentClose: Float
-    let contentZoom: Float
-    let contentBlur: Float
-    let glyphGone: Float
-    let glyphReturn: Float
-    let glyphBack: Float
-    let glyphBlur: Float
-    let homeReach: Float
-    let homeDepth: Float
-    let homeSurface: Float
-    let homeLead: Float
-    let homeBlend: Float
-}
-
-public let menuMorphMetrics = MenuMorphMetrics {
-    growthResponse: catalogMetric(kiraUICatalogStack, metricMenuMorphGrowthResponse()),
-    growthDamping: catalogMetric(kiraUICatalogStack, metricMenuMorphGrowthDamping()),
-    heightResponse: catalogMetric(kiraUICatalogStack, metricMenuMorphHeightResponse()),
-    heightDamping: catalogMetric(kiraUICatalogStack, metricMenuMorphHeightDamping()),
-    dropResponse: catalogMetric(kiraUICatalogStack, metricMenuMorphDropResponse()),
-    dropDamping: catalogMetric(kiraUICatalogStack, metricMenuMorphDropDamping()),
-    dropLaunch: catalogMetric(kiraUICatalogStack, metricMenuMorphDropLaunch()),
-    closeResponse: catalogMetric(kiraUICatalogStack, metricMenuMorphCloseResponse()),
-    closeDamping: catalogMetric(kiraUICatalogStack, metricMenuMorphCloseDamping()),
-    flightResponse: catalogMetric(kiraUICatalogStack, metricMenuMorphFlightResponse()),
-    flightDamping: catalogMetric(kiraUICatalogStack, metricMenuMorphFlightDamping()),
-    cornerResponse: catalogMetric(kiraUICatalogStack, metricMenuMorphCornerResponse()),
-    closeCornerResponse: catalogMetric(kiraUICatalogStack, metricMenuMorphCloseCornerResponse()),
-    closeDuration: catalogMetric(kiraUICatalogStack, metricMenuMorphCloseDuration()),
-    roundness: catalogMetric(kiraUICatalogStack, metricMenuMorphRoundness()),
-    contentOpen: catalogMetric(kiraUICatalogStack, metricMenuMorphContentOpen()),
-    contentClose: catalogMetric(kiraUICatalogStack, metricMenuMorphContentClose()),
-    contentZoom: catalogMetric(kiraUICatalogStack, metricMenuMorphContentZoom()),
-    contentBlur: catalogMetric(kiraUICatalogStack, metricMenuMorphContentBlur()),
-    glyphGone: catalogMetric(kiraUICatalogStack, metricMenuMorphGlyphGone()),
-    glyphReturn: catalogMetric(kiraUICatalogStack, metricMenuMorphGlyphReturn()),
-    glyphBack: catalogMetric(kiraUICatalogStack, metricMenuMorphGlyphBack()),
-    glyphBlur: catalogMetric(kiraUICatalogStack, metricMenuMorphGlyphBlur()),
-    homeReach: catalogMetric(kiraUICatalogStack, metricMenuMorphHomeReach()),
-    homeDepth: catalogMetric(kiraUICatalogStack, metricMenuMorphHomeDepth()),
-    homeSurface: catalogMetric(kiraUICatalogStack, metricMenuMorphHomeSurface()),
-    homeLead: catalogMetric(kiraUICatalogStack, metricMenuMorphHomeLead()),
-    homeBlend: catalogMetric(kiraUICatalogStack, metricMenuMorphHomeBlend())
-}
-
-// A submenu coming out of its row over the menu it is in: the springs its card
-// grows and shrinks on; how the menu behind it falls back -- how far, how dim,
-// after how long, and on which springs, going and coming back, and the one
-// spring it shrinks and grows back on; how far the card rests above its row,
-// past where the menu's fall carries it, and how hard it is thrown up past
-// that as it opens; where the
-// header sits in the card; and at what point of the growth the chevron has
-// turned, the glass shows and goes, and the items show and go.
-public struct MenuSubmenuMetrics {
-    let openResponse: Float
-    let openDamping: Float
-    let closeResponse: Float
-    let closeDamping: Float
-    let recededOpacity: Float
-    let recedeScale: Float
-    let recedeHold: Float
-    let dwell: Float
-    let widen: Float
-    let recedeInResponse: Float
-    let recedeInDamping: Float
-    let recedeOutResponse: Float
-    let recedeOutDamping: Float
-    let shrinkResponse: Float
-    let shrinkDamping: Float
-    let rise: Float
-    let riseLaunch: Float
-    let headerCenter: Float
-    let chevronTurn: Float
-    let cardAppear: Float
-    let cardAppearSpan: Float
-    let cardVanish: Float
-    let itemsAppear: Float
-    let itemsAppearSpan: Float
-    let itemsVanish: Float
-    let itemsVanishSpan: Float
-}
-
-public let menuSubmenuMetrics = MenuSubmenuMetrics {
-    openResponse: catalogMetric(kiraUICatalogStack, metricMenuSubmenuOpenResponse()),
-    openDamping: catalogMetric(kiraUICatalogStack, metricMenuSubmenuOpenDamping()),
-    closeResponse: catalogMetric(kiraUICatalogStack, metricMenuSubmenuCloseResponse()),
-    closeDamping: catalogMetric(kiraUICatalogStack, metricMenuSubmenuCloseDamping()),
-    recededOpacity: catalogMetric(kiraUICatalogStack, metricMenuSubmenuRecededOpacity()),
-    recedeScale: catalogMetric(kiraUICatalogStack, metricMenuSubmenuRecedeScale()),
-    recedeHold: catalogMetric(kiraUICatalogStack, metricMenuSubmenuRecedeHold()),
-    dwell: catalogMetric(kiraUICatalogStack, metricMenuSubmenuDwell()),
-    widen: catalogMetric(kiraUICatalogStack, metricMenuSubmenuWiden()),
-    recedeInResponse: catalogMetric(kiraUICatalogStack, metricMenuSubmenuRecedeInResponse()),
-    recedeInDamping: catalogMetric(kiraUICatalogStack, metricMenuSubmenuRecedeInDamping()),
-    recedeOutResponse: catalogMetric(kiraUICatalogStack, metricMenuSubmenuRecedeOutResponse()),
-    recedeOutDamping: catalogMetric(kiraUICatalogStack, metricMenuSubmenuRecedeOutDamping()),
-    shrinkResponse: catalogMetric(kiraUICatalogStack, metricMenuSubmenuShrinkResponse()),
-    shrinkDamping: catalogMetric(kiraUICatalogStack, metricMenuSubmenuShrinkDamping()),
-    rise: catalogMetric(kiraUICatalogStack, metricMenuSubmenuRise()),
-    riseLaunch: catalogMetric(kiraUICatalogStack, metricMenuSubmenuRiseLaunch()),
-    headerCenter: catalogMetric(kiraUICatalogStack, metricMenuSubmenuHeaderCenter()),
-    chevronTurn: catalogMetric(kiraUICatalogStack, metricMenuSubmenuChevronTurn()),
-    cardAppear: catalogMetric(kiraUICatalogStack, metricMenuSubmenuCardAppear()),
-    cardAppearSpan: catalogMetric(kiraUICatalogStack, metricMenuSubmenuCardAppearSpan()),
-    cardVanish: catalogMetric(kiraUICatalogStack, metricMenuSubmenuCardVanish()),
-    itemsAppear: catalogMetric(kiraUICatalogStack, metricMenuSubmenuItemsAppear()),
-    itemsAppearSpan: catalogMetric(kiraUICatalogStack, metricMenuSubmenuItemsAppearSpan()),
-    itemsVanish: catalogMetric(kiraUICatalogStack, metricMenuSubmenuItemsVanish()),
-    itemsVanishSpan: catalogMetric(kiraUICatalogStack, metricMenuSubmenuItemsVanishSpan())
-}
-
-// --- Tab bar -----------------------------------------------------------------
-
-// The capsule a `TabView` floats in the toolbar's row and the tabs in it.
-public struct TabBarMetrics {
-    let height: Float
-    let inset: Float
-    let tabHeight: Float
-    let labelInset: Float
-    let symbolInset: Float
-}
-
-public let tabBarMetrics = TabBarMetrics {
-    height: catalogMetric(kiraUICatalogStack, metricTabBarHeight()),
-    inset: catalogMetric(kiraUICatalogStack, metricTabBarInset()),
-    tabHeight: catalogMetric(kiraUICatalogStack, metricTabHeight()),
-    labelInset: catalogMetric(kiraUICatalogStack, metricTabLabelInset()),
-    symbolInset: catalogMetric(kiraUICatalogStack, metricTabSymbolInset())
-}
-
-// An unselected tab's title, and the capsule behind the selected one, whose
-// title takes the accent.
-public let tabLabel = catalogAdaptive(kiraUICatalogStack, "tabLabel")
-public let tabSelection = catalogAdaptive(kiraUICatalogStack, "tabSelection")
-
-// --- Switches, sliders and progress bars --------------------------------------
-
-// A switch's capsule track and the knob held inside it, off its ends.
-public struct SwitchMetrics {
-    let width: Float
-    let height: Float
-    let knobWidth: Float
-    let knobInset: Float
-}
-
-public let switchMetrics = SwitchMetrics {
-    width: catalogMetric(kiraUICatalogStack, metricSwitchWidth()),
-    height: catalogMetric(kiraUICatalogStack, metricSwitchHeight()),
-    knobWidth: catalogMetric(kiraUICatalogStack, metricSwitchKnobWidth()),
-    knobInset: catalogMetric(kiraUICatalogStack, metricSwitchKnobInset())
-}
-
-// A slider's height, the track through its middle, the knob that rides it and
-// the two shadows the knob casts: a soft one falling away from it and a tight
-// one where it meets the track.
-public struct SliderMetrics {
-    let height: Float
-    let trackHeight: Float
-    let knobWidth: Float
-    let knobHeight: Float
-    // How far in from either end of the track the knob's center stops.
-    let knobInset: Float
-    let heldKnobWidth: Float
-    let heldKnobHeight: Float
-    let knobShadowRadius: Float
-    let knobShadowOffset: Float
-    let knobContactShadowRadius: Float
-    let knobContactShadowOffset: Float
-}
-
-public let sliderMetrics = SliderMetrics {
-    height: catalogMetric(kiraUICatalogStack, metricSliderHeight()),
-    trackHeight: catalogMetric(kiraUICatalogStack, metricSliderTrackHeight()),
-    knobWidth: catalogMetric(kiraUICatalogStack, metricSliderKnobWidth()),
-    knobHeight: catalogMetric(kiraUICatalogStack, metricSliderKnobHeight()),
-    knobInset: catalogMetric(kiraUICatalogStack, metricSliderKnobInset()),
-    heldKnobWidth: catalogMetric(kiraUICatalogStack, metricSliderHeldKnobWidth()),
-    heldKnobHeight: catalogMetric(kiraUICatalogStack, metricSliderHeldKnobHeight()),
-    knobShadowRadius: catalogMetric(kiraUICatalogStack, metricKnobShadowRadius()),
-    knobShadowOffset: catalogMetric(kiraUICatalogStack, metricKnobShadowOffset()),
-    knobContactShadowRadius: catalogMetric(kiraUICatalogStack, metricKnobContactShadowRadius()),
-    knobContactShadowOffset: catalogMetric(kiraUICatalogStack, metricKnobContactShadowOffset())
-}
-
-// How opaque a switch or slider stands while it is disabled.
-public let disabledControlOpacity = catalogMetric(kiraUICatalogStack, metricDisabledControlOpacity())
-
-// A progress bar's track.
-public let progressTrackHeight = catalogMetric(kiraUICatalogStack, metricProgressTrackHeight())
-
-// A switch's track on and off, the knob a switch and a slider share and the
-// shadow a slider's knob casts, the wash in a held slider knob's glass, and the
-// tracks under a slider's knob and a progress bar's fill.
-public let switchOn = catalogAdaptive(kiraUICatalogStack, "switchOn")
-public let switchOff = catalogAdaptive(kiraUICatalogStack, "switchOff")
-public let controlKnob = catalogAdaptive(kiraUICatalogStack, "controlKnob")
-public let knobShadow = catalogAdaptive(kiraUICatalogStack, "knobShadow")
-public let sliderTrack = catalogAdaptive(kiraUICatalogStack, "sliderTrack")
-public let sliderKnobGlass = catalogAdaptive(kiraUICatalogStack, "sliderKnobGlass")
-public let progressTrack = catalogAdaptive(kiraUICatalogStack, "progressTrack")
-
-// The shadow a menu's card casts: its color, how far it blurs and how far below
-// the card it falls.
-public let menuShadow = catalogAdaptive(kiraUICatalogStack, "menuShadow")
-public let menuRowHighlight = catalogAdaptive(kiraUICatalogStack, "menuRowHighlight")
-public let menuShadowRadius = catalogMetric(kiraUICatalogStack, metricMenuShadowRadius())
-public let menuShadowOffset = catalogMetric(kiraUICatalogStack, metricMenuShadowOffset())
-
-// --- Text fields --------------------------------------------------------------
-
-// The insertion point a focused field draws in the accent.
-public struct CaretMetrics {
-    let width: Float
-    let height: Float
-}
-
-public let caretMetrics = CaretMetrics {
-    width: catalogMetric(kiraUICatalogStack, metricCaretWidth()),
-    height: catalogMetric(kiraUICatalogStack, metricCaretHeight())
+// A length the catalog states, at `mode`'s size.
+public function catalogMetric(stack: borrow CatalogStack, name: borrow String, mode: borrow InterfaceMode) -> Float {
+    return resolveMetric(stack, name, kiraUICatalogEnvironment(.Light, mode)).points
 }

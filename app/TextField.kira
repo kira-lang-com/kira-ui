@@ -372,7 +372,7 @@ public function textFieldTrailKey() -> Int {
 
 // The insertion point: the catalog's bar in the accent.
 public function textFieldCaret(modifiers: borrow ModifierContext) -> CALayerDescription {
-    let metrics = caretMetrics
+    let metrics = caretMetrics()
     return CALayerDescription {
         key: textFieldCaretKey(),
         layout: CALayoutIntent {
@@ -459,8 +459,6 @@ public construct TextField(
     key: Int,
     initial: String,
     placeholder: String,
-    width: Float,
-    height: Float,
     onSubmit: () -> Void
 ) extends Widget {
 
@@ -468,9 +466,11 @@ public construct TextField(
     // the keyboard and splits its text at the caret with the insertion point
     // drawn between the halves, so no glyph has to be measured to place it.
     //
-    // In a grouped list the row is the field, as it is in a platform form: no
-    // fill of its own, across the row. Anywhere else it is a filled box of the
-    // size it was given.
+    // It runs across the room it is given and stands as tall as every piece
+    // of the interface's glass, a button's or the toolbar's;
+    // `.width(...)` and `.height(...)` say otherwise. In a
+    // grouped list the row is the field, as it is in a platform form: no fill
+    // of its own, as tall as the row.
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let size = textFieldTextSize(modifiers)
         textFieldSeed(key, initial)
@@ -501,13 +501,12 @@ public construct TextField(
         return CALayerDescription {
             layout: CALayoutIntent {
                 axis: .Row,
-                widthFill: grouped || width <= 0.0,
+                widthFill: true,
                 heightFill: false,
-                fixedWidth: grouped || width <= 0.0 ? -1.0 : width,
-                fixedHeight: height,
+                fixedHeight: grouped ? listMetrics().rowHeight : windowChromeMetrics().itemHeight,
                 paddingLeading: inset,
                 paddingTrailing: inset,
-                flex: grouped || width <= 0.0 ? 1 : 0,
+                flex: 1,
                 alignment: Point { x: 0.0, y: 0.5 }
             },
             hittable: !modifiers.disabled,

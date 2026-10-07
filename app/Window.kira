@@ -1,0 +1,180 @@
+import Foundation
+import KiraGraphics
+import KiraLayout
+import KCoreAnimation
+
+// The window: its content, the chrome over it -- the menu bar across the top
+// and the toolbar's band under it -- and what floats over both.
+//
+// A window's frame is lowered in one order everywhere it is drawn: the content
+// declares its commands and its toolbar items while it lowers and is laid out
+// in the safe area the chrome leaves, then the chrome is drawn from what it
+// declared, and whatever floats is stacked over all of it. `windowFrame` is
+// that order, so a window's runner and anything else that draws one draw the
+// same window.
+
+// One frame of the window, lowered: `root` under the chrome, in the
+// application named `application`.
+public function windowFrame(root: Any Widget, application: String, context: BuildContext, viewport: borrow Size) -> CALayerDescription {
+    var windowContext = move context
+    windowContext.safeArea.top = windowContext.safeArea.top + menuBarHeight() + windowChromeMetricsFor(windowContext.viewportWidth).bandHeight
+    kiraUiOverlayCollect()
+    kiraUiCommandsCollect(move application)
+    kiraUiToolbarCollect()
+    let content = root.describe(windowContext, ModifierContext {})
+    kiraUiToolbarStopCollecting()
+    kiraUiCommandsStopCollecting()
+    let window = windowDescription(move content, windowContext, ModifierContext {})
+    kiraUiOverlayStopCollecting()
+    return overlayStack(move window, kiraUiOverlaysThisFrame(), viewport.width, viewport.height)
+}
+
+// The window: its background, its content, and its chrome over both.
+//
+// The content is laid out inside the safe area the chrome leaves, unless a
+// container in it already did that itself — a split view does, so its sidebar
+// can run under the bar. The menu bar, where the window has one, is the
+// chrome's first row, and the toolbar's band is drawn under it.
+public function windowDescription(content: CALayerDescription, context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    var body = move content
+    if !kiraUiChromeSafeAreaWasHandled() {
+        body = safeAreaInset(move body, context.safeArea)
+    }
+    var chrome = WindowChrome().describe(context, modifiers)
+    chrome.animation = kiraUiToolbarMotion()
+    chrome.layout.widthFill = true
+    if menuBarShown() {
+        let bar = MenuBar().describe(context, modifiers)
+        chrome = CALayerDescription {
+            layout: CALayoutIntent {
+                axis: .Column,
+                heightFill: false
+            },
+            sublayers: [bar, chrome]
+        }
+    }
+    chrome = safeAreaInset(move chrome, context.systemSafeArea)
+    return CALayerDescription {
+        content: .Solid(CASolid {
+            fill: caColorFromFoundation(navigationCanvas(modifiers))
+        }),
+        sublayers: [body, chrome]
+    }
+}
+
+// Content held inside a safe area, its box otherwise its own.
+public function safeAreaInset(content: CALayerDescription, insets: borrow EdgeInsets) -> CALayerDescription {
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            paddingLeading: insets.leading,
+            paddingTop: insets.top,
+            paddingTrailing: insets.trailing,
+            paddingBottom: insets.bottom
+        },
+        sublayers: [move content]
+    }
+}
+
+// --- The window controls -----------------------------------------------------
+
+// Whether the close, minimize and zoom buttons lead the toolbar's band. They
+// lead the window's first row: the menu bar's, where the window has one.
+public function windowControlsInToolbar() -> Bool {
+    return windowHasControls() && !menuBarShown()
+}
+
+// How tall the window's first row is, which the window controls are centered
+// in.
+public function windowControlsRowHeight() -> Float {
+    if menuBarShown() {
+        return menuBarMetrics().height
+    }
+    return windowChromeMetrics().toolbarHeight
+}
+
+// The native compositor asks this only for a real pointer press. Controls in
+// the chrome still receive their ordinary UI event; the window decides whether
+// the press begins a move once it belongs to the chrome.
+public function kiraUiToolbarWindowDragRegion(x: Float, y: Float) -> Bool {
+    kiraUiToolbarSinkEnsure()
+    let sink = nativeRecover<KiraUiToolbarSink>(kiraUiStateSlotGet(kiraUiToolbarSinkKey()))
+    if sink.windowDragHeight <= 0.0 {
+        return graphicsApplicationFallbackWindowDragRegion(x, y)
+    }
+    if x < 0.0 || y < 0.0 || y >= sink.windowDragHeight {
+        return false
+    }
+    if y >= windowControlsRowHeight() {
+        return true
+    }
+    // The close, minimize and zoom buttons are the window's, wherever they are
+    // drawn, and a press on them is theirs.
+    let metrics = windowChromeMetrics()
+    let controlsStart = metrics.controlsLeading
+    let controlsEnd = controlsStart + metrics.controlDiameter * 3.0 + metrics.controlSpacing * 2.0
+    return x < controlsStart || x > controlsEnd
+}
+
+// --- Window commands ---------------------------------------------------------
+
+// A button press happens in the input callback, while the native window is
+// owned by the next RenderFrame. Keep one pending request in the same ambient
+// store as the toolbar and consume it at the start of that frame.
+public struct KiraUiWindowCommandState {
+    // 0 none, 1 close, 2 minimize, 3 toggle maximize.
+    var command: Int = 0
+}
+
+public function kiraUiWindowCommandKey() -> String {
+    return "kiraui.window.command"
+}
+
+public function kiraUiWindowCommandEnsure() {
+    if kiraUiStateSlotHas(kiraUiWindowCommandKey()) == false {
+        kiraUiStateSlotPut(
+            kiraUiWindowCommandKey(),
+            nativeUserData(nativeState(KiraUiWindowCommandState {}))
+        )
+    }
+    return
+}
+
+public function kiraUiRequestWindowClose() {
+    kiraUiWindowCommandEnsure()
+    var state = nativeRecover<KiraUiWindowCommandState>(kiraUiStateSlotGet(kiraUiWindowCommandKey()))
+    state.command = 1
+    return
+}
+
+public function kiraUiRequestWindowMinimize() {
+    kiraUiWindowCommandEnsure()
+    var state = nativeRecover<KiraUiWindowCommandState>(kiraUiStateSlotGet(kiraUiWindowCommandKey()))
+    state.command = 2
+    return
+}
+
+public function kiraUiRequestWindowToggleMaximize() {
+    kiraUiWindowCommandEnsure()
+    var state = nativeRecover<KiraUiWindowCommandState>(kiraUiStateSlotGet(kiraUiWindowCommandKey()))
+    state.command = 3
+    return
+}
+
+public function kiraUiConsumeWindowCommand(frame: borrow mut KiraGraphics.RenderFrame) {
+    kiraUiWindowCommandEnsure()
+    var state = nativeRecover<KiraUiWindowCommandState>(kiraUiStateSlotGet(kiraUiWindowCommandKey()))
+    let command = state.command
+    state.command = 0
+    if command == 1 {
+        frame.requestQuit()
+        return
+    }
+    if command == 2 {
+        frame.minimizeWindow()
+        return
+    }
+    if command == 3 {
+        frame.toggleMaximizeWindow()
+    }
+    return
+}

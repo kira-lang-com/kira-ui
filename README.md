@@ -89,6 +89,57 @@ See [Navigation.md](Navigation.md) for the responsive `NavigationPath`,
 `NavigationSplitView` API. The layered runnable app is in
 [`Examples/navigation-app`](Examples/navigation-app).
 
+## Workspaces
+
+Editor windows: panels docked around a center, arranged by the person.
+
+```kira
+Workspace(layout = layout, center = .AcceptsPanels) {
+    Panel(value = FilesPanel(), title = "Files", systemImage = .Folder, edge = .Leading) {
+        FileTree()
+    }
+    Panel(value = DocumentPanel(name = "rpc-node.ts"), title = "rpc-node.ts", systemImage = .DocText, edge = .Center) {
+        CodeEditor()
+    }
+}
+.toolbar {
+    ToolbarItemGroup(placement = .Navigation) {
+        PanelEdgeToggle(edge = .Leading)
+        PanelEdgeToggle(edge = .Bottom)
+        PanelEdgeToggle(edge = .Trailing)
+    }
+}
+```
+
+Each panel states where it starts; after that KiraUI handles the person's
+changes. They can drag a tab to another edge, where a drop zone shows where
+it will land. They can close a tab and bring the panel back from the strip's
+`+` menu. They can drag a divider to resize an edge, or past its minimum to
+fold the edge away. `WorkspaceLayout` lets the application ask what is where
+and change it (`show`, `hide`, `dock`, `toggle`, `reset`). `center = .Fixed`
+keeps the center to what was declared there, such as a game engine's
+viewport. A runnable editor is in
+[`Examples/editor-app`](Examples/editor-app).
+
+## Interface Modes
+
+One interface, drawn at two sizes:
+
+- **Adaptive Desktop** (macOS, Windows, Linux) — the Mac's sizes: 13-point
+  body, 28-point sidebar rows, a 52-point toolbar. Rows, sidebar items and
+  pressable views light while the pointer rests on them.
+- **Adaptive Mobile** (iOS, iPadOS, Android) — the iOS and iPadOS kit's sizes:
+  17-point body, 44-point rows. Nothing lights on hover.
+
+The views, their structure and their motion are the same in both. The catalog
+carries both sizes: the mobile one is its floor, and the desktop one is pinned
+to the desktop idiom. A program starts in its host's mode, or in the one
+`KIRA_UI_MODE=desktop|mobile` sets, and can switch while it runs:
+
+```kira
+setInterfaceMode(.AdaptiveMobile)
+```
+
 ## Project Structure
 
 ```text

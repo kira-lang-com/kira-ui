@@ -129,9 +129,7 @@ public construct Tab(
     }
 }
 
-// One tab on the bar: its title held off the ends of a capsule the bar's
-// height less its inset. The selected tab sits on the selection capsule with
-// its title emphasized in the accent; a press on any tab selects it.
+// One tab on the bar, pressed to select it.
 public function tabBarItem(
     title: borrow String,
     selected: Bool,
@@ -141,7 +139,21 @@ public function tabBarItem(
 ) -> CALayerDescription {
     let key = kiraUiTapSeqKey()
     kiraUiLayerActionRegister(key, move select)
-    let metrics = tabBarMetrics
+    var item = tabBarItemFace(tabBarItemLabel(title, .None, selected, context, modifiers), selected, modifiers)
+    item.hittable = !modifiers.disabled
+    item.hitKey = key
+    return item
+}
+
+// What a tab looks like, with nothing to press: its label held off the ends
+// of a capsule the bar's height less its inset, on the selection capsule when
+// it is the one selected.
+public function tabBarItemFace(
+    label: CALayerDescription,
+    selected: Bool,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let metrics = tabBarMetrics()
     let radius = metrics.tabHeight / 2.0
     return CALayerDescription {
         layout: CALayoutIntent {
@@ -153,36 +165,38 @@ public function tabBarItem(
             paddingTrailing: metrics.labelInset,
             alignment: Point { x: 0.5, y: 0.5 }
         },
-        hittable: !modifiers.disabled,
-        hitKey: key,
         cornerRadius: radius,
         content: .Solid(CASolid {
             fill: caColorFromFoundation(modifierColor(foundationColor(tabBarItemFill(selected, modifiers)), modifiers)),
             cornerRadius: radius
         }),
-        sublayers: [tabBarItemTitle(title, selected, context, modifiers)]
+        sublayers: [move label]
     }
 }
 
-// A tab's title: the subheadline face, medium, in the bar's ink; bold in the
-// accent when the tab is selected.
-public function tabBarItemTitle(
+// A tab's label: the subheadline face, medium, in the bar's ink; bold in the
+// primary ink when the tab is selected. A tab view's bar names a tab by its title
+// alone, the symbol being for the sidebar it becomes.
+public function tabBarItemLabel(
     title: borrow String,
+    systemImage: Symbol,
     selected: Bool,
     context: borrow BuildContext,
     modifiers: borrow ModifierContext,
 ) -> CALayerDescription {
     let face = modifierTypography(modifiers, .subheadline)
+    let label = Label(title: copy title, systemImage: systemImage)
+        .font(size: face.size, weight: selected ? .Bold : .Medium)
+    return label.describe(context, tabBarItemInk(selected, modifiers))
+}
+
+// The ink everything on a tab is set in: the primary when it is selected, the
+// bar's own otherwise.
+public function tabBarItemInk(selected: Bool, modifiers: borrow ModifierContext) -> ModifierContext {
     if selected {
-        let emphasized = Text(content: copy title)
-            .font(size: face.size, weight: .Bold)
-            .foregroundColor(.Accent)
-        return emphasized.describe(context, modifiers)
+        return modifierContextApply(modifiers, modifierDeltaForegroundColor(.Primary))
     }
-    let plain = Text(content: copy title)
-        .font(size: face.size, weight: .Medium)
-        .textColor(themeAdaptiveColor(tabLabel, modifierAppearance(modifiers)))
-    return plain.describe(context, modifiers)
+    return modifierContextApply(modifiers, modifierDeltaTextColor(themeAdaptiveColor(tabLabel, modifierAppearance(modifiers))))
 }
 
 // The capsule behind a tab: the selection's when it is selected, nothing
@@ -192,6 +206,42 @@ public function tabBarItemFill(selected: Bool, modifiers: borrow ModifierContext
         return themeAdaptiveColor(tabSelection, modifierAppearance(modifiers))
     }
     return Color { a: 0.0 }
+}
+
+// The bar a tab view's tabs float in: one capsule of glass holding them off
+// every side.
+public function tabBarCapsule(
+    tabs: [CALayerDescription],
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let metrics = tabBarMetrics()
+    let row = CALayerDescription {
+        layout: CALayoutIntent {
+            axis: .Row,
+            widthFill: false,
+            heightFill: false,
+            paddingLeading: metrics.inset,
+            paddingTop: metrics.inset,
+            paddingTrailing: metrics.inset,
+            paddingBottom: metrics.inset,
+            alignment: Point { x: 0.0, y: 0.5 }
+        },
+        sublayers: move tabs
+    }
+    return interactiveGlassDescription(
+        context,
+        kiraUiTapSeqKey(),
+        CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedHeight: metrics.height
+        },
+        containerShapeRadius(.Capsule, modifiers),
+        .Capsule,
+        modifiers,
+        [row]
+    )
 }
 
 public construct TabView(initialSelection: Int = 0) extends Widget {

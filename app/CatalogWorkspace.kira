@@ -1,0 +1,75 @@
+import Foundation
+import KCoreUI
+import KCoreAnimation
+
+// The lengths a workspace is laid out with, resolved once for each interface
+// mode like every other group the catalog sizes.
+
+// The gap the panels stand apart by on the window's canvas; the room a tab
+// holds its cross in by; how far a panel holds its strip off its edges; the
+// band a divider is grabbed by, which is wider than the gap it runs down; how
+// wide or tall each edge opens; and how small one may be dragged before it
+// folds away.
+public struct WorkspaceMetrics {
+    let gap: Float
+    let tabSpacing: Float
+    let stripInset: Float
+    let dividerThickness: Float
+    let leadingWidth: Float
+    let trailingWidth: Float
+    let bottomHeight: Float
+    let minimumWidth: Float
+    let minimumHeight: Float
+}
+
+public function catalogWorkspaceMetrics(mode: InterfaceMode) -> WorkspaceMetrics {
+    return WorkspaceMetrics {
+        gap: catalogMetric(kiraUICatalogStack, metricWorkspaceGap(), mode),
+        tabSpacing: catalogMetric(kiraUICatalogStack, metricWorkspaceTabSpacing(), mode),
+        stripInset: catalogMetric(kiraUICatalogStack, metricWorkspaceStripInset(), mode),
+        dividerThickness: catalogMetric(kiraUICatalogStack, metricWorkspaceDividerThickness(), mode),
+        leadingWidth: catalogMetric(kiraUICatalogStack, metricWorkspaceLeadingWidth(), mode),
+        trailingWidth: catalogMetric(kiraUICatalogStack, metricWorkspaceTrailingWidth(), mode),
+        bottomHeight: catalogMetric(kiraUICatalogStack, metricWorkspaceBottomHeight(), mode),
+        minimumWidth: catalogMetric(kiraUICatalogStack, metricWorkspaceMinimumWidth(), mode),
+        minimumHeight: catalogMetric(kiraUICatalogStack, metricWorkspaceMinimumHeight(), mode)
+    }
+}
+
+let desktopWorkspaceMetrics = catalogWorkspaceMetrics(.AdaptiveDesktop)
+let mobileWorkspaceMetrics = catalogWorkspaceMetrics(.AdaptiveMobile)
+
+public function workspaceMetrics() -> WorkspaceMetrics {
+    return interfaceMode() == .AdaptiveDesktop ? desktopWorkspaceMetrics : mobileWorkspaceMetrics
+}
+
+// The card a workspace's panels sit on.
+public let workspacePanelColor = catalogAdaptive(kiraUICatalogStack, colorWorkspacePanel())
+
+// The card's color as a layer fill, through the opacity in effect.
+public function workspacePanelFill(modifiers: borrow ModifierContext) -> CAColor {
+    let resolved = themeAdaptiveColor(workspacePanelColor, modifierAppearance(modifiers))
+    return caColorFromFoundation(modifierColor(foundationColor(move resolved), modifiers))
+}
+
+// How far an edge opens before anyone has dragged its divider.
+public function workspaceOpeningExtent(edge: borrow PanelEdge) -> Float {
+    let metrics = workspaceMetrics()
+    match edge {
+        Leading -> return metrics.leadingWidth
+        Trailing -> return metrics.trailingWidth
+        Bottom -> return metrics.bottomHeight
+        Center -> return 0.0
+    }
+}
+
+// The least an edge may be dragged to before it folds away.
+public function workspaceMinimumExtent(edge: borrow PanelEdge) -> Float {
+    let metrics = workspaceMetrics()
+    match edge {
+        Leading -> return metrics.minimumWidth
+        Trailing -> return metrics.minimumWidth
+        Bottom -> return metrics.minimumHeight
+        Center -> return 0.0
+    }
+}

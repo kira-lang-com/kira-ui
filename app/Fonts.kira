@@ -5,7 +5,8 @@ import KCoreAnimation
 // the size class around them, and the modifiers that choose among them. Of
 // `.font(...)` and `.typography(...)` the innermost names the font; a
 // `.fontWeight(...)` sets the weight of whichever is in effect until a
-// `.font(...)` inside it names its own.
+// `.font(...)` inside it names its own. A `.fontDesign(...)` sets the face
+// any of them is drawn from.
 
 public enum FontWeight {
     Regular
@@ -25,6 +26,20 @@ public function foundationFontWeight(weight: borrow FontWeight) -> Float {
         SemiBold -> return 600.0
         Bold -> return 700.0
         Axis(value) -> return value
+    }
+}
+
+// SwiftUI's `Font.Design`: the system face, or its monospaced cut, where every
+// character takes the same advance and a column of code lines up.
+public enum FontDesign {
+    Default
+    Monospaced
+}
+
+public function foundationFontDesign(design: borrow FontDesign) -> CAFontDesign {
+    match design {
+        Default -> return .Default
+        Monospaced -> return .Monospaced
     }
 }
 
@@ -90,12 +105,23 @@ public function modifierTextWeight(modifiers: borrow ModifierContext) -> Float {
     return foundationFontWeight(typographyImplementation(move style, modifiers).weight)
 }
 
-public construct Text(content: String) extends Widget {
+// A span of a Text's content set in an ink of its own: bytes `start` up to,
+// not including, `end`. A line of source in its syntax colors is one Text with
+// a run per token, not a row of Texts -- the letters keep the spacing the face
+// gives them across every seam, and the line is one layer, not one per token.
+public struct TextRun {
+    let start: Int
+    let end: Int
+    let foregroundColor: PrimaryColor
+}
+
+public construct Text(content: String, runs: [TextRun] = []) extends Widget {
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let textSize = modifierTextSize(modifiers)
         let textWeight = modifierTextWeight(modifiers)
-        let measured = foundationTextMeasure(content, textSize, textWeight)
+        let design = foundationFontDesign(modifiers.fontDesign)
+        let measured = foundationTextMeasure(content, textSize, textWeight, design)
         return CALayerDescription {
             layout: CALayoutIntent {
                 widthFill: false,
@@ -108,15 +134,31 @@ public construct Text(content: String) extends Widget {
                 color: caColorFromFoundation(modifierColor(modifierTextColor(modifiers), modifiers)),
                 size: textSize,
                 weight: textWeight,
-                inkLeft: foundationTextRunInkLeft(content: content, size: textSize, weight: textWeight),
-                inkRight: foundationTextRunInkRight(content: content, size: textSize, weight: textWeight),
-                inkTop: foundationTextRunInkTop(content: content, size: textSize, weight: textWeight),
-                inkBottom: foundationTextRunInkBottom(content: content, size: textSize, weight: textWeight),
+                design: design,
+                inkLeft: foundationTextRunInkLeft(content: content, size: textSize, weight: textWeight, design: design),
+                inkRight: foundationTextRunInkRight(content: content, size: textSize, weight: textWeight, design: design),
+                inkTop: foundationTextRunInkTop(content: content, size: textSize, weight: textWeight, design: design),
+                inkBottom: foundationTextRunInkBottom(content: content, size: textSize, weight: textWeight, design: design),
                 wraps: true,
-                alignment: textAlignmentUnit(modifiers.textAlignment)
+                alignment: textAlignmentUnit(modifiers.textAlignment),
+                spans: textSpans(runs, modifiers)
             })
         }
     }
+}
+
+// The runs as the layer draws them: each ink resolved through the modifiers in
+// effect, as the Text's own is.
+public function textSpans(runs: borrow [TextRun], modifiers: borrow ModifierContext) -> [CATextSpan] {
+    var spans: [CATextSpan] = []
+    for run in runs {
+        spans.append(CATextSpan {
+            start: run.start,
+            end: run.end,
+            color: caColorFromFoundation(modifierColor(modifierPrimaryColor(run.foregroundColor, modifiers), modifiers))
+        })
+    }
+    return spans
 }
 
 public construct FontLayer(size: Float, weight: FontWeight) extends Widget {
@@ -147,6 +189,17 @@ public construct FontWeightLayer(weight: FontWeight) extends Widget {
 
     function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
         let delta = modifierDeltaFontWeight(weight)
+        let resolved = modifierContextApply(modifiers, move delta)
+        return content.describe(context, resolved)
+    }
+}
+
+public construct FontDesignLayer(design: FontDesign) extends Widget {
+    let content: some Widget
+
+
+    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+        let delta = modifierDeltaFontDesign(design)
         let resolved = modifierContextApply(modifiers, move delta)
         return content.describe(context, resolved)
     }

@@ -128,6 +128,7 @@ public function kiraUiMenuChooseFn(action: () -> Void) -> () -> Void {
             menuMorphRetarget(state.presentedKey, false)
             state.presentedKey = 0
         }
+        menuBarSetOpen(-1)
         return
     }
     return press
@@ -188,6 +189,7 @@ public function kiraUiMenuDismissAll() {
     state.shrunk = 0.0
     state.holdRemaining = 0.0
     state.pivoted = false
+    menuBarPutAway()
     return
 }
 
@@ -287,7 +289,7 @@ public function menuDwellAdvance(context: borrow BuildContext, key: Int, away: I
         return
     }
     reveal.dwell = reveal.dwell + kiraUiClockDelta()
-    if reveal.dwell < menuSubmenuMetrics.dwell {
+    if reveal.dwell < menuSubmenuMetrics().dwell {
         kiraUiClockStillMoving()
         return
     }
@@ -301,12 +303,12 @@ public function menuDwellAdvance(context: borrow BuildContext, key: Int, away: I
 // settling well after it; its ink waits out the hold going and comes straight
 // back returning -- the swap described at the top of this file.
 public function menuRecessionRetarget(state: borrow mut KiraUiMenuState, opening: Bool) {
-    let metrics = menuSubmenuMetrics
+    let metrics = menuSubmenuMetrics()
     menuRetarget(state.shrink, opening ? 1.0 : 0.0, MotionSpring { response: metrics.shrinkResponse, damping: metrics.shrinkDamping, target: opening ? 1.0 : 0.0 })
     if opening {
         state.sideX = foundationPressBoundsX() + foundationPressBoundsW() / 2.0
         menuRetarget(state.recede, 1.0, menuRecedeInSpring())
-        state.holdRemaining = menuSubmenuMetrics.recedeHold
+        state.holdRemaining = menuSubmenuMetrics().recedeHold
         return
     }
     menuRetarget(state.recede, 0.0, menuRecedeOutSpring())
@@ -423,6 +425,6 @@ public function menuRevealRetarget(key: Int, opening: Bool) {
     }
     reveal.opening = opening
     menuRetarget(reveal.progress, opening ? 1.0 : 0.0, menuSubmenuSpring(opening))
-    menuRetarget(reveal.rise, opening ? 1.0 : 0.0, menuSubmenuSpring(opening), opening ? menuSubmenuMetrics.riseLaunch : 0.0)
+    menuRetarget(reveal.rise, opening ? 1.0 : 0.0, menuSubmenuSpring(opening), opening ? menuSubmenuMetrics().riseLaunch : 0.0)
     return
 }
