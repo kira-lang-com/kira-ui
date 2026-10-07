@@ -12,7 +12,7 @@
  * by side means remembering which is which.
  *
  * It does not have to be linked against them because it does not have to be.
- * KiraGraphics already resolves its harness from the environment whenever a run
+ * Ember already resolves its harness from the environment whenever a run
  * was handed none -- `KIRA_GRAPHICS_CAPTURE_FRAME`, `KIRA_GRAPHICS_CAPTURE_AT`,
  * `KIRA_GRAPHICS_QUIT_AFTER_FRAMES` -- so every Kira UI application is already
  * capturable and none of them needed changing. This sets those variables and
