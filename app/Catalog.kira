@@ -26,16 +26,25 @@ public function loadKiraUICatalogStack() -> CatalogStack {
         let catalog = try loadDefaultCatalog()
         return catalogStackOf(catalog)
     } handle {
-        NotKira { return CatalogStack() }
-        UnsupportedVersion { return CatalogStack() }
-        TruncatedHeader { return CatalogStack() }
-        TruncatedTable { return CatalogStack() }
-        OffsetOutOfRange { return CatalogStack() }
-        NamesUnsorted { return CatalogStack() }
-        ConstraintsUnsorted { return CatalogStack() }
-        DuplicateRendition { return CatalogStack() }
-        ReservedTraitValue { return CatalogStack() }
+        NotKira { return unreadCatalogStack("not a catalog") }
+        UnsupportedVersion { return unreadCatalogStack("an unsupported version") }
+        TruncatedHeader { return unreadCatalogStack("a truncated header") }
+        TruncatedTable { return unreadCatalogStack("a truncated table") }
+        OffsetOutOfRange { return unreadCatalogStack("an offset out of range") }
+        NamesUnsorted { return unreadCatalogStack("unsorted names") }
+        ConstraintsUnsorted { return unreadCatalogStack("unsorted constraints") }
+        DuplicateRendition { return unreadCatalogStack("a duplicate rendition") }
+        ReservedTraitValue { return unreadCatalogStack("a reserved trait value") }
     }
+}
+
+// The empty stack a program draws with when the catalog did not load, and the
+// fault that says so. Every color and text size then reads as zero: text is set
+// at size 0 and lays out to nothing, with no other sign of why. A missing file
+// reads as a truncated header, since an absent file reads as no bytes.
+function unreadCatalogStack(reason: String) -> CatalogStack {
+    log fault("the default catalog did not load; every color and text size reads as zero", path: defaultCatalogPath(), reason)
+    return CatalogStack()
 }
 
 public let kiraUICatalogStack = loadKiraUICatalogStack()
