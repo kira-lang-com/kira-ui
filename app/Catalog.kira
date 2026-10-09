@@ -20,31 +20,17 @@ import KCoreUI
 // built wherever a widget asks for one, many times a frame, and each build
 // reading its colors out of the catalog again was nearly all of a frame.
 
-// The catalog in effect, read from disk, once.
+// The catalog in effect, read from disk, once. When it does not load, the
+// program draws with the empty stack: every color and text size reads as zero,
+// so text is set at size 0 and lays out to nothing. The fault says why.
 public function loadKiraUICatalogStack() -> CatalogStack {
-    attempt {
-        let catalog = try loadDefaultCatalog()
-        return catalogStackOf(catalog)
-    } handle {
-        NotKira { return unreadCatalogStack("not a catalog") }
-        UnsupportedVersion { return unreadCatalogStack("an unsupported version") }
-        TruncatedHeader { return unreadCatalogStack("a truncated header") }
-        TruncatedTable { return unreadCatalogStack("a truncated table") }
-        OffsetOutOfRange { return unreadCatalogStack("an offset out of range") }
-        NamesUnsorted { return unreadCatalogStack("unsorted names") }
-        ConstraintsUnsorted { return unreadCatalogStack("unsorted constraints") }
-        DuplicateRendition { return unreadCatalogStack("a duplicate rendition") }
-        ReservedTraitValue { return unreadCatalogStack("a reserved trait value") }
+    match loadDefaultCatalog() {
+        Ok(catalog) -> return catalogStackOf(catalog)
+        Error(failure) -> {
+            log fault("the default catalog did not load; every color and text size reads as zero", path: defaultCatalogPath(), failure)
+            return CatalogStack()
+        }
     }
-}
-
-// The empty stack a program draws with when the catalog did not load, and the
-// fault that says so. Every color and text size then reads as zero: text is set
-// at size 0 and lays out to nothing, with no other sign of why. A missing file
-// reads as a truncated header, since an absent file reads as no bytes.
-function unreadCatalogStack(reason: String) -> CatalogStack {
-    log fault("the default catalog did not load; every color and text size reads as zero", path: defaultCatalogPath(), reason)
-    return CatalogStack()
 }
 
 public let kiraUICatalogStack = loadKiraUICatalogStack()
