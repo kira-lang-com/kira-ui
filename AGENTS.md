@@ -3,3 +3,7 @@ DO NOT create any "smoke test", "probe" and anything that isn't meant to either:
 This library has to be idiomatic, flawless, beautiful to read, kira native, using Kira's first party syntax. A single abstraction of the wrong shape, one stray helper, or one bad design and we FAILED.
 
 Write KiraUI like you would write SwiftUI. An application on it uses `Views/` for pages and `Views/Components/` for every component, in nested folders like most SwiftUI apps.
+
+# Specs
+
+Any spec is the rule. Read it before changing what it covers and do exactly what it says. If the spec does not say it, it does not exist: never invent a layout, encoding, convention or meaning to make a case work, and never route around a limit the spec sets. A case the spec does not cover is a question for the user, not a decision.
