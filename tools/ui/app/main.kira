@@ -29,8 +29,8 @@ function uiGalleryApp() -> KiraUIApp {
 @Derive(Parsable)
 struct ShotArguments {
     let out: String
-    let app: String
-    let arg: String
+    let app: String?
+    let arg: String?
     let frames: Int
     let at: Int
     let width: Int
@@ -48,13 +48,18 @@ struct ShotArguments {
 // The alternative -- a `shot` command inside every application -- is the same
 // work repeated once per program and then drifting: one spells the flag `--out`,
 // the next `-o`, and reviewing two side by side means remembering which is which.
-function shootForeignApp(parsed: borrow ShotArguments) -> Int {
+function shootForeignApp(parsed: borrow ShotArguments, app: borrow String) -> Int {
     kira_ui_launch_set("KIRA_GRAPHICS_CAPTURE_FRAME", parsed.out)
     kira_ui_launch_set("KIRA_GRAPHICS_CAPTURE_AT", String(parsed.at))
     kira_ui_launch_set("KIRA_GRAPHICS_QUIT_AFTER_FRAMES", String(parsed.frames))
-    let status = Int(kira_ui_launch_run(parsed.app, parsed.arg))
+    // The launcher passes no argument for an empty one.
+    let argument = match parsed.arg {
+        Some(text) -> text
+        None -> ""
+    }
+    let status = Int(kira_ui_launch_run(app, argument))
     if status != 0 {
-        print("ui shot: " + parsed.app + " exited with " + String(status))
+        print("ui shot: \(app) exited with \(status)")
         return status
     }
     print("captured " + parsed.out)
@@ -63,28 +68,27 @@ function shootForeignApp(parsed: borrow ShotArguments) -> Int {
 
 construct ShotCommand() extends ParsableCommand {
     let configuration: CommandConfiguration {
-        return CommandConfiguration(
-            name: "shot",
-            abstract: "Run the widget gallery and capture a frame to a PPM"
-        )
+        return CommandConfiguration { name: "shot", abstract: "Run the widget gallery and capture a frame to a PPM" }
     }
 
     let arguments: [ArgumentSpec] {
         return [
-            option(name: "out", shortName: "o", help: "Destination .ppm for the captured frame"),
-            optionalOption(name: "app", shortName: "p", defaultText: "", help: "Executable to run and capture; omitted, the built-in gallery is drawn"),
-            optionalOption(name: "arg", shortName: "g", defaultText: "", help: "One argument to pass the application"),
-            optionalIntegerOption(name: "frames", shortName: "f", defaultText: "120", help: "Quit after this many frames"),
-            optionalIntegerOption(name: "at", shortName: "a", defaultText: "0", help: "Capture at this frame (0 = the last one drawn)"),
-            optionalIntegerOption(name: "width", shortName: "w", defaultText: "1200", help: "Window width"),
-            optionalIntegerOption(name: "height", shortName: "t", defaultText: "800", help: "Window height")
+            option(name: "out", help: "Destination .ppm for the captured frame").short("o").required(),
+            option(name: "app", help: "Executable to run and capture; omitted, the built-in gallery is drawn").short("p"),
+            option(name: "arg", help: "One argument to pass the application").short("g"),
+            option(name: "frames", help: "Quit after this many frames").short("f").whole().defaulting("120"),
+            option(name: "at", help: "Capture at this frame (0 = the last one drawn)").short("a").whole().defaulting("0"),
+            option(name: "width", help: "Window width").short("w").whole().defaulting("1200"),
+            option(name: "height", help: "Window height").short("t").whole().defaulting("800")
         ]
     }
 
     function run(arguments: borrow ParsedArguments) -> Int {
         let parsed = parse_ShotArguments(arguments)
-        if parsed.app.count > 0 {
-            return shootForeignApp(parsed)
+        match parsed.app {
+            Some(app) -> return shootForeignApp(parsed, app)
+            // No application: the built-in gallery is drawn.
+            None -> {}
         }
         var harness = HarnessConfig {}
         harness = harnessCapture(parsed.out, parsed.at, parsed.frames)
@@ -109,11 +113,7 @@ construct ShotCommand() extends ParsableCommand {
 
 construct RootCommand() extends ParsableCommand {
     let configuration: CommandConfiguration {
-        return CommandConfiguration(
-            name: "ui",
-            abstract: "Kira UI command line (UIFoundation + KiraUI)",
-            subcommands: ["shot"]
-        )
+        return CommandConfiguration { name: "ui", abstract: "Kira UI command line (UIFoundation + KiraUI)", subcommands: ["shot"] }
     }
 
     let arguments: [ArgumentSpec] {
@@ -126,9 +126,8 @@ construct RootCommand() extends ParsableCommand {
 }
 
 @Main
-function main() {
+function main() -> Int {
     let root = RootCommand()
     let children: [Any ParsableCommand] = [ShotCommand()]
-    runCommandRouter(root, children, commandLineArguments())
-    return
+    return runCommandRouter(root, children, commandLineArguments())
 }
