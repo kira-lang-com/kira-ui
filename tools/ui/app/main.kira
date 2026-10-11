@@ -10,20 +10,30 @@ import Ember
 
 // A small gallery of KiraUI widgets, enough to prove both layers draw: the
 // widgets are KiraUI, the column and text they lower to are the Foundation's.
-function uiGalleryApp() -> KiraUIApp {
-    return KiraUIApp(
-        name: "Kira UI Gallery",
-        content: VStack(spacing: Spacing.Small) {
-            Text(content: "Kira UI")
-            Text(content: "UIFoundation + KiraUI")
-            Button(label: "Primary", onPress: { in
-                return
-            })
-            Button(label: "Danger", role: ButtonRole.Destructive, onPress: { in
-                return
-            })
+construct Gallery() extends Widget {
+    body {
+        AppSurface {
+            VStack(spacing: .Small) {
+                Text(content: "Kira UI")
+                Text(content: "UIFoundation + KiraUI")
+                Button(
+                    title: "Primary",
+                    action: {
+                        in
+                        return
+                    }
+                )
+                Button(
+                    title: "Danger",
+                    role: .Destructive,
+                    action: {
+                        in
+                        return
+                    }
+                )
+            }
         }
-    )
+    }
 }
 
 @Derive(Parsable)
@@ -49,9 +59,7 @@ struct ShotArguments {
 // work repeated once per program and then drifting: one spells the flag `--out`,
 // the next `-o`, and reviewing two side by side means remembering which is which.
 function shootForeignApp(parsed: borrow ShotArguments, app: borrow String) -> Int {
-    kira_ui_launch_set("KIRA_GRAPHICS_CAPTURE_FRAME", parsed.out)
-    kira_ui_launch_set("KIRA_GRAPHICS_CAPTURE_AT", String(parsed.at))
-    kira_ui_launch_set("KIRA_GRAPHICS_QUIT_AFTER_FRAMES", String(parsed.frames))
+    setCaptureEnvironment(parsed)
     // The launcher passes no argument for an empty one.
     let argument = match parsed.arg {
         Some(text) -> text
@@ -66,21 +74,40 @@ function shootForeignApp(parsed: borrow ShotArguments, app: borrow String) -> In
     return 0
 }
 
+// The capture settings, in the environment Ember resolves its harness from when
+// a run is handed none: a child inherits them, and the gallery run here reads them.
+function setCaptureEnvironment(parsed: borrow ShotArguments) {
+    kira_ui_launch_set("KIRA_GRAPHICS_CAPTURE_FRAME", parsed.out)
+    kira_ui_launch_set("KIRA_GRAPHICS_CAPTURE_AT", String(parsed.at))
+    kira_ui_launch_set("KIRA_GRAPHICS_QUIT_AFTER_FRAMES", String(parsed.frames))
+}
+
 construct ShotCommand() extends ParsableCommand {
     let configuration: CommandConfiguration {
-        return CommandConfiguration { name: "shot", abstract: "Run the widget gallery and capture a frame to a PPM" }
+        return CommandConfiguration {
+            name: "shot",
+            abstract: "Run the widget gallery and capture a frame to a PPM"
+        }
     }
 
     let arguments: [ArgumentSpec] {
-        return [
-            option(name: "out", help: "Destination .ppm for the captured frame").short("o").required(),
-            option(name: "app", help: "Executable to run and capture; omitted, the built-in gallery is drawn").short("p"),
-            option(name: "arg", help: "One argument to pass the application").short("g"),
-            option(name: "frames", help: "Quit after this many frames").short("f").whole().defaulting("120"),
-            option(name: "at", help: "Capture at this frame (0 = the last one drawn)").short("a").whole().defaulting("0"),
-            option(name: "width", help: "Window width").short("w").whole().defaulting("1200"),
-            option(name: "height", help: "Window height").short("t").whole().defaulting("800")
-        ]
+        return [option(name: "out", help: "Destination .ppm for the captured frame").short(
+            "o"
+        ).required(), option(
+            name: "app",
+            help: "Executable to run and capture; omitted, the built-in gallery is drawn"
+        ).short("p"), option(name: "arg", help: "One argument to pass the application").short(
+            "g"
+        ), option(name: "frames", help: "Quit after this many frames").short(
+            "f"
+        ).whole().defaulting("120"), option(
+            name: "at",
+            help: "Capture at this frame (0 = the last one drawn)"
+        ).short("a").whole().defaulting("0"), option(name: "width", help: "Window width").short(
+            "w"
+        ).whole().defaulting("1200"), option(name: "height", help: "Window height").short(
+            "t"
+        ).whole().defaulting("800")]
     }
 
     function run(arguments: borrow ParsedArguments) -> Int {
@@ -90,21 +117,15 @@ construct ShotCommand() extends ParsableCommand {
             // No application: the built-in gallery is drawn.
             None -> {}
         }
-        var harness = HarnessConfig {}
-        harness = harnessCapture(parsed.out, parsed.at, parsed.frames)
-        RunWidgetInteractiveApp(
-            title = "Kira UI Gallery",
-            width = parsed.width,
-            height = parsed.height,
-            rootBuilder = { in
-                return uiGalleryApp()
-            },
-            engineFrame = kiraUiNoopEngineFrame,
-            showFpsOverlay = false,
-            rebuildOnResize = true,
-            transparent = false,
-            opacity = 1.0,
-            harness = move harness
+        setCaptureEnvironment(parsed)
+        RunKiraWindowApp(
+            "Kira UI Gallery",
+            parsed.width,
+            parsed.height,
+            {
+                in
+                return Gallery()
+            }
         )
         print("captured " + parsed.out)
         return 0
@@ -113,7 +134,11 @@ construct ShotCommand() extends ParsableCommand {
 
 construct RootCommand() extends ParsableCommand {
     let configuration: CommandConfiguration {
-        return CommandConfiguration { name: "ui", abstract: "Kira UI command line (UIFoundation + KiraUI)", subcommands: ["shot"] }
+        return CommandConfiguration {
+            name: "ui",
+            abstract: "Kira UI command line (UIFoundation + KiraUI)",
+            subcommands: ["shot"]
+        }
     }
 
     let arguments: [ArgumentSpec] {
