@@ -1,0 +1,60 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's `Link`: a control that opens a URL, handing it to the platform,
+// which opens it in the application it opens such URLs with -- a web page in
+// the browser.
+//
+//     Link(title: "Example", destination: "https://example.com")
+//
+//     Link(destination: "https://example.com") {
+//         Label(title: "Example", systemImage: .Globe)
+//     }
+//
+// Left to the automatic style it reads as a link does, its label in the
+// accent with nothing around it; a style set on it, `.buttonStyle(...)`, is
+// the button's.
+public construct Link(destination: String) extends Widget {
+    let label: some Widget
+
+    init(title: String, destination: String) {
+        return Link(destination: destination) {
+            Text(content: title)
+        }
+    }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let url = copy destination
+        let button = Button(action: { in
+            openURL(url)
+            return
+        }) {
+            label
+        }
+        if modifiers.buttonStyle == .Automatic {
+            return button.buttonStyle(.Borderless).describe(context, modifiers)
+        }
+        return button.describe(context, modifiers)
+    }
+}
+
+// Hands `url` to the platform to open, as SwiftUI's `openURL` action does,
+// and says whether it took it. A platform that cannot open one says so in the
+// log.
+public function openURL(url: borrow String) -> Bool {
+    let opened = match targetPlatform!() {
+        Linux -> kira_ui_open_url(url) == I32(1)
+        MacOS -> kira_ui_open_url(url) == I32(1)
+        Ios -> kira_ui_open_url(url) == I32(1)
+        Windows -> kira_ui_open_url(url) == I32(1)
+        Wasm -> kira_ui_open_url(url) == I32(1)
+        else -> false
+    }
+    if !opened {
+        log warn("the platform did not open the URL", url: url)
+    }
+    return opened
+}

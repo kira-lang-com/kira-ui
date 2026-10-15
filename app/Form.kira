@@ -39,8 +39,10 @@ import KCoreAnimation
 public construct Form() extends Widget {
     let children: [some Widget]
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         let list = ScrollView() {
             InsetGroupedList() {
                 For(section in children) {
@@ -48,20 +50,33 @@ public construct Form() extends Widget {
                 }
             }
         }
-        return list.describe(context, modifiers)
+        // The grouped canvas runs to the bottom of the form's frame, below
+        // the last section too, as a Settings page's does.
+        var layer = list.describe(context, modifiers)
+        let canvas = themeAdaptiveColor(groupedBackground, modifierAppearance(modifiers))
+        layer.content = .Solid(
+            CASolid {
+                fill: colorFromFoundation(modifierColor(foundationColor(move canvas), modifiers))
+            }
+        )
+        return layer
     }
 }
 
 // --- Rows --------------------------------------------------------------------
 
 // One row of a form: a label on the left, the controls that edit it on the
-// right, at the size class's row height.
+// right.
 //
 // `active` is whether the property the row names is currently doing anything — a
 // switched-off effect, an appearance that is not the one being edited. It dims
 // the row's LABEL and GLYPH and nothing else, which is the distinction the ink
 // actually carries: the switch that turns the property back on has to stay
 // legible and accented while the property is off.
+//
+// A row whose value is text names it, as SwiftUI's does:
+//
+//     LabeledContent(label: "Version", value: "2.7.2")
 public construct LabeledContent(
     label: String = "",
     symbol: Symbol = .None,
@@ -70,32 +85,58 @@ public construct LabeledContent(
 ) extends Widget {
     let children: [some Widget]
 
+    init(label: String, value: String) {
+        return LabeledContent(label: label) {
+            Text(content: value)
+            .foregroundColor(.Secondary)
+        }
+    }
 
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        // In a grouped list the row's height is the list's, and what the row
-        // holds on the right is its value, in the secondary ink.
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        // In a grouped list what the row holds on the right is its value, in
+        // the secondary ink. A button there keeps its accent, as a Settings
+        // row's does: it is an action, not the value.
         if modifiers.controlPresentation == .InsetGrouped {
-            let groupedRow = HStack(spacing: .None, alignment: .Center, spacingLength: listMetrics().accessorySpacing) {
-                Label(title: label, systemImage: symbol)
-                    .foregroundColor(rowLabelInk(active))
+            let title = Label(title: label, systemImage: symbol)
+            .foregroundColor(rowLabelInk(active))
+            // On a Mac the row is two columns, the label's and the value's,
+            // and a field or a slider runs across the value's with its text
+            // set against the row's end, as a grouped `Form` lays it out
+            // there. On an iPad the value trails the label.
+            if interfaceMode() == .AdaptiveDesktop {
+                return labeledColumns(
+                    title.describe(context, modifiers),
+                    labeledValueColumn(children, spacing, context, modifiers)
+                )
+            }
+            let groupedRow = HStack(
+                spacing: .Length(listMetrics().accessorySpacing),
+                alignment: .Center
+            ) {
+                title
 
                 Spacer()
 
-                HStack(spacing: spacing, alignment: .Center) {
-                    For(control in children) {
-                        control
+                LabeledValue() {
+                    HStack(spacing: spacing, alignment: .Center) {
+                        For(control in children) {
+                            control
+                        }
                     }
+                    .hugWidth()
                 }
-                .hugWidth()
-                .foregroundColor(.Secondary)
             }
             return groupedRow.describe(context, modifiers)
         }
-        let metrics = resolvedControlMetrics(modifiers)
-        let row = HStack(spacing: .None, alignment: .Center) {
+        // Standing on its own, the row is as tall as what it holds, as
+        // SwiftUI's is: its controls share one height per control size, so
+        // rows of them line up without the row stating one.
+        let row = HStack(alignment: .Center) {
             Label(title: label, systemImage: symbol)
-                .foregroundColor(rowLabelInk(active))
-                .height(metrics.rowHeight)
+            .foregroundColor(rowLabelInk(active))
 
             Spacer()
 
@@ -110,17 +151,86 @@ public construct LabeledContent(
     }
 }
 
-// How far a row holds its content off the card's edges: the card's own corner
-// radius when a card said so, and the size class's inset for a row standing on
-// its own.
-public function rowInset(
-    metrics: borrow ControlMetricsImplementation,
-    modifiers: borrow ModifierContext,
-) -> Float {
-    if modifiers.hasContentInset {
-        return modifiers.contentInset
+// A desktop grouped row's two columns: the label's, then the value's, sharing
+// the row as the list says.
+function labeledColumns(
+    title: CALayerDescription,
+    value: CALayerDescription
+) -> CALayerDescription {
+    let share = listMetrics().valueColumnShare
+    return CALayerDescription {
+        layout: CALayoutIntent { axis: .Row, heightFill: false, alignment: Point { x: 0.0, y: 0.5 } },
+        sublayers: [
+            CALayerDescription {
+                layout: CALayoutIntent {
+                    axis: .Row,
+                    heightFill: false,
+                    flex: 1.0 - share,
+                    alignment: Point { x: 0.0, y: 0.5 }
+                },
+                sublayers: [move title]
+            },
+            move value
+        ]
     }
-    return metrics.rowInset
+}
+
+// The value column of a desktop grouped row: its controls against the
+// column's end, a field or a slider running across what they leave, and text
+// set against the end too.
+function labeledValueColumn(
+    controls: borrow [some Widget],
+    spacing: Spacing,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext
+) -> CALayerDescription {
+    let valueModifiers = modifierContextApply(
+        modifierContextApply(modifiers, modifierDeltaValueInk()),
+        modifierDeltaTextAlignment(.Trailing)
+    )
+    var layers: [CALayerDescription] = []
+    var runsAcross = false
+    for control in controls {
+        let layer = control.describe(context, valueModifiers)
+        if !describesNothing(layer) {
+            runsAcross = runsAcross || layer.layout.expandsWidth
+            layers.append(move layer)
+        }
+    }
+    // The controls stand in one row, which takes the whole column when one of
+    // them runs across it and otherwise is as wide as they are, at the end.
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            heightFill: false,
+            flex: listMetrics().valueColumnShare,
+            alignment: Point { x: 1.0, y: 0.5 }
+        },
+        sublayers: [
+            CALayerDescription {
+                layout: CALayoutIntent {
+                    axis: .Row,
+                    widthFill: runsAcross,
+                    heightFill: false,
+                    spacing: modifierSpacing(modifiers, spacing),
+                    alignment: Point { x: 0.0, y: 0.5 }
+                },
+                sublayers: move layers
+            }
+        ]
+    }
+}
+
+// A grouped row's value, in the value ink.
+construct LabeledValue() extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let resolved = modifierContextApply(modifiers, modifierDeltaValueInk())
+        return content.describe(context, resolved)
+    }
 }
 
 public function rowLabelInk(active: Bool) -> PrimaryColor {
@@ -139,42 +249,61 @@ public function rowGlyphInk(active: Bool) -> PrimaryColor {
 
 // --- Value field -------------------------------------------------------------
 
-// A numeric readout: the value right-aligned in a fixed-width control fill with
-// the unit that qualifies it set quieter beside it.
+// A numeric readout: the value right-aligned in a field's fill with the unit
+// that qualifies it set quieter beside it.
 //
-//     ValueField(text = "50", unit = "%")
+//     ValueField(text: "50", unit: "%")
 //         .onScrub(scrubBlur)
 //
-// The width is fixed by the size class rather than by the value, so a column of
-// fields aligns on its right edge whatever the numbers currently read. Whether
+// Like a text field it runs across the room it is given, so a column of them
+// aligns on its right edge whatever the numbers currently read; `.width(...)`
+// says otherwise. Whether
 // it can be changed at all is `.onScrub(...)`; whether it is live is
 // `.disabled(...)`. A field with neither is a readout, and it looks like one
 // without being told to.
 public construct ValueField(text: String, unit: String = "") extends Widget {
 
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         let tokens = modifierTokens(modifiers)
+        let size = resolvedControlSizeMetrics(modifiers)
         let content = HStack(spacing: .ExtraSmall, alignment: .Center) {
             Spacer()
 
             Text(content: text)
-                .typography(.label)
-                .foregroundColor(fieldValueInk(modifiers.disabled))
+            .typography(.label)
+            .foregroundColor(fieldValueInk(modifiers.disabled))
 
             if unit.count > 0 {
                 Text(content: unit)
-                    .typography(.footnote)
-                    .foregroundColor(fieldUnitInk(modifiers.disabled))
+                .typography(.footnote)
+                .foregroundColor(fieldUnitInk(modifiers.disabled))
             }
         }
-        let radius = cornerRadiusImplementation(.Small, modifiers)
+        let radius = textFieldRadius(modifiers)
+        // The readout stands in the frame `NumberField` types into, its value
+        // held off the fill's edge as a field's text is.
         return CALayerDescription {
+            layout: CALayoutIntent {
+                widthFill: true,
+                heightFill: false,
+                fixedHeight: size.fieldHeight,
+                paddingLeading: size.fieldInset,
+                paddingTrailing: size.fieldInset,
+                expandsWidth: true
+            },
             cornerRadius: radius,
             clipsChildren: true,
-            content: .Solid(CASolid {
-                fill: caColorFromFoundation(modifierSurfaceFill(foundationColor(tokens.fill.control), modifiers)),
-                cornerRadius: radius
-            }),
+            content: .Solid(
+                CASolid {
+                    fill: colorFromFoundation(
+                        modifierSurfaceFill(foundationColor(tokens.fill.control), modifiers)
+                    ),
+                    cornerRadius: radius
+                }
+            ),
             sublayers: [content.describe(context, modifiers)]
         }
     }
@@ -183,7 +312,7 @@ public construct ValueField(text: String, unit: String = "") extends Widget {
 // The same field, typed into: a value a person edits by selecting it and
 // writing a new one, committed with Enter.
 //
-//     NumberField(key = positionFieldKey(0), text = "1.500", onSubmit = commitX)
+//     NumberField(key: positionFieldKey(0), text: "1.500", onSubmit: commitX)
 //
 // It is a separate widget from `ValueField` rather than a flag on it, because
 // the two are different things to the input system: a readout registers no hit
@@ -194,33 +323,20 @@ public construct ValueField(text: String, unit: String = "") extends Widget {
 // The key is the caller's, and it has to mean the same field from one frame to
 // the next — the edit buffer lives under it. A field does not take focus on its
 // own: a form that grabbed the keyboard the moment it was drawn would take it
-// off whatever the person was doing, so `.focused(true)` is how one is asked
-// for. It carries no unit, which is the other half of that split: a unit
+// off whatever the person was doing, so a focus state, `.focused($editing)`,
+// is how one is asked for. It carries no unit, which is the other half of that split: a unit
 // belongs beside a number nobody is typing over.
-public construct NumberField(key: Int, text: String, onSubmit: () -> Void) extends Widget {
+public construct NumberField(key: Number, text: String, onSubmit: () -> Void) extends Widget {
 
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let metrics = resolvedControlMetrics(modifiers)
-        let field = TextField(
-            key: key,
-            initial: text,
-            placeholder: "",
-            onSubmit: onSubmit
-        )
-            .width(metrics.fieldWidth)
-            .height(metrics.height)
-            .typography(.label)
-            .focused(fieldTakesFocus(modifiers))
-        return field.describe(context, modifiers)
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        // What is typed stays in the field's buffer until Return submits it.
+        textFieldSeed(key, text)
+        let labeled = modifierContextApply(modifiers, modifierDeltaTypography(.label))
+        return textFieldDescription(key, "", false, { edited in return }, onSubmit, context, labeled)
     }
-}
-
-// Whether a field asks for the keyboard as it appears: only when it was told to.
-public function fieldTakesFocus(modifiers: borrow ModifierContext) -> Bool {
-    if modifiers.hasFocused {
-        return modifiers.focused
-    }
-    return false
 }
 
 // A word that qualifies a field rather than a property: the axis a pair of
@@ -228,10 +344,13 @@ public function fieldTakesFocus(modifiers: borrow ModifierContext) -> Bool {
 // the same size as a unit inside a field.
 public construct FieldCaption(text: String) extends Widget {
 
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         let caption = Text(content: text)
-            .typography(.footnote)
-            .foregroundColor(fieldUnitInk(modifiers.disabled))
+        .typography(.footnote)
+        .foregroundColor(fieldUnitInk(modifiers.disabled))
         return caption.describe(context, modifiers)
     }
 }
@@ -248,100 +367,4 @@ public function fieldUnitInk(disabled: Bool) -> PrimaryColor {
         return .Quaternary
     }
     return .Tertiary
-}
-
-// --- Value pad ---------------------------------------------------------------
-
-// A two-dimensional value, aimed rather than typed: the knob is the pair, the
-// center guide is the origin it is read against, and the ruler along the bottom
-// edge is the scale. Both axes run 0...1, and `.onScrub(...)` reports both at
-// once.
-public construct XYPad(x: Float, y: Float) extends Widget {
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let pad = ZStack(alignment: .TopLeading) {
-            PadFace()
-
-            PadKnob(x: x, y: y)
-        }
-        .hugWidth()
-        .hugHeight()
-        return pad.describe(context, modifiers)
-    }
-}
-
-// How many ticks the ruler carries, and how many dashes the center guide is
-// drawn from: the pad's extent over the tick pitch, so the ruler stays evenly
-// spaced at every size class instead of being a count someone read off a mock.
-public function padTickCount(metrics: borrow ControlMetricsImplementation, pitch: Float) -> Int {
-    return Int(metrics.padWidth / pitch) - 1
-}
-
-public function padGuideCount(metrics: borrow ControlMetricsImplementation) -> Int {
-    return Int(metrics.padHeight / (metrics.padTick * 2.0)) - 1
-}
-
-public construct PadFace() extends Widget {
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let metrics = resolvedControlMetrics(modifiers)
-        let face = ZStack(alignment: .Center) {
-                VStack(spacing: .ExtraSmall, alignment: .Center) {
-                    For(dash in indices(padGuideCount(metrics))) {
-                        Rectangle().fill(modifierTokens(modifiers).border.subtle.color).width(1.0).height(metrics.padTick)
-                    }
-                }
-                .hugWidth()
-
-            PadRuler()
-        }
-        .background(RoundedRectangle(radius: .Small))
-        .backgroundStyle(.Control)
-        .width(metrics.padWidth)
-        .height(metrics.padHeight)
-        return face.describe(context, modifiers)
-    }
-}
-
-public construct PadRuler() extends Widget {
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let metrics = resolvedControlMetrics(modifiers)
-        let pitch = spacingImplementation(.Small, modifiers)
-        let ruler = VStack(spacing: .None) {
-            Spacer()
-
-            HStack(spacing: .Small, alignment: .Bottom) {
-                For(tick in indices(padTickCount(metrics, pitch))) {
-                    Rectangle().fill(modifierTokens(modifiers).border.subtle.color).width(1.0).height(metrics.padTick)
-                }
-            }
-            .hugWidth()
-            .inset(horizontal: .ExtraSmall, vertical: .ExtraSmall)
-        }
-        .fillHeight()
-        return ruler.describe(context, modifiers)
-    }
-}
-
-public construct PadKnob(x: Float, y: Float) extends Widget {
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let metrics = resolvedControlMetrics(modifiers)
-        let knob = VStack(spacing: .None) {
-            FixedGap(width: 1.0, height: y * (metrics.padHeight - metrics.padKnob))
-
-            HStack(spacing: .None) {
-                FixedGap(width: x * (metrics.padWidth - metrics.padKnob), height: 1.0)
-
-                Circle()
-                    .width(metrics.padKnob)
-                    .height(metrics.padKnob)
-                    .foregroundColor(.Accent)
-            }
-            .hugWidth()
-        }
-        .hugWidth()
-        return knob.describe(context, modifiers)
-    }
 }

@@ -26,8 +26,12 @@ function kuiSolidFill(layer: borrow CALayerDescription) -> CAColor {
 
 construct KuiCenteredTextSitsMidway() extends Test {
     test {
-        let centered = kuiTextRun(kuiDescribe(Text(content: "Sync").multilineTextAlignment(.Center)))
-        let trailing = kuiTextRun(kuiDescribe(Text(content: "Sync").multilineTextAlignment(.Trailing)))
+        let centered = kuiTextRun(
+            kuiDescribe(Text(content: "Sync").multilineTextAlignment(.Center))
+        )
+        let trailing = kuiTextRun(
+            kuiDescribe(Text(content: "Sync").multilineTextAlignment(.Trailing))
+        )
         let leading = kuiTextRun(kuiDescribe(Text(content: "Sync")))
         return centered.alignment == 0.5 && trailing.alignment == 1.0 && leading.alignment == 0.0
     }
@@ -40,11 +44,15 @@ construct KuiCenteredTextSitsMidway() extends Test {
 // The alignment reaches every run under it, not only the one it is set on.
 construct KuiTextAlignmentCascades() extends Test {
     test {
-        let described = kuiDescribe(VStack {
-            Text(content: "One")
-            Text(content: "Two")
-        }.multilineTextAlignment(.Center))
-        return kuiTextRun(described.sublayers[0]).alignment + kuiTextRun(described.sublayers[1]).alignment
+        let described = kuiDescribe(
+            VStack {
+                Text(content: "One")
+                Text(content: "Two")
+            }.multilineTextAlignment(.Center)
+        )
+        return kuiTextRun(described.sublayers[0]).alignment + kuiTextRun(
+            described.sublayers[1]
+        ).alignment
     }
     expect {
         let expected: Result<Any, TestFailure> = .Ok(1.0)
@@ -52,13 +60,41 @@ construct KuiTextAlignmentCascades() extends Test {
     }
 }
 
-// On its own, an automatic button is its label in the accent, with no fill.
+// On its own on an iPad, an automatic button is its label in the accent, with
+// no fill.
 construct KuiAStandaloneButtonIsBorderless() extends Test {
     test {
+        setInterfaceMode(.AdaptiveMobile)
         let button = kuiDescribe(Button(title: "Open Settings", action: kuiNoAction))
-        let accent = kuiTextRun(kuiDescribe(Text(content: "Open Settings").foregroundColor(.Accent)))
+        let accent = kuiTextRun(
+            kuiDescribe(Text(content: "Open Settings").foregroundColor(.Accent))
+        )
         let run = kuiTextRun(button)
-        return run.content == "Open Settings" && kuiSameColor(run.color, accent.color) && button.hittable
+        return run.content == "Open Settings" && kuiSameColor(
+            run.color,
+            accent.color
+        ) && button.hittable
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok(true)
+        return expected
+    }
+}
+
+// On a Mac an automatic button is the push button: the control size's height
+// and corner, filled with the control bezel under the label's own ink.
+construct KuiAMacButtonIsThePushButton() extends Test {
+    test {
+        setInterfaceMode(.AdaptiveDesktop)
+        let button = kuiDescribe(Button(title: "Open Settings", action: kuiNoAction))
+        let size = resolvedControlSizeMetrics(ModifierContext {})
+        let bare = kuiTextRun(kuiDescribe(Text(content: "Open Settings")))
+        let bezel = colorFromFoundation(modifierBackgroundStyle(.Control, ModifierContext {}))
+        setInterfaceMode(.AdaptiveMobile)
+        return button.layout.minHeight == size.height
+            && button.cornerRadius == size.cornerRadius
+            && kuiSameColor(kuiSolidFill(button), bezel)
+            && kuiSameColor(kuiTextRun(button.sublayers[0]).color, bare.color)
     }
     expect {
         let expected: Result<Any, TestFailure> = .Ok(true)
@@ -69,7 +105,9 @@ construct KuiAStandaloneButtonIsBorderless() extends Test {
 // A plain button keeps the label's own ink.
 construct KuiAPlainButtonKeepsItsInk() extends Test {
     test {
-        let run = kuiTextRun(kuiDescribe(Button(title: "Done", action: kuiNoAction).buttonStyle(.Plain)))
+        let run = kuiTextRun(
+            kuiDescribe(Button(title: "Done", action: kuiNoAction).buttonStyle(.Plain))
+        )
         let bare = kuiTextRun(kuiDescribe(Text(content: "Done")))
         return kuiSameColor(run.color, bare.color)
     }
@@ -79,23 +117,27 @@ construct KuiAPlainButtonKeepsItsInk() extends Test {
     }
 }
 
-// A bordered button is a rounded rectangle hugging its padded label, washed in the
+// On an iPad a bordered button is a rounded rectangle the control size's
+// height and corner, its label held its inset off the ends, washed in the
 // accent under the accent's words.
 construct KuiABorderedButtonIsAWashedCapsule() extends Test {
     test {
-        let button = kuiDescribe(Button(title: "Open Settings", action: kuiNoAction).buttonStyle(.Bordered))
-        let metrics = resolvedControlMetrics(ModifierContext {})
-        let accent = kuiTextRun(kuiDescribe(Text(content: "Open Settings").foregroundColor(.Accent)))
+        setInterfaceMode(.AdaptiveMobile)
+        let button = kuiDescribe(
+            Button(title: "Open Settings", action: kuiNoAction).buttonStyle(.Bordered)
+        )
+        let size = resolvedControlSizeMetrics(ModifierContext {})
+        let accent = kuiTextRun(
+            kuiDescribe(Text(content: "Open Settings").foregroundColor(.Accent))
+        )
         let fill = kuiSolidFill(button)
         var out = 0
         if button.sublayers.count == 1 && !button.layout.widthFill && !button.layout.heightFill
-            && button.layout.paddingLeading == metrics.buttonHorizontalInset
-            && button.layout.paddingTop == metrics.buttonVerticalInset
-            && button.cornerRadius == cornerRadiusImplementation(.Small, ModifierContext {})
+            && button.layout.paddingLeading == size.labelInset
+            && button.layout.minHeight == size.height
+            && button.cornerRadius == size.cornerRadius
             && fill.a > 0.0 && fill.a < accent.color.a
-            && kuiSameColor(kuiTextRun(button.sublayers[0]).color, accent.color) {
-            out = 1
-        }
+            && kuiSameColor(kuiTextRun(button.sublayers[0]).color, accent.color) { out = 1 }
         return out
     }
     expect {
@@ -107,10 +149,17 @@ construct KuiABorderedButtonIsAWashedCapsule() extends Test {
 // A prominent button is a rounded rectangle of the accent under white words.
 construct KuiAProminentButtonIsFilledWithTheAccent() extends Test {
     test {
-        let button = kuiDescribe(Button(title: "Open Settings", action: kuiNoAction).buttonStyle(.BorderedProminent))
-        let accent = kuiTextRun(kuiDescribe(Text(content: "Open Settings").foregroundColor(.Accent)))
+        let button = kuiDescribe(
+            Button(title: "Open Settings", action: kuiNoAction).buttonStyle(.BorderedProminent)
+        )
+        let accent = kuiTextRun(
+            kuiDescribe(Text(content: "Open Settings").foregroundColor(.Accent))
+        )
         let words = kuiTextRun(button.sublayers[0])
-        return kuiSameColor(kuiSolidFill(button), accent.color) && kuiSameColor(words.color, CAColor { r: 1.0, g: 1.0, b: 1.0, a: 1.0 })
+        return kuiSameColor(kuiSolidFill(button), accent.color) && kuiSameColor(
+            words.color,
+            CAColor { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+        )
     }
     expect {
         let expected: Result<Any, TestFailure> = .Ok(true)
@@ -122,10 +171,12 @@ construct KuiAProminentButtonIsFilledWithTheAccent() extends Test {
 // danger ink.
 construct KuiButtonStyleCascades() extends Test {
     test {
-        let described = kuiDescribe(VStack {
-            Button(title: "Keep", action: kuiNoAction)
-            Button(title: "Delete", role: .Destructive, action: kuiNoAction)
-        }.buttonStyle(.BorderedProminent))
+        let described = kuiDescribe(
+            VStack {
+                Button(title: "Keep", action: kuiNoAction)
+                Button(title: "Delete", role: .Destructive, action: kuiNoAction)
+            }.buttonStyle(.BorderedProminent)
+        )
         let danger = kuiTextRun(kuiDescribe(Text(content: "Delete").foregroundColor(.Danger)))
         return described.sublayers[0].sublayers.count == 1
             && kuiSameColor(kuiSolidFill(described.sublayers[1]), danger.color)
@@ -140,11 +191,21 @@ construct KuiButtonStyleCascades() extends Test {
 // stated radius is that radius, and a circle stands as wide as it is tall.
 construct KuiButtonBorderShapeNamesTheOutline() extends Test {
     test {
-        let capsule = kuiDescribe(Button(title: "Sync", action: kuiNoAction).buttonStyle(.Bordered).buttonBorderShape(.Capsule))
-        let stated = kuiDescribe(Button(title: "Sync", action: kuiNoAction).buttonStyle(.Bordered).buttonBorderShape(.RoundedRectangleRadius(3.0)))
-        let circle = kuiDescribe(Button(action: kuiNoAction) {
-            Text(content: "+")
-        }.buttonStyle(.BorderedProminent).buttonBorderShape(.Circle))
+        let capsule = kuiDescribe(
+            Button(title: "Sync", action: kuiNoAction).buttonStyle(.Bordered).buttonBorderShape(
+                .Capsule
+            )
+        )
+        let stated = kuiDescribe(
+            Button(title: "Sync", action: kuiNoAction).buttonStyle(.Bordered).buttonBorderShape(
+                .RoundedRectangleRadius(3.0)
+            )
+        )
+        let circle = kuiDescribe(
+            Button(action: kuiNoAction) {
+                Text(content: "+")
+            }.buttonStyle(.BorderedProminent).buttonBorderShape(.Circle)
+        )
         return capsule.cornerRadius > 1000.0 && stated.cornerRadius == 3.0
             && circle.layout.minWidth == circle.layout.minHeight && circle.layout.minWidth > 0.0
             && circle.layout.paddingLeading == circle.layout.paddingTop
@@ -155,10 +216,13 @@ construct KuiButtonBorderShapeNamesTheOutline() extends Test {
     }
 }
 
-// An automatic button is text only even where a border shape is set.
+// On an iPad an automatic button is text only even where a border shape is set.
 construct KuiABorderShapeAloneDrawsNoBorder() extends Test {
     test {
-        let button = kuiDescribe(Button(title: "Sync", action: kuiNoAction).buttonBorderShape(.Capsule))
+        setInterfaceMode(.AdaptiveMobile)
+        let button = kuiDescribe(
+            Button(title: "Sync", action: kuiNoAction).buttonBorderShape(.Capsule)
+        )
         return kuiTextRun(button).content == "Sync" && kuiSolidFill(button).a == 0.0
     }
     expect {
@@ -171,12 +235,16 @@ construct KuiABorderShapeAloneDrawsNoBorder() extends Test {
 // keeps its hue -- with no surface of glass to swell or lean.
 construct KuiAHeldTextButtonLightensItsInk() extends Test {
     test {
-        kiraUiTapSeqReset()
+        setInterfaceMode(.AdaptiveMobile)
+        tapSeqReset()
         let resting = kuiDescribe(Button(title: "Open Settings", action: kuiNoAction))
         let key = resting.hitKey
-        kiraUiTapSeqReset()
+        tapSeqReset()
         let context = buildContext(FoundationUiContext { pressedKey: key, hoveredKey: key })
-        let held = Button(title: "Open Settings", action: kuiNoAction).describe(context, ModifierContext {})
+        let held = Button(title: "Open Settings", action: kuiNoAction).describe(
+            context,
+            ModifierContext {}
+        )
         let ink = kuiTextRun(resting).color
         let dimmed = kuiTextRun(held).color
         return key != 0 && held.hitKey == key && held.opacity == 1.0 && !held.allowsGroupOpacity
@@ -194,10 +262,12 @@ construct KuiAHeldTextButtonLightensItsInk() extends Test {
 construct KuiTheTouchLightIsFaintAndWindowWide() extends Test {
     test {
         var glass = CAGlass {}
-        let light = MotionLight { x: 10.0, y: 10.0, radius: 1500.0, strength: motionGlowLevel() }
+        let light = MotionLight { x: 10.0, y: 10.0, radius: 1500.0, strength: MotionGlow.level }
         let modifiers = ModifierContext {}
         interactiveGlassLit(glass, light, modifiers)
-        let context = buildContext(FoundationUiContext { viewport: Size { width: 1100.0, height: 720.0 } })
+        let context = buildContext(
+            FoundationUiContext { viewport: Size { width: 1100.0, height: 720.0 } }
+        )
         return glass.glowStrength == glassTouchLightLevel(modifierAppearance(modifiers))
             && glassTouchLightLevel(.Light) <= 0.2
             && glassTouchLightLevel(.Dark) < glassTouchLightLevel(.Light)

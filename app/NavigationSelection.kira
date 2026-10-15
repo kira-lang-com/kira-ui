@@ -6,77 +6,69 @@ import KCoreAnimation
 // describes them, and the selected one is remembered from build to build: a
 // different row selected, or a path that starts somewhere else, is a new run
 // of the detail -- a new view, keyed apart from the old one.
-public struct KiraUiSidebarSelectionState {
+public struct SidebarSelectionState {
     var counting: Bool = false
-    var ordinal: Int = 0
-    var selected: Int = -1
-    var shown: Int = -2
-    var navigationGeneration: Int = 0
-    var run: Int = 0
+    var ordinal: Number = 0
+    var selected: Number = -1
+    var shown: Number = -2
+    var navigationGeneration: Number = 0
+    var run: Number = 0
 }
 
-public function kiraUiSidebarSelectionSlotKey() -> String {
-    return "kiraui.navigation.sidebar-selection"
-}
-
-public function kiraUiSidebarSelectionEnsure() {
-    if kiraUiStateSlotHas(kiraUiSidebarSelectionSlotKey()) == false {
-        kiraUiStateSlotPut(
-            kiraUiSidebarSelectionSlotKey(),
-            nativeUserData(nativeState(KiraUiSidebarSelectionState {}))
+public function sidebarSelectionEnsure() {
+    if !ambientStateHas(StateSlot.sidebarSelection) {
+        ambientStatePut(
+            StateSlot.sidebarSelection,
+            nativeUserData(nativeState(SidebarSelectionState {}))
         )
     }
-    return
 }
 
-public function kiraUiSidebarSelectionState() -> KiraUiSidebarSelectionState {
-    kiraUiSidebarSelectionEnsure()
-    return nativeRecover<KiraUiSidebarSelectionState>(kiraUiStateSlotGet(kiraUiSidebarSelectionSlotKey()))
+public function sidebarSelectionState() -> SidebarSelectionState {
+    sidebarSelectionEnsure()
+    return nativeRecover<SidebarSelectionState>(ambientStateGet(StateSlot.sidebarSelection))
 }
 
 // The sidebar is about to be described: count its rows from the top.
-public function kiraUiSidebarSelectionBegin() {
-    kiraUiSidebarSelectionEnsure()
-    var state = nativeRecover<KiraUiSidebarSelectionState>(kiraUiStateSlotGet(kiraUiSidebarSelectionSlotKey()))
+public function sidebarSelectionBegin() {
+    sidebarSelectionEnsure()
+    var state = nativeRecover<SidebarSelectionState>(ambientStateGet(StateSlot.sidebarSelection))
     state.counting = true
     state.ordinal = 0
     state.selected = -1
-    return
 }
 
 // A row of the sidebar, and whether it is the selected one.
-public function kiraUiSidebarSelectionRow(selected: Bool) {
-    kiraUiSidebarSelectionEnsure()
-    var state = nativeRecover<KiraUiSidebarSelectionState>(kiraUiStateSlotGet(kiraUiSidebarSelectionSlotKey()))
+public function sidebarSelectionRow(selected: Bool) {
+    sidebarSelectionEnsure()
+    var state = nativeRecover<SidebarSelectionState>(ambientStateGet(StateSlot.sidebarSelection))
     if !state.counting {
         return
     }
     if selected && state.selected < 0 {
         state.selected = state.ordinal
     }
-    state.ordinal = state.ordinal + 1
-    return
+    state.ordinal++
 }
 
 // The sidebar has been described: settle which run of the detail it selects.
-public function kiraUiSidebarSelectionEnd() {
-    kiraUiSidebarSelectionEnsure()
-    var state = nativeRecover<KiraUiSidebarSelectionState>(kiraUiStateSlotGet(kiraUiSidebarSelectionSlotKey()))
+public function sidebarSelectionEnd() {
+    sidebarSelectionEnsure()
+    var state = nativeRecover<SidebarSelectionState>(ambientStateGet(StateSlot.sidebarSelection))
     state.counting = false
-    let generation = kiraUiNavigationGeneration()
+    let generation = currentNavigationGeneration()
     if state.selected != state.shown || generation != state.navigationGeneration {
-        state.run = state.run + 1
+        state.run++
         state.shown = state.selected
         state.navigationGeneration = generation
     }
-    return
 }
 
 // The detail of a split view as the view of one selection: keyed by its run,
 // so the tree takes a new selection's view as a new layer -- nothing of the
 // old one carried over or moved into it -- simply there in its place.
 public function navigationSelectedDetail(detail: CALayerDescription) -> CALayerDescription {
-    let state = kiraUiSidebarSelectionState()
+    let state = sidebarSelectionState()
     var page = detail
     page.key = state.run + 1
     return page

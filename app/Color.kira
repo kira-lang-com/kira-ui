@@ -1,0 +1,39 @@
+import Ember
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's `Color`: a view that fills all the space it is offered with one
+// color, as a `Rectangle` filled with it would. `Color(.Red)` names a color the
+// theme resolves, so it follows light and dark as the palette does; the inits
+// name one by its channels, which no theme changes.
+//
+//     HStack {
+//         Text("Teal")
+//         Spacer()
+//         Color(.Teal).frame(width: 100, height: 100)
+//     }
+//
+// `.opacity(...)` fades it as it fades any view.
+public construct Color(palette: PrimaryColor, channels: RGBAColor? = .None) extends Widget {
+
+    init(red: Number, green: Number, blue: Number, opacity: Number = 1.0) {
+        return Color(palette: .Clear, channels: .Some(RGBAColor { r: red, g: green, b: blue, a: opacity }))
+    }
+
+    init(white: Number, opacity: Number = 1.0) {
+        return Color(palette: .Clear, channels: .Some(RGBAColor { r: white, g: white, b: white, a: opacity }))
+    }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let fill = match channels {
+            Some(rgba) -> modifierColor(foundationColor(copy rgba), modifiers)
+            None -> modifierColor(modifierPrimaryColor(copy palette, modifiers), modifiers)
+        }
+        return CALayerDescription {
+            content: .Solid(CASolid { fill: colorFromFoundation(fill), border: colorFromFoundation(transparentFoundationColor()) })
+        }
+    }
+}

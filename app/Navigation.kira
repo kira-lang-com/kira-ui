@@ -5,237 +5,79 @@ import KCoreAnimation
 
 // KiraUI navigation follows SwiftUI's value-driven model:
 //
-//   NavigationPath       heterogeneous navigation values
+//   NavigationPath       the routes the app has gone through
 //   NavigationStack      one-column push navigation
-//   NavigationLink        appends a typed value
-//   navigationDestination maps a value type to a destination
-//   NavigationSplitView   leading navigation plus detail, collapsing when narrow
+//   NavigationLink       appends a route
+//   NavigationSplitView  leading navigation plus detail, collapsing when narrow
 //
-// Navigation values are declarations backed by NavigationValue. Applications
-// define typed values such as `NavigationValue ProjectsRoute { ... }`; the
-// route value itself is stored in the path.
-
-// --- Responsive policy ------------------------------------------------------
-
-public enum NavigationDevice {
-    Automatic
-    Phone
-    Tablet
-    PC
-    TV
-}
-
-public enum NavigationWidthClass {
-    Compact
-    Regular
-    Expanded
-}
-
-public enum NavigationPresentation {
-    Stack
-    Split
-}
-
-public struct NavigationMetrics {
-    let device: NavigationDevice
-    let widthClass: NavigationWidthClass
-    let presentation: NavigationPresentation
-    let primaryWidth: Float
-    let targetSize: Float
-    let toolbarHeight: Float
-    // The layout margin: how far a column holds its content off its edges, and
-    // where the bar over it starts its title and items. Apple's rule is one
-    // margin per width class -- 16 in a compact width, 20 in a regular one and
-    // on the Mac -- with television held well inside the overscan edge.
-    let contentMargin: Float
-}
-
-public function navigationWidthClass(width: Float) -> NavigationWidthClass {
-    if width < 600.0 {
-        return .Compact
-    }
-    if width < 960.0 {
-        return .Regular
-    }
-    return .Expanded
-}
-
-public function navigationDeviceOverride() -> NavigationDevice {
-    let requested = environmentValue("KIRA_UI_DEVICE")
-    if requested == "phone" {
-        return .Phone
-    }
-    if requested == "tablet" {
-        return .Tablet
-    }
-    if requested == "pc" || requested == "desktop" {
-        return .PC
-    }
-    if requested == "tv" || requested == "television" {
-        return .TV
-    }
-    return .Automatic
-}
-
-public function resolvedNavigationDevice(width: Float) -> NavigationDevice {
-    let requestedDevice = navigationDeviceOverride()
-    if requestedDevice != .Automatic {
-        return requestedDevice
-    }
-    if width < 600.0 {
-        return .Phone
-    }
-    if width < 960.0 {
-        return .Tablet
-    }
-    return .PC
-}
-
-public function navigationAdaptivePresentation(width: Float) -> NavigationPresentation {
-    let device = resolvedNavigationDevice(width)
-    let widthClass = navigationWidthClass(width)
-    match device {
-        Phone -> return .Stack
-        Tablet -> {
-            if widthClass == .Compact {
-                return .Stack
-            }
-            return .Split
-        }
-        PC -> {
-            if widthClass == .Compact {
-                return .Stack
-            }
-            return .Split
-        }
-        TV -> return .Split
-        Automatic -> return .Stack
-    }
-}
-
-public function navigationMetrics(width: Float) -> NavigationMetrics {
-    let device = resolvedNavigationDevice(width)
-    let widthClass = navigationWidthClass(width)
-    var primaryWidth = sidebarMetrics().width
-    var targetSize = 44.0
-    var toolbarHeight = 48.0
-    var contentMargin = 20.0
-    if widthClass == .Expanded {
-        primaryWidth = sidebarMetrics().expandedWidth
-    }
-    if widthClass == .Compact {
-        contentMargin = 16.0
-    }
-    if device == .Phone {
-        targetSize = 44.0
-        toolbarHeight = 52.0
-        contentMargin = 16.0
-    }
-    if device == .Tablet {
-        targetSize = 48.0
-        toolbarHeight = 52.0
-    }
-    if device == .PC {
-        targetSize = 40.0
-        // The bar's real height, not a floor it always exceeds.
-        //
-        // `WindowToolbar` frames itself at `Min(toolbarHeight)` over content
-        // that hugs, so a control of `targetSize` plus the section's own insets
-        // decides the height whenever it comes to more -- and at 40 plus 6 above
-        // and below it always did. The number was then 4pt short of the bar it
-        // describes, which is fine for a minimum and wrong for anything that
-        // reads it as the height: a compositor sizing a column's texture from it
-        // made every surface 4pt too tall for the box it was drawn into.
-        toolbarHeight = 52.0
-    }
-    if device == .TV {
-        primaryWidth = 320.0
-        targetSize = 64.0
-        toolbarHeight = 64.0
-        contentMargin = 80.0
-    }
-    return NavigationMetrics {
-        device: device,
-        widthClass: widthClass,
-        presentation: navigationAdaptivePresentation(width),
-        primaryWidth: primaryWidth,
-        targetSize: targetSize,
-        toolbarHeight: toolbarHeight,
-        contentMargin: contentMargin
-    }
-}
-
-// What a column's content is described under: the column's layout margin --
-// the one it states with `.contentMargin(...)`, or the standard for this width.
-// The bar over the column is told the same margin, so its title, its items and
-// the content beneath start at one distance from the column's edge.
-public function navigationColumnModifiers(modifiers: borrow ModifierContext, metrics: borrow NavigationMetrics) -> ModifierContext {
-    let margin = modifiers.hasContentMargin ? modifiers.contentMargin : metrics.contentMargin
-    kiraUiToolbarSetMargin(margin)
-    return modifierContextApply(modifiers, modifierDeltaContentMargin(margin))
-}
-
-// The sidebar column's: a list in it takes the sidebar style unless a view
-// above chose one, which is what SwiftUI's automatic style does there.
-public function navigationSidebarModifiers(modifiers: borrow ModifierContext, metrics: borrow NavigationMetrics) -> ModifierContext {
-    let column = navigationColumnModifiers(modifiers, metrics)
-    if column.listStyle != .Automatic {
-        return column
-    }
-    return modifierContextApply(column, modifierDeltaListStyle(.Sidebar))
-}
+// A path holds routes, as SwiftUI's holds `Hashable` values: a link appends
+// its route, and the stack shows the view the route draws (NavigationPath.kira).
+//
+//     NavigationStack {
+//         List {
+//             For(playground in playgrounds) {
+//                 NavigationLink(title: playground.title, value: playground)
+//             }
+//         }
+//     }
 
 // --- The sidebar ------------------------------------------------------------
 
 // Whether the person collapsed the split view's sidebar with its toggle, and
 // how far out it is on its way. It outlives the frame like the path does,
 // because it is the window's state and not any view's.
-public struct KiraUiSidebarState {
+public struct SidebarState {
     var collapsed: Bool = false
     var slide: MotionSpringState = MotionSpringState {}
-    var shown: Float = 1.0
+    var shown: Number = 1.0
     // The last frame the slide was advanced on, so it moves once a frame
     // however many times it is asked.
-    var advancedOn: Int = 0 - 1
-}
-
-public function kiraUiSidebarSlotKey() -> String {
-    return "kiraui.navigation.sidebar"
+    var advancedOn: Number = -1
 }
 
 // The spring the sidebar slides on, toward out or away.
-public function navigationSidebarSpring(target: Float) -> MotionSpring {
-    let spring = MotionSpring { response: sidebarMetrics().toggleResponse, damping: sidebarMetrics().toggleDamping, target: target }
-    if kiraUiReducedMotion() {
+public function navigationSidebarSpring(target: Number) -> MotionSpring {
+    let spring = MotionSpring {
+        response: sidebarMetrics().toggleResponse,
+        damping: sidebarMetrics().toggleDamping,
+        target: target
+    }
+    if prefersReducedMotion() {
         return motionCurveReduced(spring)
     }
     return spring
 }
 
 // The slot, made the first time it is asked for: out, and at rest there.
-public function kiraUiSidebarEnsure() {
-    if kiraUiStateSlotHas(kiraUiSidebarSlotKey()) == false {
-        kiraUiStateSlotPut(kiraUiSidebarSlotKey(), nativeUserData(nativeState(KiraUiSidebarState {
-            slide: motionSpringStart(navigationSidebarSpring(1.0), 1.0, 0.0)
-        })))
+public function sidebarEnsure() {
+    if !ambientStateHas(StateSlot.sidebar) {
+        ambientStatePut(
+            StateSlot.sidebar,
+            nativeUserData(
+                nativeState(
+                    SidebarState {
+                        slide: motionSpringStart(navigationSidebarSpring(1.0), 1.0, 0.0)
+                    }
+                )
+            )
+        )
     }
-    return
 }
 
 // How far out the sidebar is this frame, from 0 tucked away past the window's
 // leading edge to 1 beside the content. While it slides the content beside
 // it resizes with it, as in a live resize.
-public function kiraUiSidebarShown(context: borrow BuildContext) -> Float {
-    kiraUiSidebarEnsure()
-    var state = nativeRecover<KiraUiSidebarState>(kiraUiStateSlotGet(kiraUiSidebarSlotKey()))
+public function sidebarShown(context: borrow BuildContext) -> Number {
+    sidebarEnsure()
+    var state = nativeRecover<SidebarState>(ambientStateGet(StateSlot.sidebar))
     if state.advancedOn != context.frameCount {
         state.advancedOn = context.frameCount
-        let sample = motionSpringAdvance(state.slide, kiraUiClockDelta())
+        let sample = motionSpringAdvance(state.slide, clockDelta())
         state.shown = min(max(sample.value, 0.0), 1.0)
-        if motionSpringSettled(state.slide, sample, motionSpringEpsilon()) {
+        if motionSpringSettled(state.slide, sample, MotionSpringLimit.epsilon) {
             state.shown = state.slide.spring.target
         } else {
-            kiraUiClockResizing()
+            clockResizing()
         }
     }
     return state.shown
@@ -245,11 +87,15 @@ public function kiraUiSidebarShown(context: borrow BuildContext) -> Float {
 // it has.
 public function navigationSidebarToggleAction() -> () -> Void {
     let action: () -> Void = { in
-        kiraUiSidebarEnsure()
-        var state = nativeRecover<KiraUiSidebarState>(kiraUiStateSlotGet(kiraUiSidebarSlotKey()))
+        sidebarEnsure()
+        var state = nativeRecover<SidebarState>(ambientStateGet(StateSlot.sidebar))
         state.collapsed = !state.collapsed
         let now = motionSpringSample(state.slide, state.slide.elapsed)
-        state.slide = motionSpringStart(navigationSidebarSpring(state.collapsed ? 0.0 : 1.0), now.value, now.velocity)
+        state.slide = motionSpringStart(
+            navigationSidebarSpring(state.collapsed ? 0.0 : 1.0),
+            now.value,
+            now.velocity
+        )
         return
     }
     return action
@@ -257,138 +103,125 @@ public function navigationSidebarToggleAction() -> () -> Void {
 
 // The back button a stack puts on the bar once it has pushed a view: a piece
 // of glass of its own at the leading end of the document's section.
-public function navigationDeclareBack(context: borrow BuildContext, modifiers: borrow ModifierContext) {
+public function navigationDeclareBack(
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext
+) {
     let button = Button(action: navigationPopAction()) {
         Icon(symbol: .ChevronBack)
     }
-    kiraUiChromeAppend(.Back, KiraUiToolbarEntry {
-        content: button.describe(context, modifierContextPresenting(modifiers, .Toolbar)),
-        group: kiraUiToolbarOpenGroup()
-    })
-    return
+    chromeAppend(
+        .Back,
+        ToolbarEntry {
+            content: button.describe(context, modifierContextPresenting(modifiers, .Toolbar)),
+            group: toolbarOpenGroup()
+        }
+    )
 }
 
 // Value-based link, matching SwiftUI's NavigationLink(value:label:). The
 // nearest stack or split view supplies the path through ambient environment.
-public construct NavigationLink(value: Any NavigationValue) extends Widget {
+public construct NavigationLink(value: Any NavigationRoute) extends Widget {
     let label: some Widget
 
     // SwiftUI's `NavigationLink("Settings", value: route)`: a link whose label
     // is the title it was given. It is a second way to construct the same
     // declaration, not a second declaration, so both forms lower identically.
-    init(title: String, value: Any NavigationValue) {
+    init(title: String, value: Any NavigationRoute) {
         return NavigationLink(value: value, label: Text(content: title))
     }
-
 
     // In a sidebar the link is one of its rows, selected while the path starts
     // at its value. In a grouped list it is a row that drills in: its label,
     // then the chevron at the trailing end, pressed anywhere down the row's
     // height. Anywhere else it is its label, pressed to push the value.
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         if modifiers.controlPresentation == .Sidebar || modifiers.controlPresentation == .SidebarCell {
             let selected = NavigationPath {}.startsWith(value: value)
-            let row = SidebarRow(selected: selected, action: navigationSelectAction(move value)) {
+            let row = SidebarRow(selected: selected, action: navigationSelectAction(copy value)) {
                 label
             }
             return row.describe(context, modifiers)
         }
         if modifiers.controlPresentation == .InsetGrouped {
             let face = modifierTypography(modifiers, .body)
-            let row = HStack(spacing: .None, alignment: .Center, spacingLength: listMetrics().accessorySpacing) {
+            let row = HStack(
+                spacing: .Length(listMetrics().accessorySpacing),
+                alignment: .Center
+            ) {
                 label
 
                 Spacer()
 
                 Icon(symbol: .ChevronForward)
-                    .font(size: face.size, weight: .SemiBold)
-                    .foregroundColor(.Tertiary)
+                .font(size: resolvedLength(face.size), weight: .SemiBold)
+                .foregroundColor(.Tertiary)
             }
-            .minHeight(listMetrics().rowHeight)
+            .minHeight(resolvedLength(listMetrics().rowHeight))
             // The press is the whole row's, which the list lights across the
             // card: the link only says what it does.
-            let key = kiraUiTapSeqKey()
-            kiraUiLayerActionRegister(key, navigationPushAction(move value))
+            let key = tapSeqKey()
+            layerActionRegister(key, navigationPushAction(copy value))
             var described = row.describe(context, modifiers)
             described.hittable = !modifiers.disabled
             described.hitKey = key
             return described
         }
         let metrics = navigationMetrics(context.viewportWidth)
-        let target = label.minHeight(metrics.targetSize)
-        return target.onClick(navigationPushAction(move value)).describe(context, modifiers)
+        let target = label.minHeight(resolvedLength(metrics.targetSize))
+        return target.onClick(navigationPushAction(copy value)).describe(context, modifiers)
     }
 }
 
 public construct NavigationBackButton() extends Widget {
 
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        return Button(
-            title: "Back",
-            action: navigationPopAction()
-        ).describe(context, modifiers)
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        return Button(title: "Back", action: navigationPopAction()).describe(context, modifiers)
     }
 }
 
 public construct NavigationBar(title: String = "") extends Widget {
 
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         let path = NavigationPath {}
-        let metrics = navigationMetrics(context.viewportWidth)
         let items = HStack(spacing: .Small, alignment: .Center) {
-            if path.isEmpty() == false {
+            if !path.isEmpty() {
                 NavigationBackButton()
             }
             if title.count > 0 {
                 Text(content: title)
-                    .typography(.headline)
+                .typography(.headline)
             }
             Spacer()
         }
         let bar = items
-            .background(RoundedRectangle())
-            .backgroundStyle(.Surface)
-            .height(metrics.toolbarHeight)
+        .background(RoundedRectangle())
+        .backgroundStyle(.Surface)
+        .height(resolvedLength(windowChromeMetricsFor(context.viewportWidth).toolbarHeight))
         return bar.describe(context, modifiers)
     }
 }
 
+// What a window's content stands on: the Mac's window background on a
+// desktop, the system background an iPhone's and an iPad's screens are.
 public function navigationCanvas(modifiers: borrow ModifierContext) -> FoundationColor {
+    if interfaceMode() == .AdaptiveDesktop {
+        return foundationColor(modifierTokens(modifiers).background.overlay)
+    }
     return foundationColor(modifierTokens(modifiers).background.canvas)
 }
 
 public function navigationSurface(modifiers: borrow ModifierContext) -> FoundationColor {
     return foundationColor(modifierTokens(modifiers).background.surface)
-}
-
-public construct NavigationDestinationLayer(forType: Any NavigationValue) extends Widget {
-    let content: some Widget
-    let destination: some Widget
-
-
-    // Shows the destination when the path's last value matches this type, the
-    // content otherwise. The navigation bar chrome is applied by a later chrome
-    // pass; describe carries the right screen.
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let path = NavigationPath {}
-        if path.lastMatches(value: forType) == false {
-            return content.describe(context, modifiers)
-        }
-        return destination.describe(context, modifiers)
-    }
-}
-
-extend Widget {
-    // The type witness is the Kira spelling of SwiftUI's `for: Route.self`.
-    // It keeps the public navigation model typed without numeric route IDs.
-    function navigationDestination(
-        forType: Any NavigationValue,
-        destination: some Widget,
-    ) -> Any Widget {
-        return NavigationDestinationLayer(forType: move forType, destination: destination) {
-            self
-        }
-    }
 }
 
 // --- Containers -------------------------------------------------------------
@@ -407,15 +240,20 @@ extend Widget {
 public construct NavigationStack(path: NavigationPath = NavigationPath {}) extends Widget {
     let root: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let previous = kiraUiNavigationEnter(false)
-        let columnModifiers = navigationColumnModifiers(modifiers, navigationMetrics(context.viewportWidth))
-        kiraUiNavigationTransitionAdvance(context)
-        let transition = kiraUiNavigationTransition()
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let previous = navigationEnter(false)
+        let columnModifiers = navigationColumnModifiers(
+            modifiers,
+            navigationMetrics(context.viewportWidth)
+        )
+        navigationTransitionAdvance(context)
+        let transition = navigationTransition()
         var pages: [CALayerDescription] = []
         if transition.active && !transition.splitSlides {
-            let current = kiraUiNavigationValues()
+            let current = navigationValues()
             // The view that is staying lowers under the stack's own keys, so its
             // controls have the keys they will have once nothing moves: the
             // one on top while it comes in, the one under while the top one
@@ -423,46 +261,76 @@ public construct NavigationStack(path: NavigationPath = NavigationPath {}) exten
             // a press at once. The other draws its keys from the covered band
             // and answers nothing.
             let popping = navigationTransitionPopping(transition)
-            let mark = kiraUiToolbarMark()
-            kiraUiNavigationStore(copy transition.front)
+            let mark = toolbarMark()
+            navigationStore(copy transition.front)
             if popping {
-                kiraUiTapSeqEnterCovered()
+                tapSeqEnterCovered()
             }
-            let front = self.page(context, modifiers, columnModifiers, transition.front.count, navigationTransitionMetrics().pageCornerRadius)
+            let front = self.page(
+                context,
+                modifiers,
+                columnModifiers,
+                transition.front.count,
+                navigationTransitionMetrics().pageCornerRadius
+            )
             if popping {
-                kiraUiTapSeqLeaveCovered()
+                tapSeqLeaveCovered()
             }
-            let top = kiraUiToolbarBeginCovered(mark)
+            let top = toolbarBeginCovered(mark)
             if !popping {
-                kiraUiTapSeqEnterCovered()
+                tapSeqEnterCovered()
             }
-            kiraUiNavigationStore(copy transition.covered)
-            let under = self.page(context, modifiers, columnModifiers, transition.covered.count, 0.0)
+            navigationStore(copy transition.covered)
+            let under = self.page(
+                context,
+                modifiers,
+                columnModifiers,
+                transition.covered.count,
+                0.0
+            )
             if !popping {
-                kiraUiTapSeqLeaveCovered()
+                tapSeqLeaveCovered()
             }
             let animation = navigationTransitionAnimation(transition, context.frameCount)
-            kiraUiToolbarEndCovered(move top, mark, transition.shown, copy animation)
-            kiraUiNavigationStore(move current)
-            pages.append(navigationCoveredPage(move under, transition.shown, navigationTransitionFrom(transition), context.viewportWidth, popping, copy animation))
-            pages.append(navigationMovingPage(move front, transition.shown, navigationTransitionFrom(transition), context.viewportWidth, popping, move animation))
+            toolbarEndCovered(move top, mark, transition.shown, copy animation)
+            navigationStore(move current)
+            pages.append(
+                navigationCoveredPage(
+                    move under,
+                    transition.shown,
+                    navigationTransitionFrom(transition),
+                    context.viewportWidth,
+                    popping,
+                    copy animation
+                )
+            )
+            pages.append(
+                navigationMovingPage(
+                    move front,
+                    transition.shown,
+                    navigationTransitionFrom(transition),
+                    context.viewportWidth,
+                    popping,
+                    move animation
+                )
+            )
         } else {
-            var page = self.page(context, modifiers, columnModifiers, kiraUiNavigationValues().count, 0.0)
+            var page = self.page(context, modifiers, columnModifiers, navigationValues().count, 0.0)
             // The frame a motion lands on puts the page where it rests at once:
             // its corners square, nothing left for an action to carry.
             if transition.landedOn == context.frameCount {
-                page.animation = .Timed(caImmediateTiming())
+                page.animation = .Timed(immediateTiming())
             }
             pages.append(move page)
         }
-        kiraUiNavigationLeave(previous)
+        navigationLeave(previous)
         // The stack's canvas runs under the window's bar; what it shows starts
         // below it, under its title set large.
-        kiraUiChromeSafeAreaHandled()
+        chromeSafeAreaHandled()
         return CALayerDescription {
             clipsChildren: true,
             sublayers: [CALayerDescription {
-                key: kiraUiNavigationGeneration() + 1,
+                key: currentNavigationGeneration() + 1,
                 sublayers: move pages
             }]
         }
@@ -476,24 +344,27 @@ public construct NavigationStack(path: NavigationPath = NavigationPath {}) exten
         context: borrow BuildContext,
         modifiers: borrow ModifierContext,
         columnModifiers: borrow ModifierContext,
-        depth: Int,
-        radius: Float,
+        depth: Number,
+        radius: Number,
     ) -> CALayerDescription {
-        if depth > kiraUiNavigationRootDepth() {
+        if depth > navigationRootDepth() {
             navigationDeclareBack(context, modifiers)
         }
-        kiraUiNavigationClearBackground()
+        navigationClearBackground()
         // The page's scroll views are its own, known by the path and the depth,
         // and the first of them is the page's: under the bar, with its large
         // title.
-        let scope = kiraUiScrollScopeEnter(kiraUiNavigationGeneration() * 1000 + depth + 1, context.safeArea.top)
-        let view = root.describe(insideSafeArea(context), columnModifiers)
-        let carried = kiraUiScrollScopeLeave(move scope)
+        let scope = scrollScopeEnter(
+            currentNavigationGeneration() * 1000 + depth + 1,
+            context.safeArea.top
+        )
+        let view = navigationPageView(root).describe(insideSafeArea(context), columnModifiers)
+        let carried = scrollScopeLeave(move scope)
         let canvas = navigationColumnCanvas(modifiers)
         var column: [CALayerDescription] = []
-        let title = kiraUiToolbarColumnTitle()
+        let title = toolbarColumnTitle()
         if title.count > 0 {
-            kiraUiToolbarShowLargeTitle()
+            toolbarShowLargeTitle()
             if !carried {
                 column.append(navigationLargeTitle(move title, context, columnModifiers))
             }
@@ -509,18 +380,26 @@ public construct NavigationStack(path: NavigationPath = NavigationPath {}) exten
             key: depth + 1,
             cornerRadius: radius,
             clipsChildren: true,
-            content: .Solid(CASolid {
-                fill: caColorFromFoundation(canvas),
-                cornerRadius: radius,
-                shapeKind: 1
-            }),
-            sublayers: [safeAreaInset(CALayerDescription {
-                layout: CALayoutIntent {
-                    axis: .Column
+            content: .Solid(
+                CASolid { fill: colorFromFoundation(canvas), cornerRadius: radius, shapeKind: 1 }
+            ),
+            sublayers: [safeAreaInset(
+                CALayerDescription {
+                    layout: CALayoutIntent { axis: .Column },
+                    sublayers: move column
                 },
-                sublayers: move column
-            }, insets)]
+                insets
+            )]
         }
+    }
+}
+
+// What a stack's page shows: the view the route the path ends at draws, or
+// the stack's root while the path is empty.
+function navigationPageView(root: Any Widget) -> Any Widget {
+    match navigationPath().last() {
+        Some(route) -> return route.destination()
+        None -> return root
     }
 }
 
@@ -547,12 +426,13 @@ public function navigationStackedRoot(
     }
     var content = move sidebar
     content.layout.flex = 1
-    return safeAreaInset(CALayerDescription {
-        layout: CALayoutIntent {
-            axis: .Column
+    return safeAreaInset(
+        CALayerDescription {
+            layout: CALayoutIntent { axis: .Column },
+            sublayers: [navigationLargeTitle(copy title, context, modifiers), move content]
         },
-        sublayers: [navigationLargeTitle(copy title, context, modifiers), move content]
-    }, insets)
+        insets
+    )
 }
 
 // The page under a moving one, under a dimming that lifts as it is
@@ -560,13 +440,20 @@ public function navigationStackedRoot(
 // way toward the leading edge. Nothing on it answers a press while it is being
 // covered or swiped toward; being uncovered by a pop, it is the view the stack
 // has gone back to, and answers at once.
-public function navigationCoveredPage(page: CALayerDescription, progress: Float, from: Float, width: Float, popping: Bool, animation: CALayerAnimation) -> CALayerDescription {
+public function navigationCoveredPage(
+    page: CALayerDescription,
+    progress: Number,
+    from: Number,
+    width: Number,
+    popping: Bool,
+    animation: CALayerAnimation
+) -> CALayerDescription {
     let metrics = navigationTransitionMetrics()
     var covered = move page
     if !popping {
-        layerInert(covered)
+        covered.makeInert()
     }
-    covered.layout.offset = Point { x: 0.0 - (1.0 - progress) * width * metrics.coveredParallax, y: 0.0 }
+    covered.layout.offset = Point { x: -(1.0 - progress) * width * metrics.coveredParallax, y: 0.0 }
     // A page coming back into view enters from where the motion starts.
     covered.entrance = CAEntrance {
         active: true,
@@ -574,13 +461,13 @@ public function navigationCoveredPage(page: CALayerDescription, progress: Float,
     }
     // The page and its dimming move in the transition's own transaction.
     covered.animation = move animation
-    covered.sublayers.append(CALayerDescription {
-        opacity: metrics.coveredDim * (1.0 - progress),
-        entrance: CAEntrance { active: true, opacity: metrics.coveredDim * (1.0 - from) },
-        content: .Solid(CASolid {
-            fill: CAColor { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }
-        })
-    })
+    covered.sublayers.append(
+        CALayerDescription {
+            opacity: metrics.coveredDim * (1.0 - progress),
+            entrance: CAEntrance { active: true, opacity: metrics.coveredDim * (1.0 - from) },
+            content: .Solid(CASolid { fill: CAColor { r: 0.0, g: 0.0, b: 0.0, a: 1.0 } })
+        }
+    )
     return covered
 }
 
@@ -588,10 +475,17 @@ public function navigationCoveredPage(page: CALayerDescription, progress: Float,
 // has gone across the stack's width. Going off in a pop it is no longer in the
 // path, and a press passes through it to the view it uncovers. Coming in, it
 // enters from where the motion starts.
-public function navigationMovingPage(page: CALayerDescription, progress: Float, from: Float, width: Float, popping: Bool, animation: CALayerAnimation) -> CALayerDescription {
+public function navigationMovingPage(
+    page: CALayerDescription,
+    progress: Number,
+    from: Number,
+    width: Number,
+    popping: Bool,
+    animation: CALayerAnimation
+) -> CALayerDescription {
     var moving = move page
     if popping {
-        layerInert(moving)
+        moving.makeInert()
     }
     moving.layout.offset = Point { x: progress * width, y: 0.0 }
     moving.entrance = CAEntrance {
@@ -604,22 +498,25 @@ public function navigationMovingPage(page: CALayerDescription, progress: Float, 
 
 // A stack's title set large under the bar, at the column's margin, in the
 // emphasized large title face.
-public function navigationLargeTitle(title: String, context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+public function navigationLargeTitle(
+    title: String,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext
+) -> CALayerDescription {
     let face = modifierTypography(modifiers, .largeTitle)
     var text = Text(content: move title)
-        .font(size: face.size, weight: .Bold)
-        .describe(context, modifiers)
+    .font(size: resolvedLength(face.size), weight: .Bold)
+    .describe(context, modifiers)
     text.layout.widthFill = false
     text.layout.heightFill = false
     return CALayerDescription {
         layout: CALayoutIntent {
             heightFill: false,
-            paddingLeading: modifiers.contentMargin,
-            paddingTrailing: modifiers.contentMargin,
+            paddingLeading: resolvedContentMargin(modifiers),
+            paddingTrailing: resolvedContentMargin(modifiers),
             paddingTop: largeTitleMetrics().topInset,
             paddingBottom: largeTitleMetrics().bottomInset
         },
         sublayers: [text]
     }
 }
-

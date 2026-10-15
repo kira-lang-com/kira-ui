@@ -1,0 +1,163 @@
+import Foundation
+
+// How navigation adapts to the device and the width it has (see
+// `Navigation.kira`).
+
+// --- Responsive policy ------------------------------------------------------
+
+public enum NavigationDevice {
+    Automatic
+    Phone
+    Tablet
+    PC
+    TV
+}
+
+public enum NavigationWidthClass {
+    Compact
+    Regular
+    Expanded
+}
+
+public enum NavigationPresentation {
+    Stack
+    Split
+}
+
+// How far a column holds its content off its edges, one margin per width
+// class. UIKit's table margin (`_defaultMarginWidthForTableView` in iOS 27's
+// UIKitCore) is 16, and 20 where the screen asks for wide content margins;
+// SwiftUI's `EnvironmentValues.defaultPadding` is the same 16. A television
+// holds content inside its 80-point overscan edge.
+// The least a control a person points at may measure across, from the table
+// in Apple's Human Interface Guidelines (Accessibility, "Buttons and
+// controls"): 44 on a touch screen, 28 under a pointer, 66 across a room on a
+// television.
+public namespace HitTarget {
+    let touch: Number = 44.0
+    let pointer: Number = 28.0
+    let television: Number = 66.0
+}
+
+public namespace LayoutMargin {
+    let compact: Number = 16.0
+    let regular: Number = 20.0
+    let television: Number = 80.0
+}
+
+public struct NavigationMetrics {
+    let device: NavigationDevice
+    let widthClass: NavigationWidthClass
+    let presentation: NavigationPresentation
+    let primaryWidth: Number
+    let targetSize: Number
+    // The `LayoutMargin` for this width: where the column's content and the bar
+    // over it start.
+    let contentMargin: Number
+}
+
+public function navigationWidthClass(width: Number) -> NavigationWidthClass {
+    if width < 600.0 {
+        return .Compact
+    }
+    if width < 960.0 {
+        return .Regular
+    }
+    return .Expanded
+}
+
+public function navigationDeviceOverride() -> NavigationDevice {
+    let requested = environmentValue("KIRA_UI_DEVICE")
+    match requested {
+        "phone" -> return .Phone
+        "tablet" -> return .Tablet
+        "pc", "desktop" -> return .PC
+        "tv", "television" -> return .TV
+        else -> return .Automatic
+    }
+}
+
+public function resolvedNavigationDevice(width: Number) -> NavigationDevice {
+    let requestedDevice = navigationDeviceOverride()
+    if requestedDevice != .Automatic {
+        return requestedDevice
+    }
+    if width < 600.0 {
+        return .Phone
+    }
+    if width < 960.0 {
+        return .Tablet
+    }
+    return .PC
+}
+
+public function navigationAdaptivePresentation(width: Number) -> NavigationPresentation {
+    let device = resolvedNavigationDevice(width)
+    let widthClass = navigationWidthClass(width)
+    match device {
+        Phone -> return .Stack
+        Tablet, PC -> return widthClass == .Compact ? .Stack : .Split
+        TV -> return .Split
+        Automatic -> return .Stack
+    }
+}
+
+public function navigationMetrics(width: Number) -> NavigationMetrics {
+    let device = resolvedNavigationDevice(width)
+    let widthClass = navigationWidthClass(width)
+    var primaryWidth = sidebarMetrics().width
+    var targetSize = HitTarget.touch
+    var contentMargin = LayoutMargin.regular
+    match widthClass {
+        Compact -> contentMargin = LayoutMargin.compact
+        Regular -> {}
+        Expanded -> primaryWidth = sidebarMetrics().expandedWidth
+    }
+    match device {
+        Automatic -> {}
+        Phone -> contentMargin = LayoutMargin.compact
+        Tablet -> {}
+        PC -> targetSize = HitTarget.pointer
+        // A television's column is the widest a tablet opens, whatever its width
+        // class: it is read from across a room.
+        TV -> {
+            primaryWidth = sidebarMetrics().expandedWidth
+            targetSize = HitTarget.television
+            contentMargin = LayoutMargin.television
+        }
+    }
+    return NavigationMetrics {
+        device: device,
+        widthClass: widthClass,
+        presentation: navigationAdaptivePresentation(width),
+        primaryWidth: primaryWidth,
+        targetSize: targetSize,
+        contentMargin: contentMargin
+    }
+}
+
+// What a column's content is described under: the column's layout margin --
+// the one it states with `.contentMargin(...)`, or the standard for this width.
+// The bar over the column is told the same margin, so its title, its items and
+// the content beneath start at one distance from the column's edge.
+public function navigationColumnModifiers(
+    modifiers: borrow ModifierContext,
+    metrics: borrow NavigationMetrics
+) -> ModifierContext {
+    let margin = modifiers.hasContentMargin ? modifiers.contentMargin : metrics.contentMargin
+    toolbarSetMargin(margin)
+    return modifierContextApply(modifiers, modifierDeltaContentMargin(margin))
+}
+
+// The sidebar column's: a list in it takes the sidebar style unless a view
+// above chose one, which is what SwiftUI's automatic style does there.
+public function navigationSidebarModifiers(
+    modifiers: borrow ModifierContext,
+    metrics: borrow NavigationMetrics
+) -> ModifierContext {
+    let column = navigationColumnModifiers(modifiers, metrics)
+    if column.listStyle != .Automatic {
+        return column
+    }
+    return modifierContextApply(column, modifierDeltaListStyle(.Sidebar))
+}

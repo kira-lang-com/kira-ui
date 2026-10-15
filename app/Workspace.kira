@@ -30,25 +30,34 @@ import KCoreAnimation
 public construct Workspace(
     layout: WorkspaceLayout = WorkspaceLayout {},
     center: WorkspaceCenter = .Fixed,
+    presentation: WorkspacePresentation = .Cards,
 ) extends Widget {
     let children: [some Widget]
-
 
     // The arrangement is settled first -- a drag let go since the last build
     // docks its panel -- then every panel declares itself, the selected one at
     // each edge lowering its content, and the cards are laid out from what the
     // arrangement is now.
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         // The panels hang a gap under the bar's items, not under its whole
         // band: the band's own room below the items would read as a second,
         // wider gap between the bar and the panels.
         let chrome = windowChromeMetrics()
-        let top = max(context.safeArea.top - (chrome.toolbarHeight - chrome.itemHeight) / 2.0, 0.0)
+        let top = match presentation {
+            Cards -> max(
+                context.safeArea.top - (chrome.toolbarHeight - chrome.itemHeight) / 2.0,
+                0.0
+            )
+            Viewport -> context.safeArea.top
+        }
         let origin = Point { x: context.safeArea.leading, y: top }
         // A bar set along the foot by `.safeAreaInset` holds the cards off
         // it with room of its own, as the bar's items do at the top, so the
         // cards run down to it with no gap of their own under them.
-        var foot: Float = 0.0
+        var foot: Number = 0.0
         if context.safeArea.bottom > context.systemSafeArea.bottom {
             foot = workspaceMetrics().gap
         }
@@ -56,21 +65,24 @@ public construct Workspace(
             width: context.viewportWidth - context.safeArea.leading - context.safeArea.trailing,
             height: context.viewportHeight - top - context.safeArea.bottom + foot
         }
-        kiraUiWorkspaceSetCenter(center)
+        workspaceSetCenter(center)
+        workspaceSetPresentation(presentation)
+        windowCanvasGrouped()
+        workspaceSetSize(size)
         workspaceDragAdvance(context, origin, size)
         // A panel is drawn in a card, not under the window's bar.
         var panelContext = copy context
         panelContext.safeArea = EdgeInsets {}
-        let previous = kiraUiWorkspaceCollect()
+        let previous = workspaceCollect()
         for child in children {
             let _ = child.describe(panelContext, modifiers)
         }
-        let panels = kiraUiWorkspaceTakeDeclarations(previous)
-        kiraUiWorkspaceRemember(panels)
+        let panels = workspaceTakeDeclarations(previous)
+        workspaceRemember(panels)
         var described = workspaceDescription(panels, size, context, modifiers)
         described.layout.paddingLeading = origin.x
         described.layout.paddingTop = origin.y
-        kiraUiChromeSafeAreaHandled()
+        chromeSafeAreaHandled()
         return described
     }
 }
@@ -89,24 +101,26 @@ public construct Panel(
 ) extends Widget {
     let content: some Widget
 
-
     // A panel lowers its content only while its tab is the one selected:
     // everything else at its edge is a title on the strip.
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        if !kiraUiWorkspaceCollecting() {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        if !workspaceCollecting() {
             return content.describe(context, modifiers)
         }
         let panel = value.panelType()
-        kiraUiWorkspaceSeed(copy panel, edge, isPresented)
-        var declaration = KiraUiPanelDeclaration {
+        workspaceSeed(copy panel, edge, isPresented)
+        var declaration = PanelDeclaration {
             panel: copy panel,
             title: copy title,
             systemImage: systemImage
         }
-        if kiraUiWorkspaceIsSelected(panel) {
+        if workspaceIsSelected(panel) {
             declaration.content = content.describe(context, modifiers)
         }
-        kiraUiWorkspaceDeclare(move declaration)
+        workspaceDeclare(move declaration)
         return CALayerDescription {}
     }
 }
@@ -115,84 +129,72 @@ public construct Panel(
 
 // What one build's panels said about themselves: who each is, what its tab
 // shows, and -- for the one selected at its edge -- its content.
-public struct KiraUiPanelDeclaration {
+public struct PanelDeclaration {
     var panel: String = ""
     var title: String = ""
     var systemImage: Symbol = .None
     var content: CALayerDescription = CALayerDescription {}
 }
 
-public struct KiraUiWorkspaceSink {
+public struct WorkspaceSink {
     var collecting: Bool = false
-    var panels: [KiraUiPanelDeclaration] = []
+    var panels: [PanelDeclaration] = []
 }
 
-public function kiraUiWorkspaceSinkKey() -> String {
-    return "kiraui.workspace.sink"
-}
-
-public function kiraUiWorkspaceSinkEnsure() {
-    if kiraUiStateSlotHas(kiraUiWorkspaceSinkKey()) == false {
-        kiraUiStateSlotPut(
-            kiraUiWorkspaceSinkKey(),
-            nativeUserData(nativeState(KiraUiWorkspaceSink {}))
-        )
+public function workspaceSinkEnsure() {
+    if !ambientStateHas(StateSlot.workspaceSink) {
+        ambientStatePut(StateSlot.workspaceSink, nativeUserData(nativeState(WorkspaceSink {})))
     }
-    return
 }
 
 // Open collection for a workspace's panels, answering whether it was already
 // open, to be handed back when it closes.
-public function kiraUiWorkspaceCollect() -> Bool {
-    kiraUiWorkspaceSinkEnsure()
-    var sink = nativeRecover<KiraUiWorkspaceSink>(kiraUiStateSlotGet(kiraUiWorkspaceSinkKey()))
+public function workspaceCollect() -> Bool {
+    workspaceSinkEnsure()
+    var sink = nativeRecover<WorkspaceSink>(ambientStateGet(StateSlot.workspaceSink))
     let previous = sink.collecting
     sink.collecting = true
-    var empty: [KiraUiPanelDeclaration] = []
+    var empty: [PanelDeclaration] = []
     sink.panels = move empty
     return previous
 }
 
-public function kiraUiWorkspaceCollecting() -> Bool {
-    kiraUiWorkspaceSinkEnsure()
-    let sink = nativeRecover<KiraUiWorkspaceSink>(kiraUiStateSlotGet(kiraUiWorkspaceSinkKey()))
+public function workspaceCollecting() -> Bool {
+    workspaceSinkEnsure()
+    let sink = nativeRecover<WorkspaceSink>(ambientStateGet(StateSlot.workspaceSink))
     return sink.collecting
 }
 
-public function kiraUiWorkspaceDeclare(declaration: KiraUiPanelDeclaration) {
-    kiraUiWorkspaceSinkEnsure()
-    var sink = nativeRecover<KiraUiWorkspaceSink>(kiraUiStateSlotGet(kiraUiWorkspaceSinkKey()))
+public function workspaceDeclare(declaration: PanelDeclaration) {
+    workspaceSinkEnsure()
+    var sink = nativeRecover<WorkspaceSink>(ambientStateGet(StateSlot.workspaceSink))
     sink.panels.append(move declaration)
-    return
 }
 
-public function kiraUiWorkspaceTakeDeclarations(previous: Bool) -> [KiraUiPanelDeclaration] {
-    kiraUiWorkspaceSinkEnsure()
-    var sink = nativeRecover<KiraUiWorkspaceSink>(kiraUiStateSlotGet(kiraUiWorkspaceSinkKey()))
+public function workspaceTakeDeclarations(previous: Bool) -> [PanelDeclaration] {
+    workspaceSinkEnsure()
+    var sink = nativeRecover<WorkspaceSink>(ambientStateGet(StateSlot.workspaceSink))
     sink.collecting = previous
     let panels = copy sink.panels
-    var empty: [KiraUiPanelDeclaration] = []
+    var empty: [PanelDeclaration] = []
     sink.panels = move empty
     return panels
 }
 
 // The first build to declare a panel places it where it was declared, and
 // selects it there if nothing at that edge is yet.
-public function kiraUiWorkspaceSeed(panel: String, edge: borrow PanelEdge, isPresented: Bool) {
-    kiraUiWorkspaceEnsure()
-    var state = nativeRecover<KiraUiWorkspaceState>(kiraUiStateSlotGet(kiraUiWorkspaceSlotKey()))
-    if kiraUiWorkspacePlacementIndex(state, panel) >= 0 {
+public function workspaceSeed(panel: String, edge: borrow PanelEdge, isPresented: Bool) {
+    workspaceArrangementEnsure()
+    var state = nativeRecover<WorkspaceArrangement>(ambientStateGet(StateSlot.workspaceArrangement))
+    if workspacePlacementIndex(state, panel) >= 0 {
         return
     }
     let pinned = edge == .Center
     let awaited = state.awaited == panel
     let shown = isPresented || pinned || awaited
-    state.placements.append(KiraUiPanelPlacement {
-        panel: copy panel,
-        edge: copy edge,
-        shown: shown,
-        pinned: pinned
-    })
+    state.placements.append(
+        PanelPlacement { panel: copy panel, edge: copy edge, shown: shown, pinned: pinned }
+    )
     let index = panelEdgeIndex(edge)
     if awaited {
         state.awaited = ""
@@ -201,14 +203,13 @@ public function kiraUiWorkspaceSeed(panel: String, edge: borrow PanelEdge, isPre
     if shown && (awaited || state.edges[index].selected == "") {
         state.edges[index].selected = move panel
     }
-    return
 }
 
 // Whether a panel's content is drawn: it is in the workspace and its edge's
 // strip has it selected.
-public function kiraUiWorkspaceIsSelected(panel: borrow String) -> Bool {
-    let state = kiraUiWorkspaceState()
-    let index = kiraUiWorkspacePlacementIndex(state, panel)
+public function workspaceIsSelected(panel: borrow String) -> Bool {
+    let state = workspaceState()
+    let index = workspacePlacementIndex(state, panel)
     if index < 0 || !state.placements[index].shown {
         return false
     }
@@ -217,25 +218,38 @@ public function kiraUiWorkspaceIsSelected(panel: borrow String) -> Bool {
 
 // The panels this build declared, in order: what a tab's key is read back
 // through.
-public function kiraUiWorkspaceRemember(panels: borrow [KiraUiPanelDeclaration]) {
-    kiraUiWorkspaceEnsure()
-    var state = nativeRecover<KiraUiWorkspaceState>(kiraUiStateSlotGet(kiraUiWorkspaceSlotKey()))
+public function workspaceRemember(panels: borrow [PanelDeclaration]) {
+    workspaceArrangementEnsure()
+    var state = nativeRecover<WorkspaceArrangement>(ambientStateGet(StateSlot.workspaceArrangement))
     var declared: [String] = []
     for declaration in panels {
         declared.append(copy declaration.panel)
     }
     state.declared = move declared
-    return
 }
 
-public function kiraUiWorkspaceSetCenter(center: WorkspaceCenter) {
-    kiraUiWorkspaceEnsure()
-    var state = nativeRecover<KiraUiWorkspaceState>(kiraUiStateSlotGet(kiraUiWorkspaceSlotKey()))
+public function workspaceSetSize(size: borrow Size) {
+    workspaceArrangementEnsure()
+    var state = nativeRecover<WorkspaceArrangement>(ambientStateGet(StateSlot.workspaceArrangement))
+    state.workspaceSize = copy size
+}
+
+public function workspaceSetPresentation(presentation: WorkspacePresentation) {
+    workspaceArrangementEnsure()
+    var state = nativeRecover<WorkspaceArrangement>(ambientStateGet(StateSlot.workspaceArrangement))
+    state.presentation = presentation
+}
+
+public function workspaceSetCenter(center: WorkspaceCenter) {
+    workspaceArrangementEnsure()
+    var state = nativeRecover<WorkspaceArrangement>(ambientStateGet(StateSlot.workspaceArrangement))
     state.center = center
-    return
 }
 
-public function kiraUiWorkspaceDeclarationIndex(panels: borrow [KiraUiPanelDeclaration], panel: borrow String) -> Int {
+public function workspaceDeclarationIndex(
+    panels: borrow [PanelDeclaration],
+    panel: borrow String
+) -> Number {
     for index in 0..panels.count {
         if panels[index].panel == panel {
             return index
@@ -256,7 +270,10 @@ public struct WorkspaceGeometry {
     var center: Rect = Rect {}
 }
 
-public function workspaceEdgeRect(geometry: borrow WorkspaceGeometry, edge: borrow PanelEdge) -> Rect {
+public function workspaceEdgeRect(
+    geometry: borrow WorkspaceGeometry,
+    edge: borrow PanelEdge
+) -> Rect {
     match edge {
         Leading -> return copy geometry.leading
         Trailing -> return copy geometry.trailing
@@ -270,31 +287,56 @@ public function workspaceEdgeRect(geometry: borrow WorkspaceGeometry, edge: borr
 // is an edge a dragged tab is held over, which opens to show where the panel
 // would go; -1 for none. A window too narrow for both sides and the center's
 // least gives each side its share of what there is.
-public function workspaceGeometry(state: borrow KiraUiWorkspaceState, size: borrow Size, opening: Int) -> WorkspaceGeometry {
+public function workspaceGeometry(
+    state: borrow WorkspaceArrangement,
+    size: borrow Size,
+    opening: Number
+) -> WorkspaceGeometry {
     let metrics = workspaceMetrics()
     let gap = metrics.gap
-    let leadingUp = kiraUiWorkspaceEdgeVisible(state, .Leading) || opening == panelEdgeIndex(.Leading)
-    let trailingUp = kiraUiWorkspaceEdgeVisible(state, .Trailing) || opening == panelEdgeIndex(.Trailing)
-    let bottomUp = kiraUiWorkspaceEdgeVisible(state, .Bottom) || opening == panelEdgeIndex(.Bottom)
-    var leading = kiraUiWorkspaceExtent(state, .Leading)
-    var trailing = kiraUiWorkspaceExtent(state, .Trailing)
+    let leadingUp = workspaceEdgeVisible(state, .Leading) || opening == panelEdgeIndex(.Leading)
+    let trailingUp = workspaceEdgeVisible(state, .Trailing) || opening == panelEdgeIndex(.Trailing)
+    let bottomUp = workspaceEdgeVisible(state, .Bottom) || opening == panelEdgeIndex(.Bottom)
+    var leading = workspaceExtent(state, .Leading)
+    var trailing = workspaceExtent(state, .Trailing)
     let sides = (leadingUp ? leading : 0.0) + (trailingUp ? trailing : 0.0)
     let room = max(size.width - gap * 4.0 - metrics.minimumWidth, 0.0)
     if sides > room {
         leading = leading * room / sides
         trailing = trailing * room / sides
     }
-    let height = max(size.height - gap * 2.0, 0.0)
-    let bottom = min(kiraUiWorkspaceExtent(state, .Bottom), max(height - gap - metrics.minimumHeight, 0.0))
+    // The window safe area already includes the toolbar band. Viewport
+    // panels start at that content boundary; card workspaces add their gutter.
+    let topGap = state.presentation == .Viewport ? 0.0 : gap
+    let height = max(size.height - gap - topGap, 0.0)
+    let bottom = min(
+        workspaceExtent(state, .Bottom),
+        max(height - gap - metrics.minimumHeight, 0.0)
+    )
     let centerLeft = leadingUp ? gap * 2.0 + leading : gap
     let centerRight = trailingUp ? size.width - gap * 2.0 - trailing : size.width - gap
     let centerWidth = max(centerRight - centerLeft, 0.0)
     let centerHeight = bottomUp ? height - gap - bottom : height
     return WorkspaceGeometry {
-        leading: Rect { x: leadingUp ? gap : 0.0 - leading, y: gap, width: leading, height: height },
-        trailing: Rect { x: trailingUp ? size.width - gap - trailing : size.width, y: gap, width: trailing, height: height },
-        bottom: Rect { x: centerLeft, y: bottomUp ? size.height - gap - bottom : size.height, width: centerWidth, height: bottom },
-        center: Rect { x: centerLeft, y: gap, width: centerWidth, height: max(centerHeight, 0.0) }
+        leading: Rect { x: leadingUp ? gap : -leading, y: topGap, width: leading, height: height },
+        trailing: Rect {
+            x: trailingUp ? size.width - gap - trailing : size.width,
+            y: topGap,
+            width: trailing,
+            height: height
+        },
+        bottom: Rect {
+            x: centerLeft,
+            y: bottomUp ? size.height - gap - bottom : size.height,
+            width: centerWidth,
+            height: bottom
+        },
+        center: Rect {
+            x: centerLeft,
+            y: topGap,
+            width: centerWidth,
+            height: max(centerHeight, 0.0)
+        }
     }
 }
 
@@ -304,18 +346,24 @@ public function workspaceGeometry(state: borrow KiraUiWorkspaceState, size: borr
 // the dividers between them, and -- while a tab is dragged -- where it would
 // land and the tab itself under the pointer.
 public function workspaceDescription(
-    panels: borrow [KiraUiPanelDeclaration],
+    panels: borrow [PanelDeclaration],
     size: borrow Size,
     context: borrow BuildContext,
     modifiers: borrow ModifierContext,
 ) -> CALayerDescription {
-    let state = kiraUiWorkspaceState()
+    let state = workspaceState()
     let dragging = state.drag.kind == .Tab && state.drag.moving
     let geometry = workspaceGeometry(state, size, dragging ? state.drag.target : -1)
     var layers: [CALayerDescription] = []
-    let edges: [PanelEdge] = [.Leading, .Trailing, .Bottom, .Center]
+    // A viewport is the scene backdrop: render its texture before any panel
+    // glass captures the frame, then draw the docks and their toolbars on top.
+    // Ordinary card workspaces retain their original stacking order.
+    let edges: [PanelEdge] = match state.presentation {
+        Cards -> [.Leading, .Trailing, .Bottom, .Center]
+        Viewport -> [.Center, .Leading, .Trailing, .Bottom]
+    }
     for edge in edges {
-        let shown = kiraUiWorkspacePanelsAt(state, edge)
+        let shown = workspacePanelsAt(state, edge)
         if shown.count > 0 || edge == .Center {
             var card = workspaceCard(state, edge, shown, panels, context, modifiers)
             workspacePlace(card, workspaceEdgeRect(geometry, edge))
@@ -324,15 +372,20 @@ public function workspaceDescription(
         }
     }
     for edge in edges {
-        if edge != .Center && kiraUiWorkspaceEdgeVisible(state, edge) {
+        if edge != .Center && workspaceEdgeVisible(state, edge) {
             layers.append(workspaceDivider(edge, geometry, state, modifiers))
         }
     }
     if dragging {
         if state.drag.target >= 0 {
-            layers.append(workspaceDropZone(workspaceEdgeRect(geometry, panelEdgeAt(state.drag.target)), modifiers))
+            layers.append(
+                workspaceDropZone(
+                    workspaceEdgeRect(geometry, panelEdgeAt(state.drag.target)),
+                    modifiers
+                )
+            )
         }
-        let index = kiraUiWorkspaceDeclarationIndex(panels, state.drag.panel)
+        let index = workspaceDeclarationIndex(panels, state.drag.panel)
         if index >= 0 {
             layers.append(workspaceDragGhost(panels[index], state.drag.pointer, context, modifiers))
         }
@@ -342,10 +395,7 @@ public function workspaceDescription(
         // The cards follow the divider under the pointer, not behind it.
         animation = .Timed(CATiming { disableActions: true })
     }
-    return CALayerDescription {
-        animation: move animation,
-        sublayers: move layers
-    }
+    return CALayerDescription { animation: move animation, sublayers: move layers }
 }
 
 // Stand a layer at a rect of the workspace's box.
@@ -355,5 +405,36 @@ public function workspacePlace(layer: borrow mut CALayerDescription, rect: borro
     layer.layout.fixedWidth = rect.width
     layer.layout.fixedHeight = rect.height
     layer.layout.offset = Point { x: rect.x, y: rect.y }
-    return
+}
+
+// SwiftUI-style panel toolbar. The framework owns the glass and placement.
+public construct PanelToolbar() extends Widget {
+    let children: [some Widget]
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        // The kit's tab bar sets its buttons end to end: each cell carries
+        // its own inset, so the row adds no spacing of its own.
+        let controls = HStack(spacing = .None) {
+            For(child in children) {
+                child
+            }
+        }
+        .hugWidth()
+        .hugHeight()
+        .describe(context, modifierContextPresenting(modifiers, .TabBar))
+        let inset = workspaceStripInset()
+        return CALayerDescription {
+            layout: CALayoutIntent {
+                widthFill: true,
+                heightFill: true,
+                paddingTop: inset,
+                paddingTrailing: inset,
+                alignment: Point { x: 1.0, y: 0.0 }
+            },
+            sublayers: [tabBarCapsule([controls], context, modifiers)]
+        }
+    }
 }

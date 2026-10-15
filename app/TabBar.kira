@@ -1,0 +1,55 @@
+import Foundation
+import KCoreAnimation
+
+// The kit's iPad tab bar as a control the application drives itself: one
+// capsule of glass holding its tabs end to end, the selected one on the
+// selection capsule. A `TabView` puts its tabs on this same bar; `TabBar` is
+// for a selection the application keeps in its own state. Any other control
+// beside the tabs stands on the bar as the kit's sidebar and search buttons
+// do, as a symbol cell in an unselected tab's ink.
+public construct TabBar() extends Widget {
+    let children: [some Widget]
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        // Each tab and each cell carries its own inset, so the row adds no
+        // spacing of its own.
+        let row = HStack(spacing = .None) {
+            For(child in children) {
+                child
+            }
+        }
+        .hugWidth()
+        .hugHeight()
+        .describe(context, modifierContextPresenting(modifiers, .TabBar))
+        return tabBarCapsule([row], context, modifiers)
+    }
+}
+
+// One tab on a `TabBar`: its title, and its symbol before it when it names
+// one, on the selection capsule when `selected`. Pressing it runs `action`.
+public construct TabBarItem(
+    title: String,
+    systemImage: Symbol = .None,
+    selected: Bool,
+    action: () -> Void,
+) extends Widget {
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let key = tapSeqKey()
+        layerActionRegister(key, action)
+        var item = tabBarItemFace(
+            tabBarItemLabel(title, systemImage, selected, context, modifiers),
+            selected,
+            modifiers
+        )
+        item.hittable = !modifiers.disabled
+        item.hitKey = key
+        return item
+    }
+}

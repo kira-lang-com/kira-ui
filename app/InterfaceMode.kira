@@ -23,34 +23,49 @@ public enum InterfaceMode {
 }
 
 // The mode a program starts in: what `KIRA_UI_MODE=desktop|mobile` fixes for
-// the run, and otherwise the host's own: iOS and Android are mobile, and every
-// other host is a desktop.
+// the run, and otherwise the target's own: iOS is mobile, and every other
+// target is a desktop.
 public function hostInterfaceMode() -> InterfaceMode {
     let requested = environmentValue("KIRA_UI_MODE")
-    if requested == "desktop" {
-        return .AdaptiveDesktop
+    match requested {
+        "desktop" -> return .AdaptiveDesktop
+        "mobile" -> return .AdaptiveMobile
+        else -> return targetPlatform!() == .Ios ? .AdaptiveMobile : .AdaptiveDesktop
     }
-    if requested == "mobile" {
-        return .AdaptiveMobile
-    }
-    let platform = hostPlatform()
-    if platform == .IOS || platform == .Android {
-        return .AdaptiveMobile
-    }
-    return .AdaptiveDesktop
 }
 
-var interfaceModeInEffect: InterfaceMode = hostInterfaceMode()
+// The mode in effect, kept in the process's ambient state.
+struct InterfaceModeInEffect {
+    var mode: InterfaceMode = hostInterfaceMode()
+}
+
+// The slot, made the first time it is asked for.
+function interfaceModeEnsure() {
+    if !ambientStateHas(StateSlot.interfaceMode) {
+        ambientStatePut(
+            StateSlot.interfaceMode,
+            nativeUserData(nativeState(InterfaceModeInEffect {}))
+        )
+    }
+}
 
 // The mode the toolkit is drawing in.
 public function interfaceMode() -> InterfaceMode {
-    return interfaceModeInEffect
+    let previous = enterProcessScope()
+    interfaceModeEnsure()
+    let inEffect = nativeRecover<InterfaceModeInEffect>(ambientStateGet(StateSlot.interfaceMode))
+    let mode = copy inEffect.mode
+    ambientScopeEnter(previous)
+    return mode
 }
 
 // Draw in `mode` from the next build on.
 public function setInterfaceMode(mode: InterfaceMode) {
-    interfaceModeInEffect = mode
-    return
+    let previous = enterProcessScope()
+    interfaceModeEnsure()
+    var inEffect = nativeRecover<InterfaceModeInEffect>(ambientStateGet(StateSlot.interfaceMode))
+    inEffect.mode = mode
+    ambientScopeEnter(previous)
 }
 
 // Whether what can be pressed lights while the pointer rests on it: on a

@@ -1,0 +1,258 @@
+// The retained run loop in a window of its own: Ember opens the window and
+// drives it, and each frame rebuilds, reconciles and draws the retained tree.
+// This file takes part only where a platform has windows Ember opens (KLF
+// section 27.8); elsewhere a host of the platform's own runs the application.
+// `RunKiraLayerApp` reaches it through `kiraLayerPlatformRun`.
+
+import Ember on macos, ios, windows, linux, android, web, unknown
+import Foundation
+import KiraLayout
+import KCoreAnimation
+
+// Draw the retained tree as it stands: encode it and present it over the
+// window's canvas.
+function kiraLayerDraw(
+    state: borrow mut KiraLayerAppState,
+    frame: borrow mut RenderFrame,
+    viewport: borrow Size,
+    graphics: borrow Graphics,
+    batch: borrow UiBatch
+) {
+    state.compositor.encode(
+        frame,
+        graphics,
+        batch,
+        viewport.width,
+        viewport.height,
+        foundationRenderScale(frame.backingScale()),
+        state.transparent
+    )
+    // A window is cleared to its own canvas, the color its root paints. The
+    // root's edges are antialiased like any layer's, so the pixels along the
+    // window's sides are only partly covered, and a clear of any other color
+    // shows through them as a strip down each side.
+    var page = foundationPageFor(state.transparent)
+    if !state.transparent {
+        let canvas = colorFromFoundation(windowCanvas(ModifierContext {}))
+        page = RGBAColor { r: canvas.r, g: canvas.g, b: canvas.b, a: canvas.a }
+    }
+    batch.presentBatch(frame, graphics, page.r, page.g, page.b, page.a)
+}
+
+function kiraLayerWindowRun(
+    title: String,
+    width: Number,
+    height: Number,
+    rootBuilder: borrow () -> Any Widget,
+    transparent: Bool,
+    engineFrame: borrow (borrow mut RenderFrame) -> Void,
+    rebuildsEveryFrame: Bool
+) {
+    let previousStateScope = ambientScopeCurrent()
+    let layerStateScope = ambientScopeCreate()
+    ambientScopeEnter(layerStateScope)
+    let runtimeStorage = nativeState(
+        KiraLayerAppState { stateScope: layerStateScope, transparent: transparent }
+    )
+    let runtimeUser = nativeUserDataBorrow(runtimeStorage)
+
+    var app = GraphicsApplication {
+        title: title,
+        width: UN32(width),
+        height: UN32(height),
+        sampleCount: 1,
+        transparent: transparent,
+        // An opaque window is a document window: its title and toolbar share
+        // one band the content runs under, and KiraUI draws what sits on it.
+        titlebar: transparent ? .Standard : .Unified,
+        // And its corner is the platform's window corner, not the desktop's.
+        cornerRadius: transparent ? 0.0 : windowChromeMetrics().cornerRadius,
+        windowDragRegion: { x, y in
+            let state = nativeRecover<KiraLayerAppState>(runtimeUser)
+            return kiraLayerWindowDragRegion(state, x, y)
+        },
+        backend: graphicsDefaultBackend()
+    }
+
+    // The device the window draws with, and the batch that owns the glyph
+    // atlas and pipelines on it, both made once the window is up.
+    var windowGraphics: Graphics? = .None
+    var windowBatch: UiBatch? = .None
+    app.onInit { graphics in
+        windowBatch = .Some(makeUiBatch(graphics))
+        windowGraphics = .Some(move graphics)
+    }
+
+    app.onEvent { event in
+        var state = nativeRecover<KiraLayerAppState>(runtimeUser)
+        kiraLayerNoteEvent(state, event.kind)
+        if event.kind == .PointerMoved || event.kind == .PointerDown || event.kind == .PointerUp {
+            kiraLayerDispatch(state, event.pointerX, event.pointerY, event.kind)
+        }
+        if event.kind == .TextInput || event.kind == .KeyDown {
+            kiraLayerDispatchKeyboard(state, event)
+        }
+        if event.kind == .Scroll {
+            kiraLayerDispatchScroll(state, event)
+        }
+        if event.kind == .TouchesBegan || event.kind == .TouchesMoved || event.kind == .TouchesEnded || event.kind == .TouchesCancelled {
+            kiraLayerDispatchTouch(state, event)
+        }
+        return
+    }
+
+    app.onFrame { frame in
+        let graphics = match windowGraphics {
+            Some(value) -> value
+            None -> return
+        }
+        let batch = match windowBatch {
+            Some(value) -> value
+            None -> return
+        }
+        // Engine-first: the host's simulation and offscreen passes complete
+        // before any UI work, so a TextureView composites this frame's output.
+        let hostFrame: borrow (borrow mut RenderFrame) -> Void = engineFrame
+        hostFrame(frame)
+        var state = nativeRecover<KiraLayerAppState>(frame.userData)
+        let viewport = kiraLayerViewport(frame, width, height)
+        // A window being resized lays its content out again every frame, and
+        // the content takes the new size as the window does, as UIKit's does in
+        // a live resize: nothing slides to where the new layout puts it, and
+        // nothing already animating is cut short.
+        let resized = viewport.width != state.ui.viewport.width || viewport.height != state.ui.viewport.height
+        state.ui.viewport = viewport
+        state.ui.frameCount = state.frameCount
+        // An interface costs nothing while nothing changes. It is rebuilt when
+        // input arrived, the window changed size, scheme or mode, something in the
+        // last build was still moving, or a motion the compositor carried has
+        // ended; otherwise the retained tree is all there is, and it is drawn
+        // only while its own animations run. A frame with nothing to draw
+        // presents nothing, and the window keeps the last one.
+        let scheme = interfaceScheme()
+        let mode = interfaceMode()
+        let changed = state.ui.eventCount != state.builtEventCount || scheme != state.builtScheme || mode != state.builtMode
+        let waiting = clockRunning() || clockWakeDue(clockTime(frame))
+        if !rebuildsEveryFrame && state.frameCount > 0 && !resized && !changed && !waiting {
+            let moving = state.compositor.advance(frame)
+            if moving || state.layersMoving {
+                kiraLayerDraw(state, frame, viewport, graphics, batch)
+            }
+            state.layersMoving = moving
+            state.frameCount++
+            return
+        }
+        state.builtEventCount = state.ui.eventCount
+        state.builtScheme = scheme
+        state.builtMode = mode
+
+        // Build the widget tree, lower it to a description, lay it out against the
+        // window, and reconcile it into the retained tree. On the first frame the
+        // reconcile mounts every layer without animating; after that a changed
+        // property animates from where it was.
+        // A fresh action table for this rebuild: `describe` binds each hittable
+        // layer's press action under its key as it produces the description.
+        // The keys restart with it, so a control draws under the key it had
+        // last frame -- the key the pointer found it by.
+        layerActionsReset()
+        tapSeqReset()
+        scrollScopeReset()
+        // What this frame took, for whatever springs advance while it lowers.
+        clockTick(frame)
+        clockBeginFrame()
+        // Whatever the actions since the last frame did to the path lands now,
+        // as one change, before anything reads it.
+        navigationSettle()
+        let build: borrow () -> Any Widget = rootBuilder
+        var widgetContext = buildContext(state.ui)
+        let systemInsets = frame.safeAreaInsets()
+        widgetContext.systemSafeArea = EdgeInsets {
+            top: systemInsets.top,
+            leading: systemInsets.leading,
+            bottom: systemInsets.bottom,
+            trailing: systemInsets.trailing
+        }
+        widgetContext.safeArea = copy widgetContext.systemSafeArea
+        widgetContext.heldKey = state.pressSurface
+        widgetContext.heldPoint = Point {
+            x: state.pressLocal.x + state.ui.pointerX - state.pressWindow.x,
+            y: state.pressLocal.y + state.ui.pointerY - state.pressWindow.y
+        }
+        widgetContext.heldSize = state.pressSize
+        widgetContext.heldOnControl = state.pressOnControl
+        widgetContext.heldControl = state.ui.pressedKey
+        widgetContext.heldSlides = state.pressSlides
+        widgetContext.heldPress = state.pressSerial
+        widgetContext.heldOrigin = Point {
+            x: state.pressWindow.x - state.pressLocal.x,
+            y: state.pressWindow.y - state.pressLocal.y
+        }
+        var described = CALayerDescription {}
+        if state.transparent {
+            // What floats is declared while the tree lowers and drawn over it.
+            overlayCollect()
+            let content = build().describe(widgetContext, ModifierContext {})
+            overlayStopCollecting()
+            described = overlayStack(
+                move content,
+                overlaysThisFrame(),
+                viewport.width,
+                viewport.height
+            )
+        } else {
+            // A window with chrome: the tree declares its commands and toolbar
+            // items while it lowers, and the chrome is drawn from them over the
+            // content, which is laid out against the rows the chrome leaves.
+            described = windowFrame(build(), copy title, move widgetContext, viewport)
+        }
+        described.layoutTree(viewport.width, viewport.height)
+        if state.frameCount == 0 {
+            state.compositor.tree.reconcileImmediate(described)
+        } else if resized || clockState().resizing {
+            state.compositor.tree.reconcileResizing(described)
+        } else {
+            state.compositor.tree.reconcile(described)
+        }
+        // The keyboard goes where the focus state just described asked.
+        kiraLayerFocusRequested(state)
+        // A press is held by the layers it landed on, not by the keys they had
+        // then: a rebuild that numbers the controls differently moves the keys,
+        // and the press follows its layers to theirs. A layer that is gone takes
+        // its press with it.
+        state.ui.pressedKey = state.compositor.tree.hitKeyOf(state.compositor.tree.pressed())
+        state.pressSurface = state.compositor.tree.hitKeyOf(state.pressSurfaceLayer)
+
+        // What the pointer is over is decided against the tree just built: a
+        // rebuild moves things under a pointer that has not moved, and a key
+        // remembered from the last tree may name a different control in this
+        // one.
+        let under = state.compositor.tree.hitTestTree(state.ui.pointerX, state.ui.pointerY)
+        state.ui.hoveredKey = under.hit ? under.hitKey : 0
+        state.compositor.tree.setHovered(under.hit ? under.layer : Layers.none)
+        // A press sliding in a menu whose control stopped answering -- a
+        // submenu's row lifted into its card, or set back down -- is the
+        // control's still: it goes on held by whatever control is under the
+        // pointer now.
+        if state.pressSlides && state.ui.pressedKey == 0 && under.surfaceSlides && under.hit && under.hitKey != under.surfaceKey {
+            state.ui.pressedKey = under.hitKey
+            state.compositor.tree.setPressed(under.layer)
+            state.pressedPanelLayer = under.surfaceLayer
+            state.pressBounds = state.compositor.tree.restBounds(under.layer)
+            foundationWritePressBounds(state.ui, state.pressBounds)
+            if under.surfaceLayer != state.pressSurfaceLayer {
+                kiraLayerHoldSurface(state, under, state.ui.pointerX, state.ui.pointerY)
+            }
+        }
+        foundationWriteInputSnapshot(state.ui)
+
+        state.layersMoving = state.compositor.advance(frame)
+        kiraLayerDraw(state, frame, viewport, graphics, batch)
+        state.frameCount++
+        state.ui.clickedKey = 0
+        return
+    }
+
+    app.run(runtimeUser)
+    ambientStateReset()
+    ambientScopeEnter(previousStateScope)
+}

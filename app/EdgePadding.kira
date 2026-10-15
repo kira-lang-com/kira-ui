@@ -1,0 +1,77 @@
+import Ember
+import Foundation
+import KCoreAnimation
+import KiraLayout
+
+// SwiftUI's `Edge.Set`: the edges a padding holds content off.
+@Derive(Copy)
+public enum EdgeSet {
+    All
+    Horizontal
+    Vertical
+    Top
+    Bottom
+    Leading
+    Trailing
+}
+
+extend EdgeSet {
+    function holdsTop(borrow self) -> Bool {
+        return match self {
+            All, Vertical, Top -> true
+            Horizontal, Bottom, Leading, Trailing -> false
+        }
+    }
+
+    function holdsBottom(borrow self) -> Bool {
+        return match self {
+            All, Vertical, Bottom -> true
+            Horizontal, Top, Leading, Trailing -> false
+        }
+    }
+
+    function holdsLeading(borrow self) -> Bool {
+        return match self {
+            All, Horizontal, Leading -> true
+            Vertical, Top, Bottom, Trailing -> false
+        }
+    }
+
+    function holdsTrailing(borrow self) -> Bool {
+        return match self {
+            All, Horizontal, Trailing -> true
+            Vertical, Top, Bottom, Leading -> false
+        }
+    }
+}
+
+// `.padding(_:_:)`: the content held off the edges named by one length, and
+// nothing else changed about it.
+public construct EdgePaddingLayer(edges: EdgeSet, length: Number) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var described = insetDescription(
+            content.describe(context, modifierContextInset(modifiers, length)),
+            length
+        )
+        if !edges.holdsTop() { described.layout.paddingTop = 0 }
+        if !edges.holdsBottom() { described.layout.paddingBottom = 0 }
+        if !edges.holdsLeading() { described.layout.paddingLeading = 0 }
+        if !edges.holdsTrailing() { described.layout.paddingTrailing = 0 }
+        return described
+    }
+}
+
+extend Widget {
+    // SwiftUI's `.padding(_ edges:, _ length:)`: `length` on the edges named
+    // and none on the others. Its own name, as `padding(_:)` takes one length.
+    function edgePadding(edges: EdgeSet, length: ScaledMetric) -> Any Widget {
+        return EdgePaddingLayer(edges: edges, length: length.points) {
+            self
+        }
+    }
+}

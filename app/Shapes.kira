@@ -21,7 +21,7 @@ import KiraLayout
 // follows the theme where a literal 12 stops following it.
 public enum ContainerShape {
     Rect
-    RoundedRect(Float)
+    RoundedRect(Number)
     Radius(CornerRadius)
     Capsule
     Circle
@@ -30,16 +30,30 @@ public enum ContainerShape {
     // why a platform menu or a sheet reads as expensive, and it is not a corner
     // radius that has been rounded harder — it is a different curve. So it is
     // its own case rather than a flag on `RoundedRect`.
-    Squircle(Float)
+    Squircle(Number)
+    // SwiftUI's `ConcentricRectangle`: a continuous corner that keeps the
+    // container's own, its radius the container's less how far the container
+    // holds it in, never below the minimum it carries. The minimum is what AppKit's
+    // `containerConcentricWithMinimumRadiiStyle:` takes, so a shape held deep in
+    // still reads as rounded.
+    Concentric(Number)
 }
 
 // A capsule is a rounded rect whose radius no box can reach, so one number
 // answers for both and the renderer needs no separate case.
-public function containerShapeUnbounded() -> Float {
-    return infinity
+public function containerShapeUnbounded() -> Number {
+    return ShapeLimits.maximumRadius
 }
 
-public function containerShapeRadius(shape: ContainerShape, modifiers: borrow ModifierContext) -> Float {
+namespace ShapeLimits {
+    // Number's unsigned whole-value ceiling exceeds every renderable box.
+    let maximumRadius: Number = 0xffffffffffffffff
+}
+
+public function containerShapeRadius(
+    shape: ContainerShape,
+    modifiers: borrow ModifierContext
+) -> Number {
     match shape {
         Rect -> return 0.0
         RoundedRect(value) -> return value
@@ -47,6 +61,7 @@ public function containerShapeRadius(shape: ContainerShape, modifiers: borrow Mo
         Capsule -> return containerShapeUnbounded()
         Circle -> return containerShapeUnbounded()
         Squircle(value) -> return value
+        Concentric(minimum) -> return max(modifiers.containerCornerRadius, minimum)
     }
 }
 
@@ -55,6 +70,7 @@ public function containerShapeRadius(shape: ContainerShape, modifiers: borrow Mo
 public function containerShapeSurfaceShape(shape: borrow ContainerShape) -> FoundationShape {
     match shape {
         Squircle(value) -> return foundationShape(.Squircle)
+        Concentric(minimum) -> return foundationShape(.Squircle)
         Rect -> return foundationShape(.RegularRoundedRect)
         RoundedRect(value) -> return foundationShape(.RegularRoundedRect)
         Radius(style) -> return foundationShape(.RegularRoundedRect)
@@ -70,20 +86,22 @@ public function containerShapeSurfaceShape(shape: borrow ContainerShape) -> Foun
 public construct SurfaceLayer(style: Material, shape: ContainerShape) extends Widget {
     let content: some Widget
 
-
     // A material surface wrapping the content: a filled, clipping layer with the
     // content as its sublayer. Liquid Glass describes a `CAContent.Glass` layer —
     // the compositor captures the backdrop behind it, blurs it and refracts it
     // through the surface; every other material fills flat.
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         let radius = containerShapeRadius(shape, modifiers)
-        let described = content.describe(context, modifierContextForChildren(modifiers))
+        let described = content.describe(context, modifierContextContained(modifiers, radius))
         let footprint = surfaceFootprint(described.layout)
         if style == .LayeredGlass {
             return liquidGlassDescription(copy footprint, radius, shape, modifiers, [described])
         }
         var borderWidth = 1.0
-        if modifiers.hasThemeBorder == false {
+        if !modifiers.hasThemeBorder {
             borderWidth = 0.0
         }
         return CALayerDescription {
@@ -91,12 +109,16 @@ public construct SurfaceLayer(style: Material, shape: ContainerShape) extends Wi
             cornerRadius: radius,
             clipsChildren: true,
             capturesBackdrop: false,
-            content: .Solid(CASolid {
-                fill: caColorFromFoundation(surfaceGlassFill(Color {}, style, modifiers)),
-                border: caColorFromFoundation(modifierSurfaceBorder(transparentFoundationColor(), modifiers)),
-                borderWidth: borderWidth,
-                cornerRadius: radius
-            }),
+            content: .Solid(
+                CASolid {
+                    fill: colorFromFoundation(surfaceGlassFill(RGBAColor {}, style, modifiers)),
+                    border: colorFromFoundation(
+                        modifierSurfaceBorder(transparentFoundationColor(), modifiers)
+                    ),
+                    borderWidth: borderWidth,
+                    cornerRadius: radius
+                }
+            ),
             sublayers: [described]
         }
     }
@@ -105,22 +127,29 @@ public construct SurfaceLayer(style: Material, shape: ContainerShape) extends Wi
 // What `.glassEffect(_:in:)` describes: the content on a piece of glass, which
 // takes the content's footprint exactly as a background does, and answers a
 // press when it is interactive.
-public construct GlassEffectLayer(glass: Glass, shape: ContainerShape, interactive: Bool) extends Widget {
+public construct GlassEffectLayer(
+    glass: Glass,
+    shape: ContainerShape,
+    interactive: Bool
+) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         // The glass's key is drawn before what it holds: what it holds may
         // draw more keys on one frame than the next -- a menu with a submenu
         // out -- and the press the glass is holding is kept under its key.
-        let key = interactive ? kiraUiTapSeqKey() : 0
-        let described = content.describe(context, modifierContextForChildren(modifiers))
+        let key = interactive ? tapSeqKey() : 0
+        let radius = containerShapeRadius(shape, modifiers)
+        let described = content.describe(context, modifierContextContained(modifiers, radius))
         if interactive {
             return interactiveGlassDescription(
                 context,
                 key,
                 surfaceFootprint(described.layout),
-                containerShapeRadius(shape, modifiers),
+                radius,
                 shape,
                 modifiers,
                 [described],
@@ -131,7 +160,7 @@ public construct GlassEffectLayer(glass: Glass, shape: ContainerShape, interacti
         }
         return liquidGlassDescription(
             surfaceFootprint(described.layout),
-            containerShapeRadius(shape, modifiers),
+            radius,
             shape,
             modifiers,
             [described],
@@ -148,9 +177,9 @@ public construct GlassEffectLayer(glass: Glass, shape: ContainerShape, interacti
 // `.Clear`: what the surface's size does to it once it is laid out -- its blur,
 // the grays its edge burns in and the light along its rim -- read off the
 // platform's glass at each size.
-public function liquidGlassDescription(
+function liquidGlassDescription(
     layout: CALayoutIntent,
-    radius: Float,
+    radius: Number,
     shape: borrow ContainerShape,
     modifiers: borrow ModifierContext,
     sublayers: [CALayerDescription],
@@ -162,24 +191,119 @@ public function liquidGlassDescription(
         clipsChildren: true,
         capturesBackdrop: true,
         content: .Glass(liquidGlassContent(shape, modifiers, variant)),
+        shadow: liquidGlassShadow(shape, modifiers),
         sublayers: move sublayers
+    }
+}
+
+// The ambient shadow the kit drops under every piece of glass, eight points
+// down: a faint one under the small glass of a control, blurred 15, and the
+// panel's deep one under the medium and large, blurred 48.
+function liquidGlassShadow(
+    shape: borrow ContainerShape,
+    modifiers: borrow ModifierContext
+) -> CAShadow {
+    let scheme = surfaceGlassScheme(modifiers)
+    if surfaceGlassSmall(shape) {
+        return CAShadow {
+            color: CAColor { a: foundationLiquidGlassSmallAmbientAlpha(scheme) },
+            radius: 15.0,
+            offset: Point { x: 0.0, y: 8.0 }
+        }
+    }
+    return CAShadow {
+        color: CAColor { a: foundationLiquidGlassAmbientAlpha(scheme) },
+        radius: 48.0,
+        offset: Point { x: 0.0, y: 8.0 }
     }
 }
 
 // What a piece of Liquid Glass is drawn with: the platform's measured
 // material -- its wash stack, its rim, the edge light, and the blur the Liquid
 // Glass step takes -- the same stack UI Foundation's `LiquidGlassSurface` draws.
-public function liquidGlassContent(shape: borrow ContainerShape, modifiers: borrow ModifierContext, variant: borrow Glass = .Regular) -> CAGlass {
+// On a desktop it is a Mac's glass (`desktopGlassEdge`).
+function liquidGlassContent(
+    shape: borrow ContainerShape,
+    modifiers: borrow ModifierContext,
+    variant: borrow Glass = .Regular
+) -> CAGlass {
+    return liquidGlassIn(shape, modifiers, variant, interfaceMode())
+}
+
+function liquidGlassIn(
+    shape: borrow ContainerShape,
+    modifiers: borrow ModifierContext,
+    variant: borrow Glass,
+    interface: InterfaceMode
+) -> CAGlass {
     let tokens = modifierTokens(modifiers)
-    let stack = surfaceGlassStackFor(tokens, modifiers)
-    return CAGlass {
+    let small = surfaceGlassSmall(shape)
+    let stack = surfaceGlassStackFor(tokens, modifiers, small)
+    // The recipe draws the whole glass, so the surface adds no wash of its
+    // own: a tint is the caller's to give.
+    let glass = CAGlass {
         blur: surfaceGlassBlur(.LayeredGlass, modifiers),
         edgeRefraction: 1.0,
-        tint: caColorFromFoundation(layeredGlassFill(stack, modifiers)),
-        material: layeredGlassMaterial(stack, tokens),
+        tint: CAColor { r: 0.0, g: 0.0, b: 0.0, a: 0.0 },
+        material: layeredGlassMaterial(stack, tokens, modifiers, small),
         shapeKind: surfaceLayerGlassShapeKind(shape),
-        sizing: glassSizing(variant, modifiers)
+        sizing: glassSizing(variant, modifiers),
+        style: .Some(glassStyle(variant, modifierAppearance(modifiers)))
     }
+    return match interface {
+        AdaptiveDesktop -> desktopGlassEdge(move glass)
+        AdaptiveMobile -> glass
+    }
+}
+
+// A Mac's glass, as macOS Tahoe draws its Dock, toolbars and buttons: edged
+// only by the light along the inside of its rim, with none of the iOS kit's
+// lines burned into what is behind it. Burned, they read as a dark outline
+// over any bright wallpaper or window. Keep it this way: the burned ring has
+// come back too many times "to match the kit", and the kit has no Mac glass.
+function desktopGlassEdge(glass: CAGlass) -> CAGlass {
+    var desktop = move glass
+    let base = desktop.material
+    desktop.material = CAGlassMaterial {
+        edgeStrokeStrength: base.edgeStrokeStrength,
+        edgeStrokeDarken: base.edgeStrokeDarken,
+        edgeStrokePeak: base.edgeStrokePeak,
+        edgeStrokeFade: base.edgeStrokeFade,
+        sheenStrength: base.sheenStrength,
+        lensMaxBend: base.lensMaxBend,
+        refractionReach: base.refractionReach,
+        blurNearSplit: base.blurNearSplit,
+        // The lines burn in these grays, and white burns nothing.
+        borderSpread: 0.0,
+        borderSideOffset: 0.0,
+        borderSideSpread: 0.0,
+        borderGray: 1.0,
+        borderSideGray: 1.0,
+        innerRimStrength: base.innerRimStrength,
+        innerRimWidth: base.innerRimWidth,
+        washBlend: base.washBlend,
+        washUpperR: base.washUpperR,
+        washUpperG: base.washUpperG,
+        washUpperB: base.washUpperB,
+        washUpperAlpha: base.washUpperAlpha,
+        washUpperBlend: base.washUpperBlend,
+        edgeLightDodge: base.edgeLightDodge,
+        edgeLightBurn: base.edgeLightBurn
+    }
+    desktop.sizing.ringTone = CAGlassRamp {}
+    desktop.sizing.sideTone = CAGlassRamp {}
+    return desktop
+}
+
+// The glass `.glassEffect(glass, shape)` draws, in the appearance the system
+// is in and for `interface`, for a compositor that draws a client's glass over
+// what is composed behind the client's surface.
+public function systemLiquidGlass(
+    shape: ContainerShape,
+    glass: borrow Glass,
+    interface: InterfaceMode
+) -> CAGlass {
+    return liquidGlassIn(shape, ModifierContext {}, glass, interface)
 }
 
 // The box a surface takes: exactly its content's, so a background sizes itself
@@ -190,15 +314,21 @@ public function surfaceFootprint(content: borrow CALayoutIntent) -> CALayoutInte
         heightFill: content.heightFill,
         fixedWidth: content.fixedWidth,
         fixedHeight: content.fixedHeight,
-        flex: content.flex
+        minWidth: content.minWidth,
+        minHeight: content.minHeight,
+        maxWidth: content.maxWidth,
+        flex: content.flex,
+        expandsWidth: content.expandsWidth,
+        expandsHeight: content.expandsHeight
     }
 }
 
 // A continuous superellipse corner draws as shape kind 1 (the platform menu /
 // control corner); every other container shape is a circular-arc rounded rect.
-public function surfaceLayerGlassShapeKind(shape: borrow ContainerShape) -> Int {
+public function surfaceLayerGlassShapeKind(shape: borrow ContainerShape) -> Number {
     match shape {
         Squircle(value) -> return 1
+        Concentric(minimum) -> return 1
         Rect -> return 0
         RoundedRect(value) -> return 0
         Radius(style) -> return 0
@@ -223,7 +353,7 @@ public enum RoundedCornerStyle {
 }
 
 public construct RoundedRectangle(
-    cornerRadius: Float = 0.0,
+    cornerRadius: Number = 0.0,
     style: RoundedCornerStyle = .Circular,
     token: CornerRadius = .None,
     followsTheme: Bool = false,
@@ -237,11 +367,18 @@ public construct RoundedRectangle(
     // different shape, so neither gets a different type: the token spelling is
     // an `init`, and `RoundedRectangle(…)` names both.
     init(radius: CornerRadius) {
-        return RoundedRectangle(cornerRadius: 0.0, style: .Circular, token: radius, followsTheme: true)
+        return RoundedRectangle(
+            cornerRadius: 0.0,
+            style: .Circular,
+            token: radius,
+            followsTheme: true
+        )
     }
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         var radius = cornerRadius
         if followsTheme {
             radius = cornerRadiusImplementation(token, modifiers)
@@ -255,23 +392,64 @@ public construct RoundedRectangle(
 // view, and filled by the cascade or by `.fill(...)`.
 public construct Rectangle() extends Widget {
 
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         return shapeDescription(context, modifiers, 0.0, 0)
     }
 }
 
 public construct Capsule() extends Widget {
 
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         return shapeDescription(context, modifiers, containerShapeUnbounded(), 0)
+    }
+}
+
+// What `.containerShape(_:)` describes: the content, built where a concentric
+// shape follows `shape`.
+public construct ContainerShapeLayer(shape: ContainerShape) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let radius = containerShapeRadius(shape, modifiers)
+        return content.describe(context, modifierContextContained(modifiers, radius))
+    }
+}
+
+// SwiftUI's `ConcentricRectangle`: a rectangle whose continuous corner follows
+// the container it stands in (see `ContainerShape.Concentric`), never below
+// `minimum`.
+public construct ConcentricRectangle(minimum: Number = 0.0) extends Widget {
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        return shapeDescription(
+            context,
+            modifiers,
+            containerShapeRadius(.Concentric(minimum), modifiers),
+            1
+        )
     }
 }
 
 // What a shape is filled with, as in SwiftUI: the foreground ink in effect, or
 // an explicit `.fill(...)`. On Liquid Glass the material owns its wash.
-public function shapeFill(style: borrow Material, modifiers: borrow ModifierContext) -> FoundationColor {
+public function shapeFill(
+    style: borrow Material,
+    modifiers: borrow ModifierContext
+) -> FoundationColor {
     if style == .LayeredGlass {
-        return surfaceGlassFill(Color {}, style, modifiers)
+        return surfaceGlassFill(RGBAColor {}, style, modifiers)
     }
     var ink = foundationColor(modifierTokens(modifiers).foreground.primary)
     if modifiers.hasForegroundColor {
@@ -282,13 +460,13 @@ public function shapeFill(style: borrow Material, modifiers: borrow ModifierCont
 
 // One shape, filled the way the modifiers in effect say to fill it: `.material`
 // picks the material, `.backgroundStyle` / `.foregroundColor` the flat fill,
-// `.themeBorder` the edge. A shape does not name its own color, exactly as
+// `.themeBorder` the edge, `.stroke` the outline in place of the fill. A shape does not name its own color, exactly as
 // SwiftUI's does not — `.fill(...)` and the cascade decide.
 public function shapeDescription(
     context: borrow BuildContext,
     modifiers: borrow ModifierContext,
-    radius: Float,
-    shapeKind: Int,
+    radius: Number,
+    shapeKind: Number,
 ) -> CALayerDescription {
     var style: Material = .Flat
     if modifiers.hasMaterial {
@@ -296,44 +474,68 @@ public function shapeDescription(
     }
     var border = modifierSurfaceBorder(transparentFoundationColor(), modifiers)
     var borderWidth = 1.0
-    if modifiers.hasThemeBorder == false {
+    if !modifiers.hasThemeBorder {
         borderWidth = 0.0
     }
     if style == .LayeredGlass {
         border = transparentFoundationColor()
     }
+    var fill = shapeFill(style, modifiers)
+    // Stroked, the shape is its outline alone, in the ink it would be filled
+    // with unless the stroke names one.
+    if modifiers.hasStroke {
+        border = modifiers.hasStrokeColor ? foundationColor(modifiers.strokeColor) : fill
+        borderWidth = modifiers.strokeWidth
+        fill = transparentFoundationColor()
+    }
     return CALayerDescription {
         cornerRadius: radius,
-        content: .Solid(CASolid {
-            fill: caColorFromFoundation(shapeFill(style, modifiers)),
-            border: caColorFromFoundation(border),
-            borderWidth: borderWidth,
-            cornerRadius: radius,
-            shapeKind: shapeKind
-        })
+        content: .Solid(
+            CASolid {
+                fill: colorFromFoundation(fill),
+                border: colorFromFoundation(border),
+                borderWidth: borderWidth,
+                cornerRadius: radius,
+                shapeKind: shapeKind
+            }
+        )
     }
 }
 
 // `.padding(_:)`: the content held off its own edges by one length, and nothing
 // else changed about it.
-public construct PaddingLayer(length: Float) extends Widget {
+public construct PaddingLayer(length: Number) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        return insetDescription(content.describe(context, modifierContextForChildren(modifiers)), length)
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        return insetDescription(
+            content.describe(context, modifierContextInset(modifiers, length)),
+            length
+        )
     }
 }
 
 // A wrapper that holds a description off its edges by one length on every side.
 // The child fills the inner box; the wrapper takes the child's own fill/hug.
-public function insetDescription(described: CALayerDescription, length: Float) -> CALayerDescription {
+public function insetDescription(
+    described: CALayerDescription,
+    length: Number
+) -> CALayerDescription {
     let fillsWidth = described.layout.widthFill
     let fillsHeight = described.layout.heightFill
+    let flex = described.layout.flex
+    let expandsWidth = described.layout.expandsWidth
+    let expandsHeight = described.layout.expandsHeight
     return CALayerDescription {
         layout: CALayoutIntent {
             widthFill: fillsWidth,
             heightFill: fillsHeight,
+            flex: flex,
+            expandsWidth: expandsWidth,
+            expandsHeight: expandsHeight,
             paddingLeading: length,
             paddingTop: length,
             paddingTrailing: length,

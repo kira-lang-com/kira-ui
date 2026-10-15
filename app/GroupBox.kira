@@ -19,17 +19,22 @@ public construct GroupBox() extends Widget {
     let children: [some Widget]
     let label: some Widget = EmptyView()
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         let radius = listMetrics().cornerRadius
         let inset = listMetrics().rowInset
+        // What the box holds is held in by the inset, so a concentric shape in it
+        // keeps the box's corner.
+        let inside = modifierContextInset(modifierContextContained(modifiers, radius), inset)
         var parts: [CALayerDescription] = []
-        let title = label.typography(.headline).describe(context, modifiers)
+        let title = label.typography(.headline).describe(context, inside)
         if !describesNothing(title) {
             parts.append(title)
         }
         for child in children {
-            parts.append(child.describe(context, modifiers))
+            parts.append(child.describe(context, inside))
         }
         return CALayerDescription {
             layout: CALayoutIntent {
@@ -42,11 +47,18 @@ public construct GroupBox() extends Widget {
                 paddingBottom: inset
             },
             cornerRadius: radius,
-            content: .Solid(CASolid {
-                fill: caColorFromFoundation(modifierSurfaceFill(foundationColor(modifierTokens(modifiers).background.surface), modifiers)),
-                cornerRadius: radius,
-                shapeKind: 1
-            }),
+            content: .Solid(
+                CASolid {
+                    fill: colorFromFoundation(
+                        modifierSurfaceFill(
+                            foundationColor(modifierTokens(modifiers).background.surface),
+                            modifiers
+                        )
+                    ),
+                    cornerRadius: radius,
+                    shapeKind: 1
+                }
+            ),
             sublayers: move parts
         }
     }

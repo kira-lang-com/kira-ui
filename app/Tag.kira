@@ -1,0 +1,163 @@
+import Foundation
+import KCoreAnimation
+
+// A view's tag, as SwiftUI's is: the value it stands for in the container
+// choosing among its children by value, a tab view's tabs or a picker's
+// options.
+//
+//     Picker(title: "Flavor", selection: $flavor) {
+//         Text("Chocolate").tag(Flavor.chocolate)
+//         Text("Vanilla").tag(Flavor.vanilla)
+//     }
+//
+// The container builds its children inside a `TagScope`, which says what a
+// tagged view is there and how to ask whether a value is the selection and to
+// select one. A tag may be of any type, so the scope takes it as `Any`, and
+// the container casts it back to its selection's type: a tag of another type
+// is never selected.
+
+// What a tagged view is inside the container building it.
+public enum TagRole {
+    // A tab of a tab view.
+    Tab
+    // The value a picker shows: drawn only when it is the selection.
+    PickerValue
+    // A row of the list a picker opens, pressed to select it.
+    PickerOption
+}
+
+// The container a tagged view is built in: what the view is there, whether a
+// value is the selection, and selecting one.
+public struct TagSelector {
+    let role: TagRole
+    let isSelected: (Any) -> Bool
+    let select: (Any) -> Void
+}
+
+// The selector for a container choosing with `selection`.
+public function tagSelector<SelectionValue>(role: TagRole, selection: borrow Binding<SelectionValue>) -> TagSelector {
+    let read = copy selection
+    let written = copy selection
+    return TagSelector {
+        role: role,
+        isSelected: { value in
+            return value is SelectionValue && value as SelectionValue == read.get()
+        },
+        select: { value in
+            if value is SelectionValue {
+                written.set(value as SelectionValue)
+            }
+        }
+    }
+}
+
+// One tagged view as its container sees it: whether it is selected, and
+// selecting it.
+public struct TagEntry {
+    let selected: Bool
+    let select: () -> Void
+}
+
+// The entry `value` is in the container `selector` answers for.
+public function tagEntry<Value>(selector: borrow TagSelector, value: borrow Value) -> TagEntry {
+    let chosen = copy value
+    let select = copy selector.select
+    return TagEntry {
+        selected: selector.isSelected(copy value),
+        select: { in
+            select(copy chosen)
+        }
+    }
+}
+
+// What the view being built is inside: the container's selector, and, in a
+// tab view, the tag and the bar item a tab's modifiers gave it, each waiting
+// for the other.
+public struct TagEnvironment {
+    var selector: Optional<TagSelector> = .None
+    var entry: Optional<TagEntry> = .None
+    var item: Optional<Any Widget> = .None
+
+    // Whether the view is built in a container of `role`.
+    function within(role: TagRole) -> Bool {
+        match selector {
+            Some(scope) -> return scope.role == role
+            None -> return false
+        }
+    }
+}
+
+public function tagEnvironment() -> TagEnvironment {
+    if !ambientStateHas(StateSlot.tagEnvironment) {
+        ambientStatePut(StateSlot.tagEnvironment, nativeUserData(nativeState(TagEnvironment {})))
+    }
+    return nativeRecover<TagEnvironment>(ambientStateGet(StateSlot.tagEnvironment))
+}
+
+// Makes `environment` the one views are built in, and answers the one that was.
+public function tagEnter(environment: TagEnvironment) -> TagEnvironment {
+    let previous = tagEnvironment()
+    var current = nativeRecover<TagEnvironment>(ambientStateGet(StateSlot.tagEnvironment))
+    current.selector = environment.selector
+    current.entry = environment.entry
+    current.item = environment.item
+    return previous
+}
+
+public function tagLeave(previous: TagEnvironment) {
+    tagEnter(move previous)
+}
+
+// Its content built inside the container `selector` answers for.
+public construct TagScope(selector: TagSelector) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let previous = tagEnter(TagEnvironment { selector: .Some(copy selector) })
+        let described = content.describe(context, modifiers)
+        tagLeave(move previous)
+        return described
+    }
+}
+
+extend Widget {
+    // The value this view stands for among the children of a tab view or a
+    // picker.
+    function tag<Value>(value: Value) -> Any Widget {
+        return TagLayer(tag: value) {
+            self
+        }
+    }
+}
+
+// A view tagged with its value, which is what its container makes of it.
+@Instance(Number)
+@Instance(String)
+public construct TagLayer<Value>(tag: Value) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        match tagEnvironment().selector {
+            Some(selector) -> {
+                let entry = tagEntry(selector, tag)
+                match selector.role {
+                    Tab -> return taggedTab(move entry, content, context, modifiers)
+                    PickerValue -> {
+                        if !entry.selected {
+                            return CALayerDescription {}
+                        }
+                    }
+                    PickerOption -> return pickerOption(move entry, content, context, modifiers)
+                }
+            }
+            None -> {}
+        }
+        return content.describe(context, modifiers)
+    }
+}

@@ -27,12 +27,14 @@ public enum VerticalEdge {
 public construct SafeAreaInsetLayer(edge: VerticalEdge, inset: Any Widget) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         var bar = inset.describe(context, modifiers)
         bar.layout.heightFill = false
         let across = context.viewportWidth - context.safeArea.leading - context.safeArea.trailing
-        let height = caMeasure(bar, across).height
+        let height = bar.measure(across).height
         var inner = copy context
         if edge == .Top {
             inner.safeArea.top = inner.safeArea.top + height
@@ -42,12 +44,12 @@ public construct SafeAreaInsetLayer(edge: VerticalEdge, inset: Any Widget) exten
         // Whether the content laid itself out inside the safe area is read off
         // its own lowering alone, and what was already true around it is left
         // true.
-        let around = kiraUiChromeSafeAreaWasHandled()
-        kiraUiChromeSafeAreaPending()
+        let around = chromeSafeAreaWasHandled()
+        chromeSafeAreaPending()
         var body = content.describe(inner, modifiers)
-        let handled = kiraUiChromeSafeAreaWasHandled()
+        let handled = chromeSafeAreaWasHandled()
         if around || handled {
-            kiraUiChromeSafeAreaHandled()
+            chromeSafeAreaHandled()
         }
         if handled {
             let held = CALayerDescription {
@@ -61,17 +63,13 @@ public construct SafeAreaInsetLayer(edge: VerticalEdge, inset: Any Widget) exten
                 sublayers: [bar]
             }
             return CALayerDescription {
-                layout: CALayoutIntent {
-                    alignment: Point { x: 0.0, y: edge == .Top ? 0.0 : 1.0 }
-                },
+                layout: CALayoutIntent { alignment: Point { x: 0.0, y: edge == .Top ? 0.0 : 1.0 } },
                 sublayers: [body, held]
             }
         }
         body.layout.flex = 1
         return CALayerDescription {
-            layout: CALayoutIntent {
-                axis: .Column
-            },
+            layout: CALayoutIntent { axis: .Column },
             sublayers: edge == .Top ? [bar, body] : [body, bar]
         }
     }

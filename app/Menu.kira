@@ -52,26 +52,26 @@ import KCoreAnimation
 
 // Menu geometry is the interface's, from the catalog, drawn at the size class
 // in effect; see `menuMetrics`.
-public function menuRowPitch(modifiers: borrow ModifierContext) -> Float {
+public function menuRowPitch(modifiers: borrow ModifierContext) -> Number {
     return menuMetrics(modifiers).rowHeight
 }
 
-public function menuRowLeading(modifiers: borrow ModifierContext) -> Float {
+public function menuRowLeading(modifiers: borrow ModifierContext) -> Number {
     return menuMetrics(modifiers).leadingInset
 }
 
-public function menuRowTrailing(modifiers: borrow ModifierContext) -> Float {
+public function menuRowTrailing(modifiers: borrow ModifierContext) -> Number {
     return menuMetrics(modifiers).trailingInset
 }
 
-public function menuLabelSize(modifiers: borrow ModifierContext) -> Float {
+public function menuLabelSize(modifiers: borrow ModifierContext) -> Number {
     return menuMetrics(modifiers).labelSize
 }
 
 // The corner every menu card takes -- the panel and the submenu that opens over
 // it alike. It is part of menu presentation geometry, so it resolves through the
 // active metric table rather than living as a private literal here.
-public function menuCardRadius(modifiers: borrow ModifierContext) -> Float {
+public function menuCardRadius(modifiers: borrow ModifierContext) -> Number {
     return menuMetrics(modifiers).cardRadius
 }
 
@@ -84,21 +84,37 @@ public function menuCardRadius(modifiers: borrow ModifierContext) -> Float {
 public function menuSubmenuSpring(opening: Bool) -> MotionSpring {
     let metrics = menuSubmenuMetrics()
     if opening {
-        return MotionSpring { response: metrics.openResponse, damping: metrics.openDamping, target: 1.0 }
+        return MotionSpring {
+            response: metrics.openResponse,
+            damping: metrics.openDamping,
+            target: 1.0
+        }
     }
-    return MotionSpring { response: metrics.closeResponse, damping: metrics.closeDamping, target: 0.0 }
+    return MotionSpring {
+        response: metrics.closeResponse,
+        damping: metrics.closeDamping,
+        target: 0.0
+    }
 }
 
 // The menu behind it falling back. Slow, and it starts late -- see
 // `recedeHold`.
 public function menuRecedeInSpring() -> MotionSpring {
-    return MotionSpring { response: menuSubmenuMetrics().recedeInResponse, damping: menuSubmenuMetrics().recedeInDamping, target: 1.0 }
+    return MotionSpring {
+        response: menuSubmenuMetrics().recedeInResponse,
+        damping: menuSubmenuMetrics().recedeInDamping,
+        target: 1.0
+    }
 }
 
 // The menu behind it coming back. Nothing like the same motion, and no hold at
 // all: the thing you are returning to does not wait.
 public function menuRecedeOutSpring() -> MotionSpring {
-    return MotionSpring { response: menuSubmenuMetrics().recedeOutResponse, damping: menuSubmenuMetrics().recedeOutDamping, target: 0.0 }
+    return MotionSpring {
+        response: menuSubmenuMetrics().recedeOutResponse,
+        damping: menuSubmenuMetrics().recedeOutDamping,
+        target: 0.0
+    }
 }
 
 // --- the menu row ------------------------------------------------------------
@@ -114,20 +130,20 @@ public function menuRecedeOutSpring() -> MotionSpring {
 // A quarter turn clockwise, following the reveal and done before it is, so the
 // chevron points down by the time the card has mostly opened -- and on the way
 // back stays down until the card is mostly shut.
-public function menuChevronTurn(amount: Float) -> Float {
+public function menuChevronTurn(amount: Number) -> Number {
     return 1.5707963267948966 * menuHeaderEmphasis(amount)
 }
 
 // How far a header has gone from its row's weight to its card's, on the
 // chevron's schedule.
-public function menuHeaderEmphasis(amount: Float) -> Float {
+public function menuHeaderEmphasis(amount: Number) -> Number {
     return min(max(amount / menuSubmenuMetrics().chevronTurn, 0.0), 1.0)
 }
 
 // The box the chevron is centered in. A turning glyph sweeps its own diagonal, so
 // the box is squared and large enough to hold it at every angle rather than at
 // the two it rests at.
-public function menuChevronBox(modifiers: borrow ModifierContext) -> Float {
+public function menuChevronBox(modifiers: borrow ModifierContext) -> Number {
     return menuMetrics(modifiers).chevronBox
 }
 
@@ -137,28 +153,39 @@ public function menuChevronBox(modifiers: borrow ModifierContext) -> Float {
 // While the submenu is out the row is its card's header: emphasized, its
 // chevron turned down and its label thickened to semibold with the same value
 // that grows the card, both done before the card is.
-public construct MenuHeader(title: String, systemImage: Symbol, amount: Float, key: Int) extends Widget {
+public construct MenuHeader(
+    title: String,
+    systemImage: Symbol,
+    amount: Number,
+    key: Number
+) extends Widget {
 
     // The header row as one press region: label, spacer and the disclosure
     // chevron, in a pill as every menu row is. The chevron turns inside a squared
     // box, so the row does not re-resolve around it while it turns.
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         let row = HStack(spacing: .Small, alignment: .Center) {
             Label(title: title, systemImage: systemImage)
-                .font(size: menuLabelSize(modifiers), weight: fontWeightBetween(.Regular, .SemiBold, menuHeaderEmphasis(amount)))
+            .font(
+                size: resolvedLength(menuLabelSize(modifiers)),
+                weight: fontWeightBetween(.Regular, .SemiBold, menuHeaderEmphasis(amount))
+            )
 
             Spacer()
 
             ZStack(alignment: .Center) {
                 Icon(symbol: .ChevronRight)
-                    .font(size: menuMetrics(modifiers).chevronSize)
-                    .foregroundColor(.Secondary)
-                    .rotationEffect(menuChevronTurn(amount))
+                .font(size: resolvedLength(menuMetrics(modifiers).chevronSize))
+                .foregroundColor(.Secondary)
+                .rotationEffect(menuChevronTurn(amount))
             }
-            .width(menuChevronBox(modifiers))
-            .height(menuChevronBox(modifiers))
+            .width(resolvedLength(menuChevronBox(modifiers)))
+            .height(resolvedLength(menuChevronBox(modifiers)))
         }
-        .height(menuRowPitch(modifiers))
+        .height(resolvedLength(menuRowPitch(modifiers)))
         return menuRowPill(key, row.describe(context, modifiers), 0.0, modifiers)
     }
 }
@@ -200,18 +227,20 @@ public construct MenuHeader(title: String, systemImage: Symbol, amount: Float, k
 public construct Menu(title: String, systemImage: Symbol = .None) extends Widget {
     let children: [some Widget]
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        if modifiers.controlPresentation == .Toolbar {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        if modifiers.controlPresentation == .Toolbar || modifiers.controlPresentation == .TabBar {
             return presentedMenuDescription(context, modifiers)
         }
-        let key = kiraUiTapSeqKey()
-        kiraUiLayerActionRegister(key, kiraUiToggleMenuFn(key))
+        let key = tapSeqKey()
+        layerActionRegister(key, toggleMenuFn(key))
         // The card's glass answers under a key of its own, so its header is a
         // row in it that a sliding press can come to rest on.
         // And off the card, a key of its own for what takes the press there.
-        let card = kiraUiTapSeqKey()
-        let away = kiraUiTapSeqKey()
+        let card = tapSeqKey()
+        let away = tapSeqKey()
         menuDwellAdvance(context, key, away)
         let amount = menuRevealAdvance(key)
         let header = MenuHeader(title: title, systemImage: systemImage, amount: amount, key: key)
@@ -223,43 +252,55 @@ public construct Menu(title: String, systemImage: Symbol = .None) extends Widget
         // Out: the row keeps its place and draws nothing there. While the card
         // is open its header is the row's press; while it goes back the row's
         // own place is, so pressing it again reopens it at once.
-        let open = kiraUiOpenMenuKey() == key
+        let open = openMenuKey() == key
         row.sublayers[0].opacity = 0.0
         if open {
-            layerInert(row)
+            row.makeInert()
         }
-        let band = kiraUiTapSeqEnterOverlay()
+        let band = tapSeqEnterOverlay()
         let overlayModifiers = modifierContextForOverlay(modifiers)
         let lifted = header.describe(context, overlayModifiers)
         let rule = Divider().describe(context, overlayModifiers)
-        var items = VStack(spacing: .None) {
+        var items = VStack(spacing: .None, alignment: .Leading) {
             For(item in children) {
                 item
             }
         }
         .describe(context, overlayModifiers)
         menuCardFoot(items, modifiers)
-        var overlay = kiraUiMenuAnchor(key)
+        var overlay = menuAnchor(key)
         let reveal = menuRevealState(key)
-        var panel = menuSubmenuCard(context, card, move lifted, move rule, move items, reveal, modifiers)
+        var panel = menuSubmenuCard(
+            context,
+            card,
+            move lifted,
+            move rule,
+            move items,
+            reveal,
+            modifiers
+        )
         if !open {
-            layerInert(panel)
+            panel.makeInert()
         }
         // The card's box, placed exactly: its leading edge where its span
         // starts, and its top where the card's top lands open.
-        overlay.z = kiraUiOverlayZSubmenu()
+        overlay.z = OverlayLevel.submenu
         overlay.alignment = 0.0
         overlay.anchorX = menuSubmenuLeft(reveal, modifiers)
         overlay.anchorW = menuSubmenuWidth(reveal, modifiers)
-        overlay.spacing = menuSubmenuTop(reveal, panel.layout.fixedHeight, context.viewportHeight) - overlay.anchorY - overlay.anchorH
+        overlay.spacing = menuSubmenuTop(
+            reveal,
+            panel.layout.fixedHeight,
+            context.viewportHeight
+        ) - overlay.anchorY - overlay.anchorH
         overlay.content = move panel
         // A tap off the card closes it.
         if open {
-            kiraUiLayerActionRegister(away, kiraUiToggleMenuFn(key))
+            layerActionRegister(away, toggleMenuFn(key))
             overlay.dismissKey = away
         }
-        kiraUiTapSeqLeaveOverlay(band)
-        kiraUiOverlayPresent(move overlay)
+        tapSeqLeaveOverlay(band)
+        overlayPresent(move overlay)
         return row
     }
 
@@ -271,26 +312,32 @@ public construct Menu(title: String, systemImage: Symbol = .None) extends Widget
     // button, its top and trailing edges on the button's. The button shows the
     // symbol when the menu has one, as the platform's bar does, and the title
     // when it has none.
-    function presentedMenuDescription(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let key = kiraUiTapSeqKey()
-        kiraUiLayerActionRegister(key, kiraUiPresentMenuFn(key))
+    function presentedMenuDescription(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let key = tapSeqKey()
+        layerActionRegister(key, presentMenuFn(key))
         var label: Any Widget = Text(content: title)
         if systemImage != .None {
             label = Icon(symbol: systemImage)
         }
-        var button = toolbarButtonDescription(context, modifiers, key, label)
-        if !kiraUiMenuHoldsGlass(key) {
+        // On a tab bar the menu's button is the bar's symbol cell.
+        var button = modifiers.controlPresentation == .TabBar
+        ? tabBarButtonDescription(context, modifiers, key, label)
+        : toolbarButtonDescription(context, modifiers, key, label)
+        if !menuHoldsGlass(key) {
             return button
         }
         let reveal = menuMorphAdvance(key)
-        let presented = kiraUiMenuState().presentedKey == key
+        let presented = menuState().presentedKey == key
         // The glyph travels with the glass, so the button keeps only its press.
         var glyph = copy button.sublayers[0]
         button.sublayers[0].opacity = 0.0
-        let band = kiraUiTapSeqEnterOverlay()
+        let band = tapSeqEnterOverlay()
         // The glass's key before its rows', which draw more on a frame a
         // submenu is out; see `GlassEffectLayer`.
-        let surface = kiraUiTapSeqKey()
+        let surface = tapSeqKey()
         let overlayModifiers = modifierContextForOverlay(modifiers)
         var items = MenuItems() {
             For(item in children) {
@@ -299,31 +346,38 @@ public construct Menu(title: String, systemImage: Symbol = .None) extends Widget
         }
         .describe(context, overlayModifiers)
         if !presented {
-            layerInert(items)
+            items.makeInert()
         }
-        var overlay = kiraUiMenuAnchor(key)
+        var overlay = menuAnchor(key)
         // Hung by its own height above the bottom of the button: over it.
-        overlay.spacing = 0.0 - overlay.anchorH
+        overlay.spacing = -overlay.anchorH
         overlay.alignment = 1.0
-        var morph = menuMorphDescription(context, surface, move items, move glyph, reveal, modifiers)
+        var morph = menuMorphDescription(
+            context,
+            surface,
+            move items,
+            move glyph,
+            reveal,
+            modifiers
+        )
         // Falls back behind a submenu open in it, as a whole, toward the button
         // it came out of.
-        let recession = kiraUiMenuRecession(context)
+        let recession = menuRecession(context)
         morph.scaleX = recession.scale
         morph.scaleY = recession.scale
         morph.anchorPoint = stackAlignmentUnitPoint(.TopTrailing)
-        if kiraUiMenuSubmenuIsOut(context) {
-            layerInert(morph)
+        if menuSubmenuIsOut(context) {
+            morph.makeInert()
         }
-        kiraUiMenuRecedesFrom(Point { x: overlay.anchorX + overlay.anchorW, y: overlay.anchorY })
+        menuRecedesFrom(Point { x: overlay.anchorX + overlay.anchorW, y: overlay.anchorY })
         overlay.content = move morph
         if presented {
-            let dismissKey = kiraUiTapSeqKey()
-            kiraUiLayerActionRegister(dismissKey, kiraUiDismissMenuFn())
+            let dismissKey = tapSeqKey()
+            layerActionRegister(dismissKey, dismissMenuFn())
             overlay.dismissKey = dismissKey
         }
-        kiraUiTapSeqLeaveOverlay(band)
-        kiraUiOverlayPresent(move overlay)
+        tapSeqLeaveOverlay(band)
+        overlayPresent(move overlay)
         return button
     }
 }
@@ -333,22 +387,32 @@ public construct Menu(title: String, systemImage: Symbol = .None) extends Widget
 // from that by the pill's inset. Open it is wider than the menu by the
 // platform's margin, all of it on the leading side, so its trailing edge
 // stays on the menu's.
-public function menuSubmenuLeft(reveal: borrow KiraUiMenuReveal, modifiers: borrow ModifierContext) -> Float {
+public function menuSubmenuLeft(
+    reveal: borrow MenuReveal,
+    modifiers: borrow ModifierContext
+) -> Number {
     return reveal.anchorX - menuPillInset(modifiers) - menuSubmenuWidening(reveal)
 }
 
-public function menuSubmenuWidth(reveal: borrow KiraUiMenuReveal, modifiers: borrow ModifierContext) -> Float {
+public function menuSubmenuWidth(
+    reveal: borrow MenuReveal,
+    modifiers: borrow ModifierContext
+) -> Number {
     return reveal.anchorW + menuPillInset(modifiers) * 2.0 + menuSubmenuWidening(reveal)
 }
 
-public function menuSubmenuWidening(reveal: borrow KiraUiMenuReveal) -> Float {
+public function menuSubmenuWidening(reveal: borrow MenuReveal) -> Number {
     return menuSubmenuMetrics().widen * min(max(reveal.amount, 0.0), 1.0)
 }
 
 // Where an open submenu's card tops out: so the header is where its row was,
 // the card's air above it, unless the card would run off the bottom of the
 // window -- then as far up as it has to go, and never off the top.
-public function menuSubmenuTop(reveal: borrow KiraUiMenuReveal, full: Float, viewportHeight: Float) -> Float {
+public function menuSubmenuTop(
+    reveal: borrow MenuReveal,
+    full: Number,
+    viewportHeight: Number
+) -> Number {
     let margin = windowChromeMetrics().edgeInset
     let inset = menuSubmenuMetrics().headerCenter - reveal.anchorH * 0.5
     return max(min(reveal.anchorY - inset, viewportHeight - margin - full), margin)
@@ -366,18 +430,18 @@ public function menuSubmenuTop(reveal: borrow KiraUiMenuReveal, full: Float, vie
 // last, as a pill the size of the row, back on it.
 public function menuSubmenuCard(
     context: borrow BuildContext,
-    surface: Int,
+    surface: Number,
     header: CALayerDescription,
     rule: CALayerDescription,
     items: CALayerDescription,
-    reveal: borrow KiraUiMenuReveal,
+    reveal: borrow MenuReveal,
     modifiers: borrow ModifierContext,
 ) -> CALayerDescription {
     let metrics = menuSubmenuMetrics()
     let width = menuSubmenuWidth(reveal, modifiers)
     let rowHeight = reveal.anchorH
     let inset = metrics.headerCenter - rowHeight * 0.5
-    let full = inset + rowHeight + caMeasure(rule, width).height + caMeasure(items, width).height
+    let full = inset + rowHeight + rule.measure(width).height + items.measure(width).height
     let top = menuSubmenuTop(reveal, full, context.viewportHeight)
     let grown = reveal.amount
     // The menu it opened in falls back toward its pivot, taking the row this
@@ -385,10 +449,12 @@ public function menuSubmenuCard(
     // the card IS that row, so it shrinks with the menu as the row does and
     // hands over to it exactly wherever the menu's own spring has got to;
     // open, it is its own card at its own size, and only falls back with it.
-    let recession = kiraUiMenuRecession(context)
+    let recession = menuRecession(context)
     let shut = 1.0 - min(max(grown, 0.0), 1.0)
     let scale = recession.pivoted ? 1.0 - (1.0 - recession.scale) * shut : 1.0
-    let followed = recession.pivoted ? (1.0 - recession.scale) * (reveal.anchorY - recession.pivot.y) * (1.0 - shut) : 0.0
+    let followed = recession.pivoted ? (1.0 - recession.scale) * (
+        reveal.anchorY - recession.pivot.y
+    ) * (1.0 - shut) : 0.0
     let height = rowHeight + (full - rowHeight) * grown
     let radius = min(menuCardRadius(modifiers), height * 0.5)
 
@@ -407,7 +473,10 @@ public function menuSubmenuCard(
             heightFill: false,
             fixedWidth: width,
             fixedHeight: height,
-            offset: Point { x: 0.0, y: (reveal.anchorY - top) * (1.0 - grown) - metrics.rise * reveal.risen }
+            offset: Point {
+                x: 0.0,
+                y: (reveal.anchorY - top) * (1.0 - grown) - metrics.rise * reveal.risen
+            }
         },
         cornerRadius: radius
     }
@@ -458,7 +527,7 @@ public function menuSubmenuCard(
             heightFill: false,
             fixedWidth: width,
             fixedHeight: full,
-            offset: Point { x: 0.0, y: 0.0 - followed }
+            offset: Point { x: 0.0, y: -followed }
         },
         sublayers: []
     }
@@ -475,7 +544,7 @@ public function menuSubmenuCard(
     }
     panel.sublayers = [move glass, move clip]
     card.sublayers.append(move panel)
-    layerImmediate(card)
+    card.makeImmediate()
     return card
 }
 
@@ -490,9 +559,11 @@ public function menuSubmenuCard(
 public construct ContextMenu() extends Widget {
     let children: [some Widget]
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let recession = kiraUiMenuRecession(context)
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let recession = menuRecession(context)
         // The panel is interactive glass: pressed or scrubbed anywhere it
         // leans after the pointer, rows and all. It is lifted off what it is
         // over by the kit's wide, soft shadow.
@@ -501,17 +572,21 @@ public construct ContextMenu() extends Widget {
                 item
             }
         }
-        .glassEffect(glass = .Regular, shape = .Squircle(menuCardRadius(modifiers)), interactive = true)
+        .glassEffect(
+            glass = .Regular,
+            shape = .Squircle(menuCardRadius(modifiers)),
+            interactive = true
+        )
         .shadow(
             color: themeAdaptiveColor(menuShadow, modifierAppearance(modifiers)),
-            radius: menuShadowMetrics().radius,
-            x: 0.0,
-            y: menuShadowMetrics().offset
+            radius: resolvedLength(menuShadowMetrics().radius),
+            x: resolvedLength(0.0),
+            y: resolvedLength(menuShadowMetrics().offset)
         )
         .scaleEffect(recession.scale, anchor: recession.anchor)
         var described = card.describe(context, modifierContextPresenting(modifiers, .MenuRow))
-        if kiraUiMenuSubmenuIsOut(context) {
-            layerInert(described)
+        if menuSubmenuIsOut(context) {
+            described.makeInert()
         }
         return described
     }
@@ -525,17 +600,19 @@ public construct ContextMenu() extends Widget {
 public construct MenuItems() extends Widget {
     let children: [some Widget]
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let recession = kiraUiMenuRecession(context)
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let recession = menuRecession(context)
         let menu = menuMetrics(modifiers)
-        let rows = VStack(spacing: .None) {
+        let rows = VStack(spacing: .None, alignment: .Leading) {
             For(item in children) {
                 item
             }
         }
         .opacity(recession.ink)
-        .width(menu.cardWidth)
+        .width(resolvedLength(menu.cardWidth))
         var described = rows.describe(context, modifierContextPresenting(modifiers, .MenuRow))
         described.layout.paddingTop = menu.cardPadding
         menuCardFoot(described, modifiers)
@@ -545,7 +622,9 @@ public construct MenuItems() extends Widget {
 
 // A menu card's rows end on the card's padding, whichever card they are in:
 // a menu's own, or a submenu's under its header.
-public function menuCardFoot(rows: borrow mut CALayerDescription, modifiers: borrow ModifierContext) {
+public function menuCardFoot(
+    rows: borrow mut CALayerDescription,
+    modifiers: borrow ModifierContext
+) {
     rows.layout.paddingBottom = menuMetrics(modifiers).cardPadding
-    return
 }

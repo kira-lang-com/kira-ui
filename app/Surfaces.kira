@@ -32,26 +32,66 @@ public function surfaceGlassStack(modifiers: borrow ModifierContext) -> Foundati
 // The wash stack under tokens already resolved: a piece of glass asks for its
 // stack, its fill and its material, and each resolving the theme again was
 // most of what describing the glass cost.
-public function surfaceGlassStackFor(tokens: borrow ThemeTokens, modifiers: borrow ModifierContext) -> FoundationTintStack {
-    let platform = foundationLiquidGlassTint(surfaceGlassScheme(modifiers))
+//
+// `small` is the capsule every bar and glass button is cut from, which the
+// platform washes differently from its panels and menus.
+public function surfaceGlassStackFor(
+    tokens: borrow ThemeTokens,
+    modifiers: borrow ModifierContext,
+    small: Bool = false
+) -> FoundationTintStack {
+    let scheme = surfaceGlassScheme(modifiers)
+    let platform = small ? foundationLiquidGlassSmallTint(scheme) : foundationLiquidGlassTint(
+        scheme
+    )
     return foundationTintStackShaded(platform, foundationColor(tokens.glassTint))
 }
 
-// Liquid Glass's material over its stack: UI Foundation's canonical path
-// exactly -- the element owns its measured rim and shadow stack, and the
-// default border inks are not replaced just because the appearance is dark.
-public function layeredGlassMaterial(stack: borrow FoundationTintStack, tokens: borrow ThemeTokens) -> CAGlassMaterial {
-    let tinted = foundationGlassMaterialWithTint(CAGlassMaterial {}, stack)
+// Whether glass of this shape is the platform's small element: its capsule,
+// and the circle that is a capsule as tall as it is wide.
+public function surfaceGlassSmall(shape: borrow ContainerShape) -> Bool {
+    match shape {
+        Capsule -> return true
+        Circle -> return true
+        Squircle(value) -> return false
+        Concentric(minimum) -> return false
+        Rect -> return false
+        RoundedRect(value) -> return false
+        Radius(style) -> return false
+    }
+}
+
+// Resolve the rim ink from the same scheme as the glass wash. The design
+// reference uses #DBDBDB for light glass and #A6A6A6 for dark glass;
+// a universal light rim overstates the border on near-black backdrops.
+public function layeredGlassMaterial(
+    stack: borrow FoundationTintStack,
+    tokens: borrow ThemeTokens,
+    modifiers: borrow ModifierContext,
+    small: Bool = false
+) -> CAGlassMaterial {
+    let scheme = surfaceGlassScheme(modifiers)
+    let ink = foundationLiquidGlassBorderInk(scheme)
+    let tinted = foundationGlassMaterialWithTint(
+        CAGlassMaterial {
+            borderGray: small ? foundationLiquidGlassSmallRingInk(scheme) : ink,
+            borderSideGray: small ? foundationLiquidGlassSmallSideInk(scheme) : ink
+        },
+        stack
+    )
     return foundationGlassMaterialEdgeLit(tinted, tokens.glassEdgeLighting)
 }
 
 // Liquid Glass's own wash, through the opacity in effect; an explicit fill
 // stays an intentional override.
-public function layeredGlassFill(stack: borrow FoundationTintStack, modifiers: borrow ModifierContext) -> FoundationColor {
-    if modifiers.hasFill == false {
+public function layeredGlassFill(
+    stack: borrow FoundationTintStack,
+    modifiers: borrow ModifierContext
+) -> FoundationColor {
+    if !modifiers.hasFill {
         return modifierColor(foundationTintFill(stack), modifiers)
     }
-    return modifierSurfaceFill(foundationColor(Color {}), modifiers)
+    return modifierSurfaceFill(foundationColor(RGBAColor {}), modifiers)
 }
 
 public function surfaceGlassMaterial(
@@ -61,7 +101,7 @@ public function surfaceGlassMaterial(
     match material {
         LayeredGlass -> {
             let tokens = modifierTokens(modifiers)
-            return layeredGlassMaterial(surfaceGlassStackFor(tokens, modifiers), tokens)
+            return layeredGlassMaterial(surfaceGlassStackFor(tokens, modifiers), tokens, modifiers)
         }
         Flat -> return CAGlassMaterial {}
         Frosted -> return CAGlassMaterial {}
@@ -70,7 +110,7 @@ public function surfaceGlassMaterial(
 }
 
 public function surfaceGlassFill(
-    fill: Color,
+    fill: RGBAColor,
     material: borrow Material,
     modifiers: borrow ModifierContext,
 ) -> FoundationColor {
@@ -78,7 +118,7 @@ public function surfaceGlassFill(
     // used to turn the material's lower layer into an opaque rectangle, hiding
     // the captured backdrop. Use the named Foundation stack instead; an explicit
     // `.fill(...)` remains an intentional override.
-    if modifiers.hasFill == false && material == .LayeredGlass {
+    if !modifiers.hasFill && material == .LayeredGlass {
         // Through the opacity in effect, like every other fill this function can
         // return. The stack is the material's OWN wash and does not know about
         // the modifiers around it, so taking it straight left `.opacity(...)` with
@@ -95,7 +135,10 @@ public function surfaceGlassFill(
 // it blurs fully, and how far is its glass recipe's radius at the surface's
 // size (see `glassCompositorSizing`). Frosted materials remain a separate
 // family.
-public function surfaceGlassBlur(material: borrow Material, modifiers: borrow ModifierContext) -> Float {
+public function surfaceGlassBlur(
+    material: borrow Material,
+    modifiers: borrow ModifierContext
+) -> Number {
     match material {
         LayeredGlass -> return 1.0
         Flat -> return 1.0
@@ -124,8 +167,8 @@ public function surfaceGlassBlur(material: borrow Material, modifiers: borrow Mo
 // A run of rows under a header, grouped the way SwiftUI's `Section` groups one:
 //
 //     Section {
-//         Picker(label = "Mode", options = modes(), selection = mode, onSelect = chooseMode)
-//         Toggle(isOn = blurOn, onChange = setBlur)
+//         Picker(label: "Mode", options: modes(), selection: mode, onSelect: chooseMode)
+//         Toggle(isOn: blurOn, onChange: setBlur)
 //     } header: {
 //         Text("Liquid Glass")
 //     } footer: {
@@ -134,19 +177,13 @@ public function surfaceGlassBlur(material: borrow Material, modifiers: borrow Mo
 //
 // `header` and `footer` are VIEWS, as they are in SwiftUI — a header carrying a
 // scope picker beside its title is a header, not a special case the section has
-// to declare an argument for. The section supplies their presentation (the
-// footnote size and the secondary ink a grouped header is set in) and each one
-// keeps whatever it states for itself, since the nearer modifier wins.
+// to declare an argument for.
 //
-// The rows sit together on one raised surface and the header sits above it at
-// the group's own inset. Writing that per section is what produced headers lined
-// up with nothing. Consecutive rows are divided by a hairline, the way a grouped
-// list divides them: a card of rows with nothing between them reads as one
-// control, not as a list of properties.
-//
-// Every length here comes from the size class, so `.controlSize(.Small)` on the
-// panel is the whole statement of how dense the section is.
-public construct Section(spacing: Spacing = .ExtraSmall) extends Widget {
+// The container presents the section, as SwiftUI's list styles do: a grouped
+// list or `Form` sets the header over a card of rows over the footer, a
+// sidebar sets its title over its rows on the column's glass. Anywhere else a
+// section presents nothing of its own.
+public construct Section() extends Widget {
     // The rows are the bare block, and the two lines around them name their own
     // slots: `Section { … } header: { … } footer: { … }`. Both default to
     // nothing, so a section states only the lines it has.
@@ -154,8 +191,14 @@ public construct Section(spacing: Spacing = .ExtraSmall) extends Widget {
     let header: some Widget = EmptyView()
     let footer: some Widget = EmptyView()
 
+    function isSection() -> Bool {
+        return true
+    }
 
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         // In a sidebar the section is its title over its rows, on the column's
         // glass: no card, no footer. Every row sits in the sidebar's cell, so
         // a plain view lines up with the links beside it; a section without a
@@ -189,15 +232,16 @@ public construct Section(spacing: Spacing = .ExtraSmall) extends Widget {
         // In an inset grouped list the section is a header over a card of rows
         // over a footer, laid out the list's way.
         if modifiers.controlPresentation == .InsetGrouped {
-            let face = modifierTypography(modifiers, .title2)
+            let headerFace = listMetrics().headerFont
+            let footerFace = listMetrics().footerFont
             let headerLayer = header
-                .font(size: face.size, weight: .Bold)
-                .foregroundColor(.Primary)
-                .describe(context, modifiers)
+            .font(size: resolvedLength(headerFace.size), weight: headerFace.weight)
+            .foregroundColor(.Primary)
+            .describe(context, modifiers)
             let footerLayer = footer
-                .typography(.footnote)
-                .foregroundColor(.Secondary)
-                .describe(context, modifiers)
+            .font(size: resolvedLength(footerFace.size), weight: footerFace.weight)
+            .foregroundColor(.Secondary)
+            .describe(context, modifiers)
             let rowModifiers = modifierContextApply(modifiers, modifierDeltaTypography(.body))
             var rows: [CALayerDescription] = []
             for child in children {
@@ -209,51 +253,17 @@ public construct Section(spacing: Spacing = .ExtraSmall) extends Widget {
             }
             return insetGroupedSection(move rows, move headerLayer, move footerLayer, modifiers)
         }
-        let metrics = resolvedControlMetrics(modifiers)
-        let cardRadius = cornerRadiusImplementation(.Medium, modifiers)
-        let rows = VStack(spacing: .None) {
+        // Anywhere else a section is SwiftUI's: it presents nothing of its own,
+        // and its header, rows and footer stand one after another.
+        let section = VStack() {
+            header
+
             For(child in children) {
                 child
             }
-        }
-        .padding(length: metrics.cardPadding)
-        .background(RoundedRectangle(cornerRadius: cardRadius))
-        .backgroundStyle(.Raised)
-        .hugHeight()
-        let section = VStack(spacing: spacing) {
-            SectionBand(inset: metrics.headerInset, height: metrics.headerHeight) {
-                header
-            }
-            .typography(.footnote)
-            .foregroundColor(.Secondary)
 
-            rows
-
-            SectionBand(inset: metrics.headerInset, height: metrics.headerHeight) {
-                footer
-            }
-            .typography(.caption)
-            .foregroundColor(.Tertiary)
+            footer
         }
         return section.describe(context, modifiers)
-    }
-}
-
-// A header or footer line: its content across the section's width, held off the
-// card's leading and trailing edges.
-public construct SectionBand(inset: Float, height: Float) extends Widget {
-    let content: some Widget
-
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        var band = HStack(spacing: .None, alignment: .Center) {
-            content
-        }
-        .describe(context, modifiers)
-        band.layout.heightFill = false
-        band.layout.fixedHeight = height
-        band.layout.paddingLeading = inset
-        band.layout.paddingTrailing = inset
-        return band
     }
 }

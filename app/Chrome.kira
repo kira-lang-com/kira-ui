@@ -30,54 +30,64 @@ public enum WindowControlGlyph {
 // bar. Answered by the compiler for the platform being built: macOS draws them
 // over the bar, a Wayland client draws its own there, and an iPhone or iPad
 // window has none, so its bar starts at the screen's edge.
-comptime macro platformDrawsWindowControls {
-    kind { function }
-    expand(input: Syntax) -> Syntax {
-        let _ = input
-        if Build.platform() == "macos" { return quote { true } }
-        return quote { false }
-    }
-}
-
+//
+// `targetPlatform!()` is Foundation's fold of the same `Build.platform()` this
+// question used to read through a macro declared here, and it is what answers
+// it now: a `comptime macro` declared in a file that imports a module carrying
+// autobound FFI bindings — Ember, KCoreAnimation — fails to expand, and this
+// file imports both. Foundation's macro comes from another module and is
+// unaffected.
 public function windowHasControls() -> Bool {
-    return platformDrawsWindowControls!() || graphicsUsesWaylandClientWindowControls()
+    if !windowChromeShown() { return false }
+    return targetPlatform!() == .MacOS || graphicsUsesWaylandClientWindowControls()
+        || windowDecorated()
 }
 
-public construct WindowControls(spacing: Spacing = .ExtraSmall) extends Widget {
+// The close, minimize and zoom buttons, the platform's diameter apart by its
+// spacing: the same geometry the bar keeps their room by and the window finds
+// a press on them by (see `windowControlsArea`, `toolbarWindowDragRegion`).
+public construct WindowControls() extends Widget {
 
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        if graphicsUsesWaylandClientWindowControls() == false {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        if !windowChromeShown() || !graphicsUsesWaylandClientWindowControls() && !windowDecorated() {
             return CALayerDescription {}
         }
-        let closeKey = kiraUiTapSeqKey()
-        let minimizeKey = kiraUiTapSeqKey()
-        let maximizeKey = kiraUiTapSeqKey()
-        let reveal = kiraUiHovered(closeKey) ||
-            kiraUiHovered(minimizeKey) ||
-            kiraUiHovered(maximizeKey)
-        let controls = HStack(spacing: spacing, alignment: .Center) {
+        let closeKey = tapSeqKey()
+        let minimizeKey = tapSeqKey()
+        let maximizeKey = tapSeqKey()
+        let reveal = hovered(closeKey) ||
+            hovered(minimizeKey) ||
+            hovered(maximizeKey)
+        // A window behind has its controls grey until the pointer is over
+        // them, as a Mac's are.
+        let lit = windowActive() || reveal
+        let spacing = windowChromeMetrics().controlSpacing
+        let controls = HStack(spacing: .Length(spacing), alignment: .Center) {
             WindowButton(
                 key: closeKey,
-                ink: .Red,
+                ink: lit ? .Red : .Quaternary,
                 glyph: .Close,
                 revealGlyph: reveal,
-                action: kiraUiRequestWindowClose,
+                action: requestWindowClose,
             )
 
             WindowButton(
                 key: minimizeKey,
-                ink: .Yellow,
+                ink: lit ? .Yellow : .Quaternary,
                 glyph: .Minimize,
                 revealGlyph: reveal,
-                action: kiraUiRequestWindowMinimize,
+                action: requestWindowMinimize,
             )
 
             WindowButton(
                 key: maximizeKey,
-                ink: .Green,
+                ink: lit ? .Green : .Quaternary,
                 glyph: .Maximize,
                 revealGlyph: reveal,
-                action: kiraUiRequestWindowToggleMaximize,
+                action: requestWindowToggleMaximize,
             )
         }
         .hugWidth()
@@ -86,59 +96,92 @@ public construct WindowControls(spacing: Spacing = .ExtraSmall) extends Widget {
 }
 
 public construct WindowButton(
-    key: Int,
+    key: Number,
     ink: PrimaryColor,
     glyph: WindowControlGlyph,
     revealGlyph: Bool,
     action: () -> Void,
 ) extends Widget {
 
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let metrics = resolvedControlMetrics(modifiers)
-        let hitSize = metrics.windowButton + 4.0
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let diameter = windowChromeMetrics().controlDiameter
+        // A Mac's control is not a flat disc: a faint sheen lights its top
+        // and a darker rim edges it, so it reads as a bead on any bar.
         let face = ZStack(alignment: .Center) {
             Circle()
-                .width(metrics.windowButton)
-                .height(metrics.windowButton)
-                .foregroundColor(ink)
+            .width(resolvedLength(diameter))
+            .height(resolvedLength(diameter))
+            .foregroundColor(ink)
+
+            LinearGradient(start: WindowButtonDepth.sheen, end: WindowButtonDepth.clear, radius: .Capsule)
+            .width(resolvedLength(diameter))
+            .height(resolvedLength(diameter))
+
+            Circle()
+            .stroke(lineWidth: resolvedLength(WindowButtonDepth.rimWidth))
+            .width(resolvedLength(diameter))
+            .height(resolvedLength(diameter))
+            .foregroundColor(.Black)
+            .opacity(WindowButtonDepth.rimOpacity)
 
             if revealGlyph {
                 WindowControlMark(kind: glyph)
             }
         }
-        .width(hitSize)
-        .height(hitSize)
+        // A press on the button is found by its key, which carries what the
+        // button does.
+        if !modifiers.disabled { layerActionRegister(key, action) }
         return CALayerDescription {
             hittable: !modifiers.disabled,
             hitKey: key,
-            cornerRadius: hitSize / 2.0,
+            cornerRadius: diameter / 2.0,
             sublayers: [face.describe(context, modifiers)]
         }
     }
 }
 
+// The light and shade that give a window control its depth.
+namespace WindowButtonDepth {
+    let sheen: RGBAColor = RGBAColor { r: 1.0, g: 1.0, b: 1.0, a: 0.16 }
+    let clear: RGBAColor = RGBAColor { r: 1.0, g: 1.0, b: 1.0, a: 0.0 }
+    let rimOpacity: Number = 0.2
+    let rimWidth: Number = 0.5
+}
+
 // Tiny geometric marks rather than general-purpose symbol artwork: these live
-// inside a twelve-point face, and a library icon's text-sized layout box can
+// inside a window control's face, and a library icon's text-sized layout box can
 // extend across neighboring controls even when its ink is requested smaller.
 public construct WindowControlMark(kind: WindowControlGlyph) extends Widget {
 
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         let mark = ZStack(alignment: .Center) {
             if kind == .Close {
                 Text(content: "×")
-                    .typography(.caption)
-                    .foregroundColor(.Black)
+                .typography(.caption)
+                .foregroundColor(.Black)
             }
             if kind == .Minimize {
-                RoundedRectangle(cornerRadius: 0.625).fill(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.65 }).width(6.0).height(1.25)
+                RoundedRectangle(cornerRadius: 0.625).fill(
+                    RGBAColor { r: 0.0, g: 0.0, b: 0.0, a: 0.65 }
+                ).width(resolvedLength(6.0)).height(resolvedLength(1.25))
             }
             if kind == .Maximize {
-                RoundedRectangle(cornerRadius: 0.625).fill(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.65 }).width(6.0).height(1.25)
-                RoundedRectangle(cornerRadius: 0.625).fill(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.65 }).width(1.25).height(6.0)
+                RoundedRectangle(cornerRadius: 0.625).fill(
+                    RGBAColor { r: 0.0, g: 0.0, b: 0.0, a: 0.65 }
+                ).width(resolvedLength(6.0)).height(resolvedLength(1.25))
+                RoundedRectangle(cornerRadius: 0.625).fill(
+                    RGBAColor { r: 0.0, g: 0.0, b: 0.0, a: 0.65 }
+                ).width(resolvedLength(1.25)).height(resolvedLength(6.0))
             }
         }
-        .width(8.0)
-        .height(8.0)
+        .width(resolvedLength(8.0))
+        .height(resolvedLength(8.0))
         return mark.describe(context, modifiers)
     }
 }
@@ -154,46 +197,13 @@ public construct WindowControlMark(kind: WindowControlGlyph) extends Widget {
 public construct CenteredContent() extends Widget {
     let content: some Widget
 
-
     // Centering is geometry the layout stage applies; the content passes through.
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         return content.describe(context, modifiers)
     }
-}
-
-// A control-sized box around a glyph: the toolbar item, one segment of a group.
-// It carries the pressed-in fill a mode item holds while its mode is on.
-public construct ControlSlot(active: Bool = false, radius: CornerRadius = .Small) extends Widget {
-    let content: some Widget
-
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let metrics = resolvedControlMetrics(modifiers)
-        let slot = CenteredContent() {
-            content
-        }
-        .background(RoundedRectangle(radius: radius))
-        .backgroundStyle(controlSlotSurface(active))
-        .width(metrics.buttonSize)
-        .height(metrics.buttonSize)
-        return slot.describe(context, modifiers)
-    }
-}
-
-public function controlSlotSurface(active: Bool) -> BackgroundStyle {
-    if active {
-        return .Control
-    }
-    return .Clear
-}
-
-// The ink a chrome glyph takes: the accent while its mode is on, secondary
-// otherwise.
-public function controlStateInk(active: Bool) -> PrimaryColor {
-    if active {
-        return .Accent
-    }
-    return .Secondary
 }
 
 // A capsule of controls that belong together: the appearance previews on a
@@ -202,17 +212,22 @@ public function controlStateInk(active: Bool) -> PrimaryColor {
 public construct ControlGroup(spacing: Spacing = .ExtraSmall) extends Widget {
     let children: [some Widget]
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         if modifiers.controlPresentation == .MenuRow {
             let menu = menuMetrics(modifiers)
-            let actions = HStack(spacing: .None, alignment: .Top, spacingLength: menu.actionsGap) {
+            let actions = HStack(spacing: .Length(menu.actionsGap), alignment: .Top) {
                 For(item in children) {
                     item
                 }
             }
             .fillWidth()
-            var described = actions.describe(context, modifierContextPresenting(modifiers, .MenuAction))
+            var described = actions.describe(
+                context,
+                modifierContextPresenting(modifiers, .MenuAction)
+            )
             described.layout.paddingLeading = menu.actionsInset
             described.layout.paddingTrailing = menu.actionsInset
             described.layout.paddingTop = menu.actionsTopInset
@@ -226,10 +241,10 @@ public construct ControlGroup(spacing: Spacing = .ExtraSmall) extends Widget {
         }
         .hugWidth()
         let group = items
-            .background(Capsule())
-            .backgroundStyle(.Control)
-            .hugWidth()
-            .hugHeight()
+        .background(Capsule())
+        .backgroundStyle(.Control)
+        .hugWidth()
+        .hugHeight()
         return group.describe(context, modifiers)
     }
 }
@@ -244,53 +259,26 @@ public construct ControlGroup(spacing: Spacing = .ExtraSmall) extends Widget {
 // of those, and every window that used one had to rebuild the row around it.
 // What goes IN the column is an ordinary list of `ListRow`s.
 
-// The column on the other side of the document: the properties of whatever is
-// selected, as a form of sections. It takes its width from the metrics table, so
-// a window states neither it nor the split view's sidebar width.
-public construct Inspector(
-    background: BackgroundStyle = .Surface,
-    material: Material = .Flat,
-) extends Widget {
-    let children: [some Widget]
-
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let metrics = resolvedControlMetrics(modifiers)
-        let panel = Form() {
-            For(section in children) {
-                section
-            }
-
-            Spacer()
-        }
-        .background(RoundedRectangle())
-        .backgroundStyle(background)
-        .material(material)
-        .width(metrics.inspectorWidth)
-        .fillHeight()
-        return panel.describe(context, modifiers)
-    }
-}
-
-// One row of a source list or outline: its content across the list's width, at
-// the size class's row height, indented one gutter per level of disclosure, and
+// One row of a source list or outline: its content across the list's width,
+// indented one step per level of disclosure, as the platform's outline is, and
 // carrying the selection band when it is the selected row.
 //
 // A selected row paints its content in the inverse ink, so nothing inside it has
 // to know that it is selected.
 public construct ListRow(
     selected: Bool = false,
-    level: Int = 0,
+    level: Number = 0,
     spacing: Spacing = .Small,
 ) extends Widget {
     let children: [some Widget]
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let metrics = resolvedControlMetrics(modifiers)
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         let content = HStack(spacing: spacing, alignment: .Center) {
             if level > 0 {
-                FixedGap(width: intAsFloat(value: level) * metrics.listIndent, height: 1.0)
+                FixedGap(width: level * listMetrics().indentation, height: 1.0)
             }
 
             For(item in children) {
@@ -300,16 +288,22 @@ public construct ListRow(
         // The selection band is the row's own surface; insets and row height are
         // geometry the layout stage applies.
         let band = content
-            .background(BackgroundFill(style: listRowSurface(selected), radius: .Small))
+        .background(BackgroundFill(style: listRowSurface(selected), radius: .Small))
         return band.describe(context, listRowModifiers(modifiers, selected))
     }
 }
 
-public function listRowModifiers(modifiers: borrow ModifierContext, selected: Bool) -> ModifierContext {
-    if selected == false {
+public function listRowModifiers(
+    modifiers: borrow ModifierContext,
+    selected: Bool
+) -> ModifierContext {
+    if !selected {
         return modifierContextApply(modifiers, ModifierDelta {})
     }
-    return modifierContextApply(modifiers, modifierDeltaForegroundColor(listRowSelectedInk(modifiers)))
+    return modifierContextApply(
+        modifiers,
+        modifierDeltaForegroundColor(listRowSelectedInk(modifiers))
+    )
 }
 
 // The ink a selected row is set in.

@@ -12,6 +12,15 @@ import KCoreAnimation
 // that seam because the two halves run at different times and share only the
 // sink between them.
 
+public namespace ToolbarPieceKey {
+    // The keys the pieces of a document's section are known by. See
+    // `documentSection`.
+    let back: Number = 1
+
+    let space: Number = 3
+    let search: Number = 4
+}
+
 // --- The bar -----------------------------------------------------------------
 
 // The window's chrome: the band across the top that its title, its toolbar
@@ -30,13 +39,78 @@ import KCoreAnimation
 // Every length comes from the catalog (`windowChromeMetrics()`), and the band
 // paints nothing of its own: the glass under each group of items is the only
 // surface it has, which is the Liquid Glass bar.
+// A phone's tab bar, floating over the window's content at its foot: what the
+// toolbar's row holds on a larger screen.
+public construct WindowTabBar() extends Widget {
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        toolbarSinkEnsure()
+        let sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+        return CALayerDescription {
+            sublayers: chromeTabBars(sink, context, modifierContextPresenting(modifiers, .Toolbar))
+        }
+    }
+}
+
+// A `TabView`'s tabs: their capsule of glass, centered on the window in the
+// band's row, or at its foot on a phone.
+function chromeTabBar(
+    entries: borrow [ToolbarEntry],
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    var tabs: [CALayerDescription] = []
+    for entry in entries {
+        tabs.append(copy entry.content)
+    }
+    if tabBarAtFoot(context) {
+        return phoneTabBar(move tabs, context, modifiers)
+    }
+    return tabBarCapsule(move tabs, context, modifiers)
+}
+
+// The tab bars the chrome shows: the shown view's, and while a view moves,
+// the one it covers fading in as it leaves. A view's tabs are its own: they
+// leave with it and come with the view uncovered.
+function chromeTabBars(
+    sink: borrow ToolbarSink,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> [CALayerDescription] {
+    var layers: [CALayerDescription] = []
+    if !sink.moving {
+        if sink.tabs.count > 0 {
+            layers.append(chromeTabBar(sink.tabs, context, modifiers))
+        }
+        return layers
+    }
+    if sink.tabs.count > 0 {
+        layers.append(
+            toolbarFaded(chromeTabBar(sink.tabs, context, modifiers), 1.0 - sink.coveredShown)
+        )
+    }
+    let coveredTabs = toolbarCoveredEntries(sink.covered.tabs, sink.tabs, sink.pageEnd.tabs)
+    if coveredTabs.count > 0 {
+        var under = chromeTabBar(coveredTabs, context, modifiers)
+        under.makeInert()
+        layers.append(toolbarFaded(move under, sink.coveredShown))
+    }
+    return layers
+}
+
 public construct WindowChrome() extends Widget {
 
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        kiraUiToolbarSinkEnsure()
-        var sink = nativeRecover<KiraUiToolbarSink>(kiraUiStateSlotGet(kiraUiToolbarSinkKey()))
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        toolbarSinkEnsure()
+        var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
         let metrics = windowChromeMetricsFor(context.viewportWidth)
-        sink.windowDragHeight = menuBarHeight() + metrics.toolbarHeight
+        sink.windowDragHeight = windowTopClearance() + metrics.toolbarHeight
         let barModifiers = modifierContextPresenting(modifiers, .Toolbar)
 
         var sections: [CALayerDescription] = []
@@ -63,24 +137,13 @@ public construct WindowChrome() extends Widget {
             },
             sublayers: move sections
         }
-        if sink.tabs.count == 0 && sink.covered.tabs.count == 0 {
+        // A phone's tabs float at the foot of the window instead (`WindowTabBar`).
+        if tabBarAtFoot(context) || sink.tabs.count == 0 && sink.covered.tabs.count == 0 {
             return band
         }
         var layers: [CALayerDescription] = [band]
-        if !sink.moving {
-            layers.append(tabBar(sink.tabs, context, barModifiers))
-        } else {
-            // A view's tabs are its own: they leave with it and come with the
-            // view uncovered.
-            if sink.tabs.count > 0 {
-                layers.append(toolbarFaded(tabBar(sink.tabs, context, barModifiers), 1.0 - sink.coveredShown))
-            }
-            let coveredTabs = kiraUiToolbarCoveredEntries(sink.covered.tabs, sink.tabs, sink.pageEnd.tabs)
-            if coveredTabs.count > 0 {
-                var under = tabBar(coveredTabs, context, barModifiers)
-                layerInert(under)
-                layers.append(toolbarFaded(move under, sink.coveredShown))
-            }
+        for bar in chromeTabBars(sink, context, barModifiers) {
+            layers.append(bar)
         }
         return CALayerDescription {
             layout: CALayoutIntent {
@@ -92,26 +155,12 @@ public construct WindowChrome() extends Widget {
         }
     }
 
-    // A `TabView`'s tabs: their capsule of glass, centered on the window in
-    // the band's row.
-    function tabBar(
-        entries: borrow [KiraUiToolbarEntry],
-        context: borrow BuildContext,
-        modifiers: borrow ModifierContext,
-    ) -> CALayerDescription {
-        var tabs: [CALayerDescription] = []
-        for entry in entries {
-            tabs.append(copy entry.content)
-        }
-        return tabBarCapsule(move tabs, context, modifiers)
-    }
-
     // Over the sidebar: the window controls, then the sidebar's own items and
     // its toggle held at its trailing edge. As the sidebar slides away the
     // section narrows with it, down to what it holds, and its trailing edge
     // closes from a column's inset to the gap between two pieces of glass.
     function sidebarSection(
-        sink: borrow KiraUiToolbarSink,
+        sink: borrow ToolbarSink,
         metrics: borrow WindowChromeMetrics,
         context: borrow BuildContext,
         modifiers: borrow ModifierContext,
@@ -129,7 +178,9 @@ public construct WindowChrome() extends Widget {
         }
         let shown = sink.navigationShown
         var section = toolbarSection(move parts, metrics, sink.navigationWidth * shown, 0.0)
-        section.layout.paddingTrailing = metrics.edgeInset * shown + metrics.itemSpacing * (1.0 - shown)
+        section.layout.paddingTrailing = metrics.edgeInset * shown + metrics.itemSpacing * (
+            1.0 - shown
+        )
         section.key = 1
         return section
     }
@@ -139,7 +190,7 @@ public construct WindowChrome() extends Widget {
     // for it, centered over all of it, the way the platform centers it on the
     // section rather than between whatever happens to be either side.
     function documentSection(
-        sink: borrow KiraUiToolbarSink,
+        sink: borrow ToolbarSink,
         leading: [CALayerDescription],
         metrics: borrow WindowChromeMetrics,
         context: borrow BuildContext,
@@ -164,34 +215,63 @@ public construct WindowChrome() extends Widget {
         let covered = sink.covered
         let shown = sink.coveredShown
         let end = sink.pageEnd
-        let backGroups = toolbarMorphGroups(sink.back, kiraUiToolbarCoveredEntries(covered.back, sink.back, end.back), shown, sink.moving, metrics, context, modifiers, kiraUiNavigationGoingBack())
+        let backGroups = toolbarMorphGroups(
+            sink.back,
+            toolbarCoveredEntries(covered.back, sink.back, end.back),
+            shown,
+            sink.moving,
+            metrics,
+            context,
+            modifiers,
+            navigationGoingBack()
+        )
         let followsBack = backGroups.count > 0
         if followsBack {
             var back = toolbarBackArea(move backGroups, metrics)
-            back.key = toolbarPieceBack()
+            back.key = ToolbarPieceKey.back
             parts.append(move back)
         }
+        // The space between the leading pieces and the trailing ones is the
+        // room the title has: it is centered on the section, and slides off
+        // center rather than under an item, as a navigation bar's does.
         var space = toolbarFlexibleSpace()
-        space.key = toolbarPieceSpace()
+        space.key = ToolbarPieceKey.space
+        space.layout.guide = guideTag(ToolbarTitleRoom())
         parts.append(move space)
         var trailing = copy sink.automatic
         for entry in sink.primaryAction {
             trailing.append(copy entry)
         }
-        var coveredTrailing = kiraUiToolbarCoveredEntries(covered.automatic, sink.automatic, end.automatic)
-        for entry in kiraUiToolbarCoveredEntries(covered.primaryAction, sink.primaryAction, end.primaryAction) {
+        var coveredTrailing = toolbarCoveredEntries(
+            covered.automatic,
+            sink.automatic,
+            end.automatic
+        )
+        for entry in toolbarCoveredEntries(
+            covered.primaryAction,
+            sink.primaryAction,
+            end.primaryAction
+        ) {
             coveredTrailing.append(copy entry)
         }
         var place = 0
-        for group in toolbarMorphGroups(trailing, coveredTrailing, shown, sink.moving, metrics, context, modifiers) {
+        for group in toolbarMorphGroups(
+            trailing,
+            coveredTrailing,
+            shown,
+            sink.moving,
+            metrics,
+            context,
+            modifiers
+        ) {
             var piece = copy group
             piece.key = toolbarPieceTrailing(place)
             parts.append(move piece)
-            place = place + 1
+            place++
         }
         if sink.searching {
             var search = toolbarSearchField(sink, metrics, context, modifiers)
-            search.key = toolbarPieceSearch()
+            search.key = ToolbarPieceKey.search
             parts.append(move search)
         }
         // The window's own pieces lead the section and stay what they are;
@@ -205,27 +285,32 @@ public construct WindowChrome() extends Widget {
         // folds away -- so a piece matched by its place to whatever stood
         // there before would slide across the bar to where it now is.
         var items = CALayerDescription {
-            key: kiraUiNavigationGeneration() + 1,
+            key: currentNavigationGeneration() + 1,
             layout: CALayoutIntent {
                 axis: .Row,
                 spacing: metrics.itemSpacing,
                 heightFill: false,
                 fixedHeight: metrics.toolbarHeight,
                 flex: 1,
-                alignment: Point { x: 0.0, y: 0.5 }
+                alignment: Point { x: 0.0, y: 0.0 }
             },
             sublayers: move parts
         }
-        layerImmediate(items)
+        items.makeImmediate()
         var sectionParts = move leading
         sectionParts.append(move items)
         // The bar stands in the section whether anything is centered over it
         // or not, so a view that brings a title does not move the bar a level
         // down and have the tree take every piece in it for another.
-        var layers = [toolbarSection(move sectionParts, metrics, 0.0 - 1.0, leadingInset)]
+        var layers = [toolbarSection(move sectionParts, metrics, -1.0, leadingInset)]
         if sink.principal.count > 0 || sink.covered.principal.count > 0 {
             layers.append(principalRow(sink, metrics, context, modifiers))
-        } else if sink.moving || (sink.detailTitle.count > 0 && toolbarInlineTitleShown(sink.largeTitle, sink.titleCollapse) > 0.0) {
+        } else if sink.moving || (
+            sink.detailTitle.count > 0 && toolbarInlineTitleShown(
+                sink.largeTitle,
+                sink.titleCollapse
+            ) > 0.0
+        ) {
             layers.append(toolbarTitle(sink, context, modifiers))
         }
         return CALayerDescription {
@@ -242,7 +327,7 @@ public construct WindowChrome() extends Widget {
 
     // The principal item, centered across the section.
     function principalRow(
-        sink: borrow KiraUiToolbarSink,
+        sink: borrow ToolbarSink,
         metrics: borrow WindowChromeMetrics,
         context: borrow BuildContext,
         modifiers: borrow ModifierContext,
@@ -250,7 +335,7 @@ public construct WindowChrome() extends Widget {
         var row = CALayerDescription {
             // The page's, like the items beside it, and like them it takes its
             // values at once.
-            key: kiraUiNavigationGeneration() + 1,
+            key: currentNavigationGeneration() + 1,
             layout: CALayoutIntent {
                 axis: .Row,
                 spacing: metrics.itemSpacing,
@@ -259,15 +344,31 @@ public construct WindowChrome() extends Widget {
                 fixedHeight: metrics.toolbarHeight,
                 alignment: Point { x: 0.0, y: 0.5 }
             },
-            sublayers: toolbarMorphGroups(sink.principal, kiraUiToolbarCoveredEntries(sink.covered.principal, sink.principal, sink.pageEnd.principal), sink.coveredShown, sink.moving, metrics, context, modifiers)
+            sublayers: toolbarMorphGroups(
+                sink.principal,
+                toolbarCoveredEntries(
+                    sink.covered.principal,
+                    sink.principal,
+                    sink.pageEnd.principal
+                ),
+                sink.coveredShown,
+                sink.moving,
+                metrics,
+                context,
+                modifiers
+            )
         }
-        layerImmediate(row)
+        row.makeImmediate()
         return row
     }
 
     // The button that shows and hides the sidebar: a piece of glass of its own,
     // which the platform adds to every split view without being asked.
-    function sidebarToggle(metrics: borrow WindowChromeMetrics, context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function sidebarToggle(
+        metrics: borrow WindowChromeMetrics,
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         let button = Button(action: navigationSidebarToggleAction()) {
             Icon(symbol: .SidebarLeft)
         }
@@ -275,21 +376,7 @@ public construct WindowChrome() extends Widget {
     }
 }
 
-// The keys the pieces of a document's section are known by. See
-// `documentSection`.
-public function toolbarPieceBack() -> Int {
-    return 1
-}
-
-public function toolbarPieceSpace() -> Int {
-    return 3
-}
-
-public function toolbarPieceSearch() -> Int {
-    return 4
-}
-
-public function toolbarPieceTrailing(place: Int) -> Int {
+public function toolbarPieceTrailing(place: Number) -> Number {
     return 100 + place
 }
 
@@ -298,7 +385,12 @@ public function toolbarPieceTrailing(place: Int) -> Int {
 // section's trailing edge. A section is at least the width it is given and
 // grows to what it holds; one given none takes what the sections before it
 // left.
-public function toolbarSection(parts: [CALayerDescription], metrics: borrow WindowChromeMetrics, width: Float, leadingInset: Float) -> CALayerDescription {
+public function toolbarSection(
+    parts: [CALayerDescription],
+    metrics: borrow WindowChromeMetrics,
+    width: Number,
+    leadingInset: Number
+) -> CALayerDescription {
     return CALayerDescription {
         layout: CALayoutIntent {
             axis: .Row,
@@ -309,7 +401,7 @@ public function toolbarSection(parts: [CALayerDescription], metrics: borrow Wind
             fixedHeight: metrics.toolbarHeight,
             paddingLeading: leadingInset,
             paddingTrailing: metrics.edgeInset,
-            alignment: Point { x: 0.0, y: 0.5 }
+            alignment: Point { x: 0.0, y: 0.0 }
         },
         sublayers: move parts
     }
@@ -317,7 +409,11 @@ public function toolbarSection(parts: [CALayerDescription], metrics: borrow Wind
 
 // The room the close, minimize and zoom buttons take. The platform draws them
 // where it has them; where the toolkit draws its own, they sit here.
-public function windowControlsArea(metrics: borrow WindowChromeMetrics, context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+public function windowControlsArea(
+    metrics: borrow WindowChromeMetrics,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext
+) -> CALayerDescription {
     var controls = WindowControls().describe(context, modifiers)
     controls.layout.widthFill = false
     controls.layout.heightFill = false
@@ -334,21 +430,20 @@ public function windowControlsArea(metrics: borrow WindowChromeMetrics, context:
 }
 
 // A column's title, in the bar's title style.
-public function windowTitle(title: borrow String, context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+public function windowTitle(
+    title: borrow String,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext
+) -> CALayerDescription {
     let face = windowTitleFontFor(context.viewportWidth)
     var text = Text(content: copy title)
-        .font(size: face.size, weight: face.weight)
-        .describe(context, modifiers)
+    .font(size: resolvedLength(face.size), weight: face.weight)
+    .describe(context, modifiers)
     text.layout.widthFill = false
     text.layout.heightFill = false
     return text
 }
 
 public function toolbarFlexibleSpace() -> CALayerDescription {
-    return CALayerDescription {
-        layout: CALayoutIntent {
-            heightFill: false,
-            flex: 1
-        }
-    }
+    return CALayerDescription { layout: CALayoutIntent { heightFill: false, flex: 1 } }
 }

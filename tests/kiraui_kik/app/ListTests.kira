@@ -9,12 +9,18 @@ function kuiDescribeInSidebar(root: Any Widget) -> CALayerDescription {
     return root.describe(widgetContext, modifierContextPresenting(ModifierContext {}, .Sidebar))
 }
 
-function kuiNoAction() {
-    return
+function kuiNoAction() {}
+
+// Text bound to nothing: it reads `text` and drops what is set.
+function kuiText(text: String) -> Binding<String> {
+    return Binding<String> {
+        get: { in return copy text },
+        set: { edited in return }
+    }
 }
 
 // The leading edge of the text a sidebar row draws, from the section's edge.
-function kuiSidebarRowTextX(section: borrow CALayerDescription, row: Int) -> Float {
+function kuiSidebarRowTextX(section: borrow CALayerDescription, row: Number) -> Number {
     let cell = section.sublayers[row]
     let band = cell.sublayers[0]
     return cell.position.x + band.position.x + band.sublayers[0].position.x
@@ -24,9 +30,11 @@ function kuiSidebarRowTextX(section: borrow CALayerDescription, row: Int) -> Flo
 // title that is not there.
 construct KuiAHeaderlessSidebarSectionIsItsRows() extends Test {
     test {
-        let described = kuiDescribeInSidebar(Section() {
-            Text(content: "Settings")
-        })
+        let described = kuiDescribeInSidebar(
+            Section() {
+                Text(content: "Settings")
+            }
+        )
         return described.sublayers.count
     }
     expect {
@@ -38,11 +46,13 @@ construct KuiAHeaderlessSidebarSectionIsItsRows() extends Test {
 // A sidebar section with a header puts its title over its rows.
 construct KuiASidebarSectionHeaderSitsOverItsRows() extends Test {
     test {
-        let described = kuiDescribeInSidebar(Section() {
-            Text(content: "Ocean")
-        } header: {
-            Text(content: "Games")
-        })
+        let described = kuiDescribeInSidebar(
+            Section() {
+                Text(content: "Ocean")
+            } header: {
+                Text(content: "Games")
+            }
+        )
         return described.sublayers.count
     }
     expect {
@@ -55,14 +65,16 @@ construct KuiASidebarSectionHeaderSitsOverItsRows() extends Test {
 // row of a SwiftUI sidebar list sits in the same cell.
 construct KuiAPlainSidebarRowLinesUpWithARow() extends Test {
     test {
-        var described = kuiDescribeInSidebar(Section() {
-            SidebarRow(selected: false, action: kuiNoAction) {
-                Text(content: "Settings")
-            }
+        var described = kuiDescribeInSidebar(
+            Section() {
+                SidebarRow(selected: false, action: kuiNoAction) {
+                    Text(content: "Settings")
+                }
 
-            Text(content: "No saves yet")
-        })
-        caLayoutTree(described, 320.0, 480.0)
+                Text(content: "No saves yet")
+            }
+        )
+        described.layoutTree(320.0, 480.0)
         var out = 0
         if described.sublayers.count == 2 {
             let row = kuiSidebarRowTextX(described, 0)
@@ -84,16 +96,22 @@ construct KuiAPlainSidebarRowLinesUpWithARow() extends Test {
 // out of its width.
 construct KuiAFocusedFieldKeysItsCaretApartFromItsPlaceholder() extends Test {
     test {
-        let field = TextField(key: 9101, initial: "", placeholder: "Client ID", onSubmit: kuiNoAction).width(200.0).height(32.0)
+        let field = TextField(title: "Client ID", text: kuiText(""))
+        .width(resolvedLength(200.0)).height(resolvedLength(32.0))
+        tapSeqReset()
         let idle = field.describe(buildContext(FoundationUiContext {}), ModifierContext {})
-        let focused = field.describe(buildContext(FoundationUiContext { focusedKey: 9101 }), ModifierContext {})
+        tapSeqReset()
+        let focused = field.describe(
+            buildContext(FoundationUiContext { focusedKey: idle.hitKey }),
+            ModifierContext {}
+        )
+        let idleRuns = kuiFieldRuns(idle)
+        let focusedRuns = kuiFieldRuns(focused)
         var out = 0
-        if idle.sublayers.count == 1 && focused.sublayers.count == 2 {
-            if idle.sublayers[0].key == textFieldPlaceholderKey()
-                && focused.sublayers[0].key == textFieldCaretKey()
-                && focused.sublayers[1].key == textFieldPlaceholderKey() {
-                out = 1
-            }
+        if idleRuns.count == 1 && focusedRuns.count == 2 {
+            if idleRuns[0].key == TextFieldPart.placeholder
+                && focusedRuns[0].key == TextFieldPart.caret
+                && focusedRuns[1].key == TextFieldPart.placeholder { out = 1 }
         }
         return out
     }

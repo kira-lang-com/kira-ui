@@ -2,312 +2,15 @@ import KiraLayout
 import Ember
 import Foundation
 import KCoreAnimation
-// TextField — a focusable, editable single-line text input.
-//
-// The library owns the edit state (codepoint buffer + caret) in a per-key state
-// slot, seeded once from `initial` (String is opaque, so it is decoded to
-// codepoints via foundationStringToCodepoints). Typing inserts
-// at the caret; Backspace / forward-Delete remove around it; Left/Right/Home/End
-// move it; a click focuses the field and sets the caret to the nearest character
-// (prefix measurement). The caret is rendered without measurement by splitting
-// the text at the caret and placing a thin bar between the two halves. Return
-// fires onSubmit; the text stays, and `textFieldText(key)` reads it.
+public namespace TextFieldPart {
+    // The field's runs are keyed by what they are, not where they fall: the caret
+    // comes and goes beside the text and the placeholder, and a run matched by
+    // position would hand one's layer to the other and animate between them.
+    let placeholder: Number = 1
 
-public struct KiraUiTextFieldState {
-    var codes: [Int] = []
-    var caret: Int = 0
-    // Selection anchor. anchor == caret means no selection; otherwise the
-    // selection spans [min(anchor,caret), max(anchor,caret)).
-    var anchor: Int = 0
-    var seeded: Bool = false
-}
-
-public function textFieldSelMin(anchor: Int, caret: Int) -> Int {
-    if anchor < caret {
-        return anchor
-    }
-    return caret
-}
-
-public function textFieldSelMax(anchor: Int, caret: Int) -> Int {
-    if anchor > caret {
-        return anchor
-    }
-    return caret
-}
-
-// Per-field slot key.
-public function textFieldSlotKey(key: Int) -> String {
-    return kiraUiSlotKey("kiraui.tf.", key)
-}
-
-public function textFieldEnsure(key: Int) {
-    if kiraUiStateSlotHas(textFieldSlotKey(key)) == false {
-        kiraUiStateSlotPut(textFieldSlotKey(key), nativeUserData(nativeState(KiraUiTextFieldState {})))
-    }
-    return
-}
-
-public function textFieldSeed(key: Int, initial: borrow String) {
-    textFieldEnsure(key)
-    var st = nativeRecover<KiraUiTextFieldState>(kiraUiStateSlotGet(textFieldSlotKey(key)))
-    if st.seeded == false {
-        st.codes = foundationStringToCodepoints(initial)
-        st.caret = st.codes.count
-        st.anchor = st.caret
-        st.seeded = true
-    }
-    return
-}
-
-public function textFieldText(key: Int) -> String {
-    textFieldEnsure(key)
-    let st = nativeRecover<KiraUiTextFieldState>(kiraUiStateSlotGet(textFieldSlotKey(key)))
-    return foundationStringFromCodepoints(st.codes, 0, st.codes.count)
-}
-
-public function textFieldReset(key: Int) {
-    textFieldEnsure(key)
-    var st = nativeRecover<KiraUiTextFieldState>(kiraUiStateSlotGet(textFieldSlotKey(key)))
-    var empty: [Int] = []
-    st.codes = move empty
-    st.caret = 0
-    st.anchor = 0
-    st.seeded = false
-    return
-}
-
-// Delete the selected range (if any), collapsing the caret to its start.
-public function textFieldDeleteSelection(key: Int) {
-    textFieldEnsure(key)
-    var st = nativeRecover<KiraUiTextFieldState>(kiraUiStateSlotGet(textFieldSlotKey(key)))
-    if st.anchor == st.caret {
-        return
-    }
-    let a = textFieldSelMin(st.anchor, st.caret)
-    let b = textFieldSelMax(st.anchor, st.caret)
-    var next: [Int] = []
-    var i = 0
-    while i < st.codes.count {
-        if i < a || i >= b {
-            next.append(st.codes[i])
-        }
-        i = i + 1
-    }
-    st.codes = move next
-    st.caret = a
-    st.anchor = a
-    return
-}
-
-public function textFieldSelectAll(key: Int) {
-    textFieldEnsure(key)
-    var st = nativeRecover<KiraUiTextFieldState>(kiraUiStateSlotGet(textFieldSlotKey(key)))
-    st.anchor = 0
-    st.caret = st.codes.count
-    return
-}
-
-public function textFieldInsert(key: Int, cp: Int) {
-    if cp < 32 {
-        return
-    }
-    // Typing over a selection replaces it.
-    textFieldDeleteSelection(key)
-    textFieldEnsure(key)
-    var st = nativeRecover<KiraUiTextFieldState>(kiraUiStateSlotGet(textFieldSlotKey(key)))
-    var next: [Int] = []
-    var i = 0
-    while i < st.caret {
-        next.append(st.codes[i])
-        i = i + 1
-    }
-    next.append(cp)
-    while i < st.codes.count {
-        next.append(st.codes[i])
-        i = i + 1
-    }
-    st.codes = move next
-    st.caret = st.caret + 1
-    st.anchor = st.caret
-    return
-}
-
-public function textFieldBackspace(key: Int) {
-    textFieldEnsure(key)
-    var st = nativeRecover<KiraUiTextFieldState>(kiraUiStateSlotGet(textFieldSlotKey(key)))
-    // A selection is deleted whole.
-    if st.anchor != st.caret {
-        textFieldDeleteSelection(key)
-        return
-    }
-    if st.caret <= 0 {
-        return
-    }
-    let removeAt = st.caret - 1
-    var next: [Int] = []
-    var i = 0
-    while i < st.codes.count {
-        if i != removeAt {
-            next.append(st.codes[i])
-        }
-        i = i + 1
-    }
-    st.codes = move next
-    st.caret = st.caret - 1
-    st.anchor = st.caret
-    return
-}
-
-public function textFieldDeleteForward(key: Int) {
-    textFieldEnsure(key)
-    var st = nativeRecover<KiraUiTextFieldState>(kiraUiStateSlotGet(textFieldSlotKey(key)))
-    if st.anchor != st.caret {
-        textFieldDeleteSelection(key)
-        return
-    }
-    if st.caret >= st.codes.count {
-        return
-    }
-    let removeAt = st.caret
-    var next: [Int] = []
-    var i = 0
-    while i < st.codes.count {
-        if i != removeAt {
-            next.append(st.codes[i])
-        }
-        i = i + 1
-    }
-    st.codes = move next
-    return
-}
-
-public function textFieldNav(key: Int, keyCode: Int) {
-    if keyCode == 261 {
-        textFieldDeleteForward(key)
-        return
-    }
-    if keyCode == 300 {
-        textFieldSelectAll(key)
-        return
-    }
-    textFieldEnsure(key)
-    var st = nativeRecover<KiraUiTextFieldState>(kiraUiStateSlotGet(textFieldSlotKey(key)))
-    let hasSel = st.anchor != st.caret
-    if keyCode == 263 {
-        // Left: collapse a selection to its start, else step left.
-        if hasSel {
-            st.caret = textFieldSelMin(st.anchor, st.caret)
-        } else {
-            if st.caret > 0 {
-                st.caret = st.caret - 1
-            }
-        }
-        st.anchor = st.caret
-    }
-    if keyCode == 262 {
-        if hasSel {
-            st.caret = textFieldSelMax(st.anchor, st.caret)
-        } else {
-            if st.caret < st.codes.count {
-                st.caret = st.caret + 1
-            }
-        }
-        st.anchor = st.caret
-    }
-    if keyCode == 268 {
-        st.caret = 0
-        st.anchor = 0
-    }
-    if keyCode == 269 {
-        st.caret = st.codes.count
-        st.anchor = st.caret
-    }
-    return
-}
-
-// Click-to-position: map the press x (relative to the field's text start) to the
-// nearest caret index by measuring codepoint prefixes.
-public function textFieldClickCaret(key: Int, size: Float, weight: Float, leftPad: Float) {
-    textFieldEnsure(key)
-    var st = nativeRecover<KiraUiTextFieldState>(kiraUiStateSlotGet(textFieldSlotKey(key)))
-    let relX = kiraUiPointerX() - kiraUiPressBoundsX() - leftPad
-    if relX <= 0.0 {
-        st.caret = 0
-        st.anchor = 0
-        return
-    }
-    let n = st.codes.count
-    var k = 0
-    var prevW: Float = 0.0
-    var placed = false
-    while k <= n && placed == false {
-        let prefix = foundationStringFromCodepoints(st.codes, 0, k)
-        let w = foundationTextRunWidth(prefix, size, weight)
-        if w >= relX {
-            if k > 0 && (relX - prevW) < (w - relX) {
-                st.caret = k - 1
-            } else {
-                st.caret = k
-            }
-            placed = true
-        }
-        prevW = w
-        k = k + 1
-    }
-    if placed == false {
-        st.caret = n
-    }
-    // A click positions the caret and clears any selection.
-    st.anchor = st.caret
-    return
-}
-
-// --- Closure builders (capture locals, never widget fields). ---
-
-public function textFieldInsertFn(key: Int) -> (Int) -> Void {
-    let k = key
-    let f: (Int) -> Void = { cp in
-        textFieldInsert(k, cp)
-        return
-    }
-    return f
-}
-
-public function textFieldBackspaceFn(key: Int) -> () -> Void {
-    let k = key
-    let f: () -> Void = { in
-        textFieldBackspace(k)
-        return
-    }
-    return f
-}
-
-public function textFieldNavFn(key: Int) -> (Int) -> Void {
-    let k = key
-    let f: (Int) -> Void = { kc in
-        textFieldNav(k, kc)
-        return
-    }
-    return f
-}
-
-// The keys a focused field answers: Return submits, Delete removes behind the
-// caret, and the rest move it.
-public function textFieldCommandFn(key: Int, onSubmit: () -> Void) -> (Int) -> Void {
-    let k = key
-    let submit = onSubmit
-    let f: (Int) -> Void = { code in
-        if code == 257 {
-            submit()
-        } else if code == 259 {
-            textFieldBackspace(k)
-        } else {
-            textFieldNav(k, code)
-        }
-        return
-    }
-    return f
+    let lead: Number = 2
+    let caret: Number = 3
+    let trail: Number = 4
 }
 
 // One run of a field's text, in the field's size and `ink`, keyed `key`.
@@ -317,20 +20,23 @@ public function textFieldCommandFn(key: Int, onSubmit: () -> Void) -> (Int) -> V
 // further lines on the way there.
 public function textFieldRun(
     content: String,
-    size: Float,
-    key: Int,
+    size: Number,
+    key: Number,
     ink: PrimaryColor,
     context: borrow BuildContext,
     modifiers: borrow ModifierContext,
 ) -> CALayerDescription {
-    return textFieldLine(Text(content)
-        .font(size: size, weight: .Axis(textFieldWeight(modifiers)))
-        .foregroundColor(move ink)
-        .describe(context, modifiers), key)
+    return textFieldLine(
+        Text(content).font(
+            size: resolvedLength(size),
+            weight: .Axis(textFieldWeight(modifiers))
+        ).foregroundColor(move ink).describe(context, modifiers),
+        key
+    )
 }
 
 // A described run, made one of a field's lines.
-public function textFieldLine(described: CALayerDescription, key: Int) -> CALayerDescription {
+public function textFieldLine(described: CALayerDescription, key: Number) -> CALayerDescription {
     var run = move described
     run.key = key
     run.disablesActions = true
@@ -350,31 +56,11 @@ public function textFieldLine(described: CALayerDescription, key: Int) -> CALaye
     return run
 }
 
-// The field's runs are keyed by what they are, not where they fall: the caret
-// comes and goes beside the text and the placeholder, and a run matched by
-// position would hand one's layer to the other and animate between them.
-public function textFieldPlaceholderKey() -> Int {
-    return 1
-}
-
-public function textFieldLeadKey() -> Int {
-    return 2
-}
-
-public function textFieldCaretKey() -> Int {
-    return 3
-}
-
-public function textFieldTrailKey() -> Int {
-    return 4
-}
-
-
 // The insertion point: the catalog's bar in the accent.
 public function textFieldCaret(modifiers: borrow ModifierContext) -> CALayerDescription {
     let metrics = caretMetrics()
     return CALayerDescription {
-        key: textFieldCaretKey(),
+        key: TextFieldPart.caret,
         layout: CALayoutIntent {
             widthFill: false,
             heightFill: false,
@@ -383,20 +69,35 @@ public function textFieldCaret(modifiers: borrow ModifierContext) -> CALayerDesc
         },
         cornerRadius: metrics.width / 2.0,
         disablesActions: true,
-        content: .Solid(CASolid {
-            fill: caColorFromFoundation(modifierColor(foundationColor(modifierTokens(modifiers).tint.accent), modifiers)),
-            cornerRadius: metrics.width / 2.0
-        })
+        content: .Solid(
+            CASolid {
+                fill: colorFromFoundation(
+                    modifierColor(foundationColor(modifierTokens(modifiers).tint.accent), modifiers)
+                ),
+                cornerRadius: metrics.width / 2.0
+            }
+        )
     }
 }
 
-public function textFieldPressFn(key: Int, size: Float, weight: Float, leftPad: Float) -> () -> Void {
+public function textFieldPressFn(
+    key: Number,
+    size: Number,
+    weight: Number,
+    leftPad: Number,
+    rightPad: Number = 0.0,
+    alignment: Number = 0.0,
+    secure: Bool = false
+) -> () -> Void {
     let k = key
     let sz = size
     let wt = weight
     let lp = leftPad
+    let rp = rightPad
+    let unit = alignment
+    let masked = secure
     let f: () -> Void = { in
-        textFieldClickCaret(k, sz, wt, lp)
+        textFieldClickCaret(k, sz, wt, lp, rp, unit, masked)
         return
     }
     return f
@@ -408,7 +109,7 @@ public function textFieldColor(c: borrow FoundationColor) -> FoundationColor {
 
 public function textFieldColorWithOpacity(
     c: borrow FoundationColor,
-    opacity: Float,
+    opacity: Number,
 ) -> FoundationColor {
     return foundationRgba(c.r, c.g, c.b, c.a * opacity)
 }
@@ -418,18 +119,8 @@ public function textFieldColorWithOpacity(
 // One value, resolved once, because the caret is placed by measuring PREFIXES of
 // the same string the field draws: a measurement at one weight and a draw at
 // another puts the caret beside the glyph it belongs to rather than against it.
-public function textFieldWeight(modifiers: borrow ModifierContext) -> Float {
+public function textFieldWeight(modifiers: borrow ModifierContext) -> Number {
     return modifierTextWeight(modifiers)
-}
-
-public function textFieldTextSize(modifiers: borrow ModifierContext) -> Float {
-    if modifiers.hasFont {
-        return modifiers.fontSize
-    }
-    if modifiers.hasTypography {
-        return typographyImplementation(modifiers.typography, modifiers).size
-    }
-    return modifierTokens(modifiers).bodySize
 }
 
 public function textFieldPlaceholderColor(modifiers: borrow ModifierContext) -> FoundationColor {
@@ -443,81 +134,259 @@ public function textFieldSelectionColor(modifiers: borrow ModifierContext) -> Fo
     return modifierColor(foundationColor(colorWithAlpha(accent, 0.35)), modifiers)
 }
 
-public function textFieldRadius(modifiers: borrow ModifierContext) -> Float {
-    return modifierTokens(modifiers).controlRadius
+// The hairline around a Mac field's bezel.
+let fieldBorderWidth: Number = 1.0
+
+// A field's bezel is rounded by its control size, as the platform's is.
+public function textFieldRadius(modifiers: borrow ModifierContext) -> Number {
+    return resolvedControlSizeMetrics(modifiers).fieldCornerRadius
 }
 
-// An editable field resolves its own presentation from the theme, exactly like
-// Button and Card. Requiring five explicit colors at every call site meant a
-// field could never follow a theme change, and made the surrounding code carry a
-// resolved palette purely to feed this constructor.
-//
-// Overrides remain available through the ordinary modifiers: `.background(...)`
-// or `.fill(...)` for the field's background, `.themeColor(...)` /
-// `.textColor(...)` for the ink, `.typography(...)` / `.font(...)` for the size.
-public construct TextField(
-    key: Int,
-    initial: String,
-    placeholder: String,
-    onSubmit: () -> Void
-) extends Widget {
+// SwiftUI's `TextFieldStyle`: how a text field is drawn. `.Automatic` is
+// the platform's choice -- a bezel on a Mac, and on an iPad, or in a grouped
+// list's row, the text alone. `.RoundedBorder` is a bezel everywhere and
+// `.Plain` the text alone everywhere.
+public enum TextFieldStyle {
+    Automatic
+    Plain
+    RoundedBorder
+}
 
-    // The field's text, or its placeholder while it is empty. Focused, it takes
-    // the keyboard and splits its text at the caret with the insertion point
-    // drawn between the halves, so no glyph has to be measured to place it.
-    //
-    // It runs across the room it is given and stands as tall as every piece
-    // of the interface's glass, a button's or the toolbar's;
-    // `.width(...)` and `.height(...)` say otherwise. In a
-    // grouped list the row is the field, as it is in a platform form: no fill
-    // of its own, as tall as the row.
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let size = textFieldTextSize(modifiers)
-        textFieldSeed(key, initial)
-        kiraUiLayerTextInputRegister(key, textFieldInsertFn(key), textFieldCommandFn(key, onSubmit))
-        let st = nativeRecover<KiraUiTextFieldState>(kiraUiStateSlotGet(textFieldSlotKey(key)))
-        let focused = context.focusedKey == key
-        var runs: [CALayerDescription] = []
-        if st.codes.count == 0 {
-            if focused {
-                runs.append(textFieldCaret(modifiers))
-            }
-            runs.append(textFieldRun(placeholder, size, textFieldPlaceholderKey(), .Tertiary, context, modifiers))
-        } else if focused {
-            runs.append(textFieldRun(foundationStringFromCodepoints(st.codes, 0, st.caret), size, textFieldLeadKey(), .Primary, context, modifiers))
+public construct TextFieldStyleLayer(style: TextFieldStyle) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let resolved = modifierContextApply(modifiers, modifierDeltaTextFieldStyle(style))
+        return content.describe(context, resolved)
+    }
+}
+
+// Whether a field is drawn as a bezel, by the style in effect.
+public function textFieldBezeled(modifiers: borrow ModifierContext) -> Bool {
+    return match modifiers.textFieldStyle {
+        Automatic -> modifiers.controlPresentation != .InsetGrouped
+        && interfaceMode() == .AdaptiveDesktop
+        Plain -> false
+        RoundedBorder -> true
+    }
+}
+
+// `.onSubmit(action:)`: Return in a field under it runs the field's nearer
+// actions, then `action`.
+public construct OnSubmitLayer(action: () -> Void) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let outer = modifiers.submit
+        let own = action
+        let submit: () -> Void = { in
+            own()
+            outer()
+            return
+        }
+        let resolved = modifierContextApply(modifiers, modifierDeltaSubmit(move submit))
+        return content.describe(context, resolved)
+    }
+}
+
+// SwiftUI's `TextField`: a line of text a person edits, bound to the text it
+// shows.
+//
+//     @State var name: String = ""
+//
+//     TextField(title: "Name", text: $name)
+//     .onSubmit(action: { in
+//         save(name)
+//         return
+//     })
+//
+// The field shows `prompt` while it is empty, or its title when it has no
+// prompt. Every edit is set through the binding, and setting the bound text
+// to something else puts that in the field. Return runs the `.onSubmit`
+// actions around it.
+//
+// A field draws its presentation from the theme, as a button does:
+// `.textFieldStyle(...)` says whether it is a bezel, `.foregroundColor(...)`
+// inks its text, and `.typography(...)` / `.font(...)` size it.
+public construct TextField(title: String, text: Binding<String>, prompt: String = "") extends Widget {
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let key = tapSeqKey()
+        textFieldFollow(key, text.get())
+        let shown = prompt.isEmpty() ? copy title : copy prompt
+        return textFieldDescription(key, move shown, false, copy text.set, copy modifiers.submit, context, modifiers)
+    }
+}
+
+// SwiftUI's `SecureField`: a text field that shows a dot for each character
+// it holds, for a password.
+//
+//     @State var password: String = ""
+//
+//     SecureField(title: "Password", text: $password)
+public construct SecureField(title: String, text: Binding<String>, prompt: String = "") extends Widget {
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let key = tapSeqKey()
+        textFieldFollow(key, text.get())
+        let shown = prompt.isEmpty() ? copy title : copy prompt
+        return textFieldDescription(key, move shown, true, copy text.set, copy modifiers.submit, context, modifiers)
+    }
+}
+
+// The field kept under `key`: its text, or `placeholder` while it is empty,
+// dots in place of its characters when it is `secure`. Focused, it takes the
+// keyboard and splits its text at the caret with the insertion point drawn
+// between the halves, so no glyph has to be measured to place it. Each edit's
+// text goes to `onChange`, and Return runs `onSubmit`.
+//
+// It runs across the room it is given, its text set across it as
+// `.multilineTextAlignment(...)` says; `.width(...)` and `.height(...)` say
+// otherwise. A bezel is as tall as a text field of the control size in
+// effect, its text held off its ends by the field inset; a plain field is its
+// text alone, one line tall.
+public function textFieldDescription(
+    key: Number,
+    placeholder: String,
+    secure: Bool,
+    onChange: (String) -> Void,
+    onSubmit: () -> Void,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext
+) -> CALayerDescription {
+    let size = modifierTextSize(modifiers)
+    focusSync(key, context.focusedKey == key, modifiers.focus)
+    layerTextInputRegister(
+        key,
+        textFieldTypeFn(key, copy onChange),
+        textFieldCommandFn(key, move onChange, move onSubmit)
+    )
+    let st = nativeRecover<TextFieldState>(ambientStateGet(textFieldSlotKey(key)))
+    // A field in a window behind keeps its place as the one that takes
+    // the keyboard, and draws no insertion point until the window is in
+    // front again, as a Mac's does.
+    let focused = context.focusedKey == key && windowActive()
+    // The text is in the ink around the field, dimmed while it is disabled.
+    var ink: PrimaryColor = modifiers.hasForegroundColor ? modifiers.foregroundColor : .Primary
+    if modifiers.disabled {
+        ink = .Tertiary
+    }
+    var runs: [CALayerDescription] = []
+    if st.codes.count == 0 {
+        if focused {
             runs.append(textFieldCaret(modifiers))
-            runs.append(textFieldRun(foundationStringFromCodepoints(st.codes, st.caret, st.codes.count), size, textFieldTrailKey(), .Primary, context, modifiers))
-        } else {
-            runs.append(textFieldRun(foundationStringFromCodepoints(st.codes, 0, st.codes.count), size, textFieldLeadKey(), .Primary, context, modifiers))
         }
-        let grouped = modifiers.controlPresentation == .InsetGrouped
-        var fill = transparentFoundationColor()
-        if !grouped {
-            fill = modifierSurfaceFill(foundationColor(modifierTokens(modifiers).fill.control), modifiers)
-        }
-        let radius = textFieldRadius(modifiers)
-        let inset = grouped ? 0.0 : radius
-        kiraUiLayerActionRegister(key, textFieldPressFn(key, size, textFieldWeight(modifiers), inset))
-        return CALayerDescription {
-            layout: CALayoutIntent {
-                axis: .Row,
-                widthFill: true,
-                heightFill: false,
-                fixedHeight: grouped ? listMetrics().rowHeight : windowChromeMetrics().itemHeight,
-                paddingLeading: inset,
-                paddingTrailing: inset,
-                flex: 1,
-                alignment: Point { x: 0.0, y: 0.5 }
-            },
-            hittable: !modifiers.disabled,
-            hitKey: key,
-            cornerRadius: radius,
-            clipsChildren: true,
-            content: .Solid(CASolid {
-                fill: caColorFromFoundation(textFieldColorWithOpacity(fill, modifiers.opacity)),
+        runs.append(
+            textFieldRun(
+                move placeholder,
+                size,
+                TextFieldPart.placeholder,
+                .Tertiary,
+                context,
+                modifiers
+            )
+        )
+    } else if focused {
+        runs.append(
+            textFieldRun(
+                textFieldShown(st.codes, 0, st.caret, secure),
+                size,
+                TextFieldPart.lead,
+                ink,
+                context,
+                modifiers
+            )
+        )
+        runs.append(textFieldCaret(modifiers))
+        runs.append(
+            textFieldRun(
+                textFieldShown(st.codes, st.caret, st.codes.count, secure),
+                size,
+                TextFieldPart.trail,
+                ink,
+                context,
+                modifiers
+            )
+        )
+    } else {
+        runs.append(
+            textFieldRun(
+                textFieldShown(st.codes, 0, st.codes.count, secure),
+                size,
+                TextFieldPart.lead,
+                ink,
+                context,
+                modifiers
+            )
+        )
+    }
+    let bezeled = textFieldBezeled(modifiers)
+    let appearance = modifierAppearance(modifiers)
+    var fill = transparentFoundationColor()
+    var border = transparentFoundationColor()
+    if bezeled {
+        fill = modifierSurfaceFill(
+            foundationColor(themeAdaptiveColor(fieldBackground, appearance)),
+            modifiers
+        )
+        border = modifierColor(foundationColor(themeAdaptiveColor(fieldBorder, appearance)), modifiers)
+    }
+    let radius = textFieldRadius(modifiers)
+    let field = resolvedControlSizeMetrics(modifiers)
+    let inset = bezeled ? field.fieldInset : 0.0
+    let alignment = textAlignmentUnit(modifiers.textAlignment)
+    layerActionRegister(
+        key,
+        textFieldPressFn(key, size, textFieldWeight(modifiers), inset, inset, alignment, secure)
+    )
+    // The runs stand in one row as wide as they are, set across the field
+    // where its alignment says.
+    let line = CALayerDescription {
+        layout: CALayoutIntent {
+            axis: .Row,
+            widthFill: false,
+            heightFill: false,
+            alignment: Point { x: 0.0, y: 0.5 }
+        },
+        sublayers: move runs
+    }
+    var layout = CALayoutIntent {
+        widthFill: true,
+        heightFill: false,
+        paddingLeading: inset,
+        paddingTrailing: inset,
+        expandsWidth: true,
+        alignment: Point { x: alignment, y: 0.5 }
+    }
+    if bezeled {
+        layout.fixedHeight = field.fieldHeight
+    }
+    return CALayerDescription {
+        layout: move layout,
+        hittable: !modifiers.disabled,
+        hitKey: key,
+        cornerRadius: radius,
+        clipsChildren: true,
+        content: .Solid(
+            CASolid {
+                fill: colorFromFoundation(textFieldColorWithOpacity(fill, modifiers.opacity)),
+                border: colorFromFoundation(textFieldColorWithOpacity(border, modifiers.opacity)),
+                borderWidth: bezeled ? fieldBorderWidth : 0.0,
                 cornerRadius: radius
-            }),
-            sublayers: move runs
-        }
+            }
+        ),
+        sublayers: [move line]
     }
 }

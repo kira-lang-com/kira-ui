@@ -1,0 +1,262 @@
+import Foundation
+import KCoreAnimation
+
+// The system's menu bar: one bar across the top of the screen, drawn by the
+// system for whichever application is in front.
+//
+// It is the window's menu bar moved out of the window. The titles are the
+// front application's menus, exported by it (MenuExport.kira) and handed to
+// whatever draws the system's interface; each menu comes down under its title
+// as the card the window's bar puts out, and choosing a row hands its number
+// back to the application, which runs the command. What the system shows of
+// its own -- the time, the state of the machine -- stands at the trailing end.
+//
+// The bar is driven by the pointer as the window's bar is, and by the
+// keyboard: `systemBarKey` moves through the titles and rows and chooses, the
+// row it rests on lit.
+
+// The system's interface over the whole screen, `viewport` big: `root`, with
+// what floats over it -- the menu out on the bar -- stacked on top. Unlike a
+// window it stands on nothing, so what is under it shows through wherever it
+// draws nothing.
+public function systemFrame(
+    root: Any Widget,
+    context: BuildContext,
+    viewport: borrow Size
+) -> CALayerDescription {
+    overlayCollect()
+    let content = root.describe(context, ModifierContext {})
+    overlayStopCollecting()
+    return overlayStack(move content, overlaysThisFrame(), viewport.width, viewport.height)
+}
+
+// How much of the top of the screen the system's bar takes.
+public function systemBarHeight() -> Number {
+    return menuBarMetrics().height
+}
+
+// Where the keyboard rests on the bar: the menu out, and the row lit in it.
+public struct SystemBarSelection {
+    var menu: Number? = .None
+    var row: Number? = .None
+}
+
+// What a key does on the bar.
+public enum SystemBarKey {
+    // The menu before or after the one out.
+    Previous
+    Next
+    // The row above or below the one lit.
+    Up
+    Down
+    // Chooses the row lit.
+    Choose
+    // Puts the menu out away.
+    Dismiss
+}
+
+// `key` applied to `selection` over `menus`: the menu it puts out, and the
+// number of the row it chose, if it chose one. A row that cannot be chosen,
+// and a rule, are passed over.
+public function systemBarKey(
+    menus: borrow [ExportedMenu],
+    selection: borrow mut SystemBarSelection,
+    key: SystemBarKey
+) -> Number? {
+    if menus.count == 0 {
+        return .None
+    }
+    let menu = match selection.menu {
+        Some(index) -> min(index, menus.count - 1)
+        None -> {
+            match key {
+                Dismiss, Choose -> return .None
+                Previous, Next, Up, Down -> {
+                    selection.menu = .Some(0)
+                    selection.row = .None
+                    menuBarSetOpen(0)
+                    return .None
+                }
+            }
+        }
+    }
+    match key {
+        Previous -> systemBarOpen(selection, (menu + menus.count - 1) % menus.count)
+        Next -> systemBarOpen(selection, (menu + 1) % menus.count)
+        Up -> selection.row = systemBarRowAfter(menus[menu], selection.row, -1)
+        Down -> selection.row = systemBarRowAfter(menus[menu], selection.row, 1)
+        Choose -> {
+            let row = match selection.row {
+                Some(value) -> value
+                None -> return .None
+            }
+            let chosen = menus[menu].items[row].number
+            systemBarDismiss(selection)
+            return .Some(chosen)
+        }
+        Dismiss -> systemBarDismiss(selection)
+    }
+    return .None
+}
+
+function systemBarOpen(selection: borrow mut SystemBarSelection, menu: Number) {
+    selection.menu = .Some(menu)
+    selection.row = .None
+    menuBarSetOpen(menu)
+}
+
+function systemBarDismiss(selection: borrow mut SystemBarSelection) {
+    selection.menu = .None
+    selection.row = .None
+    menuBarSetOpen(-1)
+}
+
+// The next row of `menu` that can be chosen, `step` rows on from `row`,
+// coming round at either end; none when no row can be chosen.
+function systemBarRowAfter(menu: borrow ExportedMenu, row: Number?, step: Number) -> Number? {
+    let count = menu.items.count
+    var at = match row {
+        Some(value) -> value
+        None -> step > 0 ? count - 1 : 0
+    }
+    for tried in 0..count {
+        at = (at + step + count) % count
+        if !menu.items[at].separator && menu.items[at].enabled {
+            return .Some(at)
+        }
+    }
+    return .None
+}
+
+// The bar: `menus`' titles leading it, `status` at the trailing end, on the
+// canvas. `selection` is where the keyboard rests, and `choose` is handed the
+// number of the row chosen.
+public construct SystemBar(
+    menus: [ExportedMenu],
+    selection: SystemBarSelection = SystemBarSelection {},
+    choose: (Number) -> Void,
+) extends Widget {
+    let status: [some Widget]
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var barMenus: [MenuBarMenu] = []
+        for index in 0..menus.count {
+            var lit: Number? = .None
+            if selection.menu == .Some(index) {
+                lit = selection.row
+            }
+            barMenus.append(systemBarMenu(menus[index], move lit, copy choose))
+        }
+        var titles = menuBarDescription(barMenus, false, context, modifiers)
+        titles.layout.widthFill = false
+        var trailing: [CALayerDescription] = []
+        for item in status {
+            var described = item.describe(context, modifiers)
+            described.layout.widthFill = false
+            described.layout.heightFill = false
+            trailing.append(move described)
+        }
+        let chrome = windowChromeMetrics()
+        // A status item stands as far from the next as one menu's title does
+        // from the next, padding and all, as a Mac's menu bar extras do.
+        let bar = menuBarMetrics()
+        let shelf = CALayerDescription {
+            layout: CALayoutIntent {
+                axis: .Row,
+                spacing: bar.titlePadding * 2 + bar.titleSpacing,
+                widthFill: false,
+                heightFill: false,
+                paddingTrailing: chrome.edgeInset,
+                alignment: Point { x: 1.0, y: 0.5 }
+            },
+            sublayers: move trailing
+        }
+        return CALayerDescription {
+            layout: CALayoutIntent {
+                axis: .Row,
+                heightFill: false,
+                fixedHeight: systemBarHeight(),
+                alignment: Point { x: 0.0, y: 0.5 }
+            },
+            // Nothing of its own behind the titles: as on a Mac since macOS 26,
+            // the desktop picture shows through the bar, and no window goes
+            // under it.
+            content: .Empty,
+            sublayers: [move titles, toolbarFlexibleSpace(), shelf]
+        }
+    }
+}
+
+// An exported menu as the bar's own: its rows, the one at `lit` lit.
+function systemBarMenu(
+    menu: borrow ExportedMenu,
+    lit: Number?,
+    choose: (Number) -> Void
+) -> MenuBarMenu {
+    var rows: [Any Widget] = []
+    for index in 0..menu.items.count {
+        rows.append(
+            SystemBarRow(
+                item: copy menu.items[index],
+                lit: lit == .Some(index),
+                choose: copy choose
+            )
+        )
+    }
+    return MenuBarMenu {
+        title: copy menu.title,
+        items: VStack(spacing: .None, alignment: .Leading) {
+            For(row in rows) {
+                row
+            }
+        },
+        application: menu.application
+    }
+}
+
+// One row of an exported menu on the system's bar: the row the window's bar
+// would show, its number handed to `choose` when it is chosen, lit while the
+// keyboard rests on it.
+public construct SystemBarRow(
+    item: ExportedMenuItem,
+    lit: Bool = false,
+    choose: (Number) -> Void,
+) extends Widget {
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        if item.separator {
+            return Divider().describe(context, modifiers)
+        }
+        let number = item.number
+        let chosen = choose
+        let press: () -> Void = { in
+            chosen(number)
+            return
+        }
+        var button: Any Widget = Button(title: copy item.title, action: press)
+        if !item.shortcut.isEmpty() {
+            button = button.keyboardShortcut(
+                copy item.shortcut.key,
+                modifiers: copy item.shortcut.modifiers
+            )
+        }
+        var described = button.disabled(!item.enabled).describe(context, modifiers)
+        // A menu row is its pill inside an inset wrapper (MenuRows.kira).
+        if lit && described.sublayers.count > 0 {
+            described.sublayers[0].content = .Solid(
+                CASolid {
+                    fill: menuRowWash(modifiers),
+                    cornerRadius: menuRowRadius(modifiers),
+                    shapeKind: 1
+                }
+            )
+        }
+        return described
+    }
+}

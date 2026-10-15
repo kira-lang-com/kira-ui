@@ -9,42 +9,61 @@ import KCoreAnimation
 // any of them is drawn from.
 
 public enum FontWeight {
+    UltraLight
+    Thin
+    Light
     Regular
     Medium
     SemiBold
     Bold
+    Heavy
+    Black
     // A point on the variable font's weight axis, for a label carried between
     // two of the named weights by the same value that moves everything else.
-    Axis: Float
+    Axis: Number
 }
 
-public function foundationFontWeight(weight: borrow FontWeight) -> Float {
+public function foundationFontWeight(weight: borrow FontWeight) -> Number {
     match weight {
+        UltraLight -> return 100.0
+        Thin -> return 200.0
+        Light -> return 300.0
         Regular -> return 400.0
         // SF Pro's Medium instance sits at 510 on its weight axis, not 500.
         Medium -> return 510.0
         SemiBold -> return 600.0
         Bold -> return 700.0
+        Heavy -> return 800.0
+        Black -> return 900.0
         Axis(value) -> return value
     }
 }
 
 // SwiftUI's `Font.Design`: the system face, or its monospaced cut, where every
-// character takes the same advance and a column of code lines up.
+// character takes the same advance and a column of code lines up. The system
+// face with only its figures the same width is what `.monospacedDigit()`
+// sets; it stands here beside the two because the monospaced cut's figures
+// already are.
 public enum FontDesign {
     Default
     Monospaced
+    MonospacedDigits
 }
 
 public function foundationFontDesign(design: borrow FontDesign) -> CAFontDesign {
     match design {
         Default -> return .Default
         Monospaced -> return .Monospaced
+        MonospacedDigits -> return .MonospacedDigits
     }
 }
 
 // The weight `amount` of the way from one weight to another, along the axis.
-public function fontWeightBetween(from: borrow FontWeight, to: borrow FontWeight, amount: Float) -> FontWeight {
+public function fontWeightBetween(
+    from: borrow FontWeight,
+    to: borrow FontWeight,
+    amount: Number
+) -> FontWeight {
     let start = foundationFontWeight(from)
     return .Axis(start + (foundationFontWeight(to) - start) * amount)
 }
@@ -53,7 +72,9 @@ public function scaledTypography(
     font: FontImplementation,
     modifiers: borrow ModifierContext,
 ) -> FontImplementation {
-    let scale = resolvedControlMetrics(modifiers).typeScale
+    // A region's type speaks at its control size's label size, against the
+    // regular size's.
+    let scale = resolvedControlSizeMetrics(modifiers).fontSize / controlSizeMetrics(.Regular).fontSize
     return FontImplementation {
         size: font.size * scale,
         weight: font.weight,
@@ -78,7 +99,7 @@ public function typographyImplementation(
 
 // The size a run of text is set at: the `.font(...)` or `.typography(...)` in
 // effect, else the body style.
-public function modifierTextSize(modifiers: borrow ModifierContext) -> Float {
+public function modifierTextSize(modifiers: borrow ModifierContext) -> Number {
     if modifiers.hasFont {
         return modifiers.fontSize
     }
@@ -91,7 +112,7 @@ public function modifierTextSize(modifiers: borrow ModifierContext) -> Float {
 
 // The weight a run of text is set at, on the font's weight axis: a
 // `.fontWeight(...)`, else the weight of the font in effect.
-public function modifierTextWeight(modifiers: borrow ModifierContext) -> Float {
+public function modifierTextWeight(modifiers: borrow ModifierContext) -> Number {
     if modifiers.hasWeightOverride {
         return foundationFontWeight(modifiers.weightOverride)
     }
@@ -110,14 +131,21 @@ public function modifierTextWeight(modifiers: borrow ModifierContext) -> Float {
 // a run per token, not a row of Texts -- the letters keep the spacing the face
 // gives them across every seam, and the line is one layer, not one per token.
 public struct TextRun {
-    let start: Int
-    let end: Int
+    let start: Number
+    let end: Number
     let foregroundColor: PrimaryColor
 }
 
 public construct Text(content: String, runs: [TextRun] = []) extends Widget {
 
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function menuTitle() -> String {
+        return copy content
+    }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         let textSize = modifierTextSize(modifiers)
         let textWeight = modifierTextWeight(modifiers)
         let design = foundationFontDesign(modifiers.fontDesign)
@@ -129,43 +157,77 @@ public construct Text(content: String, runs: [TextRun] = []) extends Widget {
                 intrinsicWidth: measured.width,
                 intrinsicHeight: measured.height
             },
-            content: .Text(CAText {
-                content: content,
-                color: caColorFromFoundation(modifierColor(modifierTextColor(modifiers), modifiers)),
-                size: textSize,
-                weight: textWeight,
-                design: design,
-                inkLeft: foundationTextRunInkLeft(content: content, size: textSize, weight: textWeight, design: design),
-                inkRight: foundationTextRunInkRight(content: content, size: textSize, weight: textWeight, design: design),
-                inkTop: foundationTextRunInkTop(content: content, size: textSize, weight: textWeight, design: design),
-                inkBottom: foundationTextRunInkBottom(content: content, size: textSize, weight: textWeight, design: design),
-                wraps: true,
-                alignment: textAlignmentUnit(modifiers.textAlignment),
-                spans: textSpans(runs, modifiers)
-            })
+            content: .Text(
+                CAText {
+                    content: content,
+                    color: colorFromFoundation(
+                        modifierColor(modifierTextColor(modifiers), modifiers)
+                    ),
+                    size: textSize,
+                    weight: textWeight,
+                    design: design,
+                    inkLeft: foundationTextRunInkLeft(
+                        content: content,
+                        size: textSize,
+                        weight: textWeight,
+                        design: design
+                    ),
+                    inkRight: foundationTextRunInkRight(
+                        content: content,
+                        size: textSize,
+                        weight: textWeight,
+                        design: design
+                    ),
+                    inkTop: foundationTextRunInkTop(
+                        content: content,
+                        size: textSize,
+                        weight: textWeight,
+                        design: design
+                    ),
+                    inkBottom: foundationTextRunInkBottom(
+                        content: content,
+                        size: textSize,
+                        weight: textWeight,
+                        design: design
+                    ),
+                    wraps: true,
+                    alignment: textAlignmentUnit(modifiers.textAlignment),
+                    spans: textSpans(runs, modifiers),
+                    blend: copy modifiers.textBlend
+                }
+            )
         }
     }
 }
 
 // The runs as the layer draws them: each ink resolved through the modifiers in
 // effect, as the Text's own is.
-public function textSpans(runs: borrow [TextRun], modifiers: borrow ModifierContext) -> [CATextSpan] {
+public function textSpans(
+    runs: borrow [TextRun],
+    modifiers: borrow ModifierContext
+) -> [CATextSpan] {
     var spans: [CATextSpan] = []
     for run in runs {
-        spans.append(CATextSpan {
-            start: run.start,
-            end: run.end,
-            color: caColorFromFoundation(modifierColor(modifierPrimaryColor(run.foregroundColor, modifiers), modifiers))
-        })
+        spans.append(
+            CATextSpan {
+                start: run.start,
+                end: run.end,
+                color: colorFromFoundation(
+                    modifierColor(modifierPrimaryColor(run.foregroundColor, modifiers), modifiers)
+                )
+            }
+        )
     }
     return spans
 }
 
-public construct FontLayer(size: Float, weight: FontWeight) extends Widget {
+public construct FontLayer(size: Number, weight: FontWeight) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         let delta = modifierDeltaFont(size, weight)
         let resolved = modifierContextApply(modifiers, move delta)
         return content.describe(context, resolved)
@@ -175,8 +237,10 @@ public construct FontLayer(size: Float, weight: FontWeight) extends Widget {
 public construct TypographyLayer(style: TypographyStyle) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         let delta = modifierDeltaTypography(style)
         let resolved = modifierContextApply(modifiers, move delta)
         return content.describe(context, resolved)
@@ -186,8 +250,10 @@ public construct TypographyLayer(style: TypographyStyle) extends Widget {
 public construct FontWeightLayer(weight: FontWeight) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         let delta = modifierDeltaFontWeight(weight)
         let resolved = modifierContextApply(modifiers, move delta)
         return content.describe(context, resolved)
@@ -197,9 +263,27 @@ public construct FontWeightLayer(weight: FontWeight) extends Widget {
 public construct FontDesignLayer(design: FontDesign) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         let delta = modifierDeltaFontDesign(design)
+        let resolved = modifierContextApply(modifiers, move delta)
+        return content.describe(context, resolved)
+    }
+}
+
+// What `.monospacedDigit()` describes: the content with its figures the same
+// width, in whichever face is in effect; the monospaced face stays as it is.
+public construct MonospacedDigitLayer() extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        if modifiers.fontDesign == .Monospaced { return content.describe(context, modifiers) }
+        let delta = modifierDeltaFontDesign(.MonospacedDigits)
         let resolved = modifierContextApply(modifiers, move delta)
         return content.describe(context, resolved)
     }
@@ -213,7 +297,7 @@ public enum TextAlignment {
     Trailing
 }
 
-public function textAlignmentUnit(alignment: borrow TextAlignment) -> Float {
+public function textAlignmentUnit(alignment: borrow TextAlignment) -> Number {
     match alignment {
         Leading -> return 0.0
         Center -> return 0.5
@@ -224,8 +308,10 @@ public function textAlignmentUnit(alignment: borrow TextAlignment) -> Float {
 public construct TextAlignmentLayer(alignment: TextAlignment) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         let delta = modifierDeltaTextAlignment(alignment)
         let resolved = modifierContextApply(modifiers, move delta)
         return content.describe(context, resolved)

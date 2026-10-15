@@ -42,65 +42,54 @@ import KCoreAnimation
 // The rectangle is filled in by LAYOUT, not by the declaration: a view does not
 // know where it is until it has been placed, and the whole point of reporting
 // geometry to a compositor is to report where things actually landed.
-public struct KiraUiSurfaceTarget {
+public struct SurfaceTarget {
     // The shared texture this region renders into, as this process names it.
-    var handle: Int = 0
+    var handle: Number = 0
     // 0 is content, at the region's own rectangle. Above 0 is overlay, which
     // covers the canvas.
-    var zLevel: Int = 0
-    var x: Float = 0.0
-    var y: Float = 0.0
-    var width: Float = 0.0
-    var height: Float = 0.0
+    var zLevel: Number = 0
+    var x: Number = 0.0
+    var y: Number = 0.0
+    var width: Number = 0.0
+    var height: Number = 0.0
 }
 
-public struct KiraUiSurfaceSink {
-    var targets: [KiraUiSurfaceTarget] = []
+public struct SurfaceSink {
+    var targets: [SurfaceTarget] = []
     var collecting: Bool = false
 }
 
-public function kiraUiSurfaceSinkKey() -> String {
-    return "kiraui.surface.sink"
-}
-
-public function kiraUiSurfaceSinkEnsure() {
-    if kiraUiStateSlotHas(kiraUiSurfaceSinkKey()) == false {
-        kiraUiStateSlotPut(
-            kiraUiSurfaceSinkKey(),
-            nativeUserData(nativeState(KiraUiSurfaceSink {}))
-        )
+public function surfaceSinkEnsure() {
+    if !ambientStateHas(StateSlot.surfaceSink) {
+        ambientStatePut(StateSlot.surfaceSink, nativeUserData(nativeState(SurfaceSink {})))
     }
-    return
 }
 
 // Open collection for the frame about to be built, discarding what the last one
 // left. The tree is rebuilt every frame and its targets are rebuilt with it.
-public function kiraUiSurfaceCollect() {
-    kiraUiSurfaceSinkEnsure()
-    var sink = nativeRecover<KiraUiSurfaceSink>(kiraUiStateSlotGet(kiraUiSurfaceSinkKey()))
-    var empty: [KiraUiSurfaceTarget] = []
+public function surfaceCollect() {
+    surfaceSinkEnsure()
+    var sink = nativeRecover<SurfaceSink>(ambientStateGet(StateSlot.surfaceSink))
+    var empty: [SurfaceTarget] = []
     sink.targets = move empty
     sink.collecting = true
-    return
 }
 
-public function kiraUiSurfaceStopCollecting() {
-    kiraUiSurfaceSinkEnsure()
-    var sink = nativeRecover<KiraUiSurfaceSink>(kiraUiStateSlotGet(kiraUiSurfaceSinkKey()))
+public function surfaceStopCollecting() {
+    surfaceSinkEnsure()
+    var sink = nativeRecover<SurfaceSink>(ambientStateGet(StateSlot.surfaceSink))
     sink.collecting = false
-    return
 }
 
-public function kiraUiSurfaceDeclare(target: KiraUiSurfaceTarget) {
-    kiraUiSurfaceSinkEnsure()
-    var sink = nativeRecover<KiraUiSurfaceSink>(kiraUiStateSlotGet(kiraUiSurfaceSinkKey()))
-    if sink.collecting == false {
+public function surfaceDeclare(target: SurfaceTarget) {
+    surfaceSinkEnsure()
+    var sink = nativeRecover<SurfaceSink>(ambientStateGet(StateSlot.surfaceSink))
+    if !sink.collecting {
         // Declared with no frame collecting. It has nowhere to go, and is
         // dropped rather than kept for whatever frame is built next.
         return
     }
     sink.targets.append(move target)
-    return
 }
 
 // Everything this frame declared, for the application to publish.
@@ -108,15 +97,15 @@ public function kiraUiSurfaceDeclare(target: KiraUiSurfaceTarget) {
 // Read once, after the tree is built, by whatever owns the channel to the
 // compositor. Nothing in the widget layer sends anything: a widget that talked
 // to another process would be a widget that could not be drawn in a window.
-public function kiraUiSurfaceTargets() -> [KiraUiSurfaceTarget] {
-    kiraUiSurfaceSinkEnsure()
-    let sink = nativeRecover<KiraUiSurfaceSink>(kiraUiStateSlotGet(kiraUiSurfaceSinkKey()))
-    return sink.targets
+public function surfaceTargets() -> [SurfaceTarget] {
+    surfaceSinkEnsure()
+    let sink = nativeRecover<SurfaceSink>(ambientStateGet(StateSlot.surfaceSink))
+    return copy sink.targets
 }
 
 // How many targets this frame declared.
-public function kiraUiSurfaceTargetCount() -> Int {
-    return kiraUiSurfaceTargets().count
+public function surfaceTargetCount() -> Number {
+    return surfaceTargets().count
 }
 
 // A region of the view that renders into a shared texture.
@@ -126,19 +115,23 @@ public function kiraUiSurfaceTargetCount() -> Int {
 // is inside is unaware: a sidebar written for a window is the same sidebar
 // written for a compositor, which is the property that makes this worth having
 // as a wrapper rather than as a different way to write a view.
-public construct TextureTarget(handle: Int, zLevel: Int = 0) extends Widget {
+public construct TextureTarget(handle: Number, zLevel: Number = 0) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        kiraUiSurfaceDeclare(KiraUiSurfaceTarget {
-            handle: handle,
-            zLevel: zLevel,
-            x: 0.0,
-            y: 0.0,
-            width: context.viewportWidth,
-            height: context.viewportHeight
-        })
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        surfaceDeclare(
+            SurfaceTarget {
+                handle: handle,
+                    zLevel: zLevel,
+                    x: 0.0,
+                    y: 0.0,
+                    width: context.viewportWidth,
+                    height: context.viewportHeight
+            }
+        )
         return content.describe(context, modifiers)
     }
 }
@@ -149,32 +142,27 @@ public construct TextureTarget(handle: Int, zLevel: Int = 0) extends Widget {
 // views declared with `.overlay(...)`, from anywhere in the tree, exactly as
 // `.toolbar(...)` items travel to the one bar -- and it covers the whole canvas
 // because a floating thing is not confined to the region that opened it.
-public construct OverlayTarget(handle: Int) extends Widget {
+public construct OverlayTarget(handle: Number) extends Widget {
 
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        kiraUiSurfaceDeclare(KiraUiSurfaceTarget {
-            handle: handle,
-            zLevel: kiraUiOverlayZLevel(),
-            x: 0.0,
-            y: 0.0,
-            width: context.viewportWidth,
-            height: context.viewportHeight
-        })
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        surfaceDeclare(
+            SurfaceTarget {
+                handle: handle,
+                    zLevel: OverlayLevel.overlay,
+                    x: 0.0,
+                    y: 0.0,
+                    width: context.viewportWidth,
+                    height: context.viewportHeight
+            }
+        )
         return CALayerDescription {}
     }
 }
 
-// The z every overlay shares.
-//
-// One number, not a range. Ordering WITHIN an application's overlay is settled
-// by the order things were drawn into it, and ordering BETWEEN applications is
-// the compositor's -- so a second overlay z would be a third answer to a
-// question two layers already answer.
-public function kiraUiOverlayZLevel() -> Int {
-    return 1
-}
-
 // Whether a target is the overlay rather than a content region.
-public function kiraUiSurfaceIsOverlay(target: borrow KiraUiSurfaceTarget) -> Bool {
-    return target.zLevel >= kiraUiOverlayZLevel()
+public function surfaceIsOverlay(target: borrow SurfaceTarget) -> Bool {
+    return target.zLevel >= OverlayLevel.overlay
 }

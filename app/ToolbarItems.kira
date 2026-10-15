@@ -15,10 +15,12 @@ import KCoreAnimation
 public construct ToolbarItem(placement: ToolbarItemPlacement = .Automatic) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let group = kiraUiToolbarOpenGroup()
-        kiraUiToolbarDeclare(placement, group, content.describe(context, modifiers))
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let group = toolbarOpenGroup()
+        toolbarDeclare(placement, group, content.describe(context, modifiers))
         return CALayerDescription {}
     }
 }
@@ -26,13 +28,15 @@ public construct ToolbarItem(placement: ToolbarItemPlacement = .Automatic) exten
 // One described item onto the bar. The shared-background flag is taken right
 // after the item's content described, which is the one moment a
 // `.sharedBackgroundVisibility(...)` written inside it can belong to it.
-public function kiraUiToolbarDeclare(placement: ToolbarItemPlacement, group: Int, described: CALayerDescription) {
-    kiraUiToolbarAppendEntry(move placement, KiraUiToolbarEntry {
-        content: move described,
-        shared: kiraUiToolbarTakePendingShared(),
-        group: group
-    })
-    return
+public function toolbarDeclare(
+    placement: ToolbarItemPlacement,
+    group: Number,
+    described: CALayerDescription
+) {
+    toolbarAppendEntry(
+        move placement,
+        ToolbarEntry { content: move described, shared: toolbarTakePendingShared(), group: group }
+    )
 }
 
 // Several items, each with its own placement, matching SwiftUI's
@@ -41,11 +45,11 @@ public function kiraUiToolbarDeclare(placement: ToolbarItemPlacement, group: Int
 public construct ToolbarContent() extends Widget {
     let children: [some Widget]
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        return CALayerDescription {
-            sublayers: describedChildren(context, modifiers, children)
-        }
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        return CALayerDescription { sublayers: describedChildren(context, modifiers, children) }
     }
 }
 
@@ -54,11 +58,13 @@ public construct ToolbarContent() extends Widget {
 public construct ToolbarItemGroup(placement: ToolbarItemPlacement = .Automatic) extends Widget {
     let children: [some Widget]
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let group = kiraUiToolbarOpenGroup()
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let group = toolbarOpenGroup()
         for child in children {
-            kiraUiToolbarDeclare(placement, group, child.describe(context, modifiers))
+            toolbarDeclare(placement, group, child.describe(context, modifiers))
         }
         return CALayerDescription {}
     }
@@ -78,15 +84,18 @@ public construct ToolbarSpacer(
     placement: ToolbarItemPlacement = .Automatic,
 ) extends Widget {
 
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        kiraUiToolbarAppendSpacer(placement, sizing)
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        toolbarAppendSpacer(placement, sizing)
         return CALayerDescription {}
     }
 }
 
 // The transaction the bar changes in this build; see `motion`.
-public function kiraUiToolbarMotion() -> CALayerAnimation {
-    kiraUiToolbarSinkEnsure()
-    let sink = nativeRecover<KiraUiToolbarSink>(kiraUiStateSlotGet(kiraUiToolbarSinkKey()))
+public function toolbarMotion() -> CALayerAnimation {
+    toolbarSinkEnsure()
+    let sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
     return copy sink.motion
 }

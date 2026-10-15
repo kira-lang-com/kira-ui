@@ -17,32 +17,46 @@ import KCoreAnimation
 // color, glass lost its material and its blur, a scroll region lost the fact
 // that it scrolls. All the same bug, and none of them visible in the modifier
 // that caused it.
-public construct SurfacePaddingLayer(value: Float) extends Widget {
+public construct SurfacePaddingLayer(value: Number) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        return insetDescription(content.describe(context, modifierContextForChildren(modifiers)), value)
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        return insetDescription(
+            content.describe(context, modifierContextInset(modifiers, value)),
+            value
+        )
     }
 }
 
 public construct ContentMarginsLayer(value: ContentMargins) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        return insetDescription(content.describe(context, modifierContextForChildren(modifiers)), contentMarginsInset(value, modifiers))
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let inset = contentMarginsInset(value, modifiers)
+        return insetDescription(
+            content.describe(context, modifierContextInset(modifiers, inset)),
+            inset
+        )
     }
 }
 
-public construct WidthLayer(value: Float) extends Widget {
+public construct WidthLayer(value: Number) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         var described = content.describe(context, modifierContextForChildren(modifiers))
         described.layout.fixedWidth = value
         described.layout.widthFill = false
+        described.layout.expandsWidth = false
         described.layout.flex = 0
         return described
     }
@@ -51,11 +65,14 @@ public construct WidthLayer(value: Float) extends Widget {
 public construct FillWidthLayer() extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         var described = content.describe(context, modifierContextForChildren(modifiers))
         described.layout.widthFill = true
         described.layout.fixedWidth = -1.0
+        described.layout.expandsWidth = true
         return described
     }
 }
@@ -63,36 +80,42 @@ public construct FillWidthLayer() extends Widget {
 public construct ScenePaddingLayer() extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let described = content.describe(context, modifierContextForChildren(modifiers))
-        if modifiers.hasContentMargin {
-            return insetDescription(move described, modifiers.contentMargin)
-        }
-        return described
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let margin = resolvedContentMargin(modifiers)
+        let described = content.describe(context, modifierContextInset(modifiers, margin))
+        return insetDescription(move described, margin)
     }
 }
 
 public construct FillHeightLayer() extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         var described = content.describe(context, modifierContextForChildren(modifiers))
         described.layout.heightFill = true
         described.layout.fixedHeight = -1.0
+        described.layout.expandsHeight = true
         return described
     }
 }
 
-public construct HeightLayer(value: Float) extends Widget {
+public construct HeightLayer(value: Number) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         var described = content.describe(context, modifierContextForChildren(modifiers))
         described.layout.fixedHeight = value
         described.layout.heightFill = false
+        described.layout.expandsHeight = false
         return described
     }
 }
@@ -103,10 +126,13 @@ public construct HeightLayer(value: Float) extends Widget {
 public construct HugWidthLayer() extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         var described = content.describe(context, modifierContextForChildren(modifiers))
         described.layout.widthFill = false
+        described.layout.expandsWidth = false
         return described
     }
 }
@@ -114,10 +140,13 @@ public construct HugWidthLayer() extends Widget {
 public construct HugHeightLayer() extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         var described = content.describe(context, modifierContextForChildren(modifiers))
         described.layout.heightFill = false
+        described.layout.expandsHeight = false
         return described
     }
 }
@@ -129,8 +158,10 @@ public construct HugHeightLayer() extends Widget {
 public construct ThemeLayer(theme: Any Theme) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         let delta = modifierDeltaTheme(move theme)
         let resolved = modifierContextApply(modifiers, move delta)
         return content.describe(context, resolved)
@@ -140,8 +171,10 @@ public construct ThemeLayer(theme: Any Theme) extends Widget {
 public construct BackgroundStyleLayer(style: BackgroundStyle) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         let delta = modifierDeltaBackgroundStyle(style)
         let resolved = modifierContextApply(modifiers, move delta)
         return content.describe(context, resolved)
@@ -151,8 +184,10 @@ public construct BackgroundStyleLayer(style: BackgroundStyle) extends Widget {
 public construct ThemeBorderLayer(border: ThemeBorder) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         let delta = modifierDeltaThemeBorder(border)
         let resolved = modifierContextApply(modifiers, move delta)
         return content.describe(context, resolved)
@@ -162,8 +197,10 @@ public construct ThemeBorderLayer(border: ThemeBorder) extends Widget {
 public construct ForegroundColorLayer(color: PrimaryColor) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         let delta = modifierDeltaForegroundColor(color)
         let resolved = modifierContextApply(modifiers, move delta)
         return content.describe(context, resolved)
@@ -176,14 +213,18 @@ public construct ForegroundColorLayer(color: PrimaryColor) extends Widget {
 public construct BackgroundColorLayer(color: PrimaryColor) extends Widget {
     let content: some Widget
 
-
     // A wash behind the content: a filled layer carrying the content as its
     // sublayer.
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         let resolved = modifierColor(modifierPrimaryColor(color, modifiers), modifiers)
+        let described = content.describe(context, modifierContextForChildren(modifiers))
         return CALayerDescription {
-            content: .Solid(CASolid { fill: caColorFromFoundation(resolved) }),
-            sublayers: [content.describe(context, modifierContextForChildren(modifiers))]
+            layout: surfaceFootprint(described.layout),
+            content: .Solid(CASolid { fill: colorFromFoundation(resolved) }),
+            sublayers: [described]
         }
     }
 }
@@ -191,8 +232,10 @@ public construct BackgroundColorLayer(color: PrimaryColor) extends Widget {
 public construct MaterialLayer(value: Material) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         let delta = modifierDeltaMaterial(value)
         let resolved = modifierContextApply(modifiers, move delta)
         return content.describe(context, resolved)
@@ -202,61 +245,92 @@ public construct MaterialLayer(value: Material) extends Widget {
 public construct DisabledLayer(value: Bool) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         let delta = modifierDeltaDisabled(value)
         let resolved = modifierContextApply(modifiers, move delta)
         return content.describe(context, resolved)
     }
 }
 
-public construct FocusedLayer(value: Bool) extends Widget {
+public construct FrameLayer(width: Number, height: Number) extends Widget {
     let content: some Widget
 
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        return CALayerDescription {
+            layout: CALayoutIntent {
+                widthFill: false,
+                heightFill: false,
+                fixedWidth: width,
+                fixedHeight: height,
+                alignment: Point { x: 0.5, y: 0.5 }
+            },
+            sublayers: [content.describe(context, modifierContextForChildren(modifiers))]
+        }
+    }
+}
 
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let delta = modifierDeltaFocused(value)
-        let resolved = modifierContextApply(modifiers, move delta)
-        return content.describe(context, resolved)
+public construct ZIndexLayer(value: Number) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var described = content.describe(context, modifiers)
+        described.layout.zIndex = value
+        return described
     }
 }
 
 public construct BackgroundLayer(fill: Any Widget) extends Widget {
     let content: some Widget
 
-
     // The fill is the surface the modifiers describe, drawn behind the content;
     // both share this layer's bounds, fill first so it sits underneath.
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let described = content.describe(context, modifierContextForChildren(modifiers))
         return CALayerDescription {
-            sublayers: [
-                fill.describe(context, modifiers),
-                content.describe(context, modifierContextForChildren(modifiers))
-            ]
+            layout: surfaceFootprint(described.layout),
+            sublayers: [fill.describe(context, modifiers), described]
         }
     }
 }
 
-public construct CornerRadiusLayer(radius: Float) extends Widget {
+public construct CornerRadiusLayer(radius: Number) extends Widget {
     let content: some Widget
-
 
     // A clipping surface around the content: its own layer carrying the radius
     // and the clip, with the content as its sublayer.
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let described = content.describe(context, modifierContextForChildren(modifiers))
         return CALayerDescription {
+            layout: surfaceFootprint(described.layout),
             cornerRadius: radius,
             clipsChildren: true,
-            sublayers: [content.describe(context, modifierContextForChildren(modifiers))]
+            sublayers: [described]
         }
     }
 }
 
-public construct OpacityLayer(value: Float) extends Widget {
+public construct OpacityLayer(value: Number) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         var described = content.describe(context, modifierContextForChildren(modifiers))
         // Compose, so nested `.opacity` multiplies as the cascade does rather
         // than the outer one replacing the inner.
@@ -268,14 +342,16 @@ public construct OpacityLayer(value: Float) extends Widget {
 // `.shadow(...)`: cast by the view's own layer, so it takes that layer's
 // outline -- a card's continuous corner, a capsule's ends -- rather than the box
 // around it, and a layer under glass casts it only past its edge.
-public construct ShadowLayer(color: Color, radius: Float, x: Float, y: Float) extends Widget {
+public construct ShadowLayer(color: RGBAColor, radius: Number, x: Number, y: Number) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         var described = content.describe(context, modifierContextForChildren(modifiers))
         described.shadow = CAShadow {
-            color: caColorFromFoundation(modifierColor(foundationColor(color), modifiers)),
+            color: colorFromFoundation(modifierColor(foundationColor(color), modifiers)),
             radius: radius,
             offset: Point { x: x, y: y }
         }
@@ -298,22 +374,26 @@ public construct ShadowLayer(color: Color, radius: Float, x: Float, y: Float) ex
 // reflow the row it is in — which is the whole reason a chevron can be animated
 // at all. A chevron that resized its row as it turned would move every label
 // beside it, and that is what swapping one glyph for another did.
-public construct RotationLayer(radians: Float) extends Widget {
+public construct RotationLayer(radians: Number) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         var described = content.describe(context, modifierContextForChildren(modifiers))
         described.rotation = radians
         return described
     }
 }
 
-public construct ScaleLayer(value: Float, anchor: StackAlignment = .Center) extends Widget {
+public construct ScaleLayer(value: Number, anchor: StackAlignment = .Center) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         var described = content.describe(context, modifierContextForChildren(modifiers))
         described.scaleX = value
         described.scaleY = value
@@ -322,84 +402,144 @@ public construct ScaleLayer(value: Float, anchor: StackAlignment = .Center) exte
     }
 }
 
-public construct MinHeightLayer(value: Float) extends Widget {
+public construct MinHeightLayer(value: Number) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         var described = content.describe(context, modifierContextForChildren(modifiers))
         described.layout.minHeight = value
         return described
     }
 }
 
-public construct MinWidthLayer(value: Float) extends Widget {
+public construct MinWidthLayer(value: Number) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         var described = content.describe(context, modifierContextForChildren(modifiers))
         described.layout.minWidth = value
         return described
     }
 }
 
-public construct MaxWidthLayer(value: Float) extends Widget {
+public construct MaxWidthLayer(value: Number) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         var described = content.describe(context, modifierContextForChildren(modifiers))
         described.layout.maxWidth = value
         return described
     }
 }
 
-public construct SizeLayer(value: Float) extends Widget {
+public construct SizeLayer(value: Number) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         var described = content.describe(context, modifierContextForChildren(modifiers))
         described.layout.fixedWidth = value
         described.layout.fixedHeight = value
         described.layout.widthFill = false
         described.layout.heightFill = false
+        described.layout.expandsWidth = false
         return described
     }
 }
 
-public construct FillLayer(color: Color) extends Widget {
+public construct FillLayer(color: RGBAColor) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         let delta = modifierDeltaFill(move color)
         let resolved = modifierContextApply(modifiers, move delta)
         return content.describe(context, resolved)
     }
 }
 
-public construct TextColorLayer(color: Color) extends Widget {
+public construct StrokeLayer(width: Number) extends Widget {
     let content: some Widget
 
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        return content.describe(context, modifierContextApply(modifiers, modifierDeltaStroke(width)))
+    }
+}
 
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+public construct StrokeColorLayer(color: RGBAColor, width: Number) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let delta = modifierDeltaStrokeColor(move color, width)
+        return content.describe(context, modifierContextApply(modifiers, move delta))
+    }
+}
+
+public construct TextColorLayer(color: RGBAColor) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         let delta = modifierDeltaTextColor(move color)
         let resolved = modifierContextApply(modifiers, move delta)
         return content.describe(context, resolved)
     }
 }
 
-public construct SurfaceBorderLayer(color: Color, width: Float) extends Widget {
+public construct BorderLayer(color: PrimaryColor, width: Number) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        var described = content.describe(context, modifierContextForChildren(modifiers))
-        described.borderColor = caColorFromFoundation(foundationColor(move color))
-        described.borderWidth = width
-        return described
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let ink = primaryColorAsColor(color, modifierTokens(modifiers))
+        return SurfaceBorderLayer(color: move ink, width: width) {
+            content
+        }
+        .describe(context, modifiers)
     }
 }
 
+public construct SurfaceBorderLayer(color: RGBAColor, width: Number) extends Widget {
+    let content: some Widget
+
+    // A line around the content's edge: a clear layer stroked in `color`,
+    // carrying the content as its sublayer, as a background does.
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let described = content.describe(context, modifierContextForChildren(modifiers))
+        return CALayerDescription {
+            layout: surfaceFootprint(described.layout),
+            content: .Solid(CASolid {
+                fill: CAColor { a: 0.0 },
+                border: colorFromFoundation(foundationColor(move color)),
+                borderWidth: width
+            }),
+            sublayers: [described]
+        }
+    }
+}

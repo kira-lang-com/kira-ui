@@ -22,25 +22,23 @@ import KCoreAnimation
 // window's bar shows for the column this surface fills.
 public struct Channels {
     var title: String = ""
-    var badge: Int = 0
+    var badge: Number = 0
 }
 
 // Wrap a described subtree as a surface: its own render target, arranged to fill
 // the box the container gives it.
 public function renderSurface(child: CALayerDescription) -> CALayerDescription {
-    return CALayerDescription {
-        renderTarget: true,
-        clipsChildren: true,
-        sublayers: [child]
-    }
+    return CALayerDescription { renderTarget: true, clipsChildren: true, sublayers: [child] }
 }
 
 // The atomic surface: content rendered to its own texture.
 public construct RenderSurface() extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         return renderSurface(content.describe(context, modifierContextForChildren(modifiers)))
     }
 }
@@ -50,19 +48,30 @@ public construct RenderSurface() extends Widget {
 // window is stood up before anything inside it is built.
 public function RunKiraWindowApp(
     title: String,
-    width: Int,
-    height: Int,
+    width: Number,
+    height: Number,
     rootBuilder: borrow () -> Any Widget,
     // Host hook run first every frame, before the UI pass — where an app loads a
     // texture, ticks a simulation, or renders an offscreen viewport for a
     // TextureViewport to show this same frame. Default is a no-op.
-    engineFrame: borrow (borrow mut RenderFrame) -> Void = kiraUiNoopEngineFrame,
+    engineFrame: borrow (borrow mut RenderFrame) -> Void = noopEngineFrame,
     // Rebuild every frame rather than when something changed; see
     // `RunKiraLayerApp`.
     rebuildsEveryFrame: Bool = false,
+    // The identifier the app's Info.klist names it by, which its
+    // `@AppStorage` values are kept under; see AppStorage.kira.
+    bundleIdentifier: String = "",
 ) {
-    RunKiraLayerApp(move title, width, height, rootBuilder, false, engineFrame, rebuildsEveryFrame)
-    return
+    RunKiraLayerApp(
+        move title,
+        width,
+        height,
+        rootBuilder,
+        false,
+        engineFrame,
+        rebuildsEveryFrame,
+        move bundleIdentifier
+    )
 }
 
 // A sidebar column beside a detail column, each its own surface. Collapses to a
@@ -72,16 +81,15 @@ public construct SplitSurface() extends Widget {
     let sidebar: some Widget
     let detail: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         return CALayerDescription {
-            layout: CALayoutIntent {
-                axis: .Row
-            },
-            sublayers: [
-                renderSurface(sidebar.describe(context, modifiers)),
-                renderSurface(detail.describe(context, modifiers))
-            ]
+            layout: CALayoutIntent { axis: .Row },
+            sublayers: [renderSurface(sidebar.describe(context, modifiers)), renderSurface(
+                detail.describe(context, modifiers)
+            )]
         }
     }
 }
@@ -90,31 +98,36 @@ public construct SplitSurface() extends Widget {
 // the selection slides horizontally, because each page keeps its position and
 // the pager offsets them — and since each page is a texture, the slide composites
 // textures rather than re-rendering pages.
-public construct Pager(selection: Int = 0) extends Widget {
+public construct Pager(selection: Number = 0) extends Widget {
     let children: [some Widget]
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         var pages: [CALayerDescription] = []
         let described = describedChildren(context, modifiers, children)
         for index in 0..described.count {
             var page = renderSurface(described[index])
-            page.layout.offset = Point { x: Float(index - selection) * context.viewportWidth, y: 0.0 }
+            page.layout.offset = Point {
+                x: Number(index - selection) * context.viewportWidth,
+                y: 0.0
+            }
             pages.append(move page)
         }
-        return CALayerDescription {
-            sublayers: move pages
-        }
+        return CALayerDescription { sublayers: move pages }
     }
 }
 
 // A set of surfaces one of which is shown, `selection` picking it, crossfading
 // rather than sliding between them.
-public construct TabSurface(selection: Int = 0) extends Widget {
+public construct TabSurface(selection: Number = 0) extends Widget {
     let children: [some Widget]
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         var pages: [CALayerDescription] = []
         let described = describedChildren(context, modifiers, children)
         for index in 0..described.count {
@@ -128,8 +141,6 @@ public construct TabSurface(selection: Int = 0) extends Widget {
             }
             pages.append(page)
         }
-        return CALayerDescription {
-            sublayers: move pages
-        }
+        return CALayerDescription { sublayers: move pages }
     }
 }

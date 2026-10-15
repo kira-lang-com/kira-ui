@@ -50,11 +50,10 @@ public struct KeyboardShortcut {
         return false
     }
 
-    // Whether a key going down with these keys held is this shortcut. A key's
-    // code is the uppercase character on it, as every backend reports a
-    // letter or a digit.
-    function matches(keyCode: Int, held: borrow EMModifierState) -> Bool {
-        if isEmpty() || keyCode != shortcutKeyCode(key) {
+    // Whether a key going down with these keys held is this shortcut: the
+    // character on its cap is the shortcut's.
+    function matches(pressed: borrow Key, held: borrow ModifierState) -> Bool {
+        if isEmpty() || keyCapText(pressed) != shortcutKeyText(key) {
             return false
         }
         let apple = hostUsesCommandKey()
@@ -87,16 +86,61 @@ public struct KeyboardShortcut {
     }
 }
 
-// Whether the platform's command key is ⌘: Apple's systems. Asked of the host
-// the program runs on, so a build is the same build everywhere.
+// Whether the platform's command key is ⌘: on Apple's systems, and where the
+// host running the application says its keyboard's GUI key is ⌘
+// (`hostUsesCommandKeySet`), as a host drawing a Mac's or an iPad's
+// interface does.
 public function hostUsesCommandKey() -> Bool {
-    let platform = hostPlatform()
-    return platform == .MacOS || platform == .IOS
+    let platform = targetPlatform!()
+    if platform == .MacOS || platform == .Ios { return true }
+    let previous = enterProcessScope()
+    var uses = false
+    if ambientStateHas(StateSlot.commandKey) {
+        uses = nativeRecover<CommandKey>(ambientStateGet(StateSlot.commandKey)).command
+    }
+    ambientScopeEnter(previous)
+    return uses
+}
+
+// What the host said of its keyboard's GUI key.
+struct CommandKey {
+    var command: Bool = false
+}
+
+// The host running the application says whether its keyboard's GUI key is
+// ⌘, as a Mac's is; shortcuts then answer to it and menus show ⌘.
+public function hostUsesCommandKeySet(uses: Bool) {
+    let previous = enterProcessScope()
+    if !ambientStateHas(StateSlot.commandKey) {
+        ambientStatePut(StateSlot.commandKey, nativeUserData(nativeState(CommandKey {})))
+    }
+    var key = nativeRecover<CommandKey>(ambientStateGet(StateSlot.commandKey))
+    key.command = uses
+    ambientScopeEnter(previous)
+}
+
+// The keys that carry a character, in the order of `keyCaps`.
+let keyCapKeys: [Key] = [
+    .A, .B, .C, .D, .E, .F, .G, .H, .I, .J, .K, .L, .M,
+    .N, .O, .P, .Q, .R, .S, .T, .U, .V, .W, .X, .Y, .Z,
+    .Digit0, .Digit1, .Digit2, .Digit3, .Digit4, .Digit5, .Digit6, .Digit7, .Digit8, .Digit9,
+    .Space,
+]
+
+let keyCaps: String = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 "
+
+// The character on `pressed`'s cap, a letter in capitals, or nothing for a key
+// that carries none.
+public function keyCapText(pressed: borrow Key) -> String {
+    for (index, cap) in keyCapKeys.enumerated() {
+        if cap == pressed { return keyCaps.substring(index, index + 1) }
+    }
+    return ""
 }
 
 // The code a key reports: its character, uppercase.
-public function shortcutKeyCode(key: borrow String) -> Int {
-    let code = Int(key.charAt(0))
+public function shortcutKeyCode(key: borrow String) -> Number {
+    let code = Number(key.charAt(0))
     if code >= 97 && code <= 122 {
         return code - 32
     }
@@ -115,56 +159,54 @@ public function shortcutKeyText(key: borrow String) -> String {
 // --- Which button each shortcut presses ---------------------------------------
 
 // A shortcut and the press it makes, bound for one frame beside the press
-// actions; see `kiraUiLayerActionsReset`.
-public struct KiraUiShortcutEntry {
+// actions; see `layerActionsReset`.
+public struct ShortcutEntry {
     var shortcut: KeyboardShortcut = KeyboardShortcut {}
-    var action: () -> Void = kiraUiLayerNoop
+    var action: () -> Void = layerNoop
 }
 
 // The shortcut written on the content lowering now, until a button takes it.
-public struct KiraUiPendingShortcut {
+public struct PendingShortcut {
     var shortcut: KeyboardShortcut = KeyboardShortcut {}
 }
 
-public function kiraUiPendingShortcutKey() -> String {
-    return "kiraui.shortcut.pending"
-}
-
-public function kiraUiPendingShortcutEnsure() {
-    if kiraUiStateSlotHas(kiraUiPendingShortcutKey()) == false {
-        kiraUiStateSlotPut(kiraUiPendingShortcutKey(), nativeUserData(nativeState(KiraUiPendingShortcut {})))
+public function pendingShortcutEnsure() {
+    if !ambientStateHas(StateSlot.pendingShortcut) {
+        ambientStatePut(StateSlot.pendingShortcut, nativeUserData(nativeState(PendingShortcut {})))
     }
-    return
 }
 
 // What the next button to lower answers to, and none after it.
-public function kiraUiShortcutTake() -> KeyboardShortcut {
-    kiraUiPendingShortcutEnsure()
-    var pending = nativeRecover<KiraUiPendingShortcut>(kiraUiStateSlotGet(kiraUiPendingShortcutKey()))
+public function shortcutTake() -> KeyboardShortcut {
+    pendingShortcutEnsure()
+    var pending = nativeRecover<PendingShortcut>(ambientStateGet(StateSlot.pendingShortcut))
     let taken = pending.shortcut
     pending.shortcut = KeyboardShortcut {}
     return taken
 }
 
-public function kiraUiShortcutRegister(shortcut: borrow KeyboardShortcut, action: () -> Void) {
+public function shortcutRegister(shortcut: borrow KeyboardShortcut, action: () -> Void) {
     if shortcut.isEmpty() {
         return
     }
-    kiraUiLayerActionSinkEnsure()
-    var sink = nativeRecover<KiraUiLayerActionSink>(kiraUiStateSlotGet(kiraUiLayerActionSinkKey()))
-    sink.shortcuts.append(KiraUiShortcutEntry { shortcut: copy shortcut, action: action })
-    return
+    layerActionSinkEnsure()
+    var sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+    sink.shortcuts.append(ShortcutEntry { shortcut: copy shortcut, action: action })
 }
 
 // Presses the button a key going down is the shortcut of, and says whether
 // there was one. A shortcut held with no modifier is the field's key while a
 // field is being typed in.
-public function kiraUiShortcutPerform(keyCode: Int, held: borrow EMModifierState, typing: Bool) -> Bool {
-    kiraUiLayerActionSinkEnsure()
-    let sink = nativeRecover<KiraUiLayerActionSink>(kiraUiStateSlotGet(kiraUiLayerActionSinkKey()))
+public function shortcutPerform(
+    pressed: borrow Key,
+    held: borrow ModifierState,
+    typing: Bool
+) -> Bool {
+    layerActionSinkEnsure()
+    let sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
     for index in 0..sink.shortcuts.count {
         let shortcut = sink.shortcuts[index].shortcut
-        if shortcut.matches(keyCode, held) && !(typing && shortcut.modifiers.count == 0) {
+        if shortcut.matches(pressed, held) && !(typing && shortcut.modifiers.count == 0) {
             sink.shortcuts[index].action()
             return true
         }
@@ -175,10 +217,12 @@ public function kiraUiShortcutPerform(keyCode: Int, held: borrow EMModifierState
 public construct KeyboardShortcutLayer(shortcut: KeyboardShortcut) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        kiraUiPendingShortcutEnsure()
-        var pending = nativeRecover<KiraUiPendingShortcut>(kiraUiStateSlotGet(kiraUiPendingShortcutKey()))
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        pendingShortcutEnsure()
+        var pending = nativeRecover<PendingShortcut>(ambientStateGet(StateSlot.pendingShortcut))
         pending.shortcut = copy shortcut
         let described = content.describe(context, modifiers)
         // Content with no button in it leaves the shortcut to nothing.
@@ -191,7 +235,9 @@ extend Widget {
     // The key that presses this button, held with `modifiers`: ⌘ and the key
     // unless it says otherwise.
     function keyboardShortcut(key: String, modifiers: [EventModifier] = [.Command]) -> Any Widget {
-        return KeyboardShortcutLayer(shortcut: KeyboardShortcut { key: key, modifiers: modifiers }) {
+        return KeyboardShortcutLayer(
+            shortcut: KeyboardShortcut { key: key, modifiers: modifiers }
+        ) {
             self
         }
     }
@@ -199,11 +245,15 @@ extend Widget {
 
 // A shortcut set at the trailing end of a menu's row, in the row's secondary
 // ink.
-public function menuShortcutDescription(context: borrow BuildContext, shortcut: borrow KeyboardShortcut, modifiers: borrow ModifierContext) -> CALayerDescription {
+public function menuShortcutDescription(
+    context: borrow BuildContext,
+    shortcut: borrow KeyboardShortcut,
+    modifiers: borrow ModifierContext
+) -> CALayerDescription {
     var keys = Text(content: shortcut.label())
-        .font(size: menuLabelSize(modifiers))
-        .foregroundColor(.Secondary)
-        .describe(context, modifiers)
+    .font(size: resolvedLength(menuLabelSize(modifiers)))
+    .foregroundColor(.Secondary)
+    .describe(context, modifiers)
     keys.layout.widthFill = false
     keys.layout.heightFill = false
     return keys

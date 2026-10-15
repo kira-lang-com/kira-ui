@@ -1,0 +1,170 @@
+import Foundation
+import Ember
+import KiraLayout
+import KCoreAnimation
+
+// SwiftUI's `.alert(_:isPresented:actions:message:)`: a card in the middle of
+// the window with a title, a sentence under it and the buttons that answer it,
+// in front of everything the window holds, until one of them is pressed.
+//
+//     FinderView(...)
+//         .alert(title: "Ledger", isPresented: notice != .None, message: said, actions: [
+//             Button(title: "OK", action: dismiss)
+//         ])
+//
+// Whether it is out is the caller's state, as a binding is in SwiftUI: an
+// action that answers it also puts it away. While it is out a press anywhere
+// off it reaches nothing, as an alert is modal to its window.
+public construct AlertLayer(
+    title: String,
+    isPresented: Bool,
+    message: String,
+    actions: [Any Widget]
+) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let window = content.describe(context, modifiers)
+        if !isPresented {
+            return window
+        }
+        let band = tapSeqEnterOverlay()
+        // A press off the card is taken and does nothing.
+        let away = tapSeqKey()
+        layerActionRegister(away, { in return })
+        let desktop = interfaceMode() == .AdaptiveDesktop
+        let width = desktop ? AlertMetrics.width : MobileAlertMetrics.width
+        let rise = desktop ? AlertMetrics.rise : MobileAlertMetrics.rise
+        let built = desktop ? alertCard(title, message, actions) : mobileAlertCard(
+            title,
+            message,
+            actions
+        )
+        var card = built.describe(context, modifiers)
+        let size = card.measure(width)
+        card.layout.fixedWidth = width
+        card.layout.fixedHeight = size.height
+        tapSeqLeaveOverlay(band)
+        overlayPresent(
+            Overlay {
+                anchorX: 0.0,
+                anchorY: max(0.0, (context.viewportHeight - size.height) * rise),
+                anchorW: context.viewportWidth,
+                anchorH: 0.0,
+                z: OverlayLevel.surface,
+                content: move card,
+                alignment: 0.5,
+                dismissKey: away
+            }
+        )
+        return window
+    }
+}
+
+// An alert's size and place on a Mac, in points, as macOS 26 draws one.
+namespace AlertMetrics {
+    let width: Number = 260
+    let corner: Number = 26
+    let padding: Number = 20
+    // How far down the window the card's top sits, as a share of the room
+    // left over: a little above the middle, where a Mac puts it.
+    let rise: Number = 0.4
+}
+
+// An alert's size and place on an iPhone or an iPad, in points, as the iOS
+// and iPadOS 27 kit draws one: the title and the message start at the
+// leading edge, over capsule buttons side by side.
+namespace MobileAlertMetrics {
+    let width: Number = 300
+    let corner: Number = 34
+    // The card's inset, and the text's further in.
+    let inset: Number = 14
+    let textInset: Number = 8
+    // Between the title and the message, and from the text to the buttons.
+    let messageGap: Number = 10
+    let actionsGap: Number = 16
+    let buttonHeight: Number = 48
+    // In the middle of the screen.
+    let rise: Number = 0.5
+}
+
+// The card on an iPhone or an iPad.
+function mobileAlertCard(
+    title: borrow String,
+    message: borrow String,
+    actions: borrow [Any Widget]
+) -> Any Widget {
+    let words = copy message
+    return VStack(spacing: .None, alignment: .Leading) {
+        VStack(spacing: .None, alignment: .Leading) {
+            Text(content: copy title)
+            .typography(.headline)
+
+            if words.count > 0 {
+                Spacer()
+                .height(resolvedLength(MobileAlertMetrics.messageGap))
+
+                Text(content: words)
+                .typography(.body)
+            }
+        }
+        .padding(resolvedLength(MobileAlertMetrics.textInset))
+
+        Spacer()
+        .height(resolvedLength(MobileAlertMetrics.actionsGap))
+
+        HStack(spacing: .Small, alignment: .Center) {
+            For(action in copy actions) {
+                action
+                .fillWidth()
+                .height(resolvedLength(MobileAlertMetrics.buttonHeight))
+            }
+        }
+        .buttonStyle(.Bordered)
+        .buttonBorderShape(.Capsule)
+        .multilineTextAlignment(.Center)
+        // The kit's alert buttons say their action in 17-point semibold.
+        .typography(.headline)
+    }
+    .padding(resolvedLength(MobileAlertMetrics.inset))
+    .glassEffect(.Regular, .Squircle(MobileAlertMetrics.corner), false)
+}
+
+// The card on a Mac: the title and the sentence centered over the buttons,
+// on glass.
+function alertCard(
+    title: borrow String,
+    message: borrow String,
+    actions: borrow [Any Widget]
+) -> Any Widget {
+    let words = copy message
+    return VStack(spacing: .Medium, alignment: .Center) {
+        VStack(spacing: .Small, alignment: .Center) {
+            Text(content: copy title)
+            .typography(.headline)
+            .multilineTextAlignment(.Center)
+
+            if words.count > 0 {
+                Text(content: words)
+                .typography(.footnote)
+                .foregroundColor(.Secondary)
+                .multilineTextAlignment(.Center)
+            }
+        }
+
+        HStack(spacing: .Small, alignment: .Center) {
+            For(action in copy actions) {
+                action
+                .fillWidth()
+            }
+        }
+        .buttonStyle(.Bordered)
+        .buttonBorderShape(.Capsule)
+        .multilineTextAlignment(.Center)
+    }
+    .padding(resolvedLength(AlertMetrics.padding))
+    .glassEffect(.Regular, .Squircle(AlertMetrics.corner), false)
+}

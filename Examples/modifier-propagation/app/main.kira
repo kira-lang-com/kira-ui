@@ -7,7 +7,6 @@ function checkModifier(label: String, condition: Bool) {
     } else {
         print("FAIL: " + label)
     }
-    return
 }
 
 function checkContextPropagation() {
@@ -28,7 +27,10 @@ function checkContextPropagation() {
 
     let materialDelta = modifierDeltaMaterial(.Frosted)
     let frosted = modifierContextApply(ModifierContext {}, move materialDelta)
-    checkModifier("material is scoped", frosted.hasMaterial && modifierContextForChildren(frosted).hasMaterial == false)
+    checkModifier(
+        "material is scoped",
+        frosted.hasMaterial && !modifierContextForChildren(frosted).hasMaterial
+    )
 
     let parentFontDelta = modifierDeltaFont(17.0, .Regular)
     let parentFont = modifierContextApply(ModifierContext {}, move parentFontDelta)
@@ -44,55 +46,56 @@ function checkContextPropagation() {
     let stillDisabled = modifierContextApply(disabled, move enabledDelta)
     checkModifier("disabled composes environmentally", stillDisabled.disabled)
 
-    let focusedDelta = modifierDeltaFocused(true)
+    let focusedDelta = modifierDeltaFocus(FocusBinding {})
     let focused = modifierContextApply(ModifierContext {}, move focusedDelta)
     let focusedChild = modifierContextForChildren(focused)
-    checkModifier("focus is isolated", focused.hasFocused && focusedChild.hasFocused == false)
-    return
+    checkModifier("focus is isolated", focused.focus.count == 1 && focusedChild.focus.count == 0)
 }
 
-// The text run a described leaf carries, or an empty run for a non-text layer.
-function mpRun(view: borrow CALayerDescription) -> CAText {
-    var out = CAText {}
-    match view.content {
-        Text(run) -> { out = run }
-        Empty -> {}
-        Solid(s) -> {}
-        Texture(x) -> {}
-        Icon(i) -> {}
-        Glass(g) -> {}
-        Gradient(g) -> {}
+extend CALayerDescription {
+    // The text run a described leaf carries, or an empty run for a non-text layer.
+    function textRun() -> CAText {
+        var out = CAText {}
+        match content {
+            Text(run) -> { out = run }
+            Empty -> {}
+            Solid(s) -> {}
+            Texture(x) -> {}
+            Icon(i) -> {}
+            Glass(g) -> {}
+            Gradient(g) -> {}
+        }
+        return out
     }
-    return out
-}
 
-// The solid fill a described layer paints, or a clear color for others.
-function mpFill(view: borrow CALayerDescription) -> CAColor {
-    var out = CAColor { a: 0.0 }
-    match view.content {
-        Solid(s) -> { out = s.fill }
-        Empty -> {}
-        Text(t) -> {}
-        Texture(x) -> {}
-        Icon(i) -> {}
-        Glass(g) -> {}
-        Gradient(g) -> {}
+    // The solid fill a described layer paints, or a clear color for others.
+    function solidFill() -> CAColor {
+        var out = CAColor { a: 0.0 }
+        match content {
+            Solid(s) -> { out = s.fill }
+            Empty -> {}
+            Text(t) -> {}
+            Texture(x) -> {}
+            Icon(i) -> {}
+            Glass(g) -> {}
+            Gradient(g) -> {}
+        }
+        return out
     }
-    return out
 }
 
 function checkLoweringPropagation() {
     let ctx = buildContext(FoundationUiContext {})
     let styled = VStack(spacing = .None) {
         Text("Parent font")
-        Text("Child font").font(size = 31.0, weight = .Bold)
+        Text("Child font").font(size = scaledMetric(31.0), weight = .Bold)
     }
-        .font(size = 17.0)
-        .foregroundColor(.Blue)
+    .font(size = scaledMetric(17.0))
+    .foregroundColor(.Blue)
     let styledView = styled.describe(ctx, ModifierContext {})
-    checkModifier("foreground color reaches text", mpRun(styledView.sublayers[0]).color.b == 1.0)
-    checkModifier("parent font reaches first child", mpRun(styledView.sublayers[0]).size == 17.0)
-    checkModifier("explicit child font wins", mpRun(styledView.sublayers[1]).size == 31.0)
+    checkModifier("foreground color reaches text", styledView.sublayers[0].textRun().color.b == 1.0)
+    checkModifier("parent font reaches first child", styledView.sublayers[0].textRun().size == 17.0)
+    checkModifier("explicit child font wins", styledView.sublayers[1].textRun().size == 31.0)
 
     // The cascade is the SwiftUI rule: a foreground names the subtree's ink
     // until something nearer restates it.
@@ -100,76 +103,92 @@ function checkLoweringPropagation() {
         Text("One")
         Text("Two").foregroundColor(.Green)
     }
-        .foregroundColor(.Red)
+    .foregroundColor(.Red)
     let cascadedView = cascaded.describe(ctx, ModifierContext {})
-    checkModifier("foreground cascades to first child", mpRun(cascadedView.sublayers[0]).color.r == 1.0)
-    checkModifier("nearer foreground wins for second child", mpRun(cascadedView.sublayers[1]).color.g == 0.82)
+    checkModifier(
+        "foreground cascades to first child",
+        cascadedView.sublayers[0].textRun().color.r == 1.0
+    )
+    checkModifier(
+        "nearer foreground wins for second child",
+        cascadedView.sublayers[1].textRun().color.g == 0.82
+    )
 
     let nested = VStack(spacing = .None) {
         GroupBox {
             Text("Green")
         }
-            .foregroundColor(.Green)
+        .foregroundColor(.Green)
         Text("Blue")
     }
-        .foregroundColor(.Blue)
+    .foregroundColor(.Blue)
     let nestedView = nested.describe(ctx, ModifierContext {})
     // A group box describes as a solid layer holding its rows, so the text is one
     // level in rather than two.
-    checkModifier("nested foreground overrides parent", mpRun(nestedView.sublayers[0].sublayers[0]).color.g == 0.82)
-    checkModifier("parent foreground remains for sibling", mpRun(nestedView.sublayers[1]).color.b == 1.0)
+    checkModifier(
+        "nested foreground overrides parent",
+        nestedView.sublayers[0].sublayers[0].textRun().color.g == 0.82
+    )
+    checkModifier(
+        "parent foreground remains for sibling",
+        nestedView.sublayers[1].textRun().color.b == 1.0
+    )
 
     // The SwiftUI rule: the modifier call nearest the widget is the innermost
     // layer, so it wins over a later call in the same chain.
     let ordered = Text("Order")
-        .foregroundColor(.Blue)
-        .foregroundColor(.Green)
+    .foregroundColor(.Blue)
+    .foregroundColor(.Green)
     let orderedView = ordered.describe(ctx, ModifierContext {})
-    checkModifier("modifier call nearest the widget wins", mpRun(orderedView).color.g == 0.518)
+    checkModifier("modifier call nearest the widget wins", orderedView.textRun().color.g == 0.518)
 
     let mixed = Text("Mixed")
-        .inset(horizontal = .ExtraSmall, vertical = .ExtraSmall)
-        .foregroundColor(.Cyan)
-        .font(size = 19.0)
+    .inset(horizontal = .ExtraSmall, vertical = .ExtraSmall)
+    .foregroundColor(.Cyan)
+    .font(size = scaledMetric(19.0))
     let mixedView = mixed.describe(ctx, ModifierContext {})
-    checkModifier("semantic values cross structural wrappers", mpRun(mixedView.sublayers[0]).color.b == 1.0)
-    checkModifier("mixed chain preserves cascading font", mpRun(mixedView.sublayers[0]).size == 19.0)
+    checkModifier(
+        "semantic values cross structural wrappers",
+        mixedView.sublayers[0].textRun().color.b == 1.0
+    )
+    checkModifier(
+        "mixed chain preserves cascading font",
+        mixedView.sublayers[0].textRun().size == 19.0
+    )
 
     let washed = Text("Washed")
-        .backgroundColor(.Blue)
-        .describe(ctx, ModifierContext {})
-    checkModifier("background color paints behind the widget", mpFill(washed).b == 1.0)
+    .backgroundColor(.Blue)
+    .describe(ctx, ModifierContext {})
+    checkModifier("background color paints behind the widget", washed.solidFill().b == 1.0)
 
     let opacityView = Text("Alpha")
-        .opacity(0.5)
-        .opacity(0.5)
-        .describe(ctx, ModifierContext {})
+    .opacity(0.5)
+    .opacity(0.5)
+    .describe(ctx, ModifierContext {})
     checkModifier("opacity composes without a tree walk", opacityView.opacity == 0.25)
-    return
 }
 
 // Button's label is intentionally an implementation detail of the control;
 // this fixture keeps the API expression in the compiler-checked test surface.
-function buttonNoop() {
-    return
-}
+function buttonNoop() {}
 
 function buttonForegroundFixture() -> Any Widget {
     return Button(title = "Continue", role = .Normal, action = buttonNoop)
-        .foregroundColor(.Purple)
-        .focused(true)
-        .disabled(true)
+    .foregroundColor(.Purple)
+    .disabled(true)
 }
 
 function checkButtonPresentation() {
     let foundationContext = buildContext(FoundationUiContext {})
     let ctx = buildContext(FoundationUiContext {})
     let buttonView = buttonForegroundFixture().describe(ctx, ModifierContext {})
-    checkModifier("button label takes the cascading foreground", mpRun(buttonView.sublayers[0]).color.r == 0.749)
+    checkModifier(
+        "button label takes the cascading foreground",
+        buttonView.sublayers[0].textRun().color.r == 0.749
+    )
     // A disabled control is not hittable; the retained layer carries that rather
     // than a `disabled` view flag.
-    checkModifier("button receives disabled environment", buttonView.hittable == false)
-    return
+    checkModifier("button receives disabled environment", !buttonView.hittable)
 }
 
 @Main
@@ -177,5 +196,4 @@ function main() {
     checkContextPropagation()
     checkLoweringPropagation()
     checkButtonPresentation()
-    return
 }

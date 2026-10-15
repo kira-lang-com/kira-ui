@@ -22,7 +22,10 @@ public struct ToolbarPiece {
 // control with seams, and each `ToolbarItem` is a piece of glass of its own --
 // what the platform draws for each. An item that opted out of the shared
 // background stands bare, and a spacer closes whatever was open.
-public function toolbarPieces(entries: borrow [KiraUiToolbarEntry], metrics: borrow WindowChromeMetrics) -> [ToolbarPiece] {
+public function toolbarPieces(
+    entries: borrow [ToolbarEntry],
+    metrics: borrow WindowChromeMetrics
+) -> [ToolbarPiece] {
     var pieces: [ToolbarPiece] = []
     var run: [CALayerDescription] = []
     var runGroup = 0
@@ -52,7 +55,7 @@ public function toolbarPieces(entries: borrow [KiraUiToolbarEntry], metrics: bor
 }
 
 public function toolbarGroups(
-    entries: borrow [KiraUiToolbarEntry],
+    entries: borrow [ToolbarEntry],
     metrics: borrow WindowChromeMetrics,
     context: borrow BuildContext,
     modifiers: borrow ModifierContext,
@@ -71,7 +74,7 @@ public function toolbarPieceLayer(
     modifiers: borrow ModifierContext,
 ) -> CALayerDescription {
     if piece.glass {
-        var glass = toolbarGlass(copy piece.layer, 0.0 - 1.0, metrics, context, modifiers)
+        var glass = toolbarGlass(copy piece.layer, -1.0, metrics, context, modifiers)
         if toolbarGlassLent(piece.layer) {
             glass.content = .Empty
             glass.capturesBackdrop = false
@@ -88,7 +91,7 @@ public function toolbarGlassLent(row: borrow CALayerDescription) -> Bool {
     if row.sublayers.count != 1 || row.sublayers[0].sublayers.count != 1 {
         return false
     }
-    return kiraUiMenuHoldsGlass(row.sublayers[0].sublayers[0].hitKey)
+    return menuHoldsGlass(row.sublayers[0].sublayers[0].hitKey)
 }
 
 // The field `.searchable` puts at the trailing end of the bar, as iPadOS sets
@@ -96,35 +99,65 @@ public function toolbarGlassLent(row: borrow CALayerDescription) -> Bool {
 // once there is text, the text and a button that clears it. A press anywhere
 // on the glass puts the caret where it landed.
 public function toolbarSearchField(
-    sink: borrow KiraUiToolbarSink,
+    sink: borrow ToolbarSink,
     metrics: borrow WindowChromeMetrics,
     context: borrow BuildContext,
     modifiers: borrow ModifierContext,
 ) -> CALayerDescription {
-    let key = kiraUiSearchFieldKey()
-    let size = textFieldTextSize(modifiers)
-    let st = nativeRecover<KiraUiTextFieldState>(kiraUiStateSlotGet(textFieldSlotKey(key)))
+    let key = SearchField.key
+    let size = modifierTextSize(modifiers)
+    let st = nativeRecover<TextFieldState>(ambientStateGet(textFieldSlotKey(key)))
     let focused = context.focusedKey == key
     var runs: [CALayerDescription] = []
     // Its symbols are the bar's, at the bar's size and weight.
     let barModifiers = modifierContextPresenting(modifiers, .Toolbar)
-    runs.append(Icon(symbol: .Search)
-        .foregroundColor(.Secondary)
-        .describe(context, barModifiers))
+    runs.append(Icon(symbol: .Search).foregroundColor(.Secondary).describe(context, barModifiers))
     if st.codes.count == 0 {
         if focused {
             runs.append(textFieldCaret(modifiers))
         }
-        runs.append(textFieldLine(Text(sink.searchPrompt)
-            .font(size: size, weight: .Medium)
-            .foregroundColor(.Secondary)
-            .describe(context, modifiers), textFieldPlaceholderKey()))
+        runs.append(
+            textFieldLine(
+                Text(sink.searchPrompt).font(
+                    size: resolvedLength(size),
+                    weight: .Medium
+                ).foregroundColor(.Secondary).describe(context, modifiers),
+                TextFieldPart.placeholder
+            )
+        )
     } else if focused {
-        runs.append(textFieldRun(foundationStringFromCodepoints(st.codes, 0, st.caret), size, textFieldLeadKey(), .Primary, context, modifiers))
+        runs.append(
+            textFieldRun(
+                foundationStringFromCodepoints(st.codes, 0, st.caret),
+                size,
+                TextFieldPart.lead,
+                .Primary,
+                context,
+                modifiers
+            )
+        )
         runs.append(textFieldCaret(modifiers))
-        runs.append(textFieldRun(foundationStringFromCodepoints(st.codes, st.caret, st.codes.count), size, textFieldTrailKey(), .Primary, context, modifiers))
+        runs.append(
+            textFieldRun(
+                foundationStringFromCodepoints(st.codes, st.caret, st.codes.count),
+                size,
+                TextFieldPart.trail,
+                .Primary,
+                context,
+                modifiers
+            )
+        )
     } else {
-        runs.append(textFieldRun(foundationStringFromCodepoints(st.codes, 0, st.codes.count), size, textFieldLeadKey(), .Primary, context, modifiers))
+        runs.append(
+            textFieldRun(
+                foundationStringFromCodepoints(st.codes, 0, st.codes.count),
+                size,
+                TextFieldPart.lead,
+                .Primary,
+                context,
+                modifiers
+            )
+        )
     }
     var text = CALayerDescription {
         layout: CALayoutIntent {
@@ -148,8 +181,8 @@ public function toolbarSearchField(
     var parts = [move text]
     if st.codes.count > 0 {
         var clear = Icon(symbol: .XmarkCircleFill)
-            .foregroundColor(.Tertiary)
-            .describe(context, barModifiers)
+        .foregroundColor(.Tertiary)
+        .describe(context, barModifiers)
         clear.hittable = true
         clear.hitKey = sink.searchClearKey
         parts.append(move clear)
@@ -181,7 +214,10 @@ public function toolbarSearchField(
 // bar is ever matched to it. Going back to a view with nowhere further back,
 // it stays as it is while the view goes, and only then leaves: it swells a
 // little as it fades.
-public function toolbarBackArea(groups: [CALayerDescription], metrics: borrow WindowChromeMetrics) -> CALayerDescription {
+public function toolbarBackArea(
+    groups: [CALayerDescription],
+    metrics: borrow WindowChromeMetrics
+) -> CALayerDescription {
     return CALayerDescription {
         key: 1,
         layout: CALayoutIntent {
@@ -208,9 +244,9 @@ public function toolbarBackArea(groups: [CALayerDescription], metrics: borrow Wi
 // the leaving view has, which stays as it is to leave once the view is gone.
 // The covered view's items answer nothing until it is the view showing.
 public function toolbarMorphGroups(
-    top: borrow [KiraUiToolbarEntry],
-    covered: borrow [KiraUiToolbarEntry],
-    shown: Float,
+    top: borrow [ToolbarEntry],
+    covered: borrow [ToolbarEntry],
+    shown: Number,
     moving: Bool,
     metrics: borrow WindowChromeMetrics,
     context: borrow BuildContext,
@@ -229,21 +265,35 @@ public function toolbarMorphGroups(
         let hasBelow = slot < below.count
         if hasAbove && hasBelow && above[slot].glass && below[slot].glass {
             var under = copy below[slot].layer
-            layerInert(under)
-            groups.append(toolbarMorphGlass(copy above[slot].layer, move under, shown, metrics, context, modifiers))
+            under.makeInert()
+            groups.append(
+                toolbarMorphGlass(
+                    copy above[slot].layer,
+                    move under,
+                    shown,
+                    metrics,
+                    context,
+                    modifiers
+                )
+            )
         } else if hasAbove && hasBelow && !above[slot].glass && !below[slot].glass {
             var under = copy below[slot].layer
-            layerInert(under)
+            under.makeInert()
             groups.append(toolbarCrossFade(copy above[slot].layer, move under, shown))
         } else {
             if hasAbove && goingBack {
                 groups.append(toolbarPieceLayer(above[slot], metrics, context, modifiers))
             } else if hasAbove {
-                groups.append(toolbarFolding(toolbarPieceLayer(above[slot], metrics, context, modifiers), 1.0 - shown))
+                groups.append(
+                    toolbarFolding(
+                        toolbarPieceLayer(above[slot], metrics, context, modifiers),
+                        1.0 - shown
+                    )
+                )
             }
             if hasBelow {
                 var under = toolbarPieceLayer(below[slot], metrics, context, modifiers)
-                layerInert(under)
+                under.makeInert()
                 groups.append(toolbarFolding(move under, shown))
             }
         }
@@ -253,9 +303,13 @@ public function toolbarMorphGroups(
 
 // Two bare pieces in one place: one box going from the first's width to the
 // second's, the first fading out over the second fading in.
-public function toolbarCrossFade(from: CALayerDescription, to: CALayerDescription, shown: Float) -> CALayerDescription {
-    let fromWidth = caMeasure(from, windowChromeMetrics().toolbarHeight * 100.0).width
-    let toWidth = caMeasure(to, windowChromeMetrics().toolbarHeight * 100.0).width
+public function toolbarCrossFade(
+    from: CALayerDescription,
+    to: CALayerDescription,
+    shown: Number
+) -> CALayerDescription {
+    let fromWidth = from.measure(windowChromeMetrics().toolbarHeight * 100.0).width
+    let toWidth = to.measure(windowChromeMetrics().toolbarHeight * 100.0).width
     var both = CALayerDescription {
         layout: CALayoutIntent {
             widthFill: false,
@@ -265,14 +319,14 @@ public function toolbarCrossFade(from: CALayerDescription, to: CALayerDescriptio
         },
         sublayers: [toolbarFaded(move from, 1.0 - shown), toolbarFaded(move to, shown)]
     }
-    layerImmediate(both)
+    both.makeImmediate()
     return both
 }
 
 // A piece only one view has: as visible as that view, as wide, and as present
 // in the bar, so the pieces beside it close up over its gap too as it goes.
-public function toolbarFolding(piece: CALayerDescription, shown: Float) -> CALayerDescription {
-    let width = caMeasure(piece, windowChromeMetrics().toolbarHeight * 100.0).width
+public function toolbarFolding(piece: CALayerDescription, shown: Number) -> CALayerDescription {
+    let width = piece.measure(windowChromeMetrics().toolbarHeight * 100.0).width
     var folded = CALayerDescription {
         layout: CALayoutIntent {
             widthFill: false,
@@ -283,7 +337,7 @@ public function toolbarFolding(piece: CALayerDescription, shown: Float) -> CALay
         },
         sublayers: [toolbarFaded(move piece, shown)]
     }
-    layerImmediate(folded)
+    folded.makeImmediate()
     return folded
 }
 
@@ -293,13 +347,13 @@ public function toolbarFolding(piece: CALayerDescription, shown: Float) -> CALay
 public function toolbarMorphGlass(
     from: CALayerDescription,
     to: CALayerDescription,
-    shown: Float,
+    shown: Number,
     metrics: borrow WindowChromeMetrics,
     context: borrow BuildContext,
     modifiers: borrow ModifierContext,
 ) -> CALayerDescription {
-    let fromWidth = caMeasure(from, windowChromeMetrics().toolbarHeight * 100.0).width
-    let toWidth = caMeasure(to, windowChromeMetrics().toolbarHeight * 100.0).width
+    let fromWidth = from.measure(windowChromeMetrics().toolbarHeight * 100.0).width
+    let toWidth = to.measure(windowChromeMetrics().toolbarHeight * 100.0).width
     var leaving = move from
     leaving.opacity = 1.0 - shown
     var coming = move to
@@ -312,24 +366,41 @@ public function toolbarMorphGlass(
         },
         sublayers: [move leaving, move coming]
     }
-    var glass = toolbarGlass(move rows, fromWidth + (toWidth - fromWidth) * shown, metrics, context, modifiers)
-    layerImmediate(glass)
+    var glass = toolbarGlass(
+        move rows,
+        fromWidth + (toWidth - fromWidth) * shown,
+        metrics,
+        context,
+        modifiers
+    )
+    glass.makeImmediate()
     return glass
 }
 
 // A piece drawn at `opacity`, following the stack's motion frame by frame.
-public function toolbarFaded(piece: CALayerDescription, opacity: Float) -> CALayerDescription {
+public function toolbarFaded(piece: CALayerDescription, opacity: Number) -> CALayerDescription {
     var faded = move piece
     faded.opacity = opacity
-    layerImmediate(faded)
+    faded.makeImmediate()
     return faded
 }
 
 // How much of a view's title the band shows inline: all of it, unless the
 // title is set large under the bar, and then as far as the large one has
 // faded over to it.
-public function toolbarInlineTitleShown(largeTitle: Bool, collapse: Float) -> Float {
+public function toolbarInlineTitleShown(largeTitle: Bool, collapse: Number) -> Number {
     return largeTitle ? collapse : 1.0
+}
+
+// The room between a bar's leading pieces and its trailing ones, which the
+// title is kept inside.
+public construct ToolbarTitleRoom() extends AlignmentGuide {
+    let name = "toolbarTitleRoom"
+    let axis: GuideAxis = .Horizontal
+
+    function defaultValue(dimensions: borrow ViewDimensions) -> Number {
+        return dimensions.subscript(.Leading)
+    }
 }
 
 // The title centered in the band -- both views' while a push or a pop moves
@@ -337,7 +408,7 @@ public function toolbarInlineTitleShown(largeTitle: Bool, collapse: Float) -> Fl
 // rises into place out of a blur as it fades in, and sinks into one as it
 // fades out.
 public function toolbarTitle(
-    sink: borrow KiraUiToolbarSink,
+    sink: borrow ToolbarSink,
     context: borrow BuildContext,
     modifiers: borrow ModifierContext,
 ) -> CALayerDescription {
@@ -345,26 +416,35 @@ public function toolbarTitle(
     let shown = toolbarInlineTitleShown(sink.largeTitle, sink.titleCollapse)
     let leaving = sink.moving ? sink.coveredShown : 0.0
     if sink.detailTitle.count > 0 && shown > 0.0 {
-        var title = toolbarFaded(windowTitle(sink.detailTitle, context, modifiers), (1.0 - leaving) * shown)
+        var title = toolbarFaded(
+            windowTitle(sink.detailTitle, context, modifiers),
+            (1.0 - leaving) * shown
+        )
         title.layout.offset = Point { x: 0.0, y: (1.0 - shown) * largeTitleMetrics().inlineTravel }
         title.blur = (1.0 - shown) * largeTitleMetrics().inlineBlur
         titles.append(move title)
     }
     let coveredShown = toolbarInlineTitleShown(sink.covered.largeTitle, sink.covered.titleCollapse)
     if sink.moving && sink.covered.title.count > 0 && coveredShown > 0.0 {
-        titles.append(toolbarFaded(windowTitle(sink.covered.title, context, modifiers), leaving * coveredShown))
+        titles.append(
+            toolbarFaded(
+                windowTitle(sink.covered.title, context, modifiers),
+                leaving * coveredShown
+            )
+        )
     }
     var title = CALayerDescription {
         // The page's, like the principal item it stands in for.
-        key: kiraUiNavigationGeneration() + 1,
+        key: currentNavigationGeneration() + 1,
         layout: CALayoutIntent {
             widthFill: false,
             heightFill: false,
-            alignment: Point { x: 0.5, y: 0.5 }
+            alignment: Point { x: 0.5, y: 0.5 },
+            staysWithinGuide: guideTag(ToolbarTitleRoom())
         },
         sublayers: move titles
     }
-    layerImmediate(title)
+    title.makeImmediate()
     return title
 }
 
@@ -385,7 +465,10 @@ public function toolbarFixedSpace(metrics: borrow WindowChromeMetrics) -> CALaye
 // One item's box on the bar: as tall as a piece of glass, the item centered in
 // it. A button already is that box; anything else -- a run of text, a picker --
 // hugs its content.
-public function toolbarItemFrame(content: borrow CALayerDescription, metrics: borrow WindowChromeMetrics) -> CALayerDescription {
+public function toolbarItemFrame(
+    content: borrow CALayerDescription,
+    metrics: borrow WindowChromeMetrics
+) -> CALayerDescription {
     var item = copy content
     item.layout.widthFill = false
     item.layout.heightFill = false
@@ -402,7 +485,10 @@ public function toolbarItemFrame(content: borrow CALayerDescription, metrics: bo
 
 // A run of shared items in a row, ready for its glass: an item alone is its
 // glass; two or more are held a little off the capsule's ends.
-public function toolbarGlassRow(items: [CALayerDescription], metrics: borrow WindowChromeMetrics) -> CALayerDescription {
+public function toolbarGlassRow(
+    items: [CALayerDescription],
+    metrics: borrow WindowChromeMetrics
+) -> CALayerDescription {
     let inset = items.count > 1 ? metrics.groupInset : 0.0
     return CALayerDescription {
         layout: CALayoutIntent {
@@ -423,14 +509,14 @@ public function toolbarGlassRow(items: [CALayerDescription], metrics: borrow Win
 // the whole capsule, as the platform's does, while the item takes the action.
 public function toolbarGlass(
     row: CALayerDescription,
-    width: Float,
+    width: Number,
     metrics: borrow WindowChromeMetrics,
     context: borrow BuildContext,
     modifiers: borrow ModifierContext,
 ) -> CALayerDescription {
     return interactiveGlassDescription(
         context,
-        kiraUiTapSeqKey(),
+        tapSeqKey(),
         CALayoutIntent {
             widthFill: false,
             heightFill: false,
@@ -451,5 +537,5 @@ public function toolbarGlassGroup(
     context: borrow BuildContext,
     modifiers: borrow ModifierContext,
 ) -> CALayerDescription {
-    return toolbarGlass(toolbarGlassRow(move items, metrics), 0.0 - 1.0, metrics, context, modifiers)
+    return toolbarGlass(toolbarGlassRow(move items, metrics), -1.0, metrics, context, modifiers)
 }

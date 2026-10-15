@@ -52,10 +52,10 @@ public enum AlignmentAnchor {
 // 0 and `.Trailing` is the width, so a guide is written as an offset from an
 // edge and stays correct when the view resizes.
 public struct ViewDimensions {
-    let width: Float = 0.0
-    let height: Float = 0.0
+    let width: Number = 0.0
+    let height: Number = 0.0
 
-    function subscript(anchor: AlignmentAnchor) -> Float {
+    function subscript(anchor: AlignmentAnchor) -> Number {
         match anchor {
             Leading -> return 0.0
             Trailing -> return width
@@ -96,7 +96,7 @@ public construct AlignmentGuide {
     // Where the guide sits when no descendant publishes one. A container that
     // finds no answer uses this against its own dimensions, so every guide has a
     // sensible position without anything being written.
-    @Required function defaultValue(dimensions: borrow ViewDimensions) -> Float
+    @Required function defaultValue(dimensions: borrow ViewDimensions) -> Number
 }
 
 // Where the hairline under a row begins.
@@ -108,7 +108,7 @@ public construct ListRowSeparatorLeading() extends AlignmentGuide {
     let name = "listRowSeparatorLeading"
     let axis: GuideAxis = .Horizontal
 
-    function defaultValue(dimensions: borrow ViewDimensions) -> Float {
+    function defaultValue(dimensions: borrow ViewDimensions) -> Number {
         return dimensions.subscript(.Leading)
     }
 }
@@ -127,9 +127,9 @@ public construct ListRowSeparatorLeading() extends AlignmentGuide {
 // hashes to the same number, from anywhere, with nothing to keep in sync.
 //
 // Zero is the foundation's "no guide", so the result is never zero.
-public function guideTag(guide: borrow Any AlignmentGuide) -> Int {
+public function guideTag(guide: borrow Any AlignmentGuide) -> Number {
     var hash = 7
-    for code in kiraUiStringToCodepoints(guide.name) {
+    for code in stringToCodepoints(guide.name) {
         hash = (hash * 131 + code) % 1000000007
     }
     return hash + 1
@@ -142,17 +142,22 @@ public function guideTag(guide: borrow Any AlignmentGuide) -> Int {
 // The closure receives the view's own dimensions and returns a position in the
 // view's own coordinates; what an enclosing container reads is that position in
 // ITS coordinates, which the layout pass works out once the view has been placed.
-public construct AlignmentGuideLayer(guide: Any AlignmentGuide, value: (ViewDimensions) -> Float) extends Widget {
+public construct AlignmentGuideLayer(
+    guide: Any AlignmentGuide,
+    value: (ViewDimensions) -> Number
+) extends Widget {
     let content: some Widget
-
 
     // The guide rides on the content's layer for layout to resolve once the
     // layer has its width. A guide is an edge or a center and a length off it,
     // and every anchor is a fraction of the width, so the closure asked at no
     // width and at a unit width says both halves exactly.
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         var described = content.describe(context, modifiers)
-        let answer: borrow (ViewDimensions) -> Float = value
+        let answer: borrow (ViewDimensions) -> Number = value
         let atZero = answer(ViewDimensions { width: 0.0, height: 0.0 })
         let atUnit = answer(ViewDimensions { width: 1.0, height: 0.0 })
         described.layout.guide = guideTag(guide)

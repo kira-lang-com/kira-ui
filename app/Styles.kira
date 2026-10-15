@@ -25,8 +25,8 @@ public enum Appearance {
 }
 
 public struct AdaptiveColor {
-    let light: Color
-    let dark: Color
+    let light: RGBAColor
+    let dark: RGBAColor
 }
 
 // The standard colors, one adaptive pair per name. These are the values behind
@@ -86,30 +86,33 @@ public struct StyleTintTokens {
 }
 
 public struct StyleCornerRadiusTokens {
-    let none: Float
-    let small: Float
-    let medium: Float
-    let large: Float
-    let extraLarge: Float
-    let capsule: Float
+    let none: Number
+    let small: Number
+    let medium: Number
+    let large: Number
+    let extraLarge: Number
+    let capsule: Number
 }
 
 public struct StyleSpacingTokens {
-    let none: Float
-    let micro: Float
-    let extraSmall: Float
-    let small: Float
-    let medium: Float
-    let large: Float
-    let extraLarge: Float
-    let section: Float
+    // The gap a stack leaves between its children when it asks for none in
+    // particular: SwiftUI's `Spacing.defaultValue`, 8 by 8 in SwiftUICore.
+    let standard: Number
+    let none: Number
+    let micro: Number
+    let extraSmall: Number
+    let small: Number
+    let medium: Number
+    let large: Number
+    let extraLarge: Number
+    let section: Number
 }
 
 public struct FontImplementation {
-    let size: Float
+    let size: Number
     let weight: FontWeight
-    let lineHeight: Float
-    let tracking: Float
+    let lineHeight: Number
+    let tracking: Number
 }
 
 // Every entry here must be reachable from `.typography(...)`. `control` and
@@ -137,6 +140,9 @@ public enum TypographyStyle {
 }
 
 public enum Spacing {
+    // The platform's gap between adjacent views, what SwiftUI gives a stack
+    // whose spacing is nil.
+    Default
     None
     Micro
     ExtraSmall
@@ -145,6 +151,9 @@ public enum Spacing {
     Large
     ExtraLarge
     Section
+    // A gap the layout computes rather than the theme owns, such as a grid's
+    // gutter derived from its tile size or a catalog metric.
+    Length(Number)
 }
 
 // Corner radii were the one token family with no way to ask for them by name, so
@@ -239,7 +248,7 @@ public struct StyleTypographyTokens {
 // border decision, not a general one.
 public struct BorderImplementation {
     let color: AdaptiveColor
-    let width: Float
+    let width: Number
 }
 
 public struct StyleBorderTokens {
@@ -275,8 +284,8 @@ public struct StyleMaterialTokens {
     let frosted: FrostedMaterialImplementation
     let liquidGlass: LiquidGlassMaterialImplementation
     let glassTint: AdaptiveColor = AdaptiveColor {
-        light: Color { r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
-        dark: Color { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+        light: RGBAColor { r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
+        dark: RGBAColor { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
     }
 }
 
@@ -319,12 +328,13 @@ public function defaultStyleCornerRadiusTokens() -> StyleCornerRadiusTokens {
         medium: 12.0,
         large: 18.0,
         extraLarge: 24.0,
-        capsule: infinity
+        capsule: ShapeLimits.maximumRadius
     }
 }
 
 public function defaultStyleSpacingTokens() -> StyleSpacingTokens {
     return StyleSpacingTokens {
+        standard: 8.0,
         none: 0.0,
         micro: 2.0,
         extraSmall: 4.0,
@@ -347,9 +357,7 @@ public function defaultStyleBorderTokens() -> StyleBorderTokens {
 public function defaultStyleMaterialTokens() -> StyleMaterialTokens {
     return StyleMaterialTokens {
         frosted: FrostedMaterialImplementation { level: .Medium },
-        liquidGlass: LiquidGlassMaterialImplementation {
-            edgeLighting: true
-        }
+        liquidGlass: LiquidGlassMaterialImplementation { edgeLighting: true }
     }
 }
 
@@ -364,10 +372,6 @@ public construct StyleImplementation {
     @Required let typography: StyleTypographyTokens
     @Required let borders: StyleBorderTokens
     @Required let materials: StyleMaterialTokens
-    // The geometry a control is built from, per size class. Defaulted rather
-    // than required: the library ships a complete table, and a style that has no
-    // opinion about how tall a switch stands should not have to restate one.
-    let metrics: StyleMetricTokens = StyleMetricTokens {}
     // The drawings behind the symbol names, so a theme can redraw a glyph the
     // way it retunes a color.
     let symbols: StyleSymbolTokens = StyleSymbolTokens {}
@@ -380,7 +384,7 @@ public construct StyleImplementation {
         edgeLighting: true
     }
     let additionalEffect: [ShadowEffect] = []
-    let thickness: Float = 1.0
+    let thickness: Number = 1.0
 }
 
 public construct DefaultStyle() extends StyleImplementation {

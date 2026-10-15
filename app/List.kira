@@ -32,12 +32,14 @@ public enum ListStyle {
 public construct List() extends Widget {
     let children: [some Widget]
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         match modifiers.listStyle {
             Sidebar -> {
                 let rows = ScrollView() {
-                    VStack(spacing: .None) {
+                    VStack(spacing: .None, alignment: .Leading) {
                         For(child in children) {
                             child
                         }
@@ -47,7 +49,7 @@ public construct List() extends Widget {
             }
             Plain -> {
                 let rows = ScrollView() {
-                    VStack(spacing: .None) {
+                    VStack(spacing: .None, alignment: .Leading) {
                         For(child in children) {
                             child
                         }
@@ -73,33 +75,87 @@ public construct List() extends Widget {
 // the room it has and held off its edges by the column's margin, on the
 // grouped canvas. The canvas is also what it asks the column around it to be
 // painted with, so the band under the bar is the same gray.
+//
+// Two sections stand the section spacing apart, or further where one asks for
+// more room beside its header or its footer. The room is shared, not added:
+// a footer over the next section's header is as far from it as either asks,
+// which is how a grouped `Form` spaces its sections on a Mac.
+//
+// Rows standing outside any section are grouped as SwiftUI groups them: each
+// run of them is a section of its own, with no header and no footer.
 public construct InsetGroupedList() extends Widget {
     let children: [some Widget]
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         let canvas = themeAdaptiveColor(groupedBackground, modifierAppearance(modifiers))
-        kiraUiNavigationSetBackground(copy canvas)
-        let sections = VStack(spacing: .None, spacingLength: listMetrics().sectionSpacing) {
-            For(section in children) {
-                section
+        navigationSetBackground(copy canvas)
+        let sectionModifiers = modifierContextPresenting(modifiers, .InsetGrouped)
+        var grouped: [Any Widget] = []
+        var rows: [Any Widget] = []
+        for child in children {
+            if child.isSection() {
+                if rows.count > 0 {
+                    grouped.append(Section() { For(row in rows) { row } })
+                    rows = []
+                }
+                grouped.append(copy child)
+            } else {
+                rows.append(copy child)
             }
         }
-        var column = sections.describe(context, modifierContextPresenting(modifiers, .InsetGrouped))
-        column.layout.maxWidth = listMetrics().readableWidth
+        if rows.count > 0 {
+            grouped.append(Section() { For(row in rows) { row } })
+        }
+        var sections: [CALayerDescription] = []
+        for child in grouped {
+            var section = child.describe(context, sectionModifiers)
+            if describesNothing(section) {
+                continue
+            }
+            if sections.count == 0 {
+                section.layout.paddingTop = 0.0
+            } else {
+                let previous = sections.count - 1
+                section.layout.paddingTop = max(
+                    listMetrics().sectionSpacing,
+                    max(sections[previous].layout.paddingBottom, section.layout.paddingTop)
+                )
+                sections[previous].layout.paddingBottom = 0.0
+            }
+            sections.append(move section)
+        }
+        if sections.count > 0 {
+            sections[sections.count - 1].layout.paddingBottom = 0.0
+        }
         return CALayerDescription {
             layout: CALayoutIntent {
                 axis: .Column,
-                paddingLeading: modifiers.contentMargin,
+                paddingLeading: resolvedContentMargin(modifiers),
                 paddingTop: listMetrics().topInset,
-                paddingTrailing: modifiers.contentMargin,
+                paddingTrailing: resolvedContentMargin(modifiers),
                 paddingBottom: listMetrics().topInset,
                 alignment: Point { x: 0.5, y: 0.0 }
             },
-            content: .Solid(CASolid {
-                fill: caColorFromFoundation(modifierColor(foundationColor(move canvas), modifiers))
-            }),
-            sublayers: [column]
+            content: .Solid(
+                CASolid {
+                    fill: colorFromFoundation(
+                        modifierColor(foundationColor(move canvas), modifiers)
+                    )
+                }
+            ),
+            sublayers: [
+                CALayerDescription {
+                    layout: CALayoutIntent {
+                        axis: .Column,
+                        heightFill: false,
+                        maxWidth: listMetrics().readableWidth
+                    },
+                    sublayers: move sections
+                }
+            ]
         }
     }
 }
@@ -108,10 +164,15 @@ public construct InsetGroupedList() extends Widget {
 // one card, then its footer. A header or footer left at `EmptyView()` takes no
 // room at all.
 //
-// The header is the emphasized `title2`, the footer the `footnote` in the
+// The header and the footer are set in the list's faces, the footer in the
 // secondary ink; both start where the rows' content does. Every row is at
 // least the list's row height with its content centered in it, and every row
 // after the first carries a hairline across its top, inset like its content.
+//
+// The room a section asks for beside the next one is its own padding: the
+// labeled section spacing on the side a header or footer stands, none on a
+// side the card ends. The list it stands in shares that room with the next
+// section's.
 public function insetGroupedSection(
     rows: [CALayerDescription],
     header: CALayerDescription,
@@ -119,67 +180,74 @@ public function insetGroupedSection(
     modifiers: borrow ModifierContext,
 ) -> CALayerDescription {
     let radius = listMetrics().cornerRadius
-    let card = CALayerDescription {
-        layout: CALayoutIntent {
-            axis: .Column,
-            heightFill: false
-        },
-        cornerRadius: radius,
-        clipsChildren: true,
-        content: .Solid(CASolid {
-            fill: caColorFromFoundation(modifierColor(foundationColor(themeAdaptiveColor(groupedCardBackground, modifierAppearance(modifiers))), modifiers)),
-            cornerRadius: radius,
-            shapeKind: 1
-        }),
-        sublayers: move rows
-    }
-    var group: [CALayerDescription] = []
-    if !describesNothing(header) {
-        group.append(CALayerDescription {
-            layout: CALayoutIntent {
-                heightFill: false,
-                paddingLeading: listMetrics().rowInset,
-                paddingTop: listMetrics().headerPadding,
-                paddingTrailing: listMetrics().rowInset,
-                paddingBottom: listMetrics().headerPadding
-            },
-            sublayers: [move header]
-        })
-    }
-    group.append(move card)
+    let headed = !describesNothing(header)
+    let footed = !describesNothing(footer)
     var parts: [CALayerDescription] = []
-    parts.append(CALayerDescription {
-        layout: CALayoutIntent {
-            axis: .Column,
-            spacing: listMetrics().sectionSpacing,
-            heightFill: false
-        },
-        sublayers: move group
-    })
-    if !describesNothing(footer) {
-        parts.append(CALayerDescription {
-            layout: CALayoutIntent {
-                heightFill: false,
-                paddingLeading: listMetrics().rowInset,
-                paddingTop: listMetrics().footerTopInset,
-                paddingTrailing: listMetrics().rowInset,
-                paddingBottom: listMetrics().footerBottomInset
-            },
-            sublayers: [move footer]
-        })
+    if headed {
+        parts.append(
+            CALayerDescription {
+                layout: CALayoutIntent {
+                    heightFill: false,
+                    paddingLeading: listMetrics().rowInset,
+                    paddingTop: listMetrics().headerTopInset,
+                    paddingTrailing: listMetrics().rowInset,
+                    paddingBottom: listMetrics().headerBottomInset
+                },
+                sublayers: [move header]
+            }
+        )
+    }
+    parts.append(
+        CALayerDescription {
+            layout: CALayoutIntent { axis: .Column, heightFill: false },
+            cornerRadius: radius,
+            clipsChildren: true,
+            content: .Solid(
+                CASolid {
+                    fill: colorFromFoundation(
+                        modifierColor(
+                            foundationColor(
+                                themeAdaptiveColor(groupedCardBackground, modifierAppearance(modifiers))
+                            ),
+                            modifiers
+                        )
+                    ),
+                    cornerRadius: radius,
+                    shapeKind: 1
+                }
+            ),
+            sublayers: move rows
+        }
+    )
+    if footed {
+        parts.append(
+            CALayerDescription {
+                layout: CALayoutIntent {
+                    heightFill: false,
+                    paddingLeading: listMetrics().rowInset,
+                    paddingTop: listMetrics().footerTopInset,
+                    paddingTrailing: listMetrics().rowInset,
+                    paddingBottom: listMetrics().footerBottomInset
+                },
+                sublayers: [move footer]
+            }
+        )
     }
     return CALayerDescription {
         layout: CALayoutIntent {
             axis: .Column,
-            heightFill: false
+            heightFill: false,
+            paddingTop: headed ? listMetrics().labeledSectionSpacing : 0.0,
+            paddingBottom: footed ? listMetrics().labeledSectionSpacing : 0.0
         },
         sublayers: move parts
     }
 }
 
-// One row of a grouped card: its content across the row and centered down at
-// least the row height, held off the card's edges, under a hairline when a row
-// comes before it.
+// One row of a grouped card: its content across the row, held off the card's
+// edges and off the row's top and bottom, and centered down at least the row
+// height, under a hairline when a row comes before it. A control taller than
+// a line makes its row taller, as it does in a grouped `Form`.
 //
 // A row whose content can be pressed is pressed as a whole: the hit region is
 // lifted off the content onto the row, and the row lights edge to edge while
@@ -196,27 +264,42 @@ public function insetGroupedRow(
     let pressable = inner.hittable
     inner.hittable = false
     var layers: [CALayerDescription] = []
-    layers.append(CALayerDescription {
-        layout: CALayoutIntent {
-            heightFill: false,
-            minHeight: listMetrics().rowHeight,
-            alignment: Point { x: 0.0, y: 0.5 }
-        },
-        sublayers: [move inner]
-    })
+    layers.append(
+        CALayerDescription {
+            layout: CALayoutIntent {
+                heightFill: false,
+                minHeight: listMetrics().rowHeight,
+                paddingTop: listMetrics().rowVerticalInset,
+                paddingBottom: listMetrics().rowVerticalInset,
+                alignment: Point { x: 0.0, y: 0.5 }
+            },
+            sublayers: [move inner]
+        }
+    )
     // The hairline starts where the row says its separator does -- a label's
     // title, past its glyph -- and at the row's edge when nothing says.
     if separated {
-        layers.append(CALayerDescription {
-            layout: CALayoutIntent {
-                heightFill: false,
-                fixedHeight: listMetrics().separatorThickness,
-                followsGuide: guideTag(ListRowSeparatorLeading())
-            },
-            content: .Solid(CASolid {
-                fill: caColorFromFoundation(modifierColor(foundationColor(themeAdaptiveColor(listSeparator, modifierAppearance(modifiers))), modifiers))
-            })
-        })
+        layers.append(
+            CALayerDescription {
+                layout: CALayoutIntent {
+                    heightFill: false,
+                    fixedHeight: listMetrics().separatorThickness,
+                    followsGuide: guideTag(ListRowSeparatorLeading())
+                },
+                content: .Solid(
+                    CASolid {
+                        fill: colorFromFoundation(
+                            modifierColor(
+                                foundationColor(
+                                    themeAdaptiveColor(listSeparator, modifierAppearance(modifiers))
+                                ),
+                                modifiers
+                            )
+                        )
+                    }
+                )
+            }
+        )
     }
     return CALayerDescription {
         layout: CALayoutIntent {
@@ -226,10 +309,8 @@ public function insetGroupedRow(
         },
         hittable: pressable,
         hitKey: pressable ? key : 0,
-        content: .Solid(CASolid {
-            fill: caColorFromFoundation(transparentFoundationColor())
-        }),
-        hoverColor: pressable ? kiraUiHoverColor(modifiers) : CAColor { a: 0.0 },
+        content: .Solid(CASolid { fill: colorFromFoundation(transparentFoundationColor()) }),
+        hoverColor: pressable ? hoverHighlight(modifiers) : CAColor { a: 0.0 },
         pressColor: insetGroupedRowWash(pressable, modifiers),
         sublayers: move layers
     }
@@ -241,15 +322,25 @@ public function insetGroupedRowWash(pressable: Bool, modifiers: borrow ModifierC
     if !pressable {
         return CAColor { a: 0.0 }
     }
-    return caColorFromFoundation(modifierColor(foundationColor(themeAdaptiveColor(listRowHighlight, modifierAppearance(modifiers))), modifiers))
+    return colorFromFoundation(
+        modifierColor(
+            foundationColor(themeAdaptiveColor(listRowHighlight, modifierAppearance(modifiers))),
+            modifiers
+        )
+    )
 }
 
 public construct ListStyleLayer(style: ListStyle) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        return content.describe(context, modifierContextApply(modifiers, modifierDeltaListStyle(style)))
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        return content.describe(
+            context,
+            modifierContextApply(modifiers, modifierDeltaListStyle(style))
+        )
     }
 }
 
@@ -260,12 +351,14 @@ public construct ListStyleLayer(style: ListStyle) extends Widget {
 public construct SidebarSectionHeader() extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         let title = content
-            .typography(.body)
-            .foregroundColor(.Secondary)
-            .describe(context, modifiers)
+        .typography(.body)
+        .foregroundColor(.Secondary)
+        .describe(context, modifiers)
         if describesNothing(title) {
             return title
         }
@@ -289,18 +382,28 @@ public construct SidebarSectionHeader() extends Widget {
 public construct SidebarRow(selected: Bool, action: () -> Void) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        kiraUiSidebarSelectionRow(selected)
-        let key = kiraUiTapSeqKey()
-        kiraUiLayerActionRegister(key, action)
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        sidebarSelectionRow(selected)
+        let key = tapSeqKey()
+        layerActionRegister(key, action)
         let face = modifierTypography(modifiers, .body)
         let cell = modifiers.controlPresentation == .SidebarCell
-        let title = content.font(size: face.size, weight: sidebarRowWeight(selected))
-        var row = cell ? title.describe(context, modifierContextPresenting(modifiers, .Sidebar)) : title.describe(context, modifiers)
+        let title = content.font(
+            size: resolvedLength(face.size),
+            weight: sidebarRowWeight(selected)
+        )
+        var row = cell ? title.describe(
+            context,
+            modifierContextPresenting(modifiers, .Sidebar)
+        ) : title.describe(context, modifiers)
         row.hittable = !modifiers.disabled
         row.hitKey = key
-        row.backgroundColor = caColorFromFoundation(modifierColor(foundationColor(sidebarRowBand(selected, modifiers)), modifiers))
+        row.backgroundColor = colorFromFoundation(
+            modifierColor(foundationColor(sidebarRowBand(selected, modifiers)), modifiers)
+        )
         if cell {
             return row
         }
@@ -317,7 +420,10 @@ public construct SidebarRow(selected: Bool, action: () -> Void) extends Widget {
 // On a phone or a tablet the press is the cell's, the column's whole width. On
 // a desktop the row also lights under the pointer, and a wash lights the layer
 // pressed, so the press is the band's: the one layer shaped like the row.
-public function sidebarRowCell(content: CALayerDescription, modifiers: borrow ModifierContext) -> CALayerDescription {
+public function sidebarRowCell(
+    content: CALayerDescription,
+    modifiers: borrow ModifierContext
+) -> CALayerDescription {
     var inner = content
     let key = inner.hitKey
     let pressable = inner.hittable
@@ -346,14 +452,10 @@ public function sidebarRowCell(content: CALayerDescription, modifiers: borrow Mo
             },
             hittable: pressable && onBand,
             hitKey: pressable && onBand ? key : 0,
-            hoverColor: kiraUiHoverColor(modifiers),
+            hoverColor: hoverHighlight(modifiers),
             cornerRadius: radius,
             disablesActions: true,
-            content: .Solid(CASolid {
-                fill: band,
-                cornerRadius: radius,
-                shapeKind: 1
-            }),
+            content: .Solid(CASolid { fill: band, cornerRadius: radius, shapeKind: 1 }),
             sublayers: [move inner]
         }]
     }
@@ -368,9 +470,9 @@ public function sidebarRowWeight(selected: Bool) -> FontWeight {
 
 // The band behind a sidebar row: the sidebar's selection wash when the row is
 // selected, nothing otherwise.
-public function sidebarRowBand(selected: Bool, modifiers: borrow ModifierContext) -> Color {
+public function sidebarRowBand(selected: Bool, modifiers: borrow ModifierContext) -> RGBAColor {
     if selected {
         return themeAdaptiveColor(sidebarSelection, modifierAppearance(modifiers))
     }
-    return Color { a: 0.0 }
+    return RGBAColor { a: 0.0 }
 }

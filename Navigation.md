@@ -1,13 +1,19 @@
 # KiraUI Navigation
 
 KiraUI follows SwiftUI’s navigation model: the path is data, links append
-values, and destination mappings turn those values into screens. Containers
-own presentation. A screen never asks whether it is running on a phone or a
-desktop.
+routes, and the stack shows the screen the route at the end of the path
+draws. Containers own presentation. A screen never asks whether it is running
+on a phone or a desktop.
 
 ```kira
-NavigationValue SettingsRoute {
-    navigationType { return "SettingsRoute" }
+construct SettingsRoute() extends NavigationRoute {
+    function routeKey() -> String {
+        return "settings"
+    }
+
+    function destination() -> Any Widget {
+        return SettingsPage()
+    }
 }
 
 @State var navigationPath: NavigationPath = NavigationPath {}
@@ -18,14 +24,10 @@ NavigationStack(path = navigationPath) {
             Text("Settings")
         }
     }
-    .navigationDestination(
-        forType = SettingsRoute(),
-        destination = SettingsPage()
-    )
 }
 ```
 
-The intended SwiftUI shape is:
+The SwiftUI shape it follows is:
 
 ```swift
 NavigationStack(path: $path) {
@@ -36,18 +38,22 @@ NavigationStack(path: $path) {
 }
 ```
 
-Kira route values are declarations backed by `NavigationValue`. The path stores
-heterogeneous `Any NavigationValue` values, so each route remains a typed value;
-there is no numeric route discriminator. Kira uses a typed route witness with
-`forType` because it does not currently expose Swift's `Route.self` metatype
-expression. This is a syntax limitation, not an integer-based navigation model.
+Each route an app goes to is a construct of the `NavigationRoute` family. Its
+`routeKey()` plays the part SwiftUI's `Hashable` does: two routes with one key
+are the same place, which is how a sidebar row knows it is selected and how
+a change to the path is told from none. A route carries what its screen needs,
+`ProjectRoute(name: "Kira")`, and draws that screen itself in
+`destination()`. Where SwiftUI looks a value's type up in the destinations the
+stack registered, a KiraUI route draws its own, because a route an app makes
+and KiraUI holds crosses a module's edge, and nothing crossing one is asked its
+type (KLF-RIDL section 19).
 
 ## Path and containers
 
 `NavigationPath` provides `append(value:)`, `removeLast()`, `removeAll()`,
-`values()`, `lastMatches(value:)`, and `isEmpty()`. `NavigationLink(value:)`
-uses the nearest path automatically. The root view is never part of the path,
-so it cannot be popped.
+`values()`, `last()`, `startsWith(value:)` and `isEmpty()`.
+`NavigationLink(value:)` uses the nearest path automatically. The root view is
+never part of the path, so it cannot be popped.
 
 A link whose label is a title has a second way to be constructed, matching
 SwiftUI's `NavigationLink("Settings", value: route)`:
@@ -106,8 +112,8 @@ Settings
 └── Account
 ```
 
-The important part is that every level appends a value to the same path. The
-detail stack registers all mappings once:
+Every level appends a route to the same path, and the detail stack shows
+whichever route the path ends at:
 
 ```kira
 NavigationSplitView(path = navigationPath) {
@@ -117,20 +123,8 @@ NavigationSplitView(path = navigationPath) {
 }
 
 NavigationStack(path = navigationPath) {
-    WorkspaceHome(path = navigationPath)
+    WorkspaceHome()
 }
-.navigationDestination(
-    forType = ProjectsRoute(),
-    destination = ProjectsPage(path = navigationPath)
-)
-.navigationDestination(
-    forType = ProjectOverviewRoute(),
-    destination = ProjectOverviewPage(path = navigationPath)
-)
-.navigationDestination(
-    forType = ProjectFilesRoute(),
-    destination = ProjectFilesPage(path = navigationPath)
-)
 ```
 
 For a deep link, the same path can be populated in order:

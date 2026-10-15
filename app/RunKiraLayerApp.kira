@@ -1,6 +1,7 @@
 import Ember
 import KiraLayout
 import Foundation
+import Heap
 import KCoreAnimation
 
 // The retained run loop: a window that reconciles a description tree each time
@@ -13,19 +14,21 @@ import KCoreAnimation
 // makes a state change ANIMATE: the same layers are still there, so a changed
 // property moves from where it was rather than snapping.
 //
-// The chain is `describe` -> `caLayoutTree` -> `caReconcile` -> advance ->
-// `caCompositorEncode` -> present, and hit testing reads the same retained tree
+// The chain is `describe` -> `CALayerDescription.layoutTree` -> `CALayerTree.reconcile` -> advance ->
+// `Compositor.encode` -> present, and hit testing reads the same retained tree
 // the frame was drawn from.
 
+public namespace ScrollWheel {
+    // How far one line of a wheel moves the content: AppKit's line scroll.
+    let line: Number = 10.0
+}
+
 // The state a running retained app carries between frames: the compositor and
-// its retained tree, the batch that owns the glyph atlas and pipelines, and the
-// input the window has forwarded.
+// its retained tree, and the input the window has forwarded.
 public struct KiraLayerAppState {
-    var stateScope: U64 = U64(0)
+    var stateScope: AmbientScope = AmbientScope(0)
     var compositor: Compositor = Compositor {}
-    var batch: UiBatch
-    var batchReady: Bool = false
-    var frameCount: Int = 0
+    var frameCount: Number = 0
     var ui: FoundationUiContext = FoundationUiContext {}
     var transparent: Bool = false
     // The interactive surface the held press landed on -- its layer, and the
@@ -34,7 +37,7 @@ public struct KiraLayerAppState {
     // place on the surface is the second moved by however far the pointer has
     // gone from the first.
     var pressSurfaceLayer: LayerId = LayerId(0)
-    var pressSurface: Int = 0
+    var pressSurface: Number = 0
     var pressWindow: Point = Point {}
     var pressLocal: Point = Point {}
     var pressSize: Size = Size {}
@@ -44,39 +47,43 @@ public struct KiraLayerAppState {
     // within; the pull may have gone on to another card's bare glass since.
     var pressedPanelLayer: LayerId = LayerId(0)
     // Counts the presses held on surfaces, so each is told from the last.
-    var pressSerial: Int = 0
+    var pressSerial: Number = 0
     // The pressed control's box as the press found it.
     var pressBounds: Rect = Rect {}
     var touchOrigin: Point = Point {}
     var touchPosition: Point = Point {}
-    var touchScrollTarget: Int = 0
+    var touchScrollTarget: Number = 0
     var touchScrolling: Bool = false
     var touchNavigating: Bool = false
     // What the last rebuild was built from: the input it had seen, and the
     // color scheme and interface mode it was drawn in. A frame that finds all
     // three as they were, and nothing moving, has nothing new to show and is
     // not drawn at all.
-    var builtEventCount: Int = -1
-    var builtScheme: Int = 0
+    var builtEventCount: Number = -1
+    var builtScheme: PlatformScheme = .Unstated
     var builtMode: InterfaceMode = .AdaptiveDesktop
     // Whether the retained tree was still animating on the last frame drawn,
     // so the frame it settles on is drawn too.
     var layersMoving: Bool = false
 }
 
-public function kiraLayerViewport(frame: borrow RenderFrame, fallbackWidth: Int, fallbackHeight: Int) -> Size {
+public function kiraLayerViewport(
+    frame: borrow RenderFrame,
+    fallbackWidth: Number,
+    fallbackHeight: Number
+) -> Size {
     var width = frame.viewportWidth()
     var height = frame.viewportHeight()
     if width <= 0.0 {
-        width = intAsFloat(value: fallbackWidth)
+        width = Number(fallbackWidth)
     }
     if height <= 0.0 {
-        height = intAsFloat(value: fallbackHeight)
+        height = Number(fallbackHeight)
     }
     let renderScale = foundationRenderScale(frame.backingScale())
     if renderScale > 0.0 {
-        width = intAsFloat(value: frame.drawableWidth()) / renderScale
-        height = intAsFloat(value: frame.drawableHeight()) / renderScale
+        width = Number(frame.drawableWidth()) / renderScale
+        height = Number(frame.drawableHeight()) / renderScale
     }
     if width <= 0.0 || height <= 0.0 {
         return Size { width: 1280.0, height: 720.0 }
@@ -91,23 +98,29 @@ public function kiraLayerViewport(frame: borrow RenderFrame, fallbackWidth: Int,
 // A press is the platform's: going down on a control holds it, and the control
 // acts when the pointer comes back up ON it. Sliding off before letting go
 // cancels, which is how a press is taken back.
-public function kiraLayerDispatch(userData: RawPtr, x: Float, y: Float, kind: EMAppEventKind) {
-    var state = nativeRecover<KiraLayerAppState>(userData)
+public function kiraLayerDispatch(
+    state: borrow mut KiraLayerAppState,
+    x: Number,
+    y: Number,
+    kind: AppEventKind
+) {
     state.ui.pointerX = x
     state.ui.pointerY = y
-    let hit = caHitTestTree(state.compositor.tree, x, y)
+    // A pointer that left the window is over nothing in it, wherever it was
+    // last seen.
+    let hit = kind == .PointerExited ? CAHitResult {} : state.compositor.tree.hitTestTree(x, y)
     let hoveredBefore = state.ui.hoveredKey
     state.ui.hoveredKey = hit.hit ? hit.hitKey : 0
-    state.compositor.tree.setHovered(hit.hit ? hit.layer : caNoLayer())
+    state.compositor.tree.setHovered(hit.hit ? hit.layer : Layers.none)
     if kind == .PointerDown {
         state.ui.pressedKey = state.ui.hoveredKey
-        state.compositor.tree.setPressed(hit.hit ? hit.layer : caNoLayer())
+        state.compositor.tree.setPressed(hit.hit ? hit.layer : Layers.none)
         kiraLayerHoldSurface(state, hit, x, y)
         state.pressSlides = hit.surfaceSlides
         state.pressedPanelLayer = hit.surfaceLayer
         // A press focuses the field it lands on, and anywhere else ends the
         // editing, as a tap outside a field does.
-        state.ui.focusedKey = kiraUiLayerTextInputAccepts(state.ui.hoveredKey) ? state.ui.hoveredKey : 0
+        kiraLayerFocus(state, layerTextInputAccepts(state.ui.hoveredKey) ? state.ui.hoveredKey : 0)
         // Where the control stood when it was pressed, before a press could
         // move or grow it.
         state.pressBounds = Rect {
@@ -155,79 +168,75 @@ public function kiraLayerDispatch(userData: RawPtr, x: Float, y: Float, kind: EM
     if kind == .PointerUp {
         let released = state.ui.pressedKey
         state.ui.pressedKey = 0
-        state.compositor.tree.setPressed(caNoLayer())
-        state.pressSurfaceLayer = caNoLayer()
+        state.compositor.tree.setPressed(Layers.none)
+        state.pressSurfaceLayer = Layers.none
         state.pressSurface = 0
         state.pressSlides = false
-        state.pressedPanelLayer = caNoLayer()
+        state.pressedPanelLayer = Layers.none
         if released != 0 && released == state.ui.hoveredKey {
             state.ui.clickedKey = released
             // Where the control is, for an action that opens something from it.
             foundationWritePressBounds(state.ui, state.pressBounds)
             // The release runs the action the pressed key was bound to during
             // the last rebuild's `describe`.
-            kiraUiLayerActionInvoke(released)
+            layerActionInvoke(released)
         }
     }
     // A pointer that only passes over the window changes nothing drawn until
     // it crosses onto another control or carries a press with it.
     let held = state.ui.pressedKey != 0 || state.pressSurface != 0
     if kind != .PointerMoved || state.ui.hoveredKey != hoveredBefore || held {
-        state.ui.eventCount = state.ui.eventCount + 1
+        state.ui.eventCount++
     }
     foundationWriteInputSnapshot(state.ui)
-    return
 }
 
 // Every event but a bare pointer move is input the interface may answer, so it
-// counts toward the next rebuild whether or not anything handles it here.
-public function kiraLayerNoteEvent(userData: RawPtr, kind: EMAppEventKind) {
+// counts toward the next rebuild whether or not anything handles it here. One
+// that moves the scene's phase moves the environment's first.
+public function kiraLayerNoteEvent(state: borrow mut KiraLayerAppState, kind: AppEventKind) {
+    environmentNoteEvent(kind)
     if kind == .PointerMoved {
         return
     }
-    var state = nativeRecover<KiraLayerAppState>(userData)
-    state.ui.eventCount = state.ui.eventCount + 1
-    return
+    state.ui.eventCount++
 }
 
-// Draw the retained tree as it stands: encode it and present it over the
-// window's canvas.
-public function kiraLayerDraw(state: borrow mut KiraLayerAppState, frame: borrow mut RenderFrame, viewport: borrow Size) {
-    let graphics = foundationFrameGraphics(frame)
-    caCompositorEncode(
-        state.compositor,
-        frame,
-        graphics,
-        state.batch,
-        viewport.width,
-        viewport.height,
-        foundationRenderScale(frame.backingScale()),
-        state.transparent
-    )
-    // A window is cleared to its own canvas, the color its root paints. The
-    // root's edges are antialiased like any layer's, so the pixels along the
-    // window's sides are only partly covered, and a clear of any other color
-    // shows through them as a strip down each side.
-    var page = foundationPageFor(state.transparent)
-    if !state.transparent {
-        let canvas = caColorFromFoundation(navigationCanvas(ModifierContext {}))
-        page = Color { r: canvas.r, g: canvas.g, b: canvas.b, a: canvas.a }
+// Gives the keyboard to the field under `key`, or to none with zero. The field
+// that had it and the field that takes it both hear, so the focus state bound
+// to each follows.
+public function kiraLayerFocus(state: borrow mut KiraLayerAppState, key: Number) {
+    let before = state.ui.focusedKey
+    if before == key {
+        return
     }
-    state.batch.presentBatch(frame, graphics, page.r, page.g, page.b, page.a)
-    return
+    state.ui.focusedKey = key
+    layerFocusChanged(before, false)
+    layerFocusChanged(key, true)
+    state.ui.eventCount++
+}
+
+// Moves the keyboard where the last build's focus state asked: to the field it
+// named, or off the one it stopped naming.
+public function kiraLayerFocusRequested(state: borrow mut KiraLayerAppState) {
+    let claimed = layerFocusClaimed()
+    if claimed != 0 {
+        kiraLayerFocus(state, claimed)
+    } else if layerFocusReleased() == state.ui.focusedKey {
+        kiraLayerFocus(state, 0)
+    }
 }
 
 // Forward the keyboard: a key that is a button's shortcut presses the button,
 // and Escape puts the menu bar's menu away. Anything else goes to the focused
 // field: a typed character as text, any other key as a command. Escape ends
 // the editing instead.
-public function kiraLayerDispatchKeyboard(userData: RawPtr, event: borrow EMAppEvent) {
-    var state = nativeRecover<KiraLayerAppState>(userData)
+public function kiraLayerDispatchKeyboard(state: borrow mut KiraLayerAppState, event: borrow AppEvent) {
     let focused = state.ui.focusedKey
     if event.kind == .KeyDown {
-        let pressed = kiraUiShortcutPerform(event.keyCode, event.modifiers, focused != 0)
-        if pressed || (event.keyCode == 256 && kiraUiMenuBarDismiss()) {
-            state.ui.eventCount = state.ui.eventCount + 1
+        let pressed = shortcutPerform(event.key, event.modifiers, focused != 0)
+        if pressed || (event.key == .Escape && menuBarDismiss()) {
+            state.ui.eventCount++
             return
         }
     }
@@ -235,15 +244,14 @@ public function kiraLayerDispatchKeyboard(userData: RawPtr, event: borrow EMAppE
         return
     }
     if event.kind == .TextInput {
-        kiraUiLayerTextInputDeliver(focused, event.textCodepoint, false)
-    } else if event.keyCode == 256 {
-        state.ui.focusedKey = 0
+        layerTextInputType(focused, event.textCodepoint)
+    } else if event.key == .Escape {
+        kiraLayerFocus(state, 0)
     } else {
-        kiraUiLayerTextInputDeliver(focused, event.keyCode, true)
+        layerTextInputCommand(focused, event.key)
     }
-    state.ui.eventCount = state.ui.eventCount + 1
+    state.ui.eventCount++
     foundationWriteInputSnapshot(state.ui)
-    return
 }
 
 // Forward a trackpad's scroll to the scroll view under the pointer and to the
@@ -252,43 +260,35 @@ public function kiraLayerDispatchKeyboard(userData: RawPtr, event: borrow EMAppE
 // and a swipe starts only off the controls. Once the fingers are swiping back,
 // the scroll view lets them go. A wheel reports no phases: its notches step
 // the scroll view under the pointer.
-public function kiraLayerDispatchScroll(userData: RawPtr, event: borrow EMAppEvent) {
+public function kiraLayerDispatchScroll(state: borrow KiraLayerAppState, event: borrow AppEvent) {
     if !event.scrollPrecise {
-        let state = nativeRecover<KiraLayerAppState>(userData)
-        let hit = caHitTestTree(state.compositor.tree, event.pointerX, event.pointerY)
-        kiraUiScrollWheel(hit.scrollKey, 0.0 - event.scrollY * kiraLayerWheelLine())
+        let hit = state.compositor.tree.hitTestTree(event.pointerX, event.pointerY)
+        scrollWheel(hit.scrollKey, -event.scrollY * ScrollWheel.line)
         return
     }
     if event.scrollMomentum != .None {
         return
     }
     if event.scrollPhase == .Began {
-        let state = nativeRecover<KiraLayerAppState>(userData)
-        let hit = caHitTestTree(state.compositor.tree, event.pointerX, event.pointerY)
-        kiraUiNavigationSwipeBegin(event.pointerX, event.pointerY, hit.hit)
-        kiraUiScrollDragBegin(hit.scrollKey, motionRubberBandConstantTrackpad(), event.timestamp)
+        let hit = state.compositor.tree.hitTestTree(event.pointerX, event.pointerY)
+        navigationSwipeBegin(event.pointerX, event.pointerY, hit.hit)
+        scrollDragBegin(hit.scrollKey, MotionDecay.rubberBandConstantTrackpad, event.timestamp)
     }
     if event.scrollPhase == .Began || event.scrollPhase == .Changed {
         // The deltas follow the fingers under natural scrolling and run
         // against them otherwise; the swipe wants the fingers, and the
         // content goes the way the deltas do either way.
-        let across = event.scrollInverted ? event.scrollX : 0.0 - event.scrollX
-        if kiraUiNavigationSwipeMove(across, event.scrollY) {
-            kiraUiScrollDragCancel()
+        let across = event.scrollInverted ? event.scrollX : -event.scrollX
+        if navigationSwipeMove(across, event.scrollY) {
+            scrollDragCancel()
         } else {
-            kiraUiScrollDragMove(event.scrollY, event.timestamp)
+            scrollDragMove(event.scrollY, event.timestamp)
         }
     }
     if event.scrollPhase == .Ended || event.scrollPhase == .Cancelled {
-        kiraUiNavigationSwipeEnd()
-        kiraUiScrollDragEnd()
+        navigationSwipeEnd()
+        scrollDragEnd()
     }
-    return
-}
-
-// How far one line of a wheel moves the content: AppKit's line scroll.
-public function kiraLayerWheelLine() -> Float {
-    return 10.0
 }
 
 // Forward a touch to the stack's swipe back, as a trackpad's fingers are.
@@ -296,26 +296,29 @@ public function kiraLayerWheelLine() -> Float {
 // it. A surface it leaves while still held -- a menu's card it slid out of --
 // lets go as it would on release and goes home on its own spring; this one
 // takes the press up where the pointer came onto it.
-public function kiraLayerHoldSurface(state: borrow mut KiraLayerAppState, hit: borrow CAHitResult, x: Float, y: Float) {
-    state.pressSerial = state.pressSerial + 1
+public function kiraLayerHoldSurface(
+    state: borrow mut KiraLayerAppState,
+    hit: borrow CAHitResult,
+    x: Number,
+    y: Number
+) {
+    state.pressSerial++
     state.pressSurfaceLayer = hit.surfaceLayer
     state.pressSurface = hit.surfaceKey
     state.pressWindow = Point { x: x, y: y }
     state.pressLocal = Point { x: hit.surfaceX, y: hit.surfaceY }
     state.pressSize = Size { width: hit.surfaceWidth, height: hit.surfaceHeight }
     state.pressOnControl = hit.hit && hit.hitKey != hit.surfaceKey
-    return
 }
 
 // A touch has one owner: a control press until motion claims scrolling or
 // navigation. The winner cancels the press, and lifting cannot also tap a control.
-public function kiraLayerDispatchTouch(userData: RawPtr, event: borrow EMAppEvent) {
-    var state = nativeRecover<KiraLayerAppState>(userData)
+public function kiraLayerDispatchTouch(state: borrow mut KiraLayerAppState, event: borrow AppEvent) {
     let x = event.pointerX
     let y = event.pointerY
     if event.kind == .TouchesBegan {
-        kiraLayerDispatch(userData, x, y, .PointerDown)
-        let hit = caHitTestTree(state.compositor.tree, x, y)
+        kiraLayerDispatch(state, x, y, .PointerDown)
+        let hit = state.compositor.tree.hitTestTree(x, y)
         state.touchOrigin = Point { x: x, y: y }
         state.touchPosition = Point { x: x, y: y }
         state.touchScrollTarget = hit.scrollKey
@@ -323,15 +326,15 @@ public function kiraLayerDispatchTouch(userData: RawPtr, event: borrow EMAppEven
         state.touchNavigating = false
         // An edge back gesture can begin on a control; it takes the press only
         // after moving horizontally, just as an ordinary page swipe does.
-        kiraUiNavigationSwipeBegin(x, y, hit.hit && x > navigationTransitionMetrics().swipeSlop * 2.0)
+        navigationSwipeBegin(x, y, hit.hit && x > navigationTransitionMetrics().swipeSlop * 2.0)
         return
     }
     if event.kind == .TouchesMoved {
-        kiraLayerDispatch(userData, x, y, .PointerMoved)
+        kiraLayerDispatch(state, x, y, .PointerMoved)
         let across = x - state.touchOrigin.x
         let down = y - state.touchOrigin.y
         let deltaY = y - state.touchPosition.y
-        if !state.touchScrolling && kiraUiNavigationSwipeTouchMove(x, y) {
+        if !state.touchScrolling && navigationSwipeTouchMove(x, y) {
             state.touchNavigating = true
         }
         var scrollDistance = deltaY
@@ -339,255 +342,83 @@ public function kiraLayerDispatchTouch(userData: RawPtr, event: borrow EMAppEven
             if abs(down) > navigationTransitionMetrics().swipeSlop && abs(down) > abs(across) {
                 state.touchScrolling = true
                 scrollDistance = down
-                kiraUiScrollDragBegin(state.touchScrollTarget, motionRubberBandConstantTrackpad(), event.timestamp)
+                scrollDragBegin(
+                    state.touchScrollTarget,
+                    MotionDecay.rubberBandConstantTrackpad,
+                    event.timestamp
+                )
             }
         }
         if state.touchScrolling || state.touchNavigating {
             state.ui.pressedKey = 0
-            state.compositor.tree.setPressed(caNoLayer())
+            state.compositor.tree.setPressed(Layers.none)
             state.pressSurface = 0
-            state.pressSurfaceLayer = caNoLayer()
-            state.pressedPanelLayer = caNoLayer()
+            state.pressSurfaceLayer = Layers.none
+            state.pressedPanelLayer = Layers.none
             state.pressSlides = false
             foundationWriteInputSnapshot(state.ui)
         }
-        if state.touchScrolling { kiraUiScrollDragMove(scrollDistance, event.timestamp) }
+        if state.touchScrolling { scrollDragMove(scrollDistance, event.timestamp) }
         state.touchPosition = Point { x: x, y: y }
         return
     }
     if event.kind == .TouchesEnded || event.kind == .TouchesCancelled {
-        kiraUiNavigationSwipeEnd()
+        navigationSwipeEnd()
         if state.touchScrolling {
-            if event.kind == .TouchesCancelled { kiraUiScrollDragCancel() }
-            else { kiraUiScrollDragEnd() }
+            if event.kind == .TouchesCancelled { scrollDragCancel() }
+            else { scrollDragEnd() }
         }
         if event.kind == .TouchesCancelled { state.ui.pressedKey = 0 }
-        kiraLayerDispatch(userData, x, y, .PointerUp)
+        kiraLayerDispatch(state, x, y, .PointerUp)
         state.touchScrolling = false
         state.touchNavigating = false
         state.touchScrollTarget = 0
     }
-    return
 }
 
 // Whether a press at this point moves the window: it is on the chrome's band and
 // on none of the controls drawn there, decided against the tree the last frame
 // drew, as a press on a control is.
-public function kiraLayerWindowDragRegion(userData: RawPtr, x: Float, y: Float) -> Bool {
-    if !kiraUiToolbarWindowDragRegion(x, y) {
+// Whether (`x`, `y`) is on the window's bar, clear of its controls. `inset`
+// is how far into the surface the window starts, where it draws its own
+// shadow round itself.
+public function kiraLayerWindowDragRegion(
+    state: borrow KiraLayerAppState,
+    x: Number,
+    y: Number,
+    inset: Number = 0
+) -> Bool {
+    if !toolbarWindowDragRegion(x - inset, y - inset) {
         return false
     }
-    let state = nativeRecover<KiraLayerAppState>(userData)
-    return !caHitTestTree(state.compositor.tree, x, y).hit
+    return !state.compositor.tree.hitTestTree(x, y).hit
 }
-
 public function RunKiraLayerApp(
     title: String,
-    width: Int,
-    height: Int,
+    width: Number,
+    height: Number,
     rootBuilder: borrow () -> Any Widget,
     transparent: Bool = false,
     // Host hook run first every frame, before the UI pass — where an engine
     // ticks its simulation and renders its offscreen viewport for a TextureView
     // to show this same frame. Default is a no-op.
-    engineFrame: borrow (borrow mut RenderFrame) -> Void = kiraUiNoopEngineFrame,
+    engineFrame: borrow (borrow mut RenderFrame) -> Void = noopEngineFrame,
     // Rebuild every frame rather than when something changed, for a host whose
     // interface follows state that moves on its own schedule -- an engine's,
     // not the person's -- with nothing to say when it does.
     rebuildsEveryFrame: Bool = false,
+    // The identifier the app's Info.klist names it by, which its
+    // `@AppStorage` values are kept under; see AppStorage.kira.
+    bundleIdentifier: String = "",
 ) {
-    let previousStateScope = stateScopeCurrent()
-    let layerStateScope = stateScopeCreate()
-    stateScopeEnter(layerStateScope)
-    let runtimeStorage = nativeState(KiraLayerAppState {
-        stateScope: layerStateScope,
-        batch: UiBatch { storage: nativeState(UiBatchState {
-            engine: nullPointer(),
-            face: nullPointer(),
-            monoFace: nullPointer(),
-            contentsPtr: nullPointer(),
-            atlasPixels: nullPointer()
-        }) },
-        transparent: transparent
-    })
-    let runtimeUser = nativeUserDataBorrow(runtimeStorage)
-
-    var app = EMGraphicsApplication {
-        title: title,
-        width: width,
-        height: height,
-        sampleCount: 1,
-        transparent: transparent,
-        // An opaque window is a document window: its title and toolbar share
-        // one band the content runs under, and KiraUI draws what sits on it.
-        titlebar: transparent ? .Standard : .Unified,
-        // And its corner is the platform's window corner, not the desktop's.
-        cornerRadius: transparent ? 0.0 : windowChromeMetrics().cornerRadius,
-        windowDragRegion: { x, y in
-            return kiraLayerWindowDragRegion(runtimeUser, x, y)
-        },
-        backend: graphicsDefaultBackend()
-    }
-
-    app.onEvent { event in
-        kiraLayerNoteEvent(runtimeUser, event.kind)
-        if event.kind == .PointerMoved || event.kind == .PointerDown || event.kind == .PointerUp {
-            kiraLayerDispatch(runtimeUser, event.pointerX, event.pointerY, event.kind)
-        }
-        if event.kind == .TextInput || event.kind == .KeyDown {
-            kiraLayerDispatchKeyboard(runtimeUser, event)
-        }
-        if event.kind == .Scroll {
-            kiraLayerDispatchScroll(runtimeUser, event)
-        }
-        if event.kind == .TouchesBegan || event.kind == .TouchesMoved || event.kind == .TouchesEnded || event.kind == .TouchesCancelled {
-            kiraLayerDispatchTouch(runtimeUser, event)
-        }
-        return
-    }
-
-    app.onFrame { frame in
-        // Engine-first: the host's simulation and offscreen passes complete
-        // before any UI work, so a TextureView composites this frame's output.
-        let hostFrame: borrow (borrow mut RenderFrame) -> Void = engineFrame
-        hostFrame(frame)
-        var state = nativeRecover<KiraLayerAppState>(frame.userData)
-        let viewport = kiraLayerViewport(frame, width, height)
-        // A window being resized lays its content out again every frame, and
-        // the content takes the new size as the window does, as UIKit's does in
-        // a live resize: nothing slides to where the new layout puts it, and
-        // nothing already animating is cut short.
-        let resized = viewport.width != state.ui.viewport.width || viewport.height != state.ui.viewport.height
-        state.ui.viewport = viewport
-        state.ui.frameCount = state.frameCount
-        let graphics = foundationFrameGraphics(frame)
-        if !state.batchReady {
-            state.batch = UiBatch { storage: createBatch(graphics) }
-            state.batchReady = true
-        }
-
-        // An interface costs nothing while nothing changes. It is rebuilt when
-        // input arrived, the window changed size, scheme or mode, something in the
-        // last build was still moving, or a motion the compositor carried has
-        // ended; otherwise the retained tree is all there is, and it is drawn
-        // only while its own animations run. A frame with nothing to draw
-        // presents nothing, and the window keeps the last one.
-        let scheme = kiraUiPlatformScheme()
-        let mode = interfaceMode()
-        let changed = state.ui.eventCount != state.builtEventCount || scheme != state.builtScheme || mode != state.builtMode
-        let waiting = kiraUiClockRunning() || kiraUiClockWakeDue(kiraUiClockTime(frame))
-        if !rebuildsEveryFrame && state.frameCount > 0 && !resized && !changed && !waiting {
-            let moving = caCompositorAdvance(state.compositor, frame)
-            if moving || state.layersMoving {
-                kiraLayerDraw(state, frame, viewport)
-            }
-            state.layersMoving = moving
-            state.frameCount = state.frameCount + 1
-            return
-        }
-        state.builtEventCount = state.ui.eventCount
-        state.builtScheme = scheme
-        state.builtMode = mode
-
-        // Build the widget tree, lower it to a description, lay it out against the
-        // window, and reconcile it into the retained tree. On the first frame the
-        // reconcile mounts every layer without animating; after that a changed
-        // property animates from where it was.
-        // A fresh action table for this rebuild: `describe` binds each hittable
-        // layer's press action under its key as it produces the description.
-        // The keys restart with it, so a control draws under the key it had
-        // last frame -- the key the pointer found it by.
-        kiraUiLayerActionsReset()
-        kiraUiTapSeqReset()
-        kiraUiScrollScopeReset()
-        // What this frame took, for whatever springs advance while it lowers.
-        kiraUiClockTick(frame)
-        kiraUiClockBeginFrame()
-        // Whatever the actions since the last frame did to the path lands now,
-        // as one change, before anything reads it.
-        kiraUiNavigationSettle()
-        let build: borrow () -> Any Widget = rootBuilder
-        var widgetContext = buildContext(state.ui)
-        let systemInsets = frame.safeAreaInsets()
-        widgetContext.systemSafeArea = EdgeInsets {
-            top: systemInsets.top, leading: systemInsets.leading,
-            bottom: systemInsets.bottom, trailing: systemInsets.trailing
-        }
-        widgetContext.safeArea = copy widgetContext.systemSafeArea
-        widgetContext.heldKey = state.pressSurface
-        widgetContext.heldPoint = Point {
-            x: state.pressLocal.x + state.ui.pointerX - state.pressWindow.x,
-            y: state.pressLocal.y + state.ui.pointerY - state.pressWindow.y
-        }
-        widgetContext.heldSize = state.pressSize
-        widgetContext.heldOnControl = state.pressOnControl
-        widgetContext.heldControl = state.ui.pressedKey
-        widgetContext.heldSlides = state.pressSlides
-        widgetContext.heldPress = state.pressSerial
-        widgetContext.heldOrigin = Point {
-            x: state.pressWindow.x - state.pressLocal.x,
-            y: state.pressWindow.y - state.pressLocal.y
-        }
-        var described = CALayerDescription {}
-        if state.transparent {
-            // What floats is declared while the tree lowers and drawn over it.
-            kiraUiOverlayCollect()
-            let content = build().describe(widgetContext, ModifierContext {})
-            kiraUiOverlayStopCollecting()
-            described = overlayStack(move content, kiraUiOverlaysThisFrame(), viewport.width, viewport.height)
-        } else {
-            // A window with chrome: the tree declares its commands and toolbar
-            // items while it lowers, and the chrome is drawn from them over the
-            // content, which is laid out against the rows the chrome leaves.
-            described = windowFrame(build(), copy title, move widgetContext, viewport)
-        }
-        caLayoutTree(described, viewport.width, viewport.height)
-        if state.frameCount == 0 {
-            caReconcileImmediate(state.compositor.tree, described)
-        } else if resized || kiraUiClockState().resizing {
-            caReconcileResizing(state.compositor.tree, described)
-        } else {
-            caReconcile(state.compositor.tree, described)
-        }
-        // A press is held by the layers it landed on, not by the keys they had
-        // then: a rebuild that numbers the controls differently moves the keys,
-        // and the press follows its layers to theirs. A layer that is gone takes
-        // its press with it.
-        state.ui.pressedKey = state.compositor.tree.hitKeyOf(state.compositor.tree.pressed())
-        state.pressSurface = state.compositor.tree.hitKeyOf(state.pressSurfaceLayer)
-
-        // What the pointer is over is decided against the tree just built: a
-        // rebuild moves things under a pointer that has not moved, and a key
-        // remembered from the last tree may name a different control in this
-        // one.
-        let under = caHitTestTree(state.compositor.tree, state.ui.pointerX, state.ui.pointerY)
-        state.ui.hoveredKey = under.hit ? under.hitKey : 0
-        state.compositor.tree.setHovered(under.hit ? under.layer : caNoLayer())
-        // A press sliding in a menu whose control stopped answering -- a
-        // submenu's row lifted into its card, or set back down -- is the
-        // control's still: it goes on held by whatever control is under the
-        // pointer now.
-        if state.pressSlides && state.ui.pressedKey == 0 && under.surfaceSlides && under.hit && under.hitKey != under.surfaceKey {
-            state.ui.pressedKey = under.hitKey
-            state.compositor.tree.setPressed(under.layer)
-            state.pressedPanelLayer = under.surfaceLayer
-            state.pressBounds = state.compositor.tree.restBounds(under.layer)
-            foundationWritePressBounds(state.ui, state.pressBounds)
-            if under.surfaceLayer != state.pressSurfaceLayer {
-                kiraLayerHoldSurface(state, under, state.ui.pointerX, state.ui.pointerY)
-            }
-        }
-        foundationWriteInputSnapshot(state.ui)
-
-        state.layersMoving = caCompositorAdvance(state.compositor, frame)
-        kiraLayerDraw(state, frame, viewport)
-        state.frameCount = state.frameCount + 1
-        state.ui.clickedKey = 0
-        return
-    }
-
-    app.run(runtimeUser)
-    stateSlotReset()
-    stateScopeEnter(previousStateScope)
-    return
+    appStorageIdentify(move bundleIdentifier)
+    kiraLayerPlatformRun(
+        move title,
+        width,
+        height,
+        rootBuilder,
+        transparent,
+        engineFrame,
+        rebuildsEveryFrame
+    )
 }

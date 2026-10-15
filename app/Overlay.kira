@@ -43,13 +43,33 @@ import KCoreAnimation
 // a submenu can be placed exactly over the row that owns it on the very frame it
 // opens, with no lag and nothing measured twice.
 
+public namespace OverlayLevel {
+    // The layer a surface floats on.
+    let surface: Number = 0
+
+    // The layer a submenu floats on: over the menu it came out of.
+    let submenu: Number = 1
+
+    // The layer an element in transit flies on: over every surface, including the
+    // one it is on its way into.
+    let transit: Number = 100
+
+    // The z every overlay shares.
+    //
+    // One number, not a range. Ordering WITHIN an application's overlay is settled
+    // by the order things were drawn into it, and ordering BETWEEN applications is
+    // the compositor's -- so a second overlay z would be a third answer to a
+    // question two layers already answer.
+    let overlay: Number = 1
+}
+
 // One floating view: what to draw, and the rectangle it hangs from.
-public struct KiraUiOverlay {
+public struct Overlay {
     // The anchor, in canvas coordinates — the bounds of whatever opened this.
-    var anchorX: Float = 0.0
-    var anchorY: Float = 0.0
-    var anchorW: Float = 0.0
-    var anchorH: Float = 0.0
+    var anchorX: Number = 0.0
+    var anchorY: Number = 0.0
+    var anchorW: Number = 0.0
+    var anchorH: Number = 0.0
     // What draws over what. Higher is nearer.
     //
     // Presentation ORDER cannot answer this: a card is presented after the
@@ -57,98 +77,71 @@ public struct KiraUiOverlay {
     // element — so the thing that should be in front is always declared first.
     // An element in transit is above the surface it is traveling into, and
     // says so rather than hoping it was hoisted late enough.
-    var z: Int = 0
+    var z: Number = 0
     // The view, lowered.
     var content: CALayerDescription = CALayerDescription {}
     // Where it hangs under its anchor: how far below it, and where across it,
     // from 0 (the two leading edges together) to 1 (the two trailing edges).
-    var spacing: Float = 0.0
-    var alignment: Float = 0.0
+    var spacing: Number = 0.0
+    var alignment: Number = 0.0
     // The key a press anywhere off the view fires, zero when such a press
     // should reach whatever is underneath instead. A menu is dismissed this
     // way. The press is taken from `dismissTop` down: what stands above it
     // stays live while the view is out, as the menu bar does over its menu.
-    var dismissKey: Int = 0
-    var dismissTop: Float = 0.0
+    var dismissKey: Number = 0
+    var dismissTop: Number = 0.0
 }
 
-// The layer a surface floats on.
-public function kiraUiOverlayZSurface() -> Int {
-    return 0
-}
-
-// The layer a submenu floats on: over the menu it came out of.
-public function kiraUiOverlayZSubmenu() -> Int {
-    return 1
-}
-
-// The layer an element in transit flies on: over every surface, including the
-// one it is on its way into.
-public function kiraUiOverlayZTransit() -> Int {
-    return 100
-}
-
-public struct KiraUiOverlaySink {
-    var overlays: [KiraUiOverlay] = []
+public struct OverlaySink {
+    var overlays: [Overlay] = []
     var collecting: Bool = false
 }
 
-public function kiraUiOverlaySinkKey() -> String {
-    return "kiraui.overlay.sink"
-}
-
-public function kiraUiOverlaySinkEnsure() {
-    if kiraUiStateSlotHas(kiraUiOverlaySinkKey()) == false {
-        kiraUiStateSlotPut(
-            kiraUiOverlaySinkKey(),
-            nativeUserData(nativeState(KiraUiOverlaySink {}))
-        )
+public function overlaySinkEnsure() {
+    if !ambientStateHas(StateSlot.overlaySink) {
+        ambientStatePut(StateSlot.overlaySink, nativeUserData(nativeState(OverlaySink {})))
     }
-    return
 }
 
 // Open collection for the frame about to be built, discarding the last one's.
 // The tree is rebuilt every frame and what floats above it is rebuilt with it.
-public function kiraUiOverlayCollect() {
-    kiraUiOverlaySinkEnsure()
-    var sink = nativeRecover<KiraUiOverlaySink>(kiraUiStateSlotGet(kiraUiOverlaySinkKey()))
-    var empty: [KiraUiOverlay] = []
+public function overlayCollect() {
+    overlaySinkEnsure()
+    var sink = nativeRecover<OverlaySink>(ambientStateGet(StateSlot.overlaySink))
+    var empty: [Overlay] = []
     sink.overlays = move empty
     sink.collecting = true
-    return
 }
 
-public function kiraUiOverlayStopCollecting() {
-    kiraUiOverlaySinkEnsure()
-    var sink = nativeRecover<KiraUiOverlaySink>(kiraUiStateSlotGet(kiraUiOverlaySinkKey()))
+public function overlayStopCollecting() {
+    overlaySinkEnsure()
+    var sink = nativeRecover<OverlaySink>(ambientStateGet(StateSlot.overlaySink))
     sink.collecting = false
-    return
 }
 
 // Hand a lowered view to the overlay layer, to be drawn over everything at the
 // given anchor.
-public function kiraUiOverlayPresent(overlay: KiraUiOverlay) {
-    kiraUiOverlaySinkEnsure()
-    var sink = nativeRecover<KiraUiOverlaySink>(kiraUiStateSlotGet(kiraUiOverlaySinkKey()))
-    if sink.collecting == false {
+public function overlayPresent(overlay: Overlay) {
+    overlaySinkEnsure()
+    var sink = nativeRecover<OverlaySink>(ambientStateGet(StateSlot.overlaySink))
+    if !sink.collecting {
         // Presented with no frame collecting: there is no root to hoist it to,
         // so it is dropped rather than held for whichever frame is built next.
         return
     }
     sink.overlays.append(move overlay)
-    return
 }
 
-public function kiraUiOverlaysThisFrame() -> [KiraUiOverlay] {
-    kiraUiOverlaySinkEnsure()
-    let sink = nativeRecover<KiraUiOverlaySink>(kiraUiStateSlotGet(kiraUiOverlaySinkKey()))
-    return sink.overlays
+public function overlaysThisFrame() -> [Overlay] {
+    overlaySinkEnsure()
+    let sink = nativeRecover<OverlaySink>(ambientStateGet(StateSlot.overlaySink))
+    return copy sink.overlays
 }
 
 // The anchor a control that is opening something should use: the bounds of the
 // region the press landed on, which is the control itself.
-public function kiraUiPressAnchor() -> KiraUiOverlay {
-    return KiraUiOverlay {
+public function pressAnchor() -> Overlay {
+    return Overlay {
         anchorX: foundationPressBoundsX(),
         anchorY: foundationPressBoundsY(),
         anchorW: foundationPressBoundsW(),
@@ -169,22 +162,27 @@ public function kiraUiPressAnchor() -> KiraUiOverlay {
 // tree knows a layer by where it stands, so content that moved one level down
 // whenever a menu opened would be a different tree each time: every layer in
 // the window would be matched to another and animate into it.
-public function overlayStack(content: CALayerDescription, overlays: [KiraUiOverlay], width: Float, height: Float) -> CALayerDescription {
+public function overlayStack(
+    content: CALayerDescription,
+    overlays: [Overlay],
+    width: Number,
+    height: Number
+) -> CALayerDescription {
     let margin = windowChromeMetrics().edgeInset
     var layers: [CALayerDescription] = []
     layers.append(move content)
     for i in overlayOrder(overlays) {
         if overlays[i].dismissKey != 0 {
-            layers.append(CALayerDescription {
-                hittable: true,
-                hitKey: overlays[i].dismissKey,
-                layout: CALayoutIntent {
-                    offset: Point { x: 0.0, y: overlays[i].dismissTop }
+            layers.append(
+                CALayerDescription {
+                    hittable: true,
+                    hitKey: overlays[i].dismissKey,
+                    layout: CALayoutIntent { offset: Point { x: 0.0, y: overlays[i].dismissTop } }
                 }
-            })
+            )
         }
         var floating = copy overlays[i].content
-        let size = caMeasure(floating, width - margin * 2.0)
+        let size = floating.measure(width - margin * 2.0)
         let x = overlays[i].anchorX + (overlays[i].anchorW - size.width) * overlays[i].alignment
         let y = overlays[i].anchorY + overlays[i].anchorH + overlays[i].spacing
         floating.layout.widthFill = false
@@ -202,28 +200,17 @@ public function overlayStack(content: CALayerDescription, overlays: [KiraUiOverl
         }
         layers.append(move floating)
     }
-    return CALayerDescription {
-        sublayers: move layers
-    }
+    return CALayerDescription { sublayers: move layers }
 }
 
 // The order the overlays draw in: by level, nearest last, and in the order
 // they were presented within a level.
-public function overlayOrder(overlays: borrow [KiraUiOverlay]) -> [Int] {
-    var order: [Int] = []
-    var placed: [Bool] = []
-    for i in 0..overlays.count {
-        placed.append(false)
-    }
-    for n in 0..overlays.count {
-        var next = -1
-        for i in 0..overlays.count {
-            if !placed[i] && (next < 0 || overlays[i].z < overlays[next].z) {
-                next = i
-            }
-        }
-        placed[next] = true
-        order.append(next)
-    }
+public function overlayOrder(overlays: borrow [Overlay]) -> [Number] {
+    var presented: [(Number, Number)] = []
+    for (index, overlay) in overlays.enumerated() { presented.append((overlay.z, index)) }
+    // The sort is stable, so a level keeps the order it was presented in.
+    let ordered = presented.sorted({ a, b in return a.0 < b.0 })
+    var order: [Number] = []
+    for (level, index) in ordered { order.append(index) }
     return order
 }

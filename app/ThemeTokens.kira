@@ -6,52 +6,52 @@ import Foundation
 // AdaptiveColor themselves.
 
 public struct PaletteColors {
-    let red: Color
-    let orange: Color
-    let yellow: Color
-    let green: Color
-    let mint: Color
-    let teal: Color
-    let cyan: Color
-    let blue: Color
-    let indigo: Color
-    let purple: Color
-    let pink: Color
-    let brown: Color
-    let gray: Color
+    let red: RGBAColor
+    let orange: RGBAColor
+    let yellow: RGBAColor
+    let green: RGBAColor
+    let mint: RGBAColor
+    let teal: RGBAColor
+    let cyan: RGBAColor
+    let blue: RGBAColor
+    let indigo: RGBAColor
+    let purple: RGBAColor
+    let pink: RGBAColor
+    let brown: RGBAColor
+    let gray: RGBAColor
 }
 
 public struct ForegroundColors {
-    let primary: Color
-    let secondary: Color
-    let tertiary: Color
-    let quaternary: Color
-    let inverse: Color
+    let primary: RGBAColor
+    let secondary: RGBAColor
+    let tertiary: RGBAColor
+    let quaternary: RGBAColor
+    let inverse: RGBAColor
 }
 
 public struct BackgroundColors {
-    let canvas: Color
-    let surface: Color
-    let raised: Color
-    let overlay: Color
+    let canvas: RGBAColor
+    let surface: RGBAColor
+    let raised: RGBAColor
+    let overlay: RGBAColor
 }
 
 public struct FillColors {
-    let control: Color
-    let hover: Color
-    let selection: Color
+    let control: RGBAColor
+    let hover: RGBAColor
+    let selection: RGBAColor
 }
 
 public struct TintColors {
-    let accent: Color
-    let success: Color
-    let warning: Color
-    let danger: Color
+    let accent: RGBAColor
+    let success: RGBAColor
+    let warning: RGBAColor
+    let danger: RGBAColor
 }
 
 public struct ResolvedBorder {
-    let color: Color
-    let width: Float
+    let color: RGBAColor
+    let width: Number
 }
 
 public struct BorderTokens {
@@ -68,25 +68,30 @@ public struct ThemeTokens {
     let fill: FillColors
     let tint: TintColors
     let border: BorderTokens
-    let glassTint: Color
+    let glassTint: RGBAColor
     let glassEdgeLighting: Bool
-    let controlRadius: Float
-    let bodySize: Float
+    let bodySize: Number
     let bodyWeight: FontWeight
-    let controlSize: Float
+    let controlSize: Number
     let controlWeight: FontWeight
-    let titleSize: Float
+    let titleSize: Number
     let titleWeight: FontWeight
 }
 
-public function themeAdaptiveColor(color: borrow AdaptiveColor, appearance: borrow Appearance) -> Color {
+public function themeAdaptiveColor(
+    color: borrow AdaptiveColor,
+    appearance: borrow Appearance
+) -> RGBAColor {
     match appearance {
         Light -> return color.light
         Dark -> return color.dark
     }
 }
 
-public function resolvedBorder(border: borrow BorderImplementation, appearance: borrow Appearance) -> ResolvedBorder {
+public function resolvedBorder(
+    border: borrow BorderImplementation,
+    appearance: borrow Appearance
+) -> ResolvedBorder {
     return ResolvedBorder {
         color: themeAdaptiveColor(border.color, appearance),
         width: border.width
@@ -105,7 +110,6 @@ public function styleThemeTokens(style: Any StyleImplementation) -> ThemeTokens 
     let tints = style.tints
     let borders = style.borders
     let materials = style.materials
-    let radii = style.cornerRadii
     let typography = style.typography
     return ThemeTokens {
         palette: PaletteColors {
@@ -155,7 +159,6 @@ public function styleThemeTokens(style: Any StyleImplementation) -> ThemeTokens 
         },
         glassTint: themeAdaptiveColor(materials.glassTint, appearance),
         glassEdgeLighting: materials.liquidGlass.edgeLighting,
-        controlRadius: radii.small,
         bodySize: typography.body.size,
         bodyWeight: typography.body.weight,
         controlSize: typography.control.size,
@@ -177,28 +180,10 @@ public construct Theme {
     }
 
     function typography(style: borrow TypographyStyle) -> FontImplementation {
-        match style {
-            caption -> return self.style.typography.caption
-            body -> return self.style.typography.body
-            control -> return self.style.typography.control
-            subheadline -> return self.style.typography.subheadline
-            callout -> return self.style.typography.callout
-            caption2 -> return self.style.typography.caption2
-            bodyEmphasis -> return self.style.typography.bodyEmphasis
-            footnote -> return self.style.typography.footnote
-            overline -> return self.style.typography.overline
-            label -> return self.style.typography.label
-            section -> return self.style.typography.section
-            headline -> return self.style.typography.headline
-            title -> return self.style.typography.title
-            title1 -> return self.style.typography.title1
-            title2 -> return self.style.typography.title2
-            title3 -> return self.style.typography.title3
-            largeTitle -> return self.style.typography.largeTitle
-        }
+        return self.style.typography.font(style)
     }
 
-    function cornerRadius(style: borrow CornerRadius) -> Float {
+    function cornerRadius(style: borrow CornerRadius) -> Number {
         match style {
             None -> return self.style.cornerRadii.none
             Small -> return self.style.cornerRadii.small
@@ -213,17 +198,9 @@ public construct Theme {
         return styleSymbol(self.style.symbols, name)
     }
 
-    function controlMetrics(size: borrow ControlSize) -> ControlMetricsImplementation {
-        match size {
-            Mini -> return self.style.metrics.mini
-            Small -> return self.style.metrics.small
-            Regular -> return self.style.metrics.regular
-            Large -> return self.style.metrics.large
-        }
-    }
-
-    function spacing(style: borrow Spacing) -> Float {
+    function spacing(style: borrow Spacing) -> Number {
         match style {
+            Default -> return self.style.spacing.standard
             None -> return self.style.spacing.none
             Micro -> return self.style.spacing.micro
             ExtraSmall -> return self.style.spacing.extraSmall
@@ -232,6 +209,7 @@ public construct Theme {
             Large -> return self.style.spacing.large
             ExtraLarge -> return self.style.spacing.extraLarge
             Section -> return self.style.spacing.section
+            Length(length) -> return length
         }
     }
 }

@@ -9,7 +9,7 @@ import KCoreAnimation
 // loaded once into a texture the backdrop shows.
 
 struct GlassMenuState {
-    var textureId: Int = 0
+    var textureId: Number = 0
     var textureTried: Bool = false
 }
 
@@ -18,54 +18,46 @@ function glassMenuSlot() -> String {
 }
 
 function glassMenuEnsure() {
-    if stateSlotHas(glassMenuSlot()) == false {
-        stateSlotPut(glassMenuSlot(), nativeUserData(nativeState(GlassMenuState {})))
+    if !ambientStateHas(glassMenuSlot()) {
+        ambientStatePut(glassMenuSlot(), nativeUserData(nativeState(GlassMenuState {})))
     }
-    return
 }
 
 // The loaded backdrop texture, read by the screen. Zero until the first frame
 // has run its engine hook.
-function glassMenuTextureId() -> Int {
+function glassMenuTextureId() -> Number {
     glassMenuEnsure()
-    let state = nativeRecover<GlassMenuState>(stateSlotGet(glassMenuSlot()))
+    let state = nativeRecover<GlassMenuState>(ambientStateGet(glassMenuSlot()))
     return state.textureId
 }
 
-// Load the photograph once, on the first frame, when an EMGraphics handle exists.
+// Load the photograph once, on the first frame, when an Graphics handle exists.
 function glassMenuLoadTexture(frame: borrow mut RenderFrame) {
     glassMenuEnsure()
-    var state = nativeRecover<GlassMenuState>(stateSlotGet(glassMenuSlot()))
+    var state = nativeRecover<GlassMenuState>(ambientStateGet(glassMenuSlot()))
     if state.textureTried {
         return
     }
     state.textureTried = true
-    state.textureId = glassMenuBackdropTexture(foundationFrameGraphics(frame))
-    return
+    state.textureId = glassMenuBackdropTexture(frame.graphics())
 }
 
-function glassMenuBackdropTexture(graphics: borrow EMGraphics) -> Int {
-    attempt {
-        let tex = try loadRgbaTexture(graphics, "assets/background-cubes-cool.rgba", 1600, 900)
-        return tex
-    }
-    handle {
-        AssetUnreadable { return 0 }
-        DeviceRefused { return 0 }
-        ShaderRejected { return 0 }
+function glassMenuBackdropTexture(graphics: borrow Graphics) -> Number {
+    return match loadRgbaTexture(graphics, "assets/background-cubes-cool.rgba", 1600, 900) {
+        Ok(texture) -> texture
+        // No backdrop: the menu stands on the window's own background.
+        Error(failure) -> {
+            log warn("glass menu backdrop", traceText(failure))
+            return 0
+        }
     }
 }
 
 @Main
 function main() {
     GlassMenuApp()
-    return
 }
 
-// The window, event pump, and frame loop own the process main thread, and a
-// lifecycle is how a Kira program claims it. `@Main` above only schedules this
-// and returns; the process stays alive until the window closes.
-@MainThreadLifecycle
 function GlassMenuApp() {
     RunKiraWindowApp(
         // 1000x940 physical at a 3x render scale, matching the reference
@@ -82,5 +74,4 @@ function GlassMenuApp() {
             return
         }
     )
-    return
 }

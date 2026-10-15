@@ -85,7 +85,7 @@ Chain modifiers onto any widget for declarative customization:
 ## Navigation
 
 See [Navigation.md](Navigation.md) for the responsive `NavigationPath`,
-`NavigationStack`, `NavigationLink`, `navigationDestination`, and
+`NavigationStack`, `NavigationLink`, `NavigationRoute`, and
 `NavigationSplitView` API. The layered runnable app is in
 [`Examples/navigation-app`](Examples/navigation-app).
 

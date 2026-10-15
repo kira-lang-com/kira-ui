@@ -15,7 +15,7 @@ import KCoreAnimation
 public function menuRowDescription(
     context: borrow BuildContext,
     modifiers: borrow ModifierContext,
-    key: Int,
+    key: Number,
     shortcut: borrow KeyboardShortcut,
     label: some Widget,
 ) -> CALayerDescription {
@@ -28,7 +28,16 @@ public function menuRowDescription(
     // A one-line row stands at the menu's pitch with its line centered; a title
     // that wraps keeps that same air above and below and the row grows.
     let pitch = menuRowPitch(modifiers)
-    let air = max((pitch - foundationTextLineBox(menuLabelSize(modifiers), foundationFontWeight(.Regular))) / 2.0, 0.0)
+    let air = max(
+        (
+            pitch - foundationTextLineBox(
+                menuLabelSize(modifiers),
+                foundationFontWeight(.Regular),
+                .Default
+            )
+        ) / 2.0,
+        0.0
+    )
     let title = label.describe(context, labelModifiers)
     if shortcut.isEmpty() {
         return menuRowPill(key, move title, air, modifiers)
@@ -41,7 +50,11 @@ public function menuRowDescription(
             flex: 1,
             alignment: Point { x: 0.0, y: 0.5 }
         },
-        sublayers: [move title, toolbarFlexibleSpace(), menuShortcutDescription(context, shortcut, labelModifiers)]
+        sublayers: [move title, toolbarFlexibleSpace(), menuShortcutDescription(
+            context,
+            shortcut,
+            labelModifiers
+        )]
     }
     return menuRowPill(key, move row, air, modifiers)
 }
@@ -50,7 +63,12 @@ public function menuRowDescription(
 // as tall as the row however many lines its title takes, the row's content in
 // it at the row's own inset. The tree lays the wash on the row pressed, so
 // nothing rebuilds to show it, and slides it from row to row under a finger.
-public function menuRowPill(key: Int, content: CALayerDescription, air: Float, modifiers: borrow ModifierContext) -> CALayerDescription {
+public function menuRowPill(
+    key: Number,
+    content: CALayerDescription,
+    air: Number,
+    modifiers: borrow ModifierContext
+) -> CALayerDescription {
     let inset = menuPillInset(modifiers)
     let radius = menuRowRadius(modifiers)
     let pill = CALayerDescription {
@@ -67,20 +85,18 @@ public function menuRowPill(key: Int, content: CALayerDescription, air: Float, m
             paddingBottom: air,
             alignment: Point { x: 0.0, y: 0.5 }
         },
-        content: .Solid(CASolid {
-            fill: caColorFromFoundation(transparentFoundationColor()),
-            cornerRadius: radius,
-            shapeKind: 1
-        }),
+        content: .Solid(
+            CASolid {
+                fill: colorFromFoundation(transparentFoundationColor()),
+                cornerRadius: radius,
+                shapeKind: 1
+            }
+        ),
         pressColor: menuRowWash(modifiers),
         sublayers: [move content]
     }
     return CALayerDescription {
-        layout: CALayoutIntent {
-            heightFill: false,
-            paddingLeading: inset,
-            paddingTrailing: inset
-        },
+        layout: CALayoutIntent { heightFill: false, paddingLeading: inset, paddingTrailing: inset },
         sublayers: [pill]
     }
 }
@@ -90,7 +106,12 @@ public function menuRowWash(modifiers: borrow ModifierContext) -> CAColor {
     if modifiers.disabled {
         return CAColor { a: 0.0 }
     }
-    return caColorFromFoundation(modifierColor(foundationColor(themeAdaptiveColor(menuRowHighlight, modifierAppearance(modifiers))), modifiers))
+    return colorFromFoundation(
+        modifierColor(
+            foundationColor(themeAdaptiveColor(menuRowHighlight, modifierAppearance(modifiers))),
+            modifiers
+        )
+    )
 }
 
 // What `Button` describes in the group of actions across the top of a menu.
@@ -102,7 +123,7 @@ public function menuRowWash(modifiers: borrow ModifierContext) -> CAColor {
 public function menuActionDescription(
     context: borrow BuildContext,
     modifiers: borrow ModifierContext,
-    key: Int,
+    key: Number,
     label: some Widget,
 ) -> CALayerDescription {
     let pad = menuActionPad(modifiers)
@@ -118,17 +139,19 @@ public function menuActionDescription(
             paddingTrailing: pad,
             flex: 1
         },
-        content: .Solid(CASolid {
-            fill: caColorFromFoundation(transparentFoundationColor()),
-            cornerRadius: radius,
-            shapeKind: 1
-        }),
+        content: .Solid(
+            CASolid {
+                fill: colorFromFoundation(transparentFoundationColor()),
+                cornerRadius: radius,
+                shapeKind: 1
+            }
+        ),
         pressColor: menuRowWash(modifiers),
         sublayers: [label.describe(context, modifierContextForPresentation(modifiers))]
     }
 }
 
-public function menuActionPad(modifiers: borrow ModifierContext) -> Float {
+public function menuActionPad(modifiers: borrow ModifierContext) -> Number {
     return menuMetrics(modifiers).actionPadding
 }
 
@@ -144,12 +167,12 @@ public function menuActionPad(modifiers: borrow ModifierContext) -> Float {
 // So a menu row states its own highlight (see `MenuHeader`, and `menuRowView`
 // for the ordinary rows) and takes a press region that draws nothing. This is
 // the same reason `DismissArea` is its own leaf rather than an `.onClick`.
-public function menuHeaderLightFill(strength: Float) -> Color {
-    return Color { r: 1.0, g: 1.0, b: 1.0, a: 0.16 * strength }
+public function menuHeaderLightFill(strength: Number) -> RGBAColor {
+    return RGBAColor { r: 1.0, g: 1.0, b: 1.0, a: 0.16 * strength }
 }
 
 // How far the lit pill stands in from the card's edge.
-public function menuPillInset(modifiers: borrow ModifierContext) -> Float {
+public function menuPillInset(modifiers: borrow ModifierContext) -> Number {
     return menuMetrics(modifiers).pillInset
 }
 
@@ -157,6 +180,6 @@ public function menuPillInset(modifiers: borrow ModifierContext) -> Float {
 // the panel rather than a band across it, its corner concentric with the
 // card's -- the card's corner less the inset -- so a one-line row lights
 // nearly as a capsule and a taller one keeps the same round ends.
-public function menuRowRadius(modifiers: borrow ModifierContext) -> Float {
+public function menuRowRadius(modifiers: borrow ModifierContext) -> Number {
     return max(menuCardRadius(modifiers) - menuPillInset(modifiers), 0.0)
 }

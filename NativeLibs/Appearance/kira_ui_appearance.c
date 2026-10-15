@@ -1,22 +1,9 @@
 #include "kira_ui_appearance.h"
 
-#include <stdlib.h>
-#include <string.h>
-
-int kira_ui_appearance_override(void) {
-    static int answer = -1;
-    if (answer < 0) {
-        const char *requested = getenv("KIRA_UI_APPEARANCE");
-        answer = 0;
-        if (requested != NULL && strcmp(requested, "light") == 0) answer = 1;
-        if (requested != NULL && strcmp(requested, "dark") == 0) answer = 2;
-    }
-    return answer;
-}
-
-/* Every platform keeps its colour scheme somewhere different, and none of them
- * expose it through the C standard library, so this is the one place the four
- * answers live. */
+/* The platforms that keep the colour scheme behind their own C interfaces: the
+ * Windows registry, Apple's preferences and the web's media query. Linux
+ * answers in Kira (app/Appearance.kira), and a platform that publishes no
+ * scheme has none, so this library has no row for them. */
 
 #if defined(_WIN32)
 
@@ -121,20 +108,5 @@ int kira_ui_platform_appearance(void) {
 }
 
 #endif
-
-#else
-
-/* The free desktops publish the scheme over the XDG settings portal, which is a
- * D-Bus conversation rather than a library entry point. `GTK_THEME` is the one
- * value a process can read without one, and a name ending in `:dark` is the
- * convention every toolkit that reads it follows. */
-
-int kira_ui_platform_appearance(void) {
-    const char *theme = getenv("GTK_THEME");
-    if (theme == NULL) {
-        return 0;
-    }
-    return strstr(theme, ":dark") != NULL ? 2 : 1;
-}
 
 #endif

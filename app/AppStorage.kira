@@ -1,0 +1,273 @@
+import Foundation
+
+// `@AppStorage` — a value the app keeps from one launch to the next, as
+// SwiftUI's is.
+//
+//     @AppStorage("tab") var tab: ContentTab = ContentTab.About
+//
+// The property reads the value the app stores under "tab", or its initial
+// value while nothing is stored there, and a write stores it. Every view
+// naming the same key shares the one value, as every view reading a user
+// default does.
+//
+// The values live in the app's own file, `AppStorage.klist` in the directory
+// its platform keeps an app's data in, under the bundle identifier the app
+// hands its runner from its `Info.klist`:
+//
+//     let bundleIdentifier: String = klist!("Info.klist", "BundleIdentifier")
+//     RunKiraWindowApp(
+//         "Showcase",
+//         1180,
+//         820,
+//         { in
+//             return ContentView()
+//         },
+//         noopEngineFrame,
+//         false,
+//         move bundleIdentifier
+//     )
+//
+// An app that names none keeps its values for the run alone.
+
+// A value `@AppStorage` keeps, as SwiftUI keeps a `Bool`, a number, a string
+// or a raw-representable value: written out as text and read back from it.
+public trait AppStorageValue {
+    // The value as the text it is stored as.
+    function storedText() -> String
+    // Becomes the value `text` stores, staying as it is when `text` stores
+    // none of its own.
+    function restore(borrow mut self, text: borrow String)
+}
+
+extend Bool: AppStorageValue {
+    function storedText() -> String {
+        return self ? "true" : "false"
+    }
+
+    function restore(borrow mut self, text: borrow String) {
+        if text == "true" { self = true }
+        if text == "false" { self = false }
+    }
+}
+
+extend Number: AppStorageValue {
+    function storedText() -> String {
+        return String(self)
+    }
+
+    function restore(borrow mut self, text: borrow String) {
+        match parseNumber(copy text) {
+            Some(number) -> self = number
+            None -> {}
+        }
+    }
+}
+
+extend String: AppStorageValue {
+    function storedText() -> String {
+        return copy self
+    }
+
+    function restore(borrow mut self, text: borrow String) {
+        self = copy text
+    }
+}
+
+@Instance(Bool)
+@Instance(Number)
+@Instance(String)
+public struct AppStorage<Value: AppStorageValue> {
+    var wrappedValue: Value
+    // The key the value is stored under, `@AppStorage("tab")`.
+    var name: String = ""
+
+    function get() -> Value {
+        var value = copy self.wrappedValue
+        match appStorageText(self.name) {
+            Some(text) -> value.restore(text)
+            None -> {}
+        }
+        return value
+    }
+
+    function set(value: Value) {
+        appStorageStore(self.name, value.storedText())
+    }
+
+    // `$name`: a binding to the stored value, which a control reads and
+    // writes through.
+    function projectedValue() -> Binding<Value> {
+        let storage = copy self
+        let written = copy self
+        return Binding<Value> {
+            get: { in
+                return storage.get()
+            },
+            set: { value in
+                written.set(move value)
+            }
+        }
+    }
+}
+
+// The values the app keeps, read from its file the first time one is asked
+// for and written back whole whenever one changes.
+struct AppStorageState {
+    var bundleIdentifier: String = ""
+    var loaded: Bool = false
+    var values: Map<String, String> = Map<String, String>()
+}
+
+// The slot, made the first time it is asked for. The process keeps one store,
+// so it lives in the process's own scope, as the environment does.
+function appStorageEnsure() {
+    if !ambientStateHas(StateSlot.appStorage) {
+        ambientStatePut(StateSlot.appStorage, nativeUserData(nativeState(AppStorageState {})))
+    }
+}
+
+// Names the app whose values are kept: its bundle identifier, which its file
+// is kept under. The runner names it before anything is built.
+public function appStorageIdentify(bundleIdentifier: String) {
+    let previous = enterProcessScope()
+    appStorageEnsure()
+    var state = nativeRecover<AppStorageState>(ambientStateGet(StateSlot.appStorage))
+    state.bundleIdentifier = move bundleIdentifier
+    state.loaded = false
+    state.values = Map<String, String>()
+    ambientScopeEnter(previous)
+}
+
+// The text stored under `name`, or nothing while nothing is.
+public function appStorageText(name: borrow String) -> Optional<String> {
+    let previous = enterProcessScope()
+    appStorageLoad()
+    let state = nativeRecover<AppStorageState>(ambientStateGet(StateSlot.appStorage))
+    let text = state.values.value(copy name)
+    ambientScopeEnter(previous)
+    return text
+}
+
+// Stores `text` under `name`, and writes the app's file again.
+public function appStorageStore(name: borrow String, text: String) {
+    let previous = enterProcessScope()
+    appStorageLoad()
+    var state = nativeRecover<AppStorageState>(ambientStateGet(StateSlot.appStorage))
+    state.values.set(copy name, move text)
+    appStorageWrite(state)
+    ambientScopeEnter(previous)
+}
+
+// Reads the app's file into the store, the first time it is asked for.
+function appStorageLoad() {
+    appStorageEnsure()
+    var state = nativeRecover<AppStorageState>(ambientStateGet(StateSlot.appStorage))
+    if state.loaded {
+        return
+    }
+    state.loaded = true
+    if state.bundleIdentifier.count == 0 {
+        return
+    }
+    let path = appStorageFile(state.bundleIdentifier)
+    let nodes = klistNodes(path)
+    if nodes.count == 0 || nodes[0].kind != "dict" {
+        return
+    }
+    var child = 1
+    while child < nodes[0].end {
+        if nodes[child].kind == "string" {
+            state.values.set(copy nodes[child].key, copy nodes[child].text)
+        }
+        child = nodes[child].end
+    }
+}
+
+// Writes every stored value to the app's file, one string each.
+function appStorageWrite(state: borrow AppStorageState) {
+    if state.bundleIdentifier.count == 0 {
+        return
+    }
+    var lines = [
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+        "<klist version=\"1\">",
+        "<dict>"
+    ]
+    for entry in state.values.entries() {
+        lines.append(
+            "    <string key=\"" + klistEscaped(entry.key) + "\">" + klistEscaped(entry.value) + "</string>"
+        )
+    }
+    lines.append("</dict>")
+    lines.append("</klist>")
+    let path = appStorageFile(state.bundleIdentifier)
+    match makeDirectories(appStorageDirectory(state.bundleIdentifier)) {
+        Ok -> {}
+        Error(failure) -> {
+            log warn("the app's stored values were not written", path: path, failure)
+            return
+        }
+    }
+    match writeFile(path, joined(lines, "\n") + "\n") {
+        Ok -> {}
+        Error(failure) -> log warn("the app's stored values were not written", path: path, failure)
+    }
+}
+
+// `text` with the five characters a klist escapes written as its entities.
+function klistEscaped(text: borrow String) -> String {
+    var escaped = ""
+    for index in 0..text.count {
+        let character = text.substring(index, index + 1)
+        match character {
+            "&" -> escaped.append("&amp;")
+            "<" -> escaped.append("&lt;")
+            ">" -> escaped.append("&gt;")
+            "\"" -> escaped.append("&quot;")
+            "'" -> escaped.append("&apos;")
+            else -> escaped.append(character)
+        }
+    }
+    return escaped
+}
+
+function appStorageDirectory(bundleIdentifier: borrow String) -> String {
+    return appDataDirectory() + "/" + bundleIdentifier
+}
+
+function appStorageFile(bundleIdentifier: borrow String) -> String {
+    return appStorageDirectory(bundleIdentifier) + "/AppStorage.klist"
+}
+
+// The directory the platform keeps an app's own data in: Application Support
+// on Apple's, the roaming application data on Windows, and the XDG data home
+// elsewhere.
+function appDataDirectory() -> String {
+    match targetPlatform!() {
+        MacOS -> return environmentValue("HOME") + "/Library/Application Support"
+        Ios -> return environmentValue("HOME") + "/Library/Application Support"
+        Windows -> return environmentValue("APPDATA")
+        else -> {
+            if environmentIsSet("XDG_DATA_HOME") {
+                return environmentValue("XDG_DATA_HOME")
+            }
+            return environmentValue("HOME") + "/.local/share"
+        }
+    }
+}
+
+// Makes `path` and every directory above it that is missing.
+function makeDirectories(path: borrow String) -> Result<Void, FileFailure> {
+    if path.count == 0 || isDirectory(path) {
+        return .Ok
+    }
+    match path.lastIndexOf("/") {
+        Some(slash) -> {
+            if slash > 0 {
+                try makeDirectories(path.substring(0, slash))
+            }
+        }
+        None -> {}
+    }
+    return makeDirectory(path)
+}

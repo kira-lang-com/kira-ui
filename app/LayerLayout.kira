@@ -10,8 +10,8 @@ import KCoreAnimation
 // does: measure what each subtree wants, then place each one in the space it is
 // given.
 //
-// Two passes. `caMeasure` walks bottom-up and answers how large a subtree wants
-// to be when nothing forces its size. `caPlace` walks top-down, deciding each
+// Two passes. `CALayerDescription.measure` walks bottom-up and answers how large a subtree wants
+// to be when nothing forces its size. `CALayerDescription.place` walks top-down, deciding each
 // layer's final box from the size offered to it and handing each child the box
 // it gets. Kept apart because a fill child's size is the parent's to give and a
 // hug parent's size is the children's to report — one pass cannot know both at
@@ -22,419 +22,661 @@ import KCoreAnimation
 // whose content overflows that width narrows the content that can give some
 // back before anything is placed.
 
-// What a subtree wants along each axis, at most `availableWidth` wide where its
-// content can wrap, when it is neither filled nor fixed.
-//
-// For a description still being built: it is measured as it stands now, on a
-// copy, since whatever builds it may change it after asking.
-//
-// Only a layout pass keeps measures on a layer, and every frame lays out a tree
-// `describe` has just built, so a description reaches here, and reaches
-// `caLayoutTree`, with none kept.
-public function caMeasure(node: borrow CALayerDescription, availableWidth: Float) -> Size {
-    var scratch = copy node
-    return caMeasureLaid(scratch, availableWidth)
-}
-
-// `caMeasure` inside a layout pass, which keeps each answer on the layer it
-// is about. Placing a layer measures it at the width offered and again at the
-// width it took, and its parent has measured it already: without the answers
-// kept, a tree costs a walk of every subtree under each of its ancestors, many
-// times over.
-public function caMeasureLaid(node: borrow mut CALayerDescription, availableWidth: Float) -> Size {
-    if availableWidth == node.measuredAt {
-        return node.measured
+extend CALayerDescription {
+    // What a subtree wants along each axis, at most `availableWidth` wide where its
+    // content can wrap, when it is neither filled nor fixed.
+    //
+    // For a description still being built: it is measured as it stands now, on a
+    // copy, since whatever builds it may change it after asking.
+    //
+    // Only a layout pass keeps measures on a layer, and every frame lays out a tree
+    // `describe` has just built, so a description reaches here, and reaches
+    // `CALayerDescription.layoutTree`, with none kept.
+    function measure(availableWidth: Number) -> Size {
+        var scratch = copy self
+        return scratch.measureLaid(availableWidth)
     }
-    if availableWidth == node.measuredAtLast {
-        return node.measuredLast
+
+    // `CALayerDescription.measure` inside a layout pass, which keeps each answer on the layer it
+    // is about. Placing a layer measures it at the width offered and again at the
+    // width it took, and its parent has measured it already: without the answers
+    // kept, a tree costs a walk of every subtree under each of its ancestors, many
+    // times over.
+    function measureLaid(borrow mut self, availableWidth: Number) -> Size {
+        if availableWidth == self.measuredAt {
+            return self.measured
+        }
+        if availableWidth == self.measuredAtLast {
+            return self.measuredLast
+        }
+        let size = self.measureSubtree(availableWidth)
+        self.measuredAtLast = self.measuredAt
+        self.measuredLast = self.measured
+        self.measuredAt = availableWidth
+        self.measured = size
+        return size
     }
-    let size = caMeasureSubtree(node, availableWidth)
-    node.measuredAtLast = node.measuredAt
-    node.measuredLast = node.measured
-    node.measuredAt = availableWidth
-    node.measured = size
-    return size
-}
 
-function caMeasureSubtree(node: borrow mut CALayerDescription, availableWidth: Float) -> Size {
-    let intent = node.layout
-    var outerWidth = caCappedWidth(intent, availableWidth)
-    if intent.fixedWidth >= 0.0 {
-        outerWidth = intent.fixedWidth
-    }
-    let innerWidth = max(outerWidth - intent.paddingLeading - intent.paddingTrailing, 0.0)
+    function measureSubtree(borrow mut self, availableWidth: Number) -> Size {
+        let intent = self.layout
+        var outerWidth = intent.cappedWidth(availableWidth)
+        if intent.fixedWidth >= 0.0 {
+            outerWidth = intent.fixedWidth
+        }
+        let innerWidth = max(outerWidth - intent.paddingLeading - intent.paddingTrailing, 0.0)
 
-    // A fixed or intrinsic extent answers directly; otherwise the extent is what
-    // the content or the arrangement of the sublayers comes to.
-    let content = caContentSize(node, innerWidth)
-    var contentWidth = content.width
-    var contentHeight = content.height
+        // A fixed or intrinsic extent answers directly; otherwise the extent is what
+        // the content or the arrangement of the sublayers comes to.
+        let content = self.contentSize(innerWidth)
+        var contentWidth = content.width
+        var contentHeight = content.height
 
-    match intent.axis {
-        None -> {
-            // A wrapper or overlay wants the largest of what it holds.
-            for i in 0..node.sublayers.count {
-                let child = caMeasureLaid(node.sublayers[i], innerWidth)
-                contentWidth = max(contentWidth, child.width)
-                contentHeight = max(contentHeight, child.height)
+        match intent.axis {
+            None -> {
+                // A wrapper or overlay wants the largest of what it holds.
+                for i in 0..self.sublayers.count {
+                    let child = self.sublayers[i].measureLaid(innerWidth)
+                    contentWidth = max(contentWidth, child.width)
+                    contentHeight = max(contentHeight, child.height)
+                }
+            }
+            Row -> {
+                let widths = self.rowWidths(innerWidth, false)
+                var sum: Number = 0.0
+                var maxH: Number = 0.0
+                for i in 0..self.sublayers.count {
+                    let child = self.sublayers[i].measureLaid(widths[i])
+                    sum = sum + widths[i]
+                    maxH = max(maxH, child.height)
+                }
+                contentWidth = sum + self.stackSpacing()
+                contentHeight = maxH
+            }
+            Column -> {
+                var sum: Number = 0.0
+                var maxW: Number = 0.0
+                for i in 0..self.sublayers.count {
+                    let child = self.sublayers[i].measureLaid(innerWidth)
+                    sum = sum + child.height
+                    maxW = max(maxW, child.width)
+                }
+                contentWidth = maxW
+                contentHeight = sum + self.stackSpacing()
+            }
+            Grid -> {
+                let grid = intent.gridTrack(innerWidth)
+                let rows = self.gridRowHeights(grid)
+                var sum: Number = 0.0
+                for height in rows { sum = sum + height }
+                contentWidth = grid.span
+                contentHeight = sum + intent.spacing * max(rows.count - 1, 0)
             }
         }
-        Row -> {
-            let widths = caRowWidths(node, innerWidth, false)
-            var sum: Float = 0.0
-            var maxH: Float = 0.0
-            for i in 0..node.sublayers.count {
-                let child = caMeasureLaid(node.sublayers[i], widths[i])
-                sum = sum + widths[i]
-                maxH = max(maxH, child.height)
-            }
-            contentWidth = sum + caStackSpacing(node)
-            contentHeight = maxH
+
+        var wantW = contentWidth + intent.paddingLeading + intent.paddingTrailing
+        var wantH = contentHeight + intent.paddingTop + intent.paddingBottom
+        if intent.fixedWidth >= 0.0 {
+            wantW = intent.fixedWidth
         }
-        Column -> {
-            var sum: Float = 0.0
-            var maxW: Float = 0.0
-            for i in 0..node.sublayers.count {
-                let child = caMeasureLaid(node.sublayers[i], innerWidth)
-                sum = sum + child.height
-                maxW = max(maxW, child.width)
-            }
-            contentWidth = maxW
-            contentHeight = sum + caStackSpacing(node)
+        if intent.fixedHeight >= 0.0 {
+            wantH = intent.fixedHeight
+        }
+        return Size {
+            width: max(intent.cappedWidth(wantW), intent.minWidth),
+            height: max(wantH, intent.minHeight)
         }
     }
-
-    var wantW = contentWidth + intent.paddingLeading + intent.paddingTrailing
-    var wantH = contentHeight + intent.paddingTop + intent.paddingBottom
-    if intent.fixedWidth >= 0.0 {
-        wantW = intent.fixedWidth
-    }
-    if intent.fixedHeight >= 0.0 {
-        wantH = intent.fixedHeight
-    }
-    return Size { width: max(caCappedWidth(intent, wantW), intent.minWidth), height: max(wantH, intent.minHeight) }
 }
 
-// A width held under the layer's ceiling, when it has one.
-public function caCappedWidth(intent: borrow CALayoutIntent, width: Float) -> Float {
-    if intent.maxWidth >= 0.0 {
-        return min(width, intent.maxWidth)
+extend CALayoutIntent {
+    // The weight the layer shares a row's leftover width with: its flex, unless
+    // its width is fixed, as a `Spacer` in a frame of its own is.
+    function rowFlex() -> Number {
+        return self.fixedWidth >= 0.0 ? 0 : self.flex
     }
-    return width
+
+    // The weight the layer shares a column's leftover height with: its flex,
+    // unless its height is fixed.
+    function columnFlex() -> Number {
+        return self.fixedHeight >= 0.0 ? 0 : self.flex
+    }
+
+    // Whether the layer takes more width when offered more, as a flexible
+    // SwiftUI view does: it fills, expands or flexes, and its width is not
+    // fixed.
+    function widthFlexible() -> Bool {
+        return self.fixedWidth < 0.0 && (self.widthFill || self.expandsWidth || self.flex > 0)
+    }
+
+    // A width held under the layer's ceiling, when it has one.
+    function cappedWidth(width: Number) -> Number {
+        if self.maxWidth >= 0.0 {
+            return min(width, self.maxWidth)
+        }
+        return width
+    }
 }
 
-// The size a layer's own content asks for at `width`: its intrinsic extent, or —
-// for text that wraps and does not fit — the lines it breaks into there.
-public function caContentSize(node: borrow CALayerDescription, width: Float) -> Size {
-    let intrinsic = Size { width: node.layout.intrinsicWidth, height: node.layout.intrinsicHeight }
-    if intrinsic.width <= width + 0.5 {
+extend CALayerDescription {
+    // The size a layer's own content asks for at `width`: its intrinsic extent, or —
+    // for text that wraps and does not fit — the lines it breaks into there.
+    function contentSize(width: Number) -> Size {
+        let intrinsic = Size {
+            width: self.layout.intrinsicWidth,
+            height: self.layout.intrinsicHeight
+        }
+        if intrinsic.width <= width + 0.5 {
+            return intrinsic
+        }
+        match self.content {
+            Text(t) -> {
+                if t.wraps {
+                    return foundationTextWrappedSize(t.content, t.size, t.weight, width, t.design)
+                }
+            }
+            else -> {}
+        }
         return intrinsic
     }
-    match node.content {
-        Text(t) -> {
-            if t.wraps {
-                return foundationTextWrappedSize(t.content, t.size, t.weight, width, t.design)
-            }
-        }
-        else -> {}
-    }
-    return intrinsic
-}
 
-// The width each sublayer of a row gets out of `innerWidth`.
-//
-// Every child first takes what it wants. When that overflows the row, each
-// child in turn is offered its width less the overflow and gives back what it
-// can — text by wrapping, a fixed glyph not at all — until the row fits or
-// nothing more gives. When `sharesLeftover`, flex children then split what is
-// left on top of their minimum width, as a flex basis; a measure has no
-// leftover to share, so there they ask like the rest.
-public function caRowWidths(node: borrow mut CALayerDescription, innerWidth: Float, sharesLeftover: Bool) -> [Float] {
-    let count = node.sublayers.count
-    var widths: [Float] = []
-    var used: Float = 0.0
-    var flexTotal: Int = 0
-    for i in 0..count {
-        let flex = node.sublayers[i].layout.flex
-        if sharesLeftover && flex > 0 {
-            let basis = node.sublayers[i].layout.minWidth
-            flexTotal = flexTotal + flex
-            used = used + basis
-            widths.append(basis)
-        } else {
-            let want = caMeasureLaid(node.sublayers[i], innerWidth).width
-            used = used + want
-            widths.append(want)
-        }
-    }
-    used = used + caStackSpacing(node)
-
-    var overflow = used - innerWidth
-    for i in 0..count {
-        if overflow <= 0.5 {
-            break
-        }
-        if sharesLeftover && node.sublayers[i].layout.flex > 0 {
-            continue
-        }
-        let offered = max(widths[i] - overflow, 0.0)
-        let given = min(caMeasureLaid(node.sublayers[i], offered).width, widths[i])
-        overflow = overflow - (widths[i] - given)
-        widths[i] = given
-    }
-
-    if flexTotal > 0 {
-        let leftover = max(-overflow, 0.0)
+    // The width each sublayer of a row gets out of `innerWidth`.
+    //
+    // Every child first takes what it wants. When that overflows the row, each
+    // child in turn is offered its width less the overflow and gives back what it
+    // can — text by wrapping, a fixed glyph not at all — until the row fits or
+    // nothing more gives. When `sharesLeftover`, flex children then split what is
+    // left on top of their minimum width, as a flex basis, and children that
+    // expand across take a share of it on top of what they want; a measure has
+    // no leftover to share, so there they ask like the rest.
+    function rowWidths(borrow mut self, innerWidth: Number, sharesLeftover: Bool) -> [Number] {
+        let count = self.sublayers.count
+        var widths: [Number] = []
+        var used: Number = 0.0
+        var shareTotal: Number = 0
         for i in 0..count {
-            let flex = node.sublayers[i].layout.flex
-            if flex > 0 {
-                widths[i] = node.sublayers[i].layout.minWidth + leftover * Float(flex) / Float(flexTotal)
+            let flex = self.sublayers[i].layout.rowFlex()
+            if sharesLeftover && flex > 0 {
+                let basis = self.sublayers[i].layout.minWidth
+                shareTotal = shareTotal + flex
+                used = used + basis
+                widths.append(basis)
+            } else {
+                if sharesLeftover && self.sublayers[i].layout.expandsWidth {
+                    shareTotal = shareTotal + 1
+                }
+                let want = self.sublayers[i].measureLaid(innerWidth).width
+                used = used + want
+                widths.append(want)
             }
         }
-    }
-    return widths
-}
+        used = used + self.stackSpacing()
 
-// The gap a stack leaves before its sublayer at `index`: none before the first,
-// and otherwise its spacing, scaled by how fully the sublayer stands in the
-// stack and by how fully anything before it does. A sublayer folding away in
-// the middle so takes one gap with it, and one folding away at either end
-// takes the gap on its inner side -- what the stack closes up to without it.
-public function caGapBefore(node: borrow CALayerDescription, index: Int) -> Float {
-    var before: Float = 0.0
-    for i in 0..index {
-        before = max(before, node.sublayers[i].layout.presence)
-    }
-    return node.layout.spacing * min(node.sublayers[index].layout.presence, before)
-}
+        var overflow = used - innerWidth
+        for i in 0..count {
+            if overflow <= 0.5 {
+                break
+            }
+            if sharesLeftover && self.sublayers[i].layout.rowFlex() > 0 {
+                continue
+            }
+            let offered = max(widths[i] - overflow, 0.0)
+            let given = min(self.sublayers[i].measureLaid(offered).width, widths[i])
+            overflow = overflow - (widths[i] - given)
+            widths[i] = given
+        }
 
-// Every gap a stack leaves between its sublayers.
-public function caStackSpacing(node: borrow CALayerDescription) -> Float {
-    var total: Float = 0.0
-    for i in 0..node.sublayers.count {
-        total = total + caGapBefore(node, i)
-    }
-    return total
-}
-
-// This layer's own size given the space offered to it: fixed wins, then fill
-// takes the offer, then it hugs what it measured.
-public function caResolvedExtent(intent: borrow CALayoutIntent, measured: Float, offered: Float, fixed: Float, fill: Bool) -> Float {
-    if fixed >= 0.0 {
-        return fixed
-    }
-    if fill {
-        return offered
-    }
-    return measured
-}
-
-// Place `node` in a box of the offered size and lay its sublayers out inside it.
-public function caPlace(node: borrow mut CALayerDescription, offeredWidth: Float, offeredHeight: Float) {
-    let intent = node.layout
-    let width = max(caCappedWidth(intent, caResolvedExtent(intent, caMeasureLaid(node, offeredWidth).width, offeredWidth, intent.fixedWidth, intent.widthFill)), intent.minWidth)
-    // Height is measured at the width the layer resolved to, which a fill
-    // layer may have been handed rather than asked for.
-    let height = max(caResolvedExtent(intent, caMeasureLaid(node, width).height, offeredHeight, intent.fixedHeight, intent.heightFill), intent.minHeight)
-    node.size = Size { width: width, height: height }
-
-    let innerX = intent.paddingLeading
-    let innerY = intent.paddingTop
-    let innerW = width - intent.paddingLeading - intent.paddingTrailing
-    let innerH = height - intent.paddingTop - intent.paddingBottom
-
-    if node.scrollAxis != .None {
-        caPlaceScrolling(node, innerX, innerY, innerW, innerH)
-        return
-    }
-    match intent.axis {
-        None -> {
-            // Every sublayer shares the inner box, and one that resolved smaller
-            // than it sits where the layer's alignment says.
-            for i in 0..node.sublayers.count {
-                caPlace(node.sublayers[i], innerW, innerH)
-                let child = node.sublayers[i].size
-                node.sublayers[i].position = Point {
-                    x: innerX + (innerW - child.width) * intent.alignment.x,
-                    y: innerY + (innerH - child.height) * intent.alignment.y
+        if shareTotal > 0 {
+            let leftover = max(-overflow, 0.0)
+            for i in 0..count {
+                let flex = self.sublayers[i].layout.rowFlex()
+                if flex > 0 {
+                    widths[i] = self.sublayers[i].layout.minWidth + leftover * flex / shareTotal
+                } else if self.sublayers[i].layout.expandsWidth {
+                    widths[i] = widths[i] + leftover / shareTotal
                 }
             }
         }
-        Row -> {
-            caPlaceRow(node, innerX, innerY, innerW, innerH)
+        return widths
+    }
+
+    // The gap a stack leaves before its sublayer at `index`: none before the first,
+    // and otherwise its spacing, scaled by how fully the sublayer stands in the
+    // stack and by how fully anything before it does. A sublayer folding away in
+    // the middle so takes one gap with it, and one folding away at either end
+    // takes the gap on its inner side -- what the stack closes up to without it.
+    // A flush sublayer has no gap on either side.
+    function gapBefore(index: Number) -> Number {
+        if index > 0 && (self.sublayers[index].layout.flush || self.sublayers[index - 1].layout.flush) {
+            return 0.0
         }
-        Column -> {
-            caPlaceColumn(node, innerX, innerY, innerW, innerH)
+        var before: Number = 0.0
+        for i in 0..index {
+            before = max(before, self.sublayers[i].layout.presence)
+        }
+        return self.layout.spacing * min(self.sublayers[index].layout.presence, before)
+    }
+
+    // Every gap a stack leaves between its sublayers.
+    function stackSpacing() -> Number {
+        var total: Number = 0.0
+        for i in 0..self.sublayers.count {
+            total = total + self.gapBefore(i)
+        }
+        return total
+    }
+}
+
+extend CALayoutIntent {
+    // This layer's own size given the space offered to it: fixed wins, then fill
+    // takes the offer, then it hugs what it measured.
+    function resolvedExtent(
+        measured: Number,
+        offered: Number,
+        fixed: Number,
+        fill: Bool
+    ) -> Number {
+        if fixed >= 0.0 {
+            return fixed
+        }
+        if fill {
+            return offered
+        }
+        return measured
+    }
+}
+
+extend CALayerDescription {
+    // Place `node` in a box of the offered size and lay its sublayers out inside it.
+    function place(borrow mut self, offeredWidth: Number, offeredHeight: Number) {
+        let intent = self.layout
+        let width = max(
+            intent.cappedWidth(
+                intent.resolvedExtent(
+                    self.measureLaid(offeredWidth).width,
+                    offeredWidth,
+                    intent.fixedWidth,
+                    intent.widthFill
+                )
+            ),
+            intent.minWidth
+        )
+        // Height is measured at the width the layer resolved to, which a fill
+        // layer may have been handed rather than asked for.
+        let height = max(
+            intent.resolvedExtent(
+                self.measureLaid(width).height,
+                offeredHeight,
+                intent.fixedHeight,
+                intent.heightFill
+            ),
+            intent.minHeight
+        )
+        self.size = Size { width: width, height: height }
+
+        let innerX = intent.paddingLeading
+        let innerY = intent.paddingTop
+        let innerW = width - intent.paddingLeading - intent.paddingTrailing
+        let innerH = height - intent.paddingTop - intent.paddingBottom
+
+        if self.scrollAxis != .None {
+            self.placeScrolling(innerX, innerY, innerW, innerH)
+            return
+        }
+        match intent.axis {
+            None -> {
+                // Every sublayer shares the inner box, and one that resolved smaller
+                // than it sits where the layer's alignment says.
+                for i in 0..self.sublayers.count {
+                    self.sublayers[i].place(innerW, innerH)
+                    let child = self.sublayers[i].size
+                    self.sublayers[i].position = Point {
+                        x: innerX + (innerW - child.width) * intent.alignment.x,
+                        y: innerY + (innerH - child.height) * intent.alignment.y
+                    }
+                }
+            }
+            Row -> {
+                self.placeRow(innerX, innerY, innerW, innerH)
+            }
+            Column -> {
+                self.placeColumn(innerX, innerY, innerW, innerH)
+            }
+            Grid -> {
+                self.placeGrid(innerX, innerY, innerW)
+            }
         }
     }
 }
 
 // As long as anything could want: what a scrolling layer offers along its axis.
-public let caUnboundedLength = 1000000.0
+let unboundedLength = 1000000.0
 
 // A scrolling layer: each sublayer is as long along the axis as it wants, from
 // the start of the inner box, and sits across it where the layer's alignment
 // says. How long the longest came out, against the box it is shown through,
 // is what the layer can scroll, and goes to the scroll view under its key.
-public function caPlaceScrolling(
-    node: borrow mut CALayerDescription,
-    originX: Float,
-    originY: Float,
-    innerWidth: Float,
-    innerHeight: Float,
-) {
-    let vertical = node.scrollAxis == .Column
-    var length: Float = 0.0
-    for i in 0..node.sublayers.count {
-        let wanted = caMeasureLaid(node.sublayers[i], vertical ? innerWidth : caUnboundedLength)
-        if vertical {
-            caPlace(node.sublayers[i], innerWidth, wanted.height)
-        } else {
-            caPlace(node.sublayers[i], wanted.width, innerHeight)
+extend CALayerDescription {
+    function placeScrolling(
+        borrow mut self,
+        originX: Number,
+        originY: Number,
+        innerWidth: Number,
+        innerHeight: Number
+    ) {
+        let vertical = self.scrollAxis == .Column
+        var length: Number = 0.0
+        for i in 0..self.sublayers.count {
+            let wanted = self.sublayers[i].measureLaid(vertical ? innerWidth : unboundedLength)
+            if vertical {
+                self.sublayers[i].place(innerWidth, wanted.height)
+            } else {
+                self.sublayers[i].place(wanted.width, innerHeight)
+            }
+            let child = self.sublayers[i].size
+            if vertical {
+                self.sublayers[i].position = Point {
+                    x: originX + (innerWidth - child.width) * self.layout.alignment.x,
+                    y: originY
+                }
+                length = max(length, child.height)
+            } else {
+                self.sublayers[i].position = Point {
+                    x: originX,
+                    y: originY + (innerHeight - child.height) * self.layout.alignment.y
+                }
+                length = max(length, child.width)
+            }
         }
-        let child = node.sublayers[i].size
-        if vertical {
-            node.sublayers[i].position = Point { x: originX + (innerWidth - child.width) * node.layout.alignment.x, y: originY }
-            length = max(length, child.height)
-        } else {
-            node.sublayers[i].position = Point { x: originX, y: originY + (innerHeight - child.height) * node.layout.alignment.y }
-            length = max(length, child.width)
-        }
+        scrollMeasured(self.hitKey, length, vertical ? innerHeight : innerWidth)
     }
-    kiraUiScrollMeasured(node.hitKey, length, vertical ? innerHeight : innerWidth)
 }
 
-// A row: each sublayer takes the width `caRowWidths` gives it, placed at the
+// A row: each sublayer takes the width `rowWidths` gives it, placed at the
 // running offset, and sits across the row where the row's alignment says.
-public function caPlaceRow(
-    node: borrow mut CALayerDescription,
-    originX: Float,
-    originY: Float,
-    innerWidth: Float,
-    innerHeight: Float,
-) {
-    let widths = caRowWidths(node, innerWidth, true)
-    var cursor: Float = 0.0
-    for i in 0..node.sublayers.count {
-        cursor = cursor + caGapBefore(node, i)
-        caPlace(node.sublayers[i], widths[i], innerHeight)
-        let across = (innerHeight - node.sublayers[i].size.height) * node.layout.alignment.y
-        node.sublayers[i].position = Point { x: originX + cursor, y: originY + across }
-        cursor = cursor + widths[i]
+extend CALayerDescription {
+    function placeRow(
+        borrow mut self,
+        originX: Number,
+        originY: Number,
+        innerWidth: Number,
+        innerHeight: Number
+    ) {
+        let widths = self.rowWidths(innerWidth, true)
+        var cursor: Number = 0.0
+        for i in 0..self.sublayers.count {
+            cursor = cursor + self.gapBefore(i)
+            self.sublayers[i].place(widths[i], innerHeight)
+            let across = (innerHeight - self.sublayers[i].size.height) * self.layout.alignment.y
+            self.sublayers[i].position = Point { x: originX + cursor, y: originY + across }
+            cursor = cursor + widths[i]
+        }
     }
 }
 
 // A column: fixed-height sublayers take what they measure at the column's
 // width, flex ones split the remainder on top of their minimum height, and
 // each sits across the column where the column's alignment says.
-public function caPlaceColumn(
-    node: borrow mut CALayerDescription,
-    originX: Float,
-    originY: Float,
-    innerWidth: Float,
-    innerHeight: Float,
-) {
-    let count = node.sublayers.count
-    if count == 0 {
-        return
-    }
-    // The height the non-flex children want, and the total flex weight sharing
-    // what is left.
-    var heights: [Float] = []
-    var fixedMain: Float = 0.0
-    var flexTotal = 0
-    for i in 0..count {
-        let flex = node.sublayers[i].layout.flex
-        if flex > 0 {
-            let basis = node.sublayers[i].layout.minHeight
-            flexTotal = flexTotal + flex
-            fixedMain = fixedMain + basis
-            heights.append(basis)
-        } else {
-            let want = caMeasureLaid(node.sublayers[i], innerWidth).height
-            fixedMain = fixedMain + want
-            heights.append(want)
+extend CALayerDescription {
+    function placeColumn(
+        borrow mut self,
+        originX: Number,
+        originY: Number,
+        innerWidth: Number,
+        innerHeight: Number
+    ) {
+        let count = self.sublayers.count
+        if count == 0 {
+            return
         }
-    }
-    let leftover = max(innerHeight - fixedMain - caStackSpacing(node), 0.0)
+        // The height the non-flex children want, and the total weight sharing
+        // what is left: each flex child's flex, and one for each child that
+        // expands down, which takes its share on top of what it wants.
+        var heights: [Number] = []
+        var fixedMain: Number = 0.0
+        var shareTotal: Number = 0
+        for i in 0..count {
+            let flex = self.sublayers[i].layout.columnFlex()
+            if flex > 0 {
+                let basis = self.sublayers[i].layout.minHeight
+                shareTotal = shareTotal + flex
+                fixedMain = fixedMain + basis
+                heights.append(basis)
+            } else {
+                if self.sublayers[i].layout.expandsHeight {
+                    shareTotal = shareTotal + 1
+                }
+                let want = self.sublayers[i].measureLaid(innerWidth).height
+                fixedMain = fixedMain + want
+                heights.append(want)
+            }
+        }
+        let leftover = max(innerHeight - fixedMain - self.stackSpacing(), 0.0)
 
-    var cursor: Float = 0.0
-    for i in 0..count {
-        let flex = node.sublayers[i].layout.flex
-        if flex > 0 && flexTotal > 0 {
-            heights[i] = node.sublayers[i].layout.minHeight + leftover * Float(flex) / Float(flexTotal)
+        var cursor: Number = 0.0
+        for i in 0..count {
+            let flex = self.sublayers[i].layout.columnFlex()
+            if flex > 0 && shareTotal > 0 {
+                heights[i] = self.sublayers[i].layout.minHeight + leftover * flex / shareTotal
+            } else if self.sublayers[i].layout.expandsHeight && shareTotal > 0 {
+                heights[i] = heights[i] + leftover / shareTotal
+            }
+            cursor = cursor + self.gapBefore(i)
+            self.sublayers[i].place(innerWidth, heights[i])
+            let across = (innerWidth - self.sublayers[i].size.width) * self.layout.alignment.x
+            self.sublayers[i].position = Point { x: originX + across, y: originY + cursor }
+            cursor = cursor + heights[i]
         }
-        cursor = cursor + caGapBefore(node, i)
-        caPlace(node.sublayers[i], innerWidth, heights[i])
-        let across = (innerWidth - node.sublayers[i].size.width) * node.layout.alignment.x
-        node.sublayers[i].position = Point { x: originX + across, y: originY + cursor }
-        cursor = cursor + heights[i]
     }
 }
 
-// Lay a whole tree out against a window of the given size, ready to reconcile.
-public function caLayoutTree(root: borrow mut CALayerDescription, width: Float, height: Float) {
-    caPlace(root, width, height)
-    root.position = Point { x: 0.0, y: 0.0 }
-    caResolveGuides(root)
-    caApplyOffsets(root)
+// A grid's columns at one width: how many there are, how wide each is, and
+// how wide all of them come to with the gaps between them.
+struct GridTrack {
+    let columns: Number
+    let width: Number
+    let span: Number
 }
 
-// Moves each follower's leading edge to the guide it follows, as published by
-// the sublayers placed before it, in the follower's parent's coordinates.
-public function caResolveGuides(node: borrow mut CALayerDescription) {
-    for i in 0..node.sublayers.count {
-        let tag = node.sublayers[i].layout.followsGuide
-        if tag != 0 {
-            var found = false
-            var at: Float = 0.0
-            for j in 0..i {
-                if !found {
-                    let answer = caGuideIn(node.sublayers[j], tag)
-                    if answer.found {
-                        found = true
-                        at = node.sublayers[j].position.x + answer.x
+extend CALayoutIntent {
+    // The columns a grid has at `width`: as many as it names, or as many of
+    // at least the minimum as fit, sharing the width between them up to the
+    // ceiling, as SwiftUI's `GridItem` sizes them.
+    function gridTrack(width: Number) -> GridTrack {
+        let gap = self.gridColumnSpacing
+        var columns = self.gridColumns
+        if columns <= 0 {
+            let minimum = max(self.gridColumnMinimum, 1.0)
+            columns = max(floor((width + gap) / (minimum + gap)), 1)
+        }
+        var column = max((width - gap * (columns - 1)) / columns, 0.0)
+        if self.gridColumnMaximum >= 0.0 {
+            column = min(column, self.gridColumnMaximum)
+        }
+        return GridTrack {
+            columns: columns,
+            width: column,
+            span: column * columns + gap * (columns - 1)
+        }
+    }
+}
+
+// A grid: each sublayer in its turn takes the next cell, leading to trailing
+// and then down, and sits in its cell where the grid's alignment says. A row
+// is as tall as its tallest cell; the columns together sit across the grid
+// where the alignment says, when they do not fill it.
+extend CALayerDescription {
+    // How tall each row of the grid is, its cells measured at the column's width.
+    function gridRowHeights(borrow mut self, grid: borrow GridTrack) -> [Number] {
+        var rows: [Number] = []
+        var tallest: Number = 0.0
+        for i in 0..self.sublayers.count {
+            tallest = max(tallest, self.sublayers[i].measureLaid(grid.width).height)
+            if (i + 1) % grid.columns == 0 || i == self.sublayers.count - 1 {
+                rows.append(tallest)
+                tallest = 0.0
+            }
+        }
+        return rows
+    }
+
+    function placeGrid(borrow mut self, originX: Number, originY: Number, innerWidth: Number) {
+        let intent = self.layout
+        let grid = intent.gridTrack(innerWidth)
+        let rows = self.gridRowHeights(grid)
+        let leading = originX + max(innerWidth - grid.span, 0.0) * intent.alignment.x
+        var top = originY
+        for i in 0..self.sublayers.count {
+            let column = i % grid.columns
+            let row = floor(i / grid.columns)
+            if column == 0 && row > 0 {
+                top = top + rows[row - 1] + intent.spacing
+            }
+            self.sublayers[i].place(grid.width, rows[row])
+            let child = self.sublayers[i].size
+            self.sublayers[i].position = Point {
+                x: leading + column * (grid.width + intent.gridColumnSpacing) + (
+                    grid.width - child.width
+                ) * intent.alignment.x,
+                y: top + (rows[row] - child.height) * intent.alignment.y
+            }
+        }
+    }
+}
+
+// Lays the tree `description` describes out against a viewport `width` by
+// `height` points, ready to reconcile: what a host does with each frame it
+// describes before it draws it.
+public function layOutLayerTree(description: borrow mut CALayerDescription, width: Number, height: Number) {
+    description.layoutTree(width, height)
+}
+
+extend CALayerDescription {
+    // Lay a whole tree out against a window of the given size, ready to reconcile.
+    function layoutTree(borrow mut self, width: Number, height: Number) {
+        self.place(width, height)
+        self.position = Point { x: 0.0, y: 0.0 }
+        self.resolveGuides()
+        self.applyOffsets()
+        self.applyZIndex()
+    }
+
+    // Moves each follower's leading edge to the guide it follows, as published by
+    // the sublayers placed before it, in the follower's parent's coordinates.
+    function resolveGuides(borrow mut self) {
+        for i in 0..self.sublayers.count {
+            let tag = self.sublayers[i].layout.followsGuide
+            if tag != 0 {
+                var found = false
+                var at: Number = 0.0
+                for j in 0..i {
+                    if !found {
+                        let answer = self.sublayers[j].guideIn(tag)
+                        if answer.found {
+                            found = true
+                            at = self.sublayers[j].position.x + answer.x
+                        }
+                    }
+                }
+                if found {
+                    let trailing = self.sublayers[i].position.x + self.sublayers[i].size.width
+                    self.sublayers[i].position = Point { x: at, y: self.sublayers[i].position.y }
+                    self.sublayers[i].size = Size {
+                        width: max(trailing - at, 0.0),
+                        height: self.sublayers[i].size.height
                     }
                 }
             }
-            if found {
-                let trailing = node.sublayers[i].position.x + node.sublayers[i].size.width
-                node.sublayers[i].position = Point { x: at, y: node.sublayers[i].position.y }
-                node.sublayers[i].size = Size { width: max(trailing - at, 0.0), height: node.sublayers[i].size.height }
-            }
+            self.keepWithinGuide(i)
+            self.sublayers[i].resolveGuides()
         }
-        caResolveGuides(node.sublayers[i])
     }
 }
 
 public struct CAGuideAnswer {
     var found: Bool = false
-    var x: Float = 0.0
+    var x: Number = 0.0
+    // How wide the layer publishing the guide is.
+    var width: Number = 0.0
 }
 
-// Where `tag` sits in a layer's own coordinates, as the layer or the first of
-// its sublayers to publish it answers.
-public function caGuideIn(node: borrow CALayerDescription, tag: Int) -> CAGuideAnswer {
-    if node.layout.guide == tag {
-        return CAGuideAnswer { found: true, x: node.layout.guideFraction * node.size.width + node.layout.guidePosition }
-    }
-    for child in node.sublayers {
-        let answer = caGuideIn(child, tag)
-        if answer.found {
-            return CAGuideAnswer { found: true, x: child.position.x + answer.x }
+extend CALayerDescription {
+    // Keeps the sublayer at `index` inside the span of the sibling that
+    // publishes the guide it stays within: where it was placed while it fits,
+    // slid along the span to where it does, and not drawn when the span is
+    // narrower than it is.
+    function keepWithinGuide(borrow mut self, index: Number) {
+        let tag = self.sublayers[index].layout.staysWithinGuide
+        if tag == 0 { return }
+        for j in 0..self.sublayers.count {
+            if j != index {
+                let answer = self.sublayers[j].guideIn(tag)
+                if answer.found {
+                    let start = self.sublayers[j].position.x + answer.x
+                    let width = self.sublayers[index].size.width
+                    if width > answer.width {
+                        self.sublayers[index].opacity = 0.0
+                        return
+                    }
+                    let x = clamp(self.sublayers[index].position.x, start, start + answer.width - width)
+                    self.sublayers[index].position = Point { x: x, y: self.sublayers[index].position.y }
+                    return
+                }
+            }
         }
     }
-    return CAGuideAnswer {}
 }
 
-// Moves every layer by its offset once everything is placed, so it is drawn
-// displaced while its siblings sit where they would without it.
-public function caApplyOffsets(node: borrow mut CALayerDescription) {
-    node.position = Point {
-        x: node.position.x + node.layout.offset.x,
-        y: node.position.y + node.layout.offset.y
+extend CALayerDescription {
+    // Where `tag` sits in a layer's own coordinates, as the layer or the first of
+    // its sublayers to publish it answers.
+    function guideIn(tag: Number) -> CAGuideAnswer {
+        if self.layout.guide == tag {
+            return CAGuideAnswer {
+                found: true,
+                x: self.layout.guideFraction * self.size.width + self.layout.guidePosition,
+                width: self.size.width
+            }
+        }
+        for child in self.sublayers {
+            let answer = child.guideIn(tag)
+            if answer.found {
+                return CAGuideAnswer {
+                    found: true,
+                    x: child.position.x + answer.x,
+                    width: answer.width
+                }
+            }
+        }
+        return CAGuideAnswer {}
     }
-    for i in 0..node.sublayers.count {
-        caApplyOffsets(node.sublayers[i])
+
+    // Moves every layer by its offset once everything is placed, so it is drawn
+    // displaced while its siblings sit where they would without it.
+    function applyOffsets(borrow mut self) {
+        self.position = Point {
+            x: self.position.x + self.layout.offset.x,
+            y: self.position.y + self.layout.offset.y
+        }
+        for i in 0..self.sublayers.count {
+            self.sublayers[i].applyOffsets()
+        }
+    }
+
+    // Puts each layer's sublayers in the order they are painted in, once each
+    // has its place: the lowest `zIndex` first, siblings that share one in the
+    // order they were written.
+    function applyZIndex(borrow mut self) {
+        for i in 0..self.sublayers.count {
+            self.sublayers[i].applyZIndex()
+        }
+        for i in 1..self.sublayers.count {
+            var j = i
+            while j > 0 && self.sublayers[j - 1].layout.zIndex > self.sublayers[j].layout.zIndex {
+                let lower = copy self.sublayers[j]
+                self.sublayers[j] = copy self.sublayers[j - 1]
+                self.sublayers[j - 1] = move lower
+                j = j - 1
+            }
+        }
     }
 }

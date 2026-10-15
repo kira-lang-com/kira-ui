@@ -26,85 +26,89 @@ import KCoreAnimation
 // interface for each of them. Only fingers move the pages frame by frame,
 // because only they know where the pages go next.
 
-public struct KiraUiNavigationTransition {
+public struct NavigationTransition {
     var active: Bool = false
-    var front: [Any NavigationValue] = []
-    var covered: [Any NavigationValue] = []
+    var front: [Any NavigationRoute] = []
+    var covered: [Any NavigationRoute] = []
     // How far the front view is off the page: 0 in place, 1 gone. Live: where
     // the fingers have it, or where the spring has it as of the last build.
-    var progress: Float = 0.0
+    var progress: Number = 0.0
     var spring: MotionSpringState = MotionSpringState {}
     // Where the stack describes the front view: the spring's target, under
     // the fingers while they drag.
-    var shown: Float = 0.0
+    var shown: Number = 0.0
     // Whether the compositor has been handed the motion; when it was, and
     // when the spring will have settled.
     var started: Bool = false
-    var startedAt: Float = 0.0
-    var settlesAt: Float = 0.0
+    var startedAt: Number = 0.0
+    var settlesAt: Number = 0.0
     // The frame the motion ended on, which lands the pages where they rest
     // at once rather than animating the last of it.
-    var landedOn: Int = -1
+    var landedOn: Number = -1
     // Whether fingers are moving the view rather than the spring.
     var dragging: Bool = false
     // A swipe that began and has not yet moved far enough to be one, the way
     // it has moved so far, and where a touch last was.
     var tracking: Bool = false
-    var travel: Float = 0.0
-    var drift: Float = 0.0
-    var lastX: Float = 0.0
-    var lastY: Float = 0.0
+    var travel: Number = 0.0
+    var drift: Number = 0.0
+    var lastX: Number = 0.0
+    var lastY: Number = 0.0
     // How fast the fingers are going across, in points a second: what they
     // moved since the last frame, turned into a speed when the frame comes.
-    var pending: Float = 0.0
-    var velocity: Float = 0.0
+    var pending: Number = 0.0
+    var velocity: Number = 0.0
     // How wide the view is, which is how far it has to go to be gone.
-    var width: Float = 1.0
+    var width: Number = 1.0
     // How many values at the head of the path are a sidebar's selection rather
     // than views pushed: 1 beside a sidebar, whose chosen row is the stack's
     // root and is not gone back from; 0 otherwise.
-    var rootDepth: Int = 0
+    var rootDepth: Number = 0
     // A back button pressed while the stack was still moving: held until the
     // motion ends, and only then gone back on.
     var heldBack: Bool = false
     // The frame the transition last advanced on: a split view and the stack
     // in its detail both advance it, and it moves once.
-    var advancedOn: Int = -1
+    var advancedOn: Number = -1
     // Whether a stacked split view is sliding its detail over its sidebar,
     // which a stack in the detail then leaves to it; see `NavigationSplitView`.
     var splitSlides: Bool = false
 }
 
-public function kiraUiNavigationTransitionKey() -> String {
-    return "kiraui.navigation.transition"
-}
-
-public function kiraUiNavigationTransitionEnsure() {
-    if kiraUiStateSlotHas(kiraUiNavigationTransitionKey()) == false {
-        kiraUiStateSlotPut(
-            kiraUiNavigationTransitionKey(),
-            nativeUserData(nativeState(KiraUiNavigationTransition {}))
+public function navigationTransitionEnsure() {
+    if !ambientStateHas(StateSlot.navigationTransition) {
+        ambientStatePut(
+            StateSlot.navigationTransition,
+            nativeUserData(nativeState(NavigationTransition {}))
         )
     }
-    return
 }
 
 // The transition as it stands, to read.
-public function kiraUiNavigationTransition() -> KiraUiNavigationTransition {
-    kiraUiNavigationTransitionEnsure()
-    return nativeRecover<KiraUiNavigationTransition>(kiraUiStateSlotGet(kiraUiNavigationTransitionKey()))
+public function navigationTransition() -> NavigationTransition {
+    navigationTransitionEnsure()
+    return nativeRecover<NavigationTransition>(ambientStateGet(StateSlot.navigationTransition))
 }
 
 // The front view starts `from` and the spring takes it to `to`, carrying the
 // speed it already had. A page not yet on screen enters from where `from`
 // puts it; one already there -- a swipe let go, a motion turned around -- is
 // taken from where it stands.
-public function navigationTransitionSpring(state: borrow mut KiraUiNavigationTransition, from: Float, to: Float, velocity: Float) {
+public function navigationTransitionSpring(
+    state: borrow mut NavigationTransition,
+    from: Number,
+    to: Number,
+    velocity: Number
+) {
     let metrics = navigationTransitionMetrics()
     // Slowed animations stretch the spring's time, which its response is.
-    let slowdown = max(Float(kiraUiClockState().slowdown), 1.0)
-    var spring = MotionSpring { response: metrics.pushResponse * slowdown, damping: metrics.pushDamping, target: to }
-    if kiraUiReducedMotion() {
+    let slowdown = max(Number(clockState().slowdown), 1.0)
+    var spring = MotionSpring {
+        response: metrics.pushResponse * slowdown,
+        damping: metrics.pushDamping,
+        target: to
+    }
+    if prefersReducedMotion() {
         spring = motionCurveReduced(spring)
     }
     state.spring = motionSpringStart(move spring, from, velocity)
@@ -113,18 +117,17 @@ public function navigationTransitionSpring(state: borrow mut KiraUiNavigationTra
     state.started = false
     state.dragging = false
     state.active = true
-    return
 }
 
 // How long the spring takes to settle, to the tolerance the compositor's own
 // channels settle to, so the build that ends the motion comes on the frame
 // the pages arrive.
-public function navigationSpringDuration(spring: borrow MotionSpringState) -> Float {
+public function navigationSpringDuration(spring: borrow MotionSpringState) -> Number {
     let step = 1.0 / 240.0
     var t = step
     while t < 4.0 {
         let sample = motionSpringSample(spring, t)
-        if motionSpringSettled(spring, sample, motionSpringEpsilon()) {
+        if motionSpringSettled(spring, sample, MotionSpringLimit.epsilon) {
             return t
         }
         t = t + step
@@ -133,7 +136,10 @@ public function navigationSpringDuration(spring: borrow MotionSpringState) -> Fl
 }
 
 // Where the spring has the front view at `now`.
-public function navigationTransitionLive(state: borrow KiraUiNavigationTransition, now: Float) -> Float {
+public function navigationTransitionLive(
+    state: borrow NavigationTransition,
+    now: Number
+) -> Number {
     if !state.started {
         return state.shown
     }
@@ -144,73 +150,86 @@ public function navigationTransitionLive(state: borrow KiraUiNavigationTransitio
 // The transaction the moving pages change in: the push spring while the
 // compositor carries them, at once on the frame the motion starts or lands
 // and under fingers, which move them themselves.
-public function navigationTransitionAnimation(state: borrow KiraUiNavigationTransition, frameCount: Int) -> CALayerAnimation {
+public function navigationTransitionAnimation(
+    state: borrow NavigationTransition,
+    frameCount: Number
+) -> CALayerAnimation {
     if !state.active || state.dragging || !state.started || state.landedOn == frameCount {
-        return .Timed(caImmediateTiming())
+        return .Timed(immediateTiming())
     }
     // The speed the spring started with, as a fraction of its way per second.
     let span = state.spring.spring.target - state.spring.origin
-    var velocity: Float = 0.0
+    var velocity: Number = 0.0
     if abs(span) > 0.0001 {
         velocity = state.spring.velocity / span
     }
-    return .Timed(caMeasuredSpringTiming(state.spring.spring.response, state.spring.spring.damping, velocity, false))
+    return .Timed(
+        measuredSpringTiming(
+            state.spring.spring.response,
+            state.spring.spring.damping,
+            velocity,
+            false
+        )
+    )
 }
 
 // A push: the new view comes in over the one that was showing.
-public function kiraUiNavigationTransitionPush(before: [Any NavigationValue], after: [Any NavigationValue]) {
-    kiraUiNavigationTransitionEnsure()
-    var state = nativeRecover<KiraUiNavigationTransition>(kiraUiStateSlotGet(kiraUiNavigationTransitionKey()))
+public function navigationTransitionPush(
+    before: [Any NavigationRoute],
+    after: [Any NavigationRoute]
+) {
+    navigationTransitionEnsure()
+    var state = nativeRecover<NavigationTransition>(ambientStateGet(StateSlot.navigationTransition))
     state.front = move after
     state.covered = move before
     navigationTransitionSpring(state, 1.0, 0.0, 0.0)
-    return
 }
 
 // A pop: the view that was showing goes off the one under it.
-public function kiraUiNavigationTransitionPop(before: [Any NavigationValue], after: [Any NavigationValue]) {
-    kiraUiNavigationTransitionEnsure()
-    var state = nativeRecover<KiraUiNavigationTransition>(kiraUiStateSlotGet(kiraUiNavigationTransitionKey()))
+public function navigationTransitionPop(
+    before: [Any NavigationRoute],
+    after: [Any NavigationRoute]
+) {
+    navigationTransitionEnsure()
+    var state = nativeRecover<NavigationTransition>(ambientStateGet(StateSlot.navigationTransition))
     // A push still coming in turns around where it is: both its pages are
     // on screen, already moving, and the compositor retargets them there.
     let turning = state.active
-    let now = kiraUiClockNow()
+    let now = clockNow()
     let from = turning ? navigationTransitionLive(state, now) : 0.0
-    var velocity: Float = 0.0
+    var velocity: Number = 0.0
     if turning && state.started {
         velocity = motionSpringSample(state.spring, now - state.startedAt).velocity
     }
     state.front = move before
     state.covered = move after
     navigationTransitionSpring(state, from, 1.0, velocity)
-    return
 }
 
 // The path was replaced outright, as choosing a sidebar's row does: whatever
 // was moving stops, and the new view is simply there.
-public function kiraUiNavigationTransitionCancel() {
-    kiraUiNavigationTransitionEnsure()
-    var state = nativeRecover<KiraUiNavigationTransition>(kiraUiStateSlotGet(kiraUiNavigationTransitionKey()))
+public function navigationTransitionCancel() {
+    navigationTransitionEnsure()
+    var state = nativeRecover<NavigationTransition>(ambientStateGet(StateSlot.navigationTransition))
     state.active = false
     state.dragging = false
     state.tracking = false
     state.heldBack = false
-    return
 }
 
 // One build of the transition, as the stack lowers: the fingers' speed is
 // brought up to date, and where the stack describes the pages is decided --
 // where the motion ends, with a build asked for when the compositor will have
 // taken them there.
-public function kiraUiNavigationTransitionAdvance(context: borrow BuildContext) {
-    kiraUiNavigationTransitionEnsure()
-    var state = nativeRecover<KiraUiNavigationTransition>(kiraUiStateSlotGet(kiraUiNavigationTransitionKey()))
+public function navigationTransitionAdvance(context: borrow BuildContext) {
+    navigationTransitionEnsure()
+    var state = nativeRecover<NavigationTransition>(ambientStateGet(StateSlot.navigationTransition))
     if state.advancedOn == context.frameCount {
         return
     }
     state.advancedOn = context.frameCount
     state.width = max(context.viewportWidth, 1.0)
-    let delta = kiraUiClockDelta()
+    let delta = clockDelta()
     if delta > 0.0 {
         state.velocity = state.velocity * 0.4 + (state.pending / delta) * 0.6
     }
@@ -222,7 +241,7 @@ public function kiraUiNavigationTransitionAdvance(context: borrow BuildContext) 
         state.shown = state.progress
         return
     }
-    let now = kiraUiClockNow()
+    let now = clockNow()
     if !state.started {
         state.started = true
         state.startedAt = now
@@ -239,77 +258,72 @@ public function kiraUiNavigationTransitionAdvance(context: borrow BuildContext) 
             navigationTransitionReleaseBack(state.rootDepth)
             // The back it held starts a pop of its own, and this build has
             // already advanced: the next one starts it.
-            kiraUiClockStillMoving()
+            clockStillMoving()
         }
         return
     }
     state.progress = navigationTransitionLive(state, now)
     state.shown = state.spring.spring.target
-    kiraUiClockWakeAt(state.settlesAt)
-    return
+    clockWakeAt(state.settlesAt)
 }
 
 // Where a page coming on screen enters from: where the spring started, or
 // under the fingers, which describe it where it is.
-public function navigationTransitionFrom(state: borrow KiraUiNavigationTransition) -> Float {
+public function navigationTransitionFrom(state: borrow NavigationTransition) -> Number {
     return state.dragging ? state.shown : state.spring.origin
 }
 
 // Whether the spring is taking a view off: a pop on its way, the path already
 // gone back. Fingers that come down on one go back from the view under it.
-public function navigationTransitionPopping(state: borrow KiraUiNavigationTransition) -> Bool {
+public function navigationTransitionPopping(state: borrow NavigationTransition) -> Bool {
     return state.active && !state.dragging && state.spring.spring.target > 0.5
 }
 
 // Whether the stack is going back: popping, or under fingers swiping back.
-public function kiraUiNavigationGoingBack() -> Bool {
-    let state = kiraUiNavigationTransition()
+public function navigationGoingBack() -> Bool {
+    let state = navigationTransition()
     return state.active && (state.dragging || state.spring.spring.target > 0.5)
 }
 
 // The back button was pressed. It takes the press however the stack stands,
 // but goes back only from a view that has stopped: pressed mid-motion it waits
 // for the motion to end, so it never goes back from a view already leaving.
-public function kiraUiNavigationBack() {
-    kiraUiNavigationTransitionEnsure()
-    var state = nativeRecover<KiraUiNavigationTransition>(kiraUiStateSlotGet(kiraUiNavigationTransitionKey()))
+public function navigationBack() {
+    navigationTransitionEnsure()
+    var state = nativeRecover<NavigationTransition>(ambientStateGet(StateSlot.navigationTransition))
     if state.active {
         state.heldBack = true
         return
     }
     navigationTransitionReleaseBack(state.rootDepth)
-    return
 }
 
 // A held press goes back once the motion ends -- if, where it ended, there is
 // still a view to go back to. It lands at once, in the frame the motion ended
 // in, so the stack goes straight on into it.
-public function navigationTransitionReleaseBack(rootDepth: Int) {
-    if kiraUiNavigationValues().count > rootDepth {
-        kiraUiNavigationPop()
-        kiraUiNavigationSettle()
+public function navigationTransitionReleaseBack(rootDepth: Number) {
+    if navigationValues().count > rootDepth {
+        navigationPop()
+        navigationSettle()
     }
-    return
 }
 
 // A stacked split view is sliding its detail over its sidebar, or has stopped.
-public function kiraUiNavigationSetSplitSlides(slides: Bool) {
-    kiraUiNavigationTransitionEnsure()
-    var state = nativeRecover<KiraUiNavigationTransition>(kiraUiStateSlotGet(kiraUiNavigationTransitionKey()))
+public function navigationSetSplitSlides(slides: Bool) {
+    navigationTransitionEnsure()
+    var state = nativeRecover<NavigationTransition>(ambientStateGet(StateSlot.navigationTransition))
     state.splitSlides = slides
-    return
 }
 
 // How deep the stack's root is in the path; see `rootDepth`.
-public function kiraUiNavigationSetRootDepth(depth: Int) {
-    kiraUiNavigationTransitionEnsure()
-    var state = nativeRecover<KiraUiNavigationTransition>(kiraUiStateSlotGet(kiraUiNavigationTransitionKey()))
+public function navigationSetRootDepth(depth: Number) {
+    navigationTransitionEnsure()
+    var state = nativeRecover<NavigationTransition>(ambientStateGet(StateSlot.navigationTransition))
     state.rootDepth = depth
-    return
 }
 
-public function kiraUiNavigationRootDepth() -> Int {
-    return kiraUiNavigationTransition().rootDepth
+public function navigationRootDepth() -> Number {
+    return navigationTransition().rootDepth
 }
 
 // --- The swipe back -----------------------------------------------------------
@@ -320,15 +334,17 @@ public function kiraUiNavigationRootDepth() -> Int {
 // caught where it stands, as UIKit's transitions are: the fingers take the
 // view from there. A pop still moving has already gone back, so the fingers
 // go back again from the view it uncovered, and need not wait for it.
-public function kiraUiNavigationSwipeBegin(x: Float, y: Float, overControl: Bool) {
-    kiraUiNavigationTransitionEnsure()
-    var state = nativeRecover<KiraUiNavigationTransition>(kiraUiStateSlotGet(kiraUiNavigationTransitionKey()))
+public function navigationSwipeBegin(x: Number, y: Number, overControl: Bool) {
+    navigationTransitionEnsure()
+    var state = nativeRecover<NavigationTransition>(ambientStateGet(StateSlot.navigationTransition))
     state.tracking = false
-    let depth = state.active && !navigationTransitionPopping(state) ? state.front.count : kiraUiNavigationValues().count
+    let depth = state.active && !navigationTransitionPopping(
+        state
+    ) ? state.front.count : navigationValues().count
     if state.dragging || overControl || depth <= state.rootDepth {
         return
     }
-    if x < kiraUiToolbarNavigationWidth() {
+    if x < toolbarNavigationWidth() {
         return
     }
     state.tracking = true
@@ -338,19 +354,18 @@ public function kiraUiNavigationSwipeBegin(x: Float, y: Float, overControl: Bool
     state.lastY = y
     state.velocity = 0.0
     state.pending = 0.0
-    return
 }
 
 // The fingers moved this far, toward the trailing edge when `across` is
 // positive. Whether anything is being swiped, so the caller knows the motion
 // was taken.
-public function kiraUiNavigationSwipeMove(across: Float, down: Float) -> Bool {
-    kiraUiNavigationTransitionEnsure()
-    var state = nativeRecover<KiraUiNavigationTransition>(kiraUiStateSlotGet(kiraUiNavigationTransitionKey()))
+public function navigationSwipeMove(across: Number, down: Number) -> Bool {
+    navigationTransitionEnsure()
+    var state = nativeRecover<NavigationTransition>(ambientStateGet(StateSlot.navigationTransition))
     if state.dragging {
         state.progress = min(max(state.progress + across / state.width, 0.0), 1.0)
         state.pending = state.pending + across
-        kiraUiClockStillMoving()
+        clockStillMoving()
         return true
     }
     if !state.tracking {
@@ -358,7 +373,9 @@ public function kiraUiNavigationSwipeMove(across: Float, down: Float) -> Bool {
     }
     state.travel = state.travel + across
     state.drift = state.drift + abs(down)
-    if abs(state.travel) < navigationTransitionMetrics().swipeSlop && state.drift < navigationTransitionMetrics().swipeSlop {
+    if abs(
+        state.travel
+    ) < navigationTransitionMetrics().swipeSlop && state.drift < navigationTransitionMetrics().swipeSlop {
         return false
     }
     state.tracking = false
@@ -375,21 +392,19 @@ public function kiraUiNavigationSwipeMove(across: Float, down: Float) -> Bool {
     }
     // A motion the compositor is carrying is caught where it has the view.
     if state.active {
-        state.progress = navigationTransitionLive(state, kiraUiClockNow())
+        state.progress = navigationTransitionLive(state, clockNow())
         state.started = false
     }
     state.dragging = true
     state.pending = state.travel
-    kiraUiClockStillMoving()
+    clockStillMoving()
     if state.active {
         return true
     }
-    let path = kiraUiNavigationValues()
-    var under: [Any NavigationValue] = []
-    var index = 0
-    while index < path.count - 1 {
+    let path = navigationValues()
+    var under: [Any NavigationRoute] = []
+    for index in 0..(path.count - 1) {
         under.append(copy path[index])
-        index = index + 1
     }
     state.front = move path
     state.covered = move under
@@ -400,23 +415,23 @@ public function kiraUiNavigationSwipeMove(across: Float, down: Float) -> Bool {
 }
 
 // The same for a touch, which reports where it is rather than how far it went.
-public function kiraUiNavigationSwipeTouchMove(x: Float, y: Float) -> Bool {
-    kiraUiNavigationTransitionEnsure()
-    var state = nativeRecover<KiraUiNavigationTransition>(kiraUiStateSlotGet(kiraUiNavigationTransitionKey()))
+public function navigationSwipeTouchMove(x: Number, y: Number) -> Bool {
+    navigationTransitionEnsure()
+    var state = nativeRecover<NavigationTransition>(ambientStateGet(StateSlot.navigationTransition))
     let across = x - state.lastX
     let down = y - state.lastY
     state.lastX = x
     state.lastY = y
-    return kiraUiNavigationSwipeMove(across, down)
+    return navigationSwipeMove(across, down)
 }
 
 // The fingers lifted. Past the commit fraction, or thrown faster than the
 // commit velocity, the stack goes back; otherwise the view settles where it
 // was -- which, for a pop the fingers caught, takes the path forward again.
 // A throw back toward the leading edge always settles.
-public function kiraUiNavigationSwipeEnd() {
-    kiraUiNavigationTransitionEnsure()
-    var state = nativeRecover<KiraUiNavigationTransition>(kiraUiStateSlotGet(kiraUiNavigationTransitionKey()))
+public function navigationSwipeEnd() {
+    navigationTransitionEnsure()
+    var state = nativeRecover<NavigationTransition>(ambientStateGet(StateSlot.navigationTransition))
     state.tracking = false
     if !state.dragging {
         return
@@ -424,15 +439,14 @@ public function kiraUiNavigationSwipeEnd() {
     let metrics = navigationTransitionMetrics()
     let speed = state.velocity
     let thrown = speed > metrics.commitVelocity
-    let held = state.progress > metrics.commitFraction && speed > 0.0 - metrics.commitVelocity
+    let held = state.progress > metrics.commitFraction && speed > -metrics.commitVelocity
     let from = state.progress
     let carried = speed / state.width
     if thrown || held {
-        kiraUiNavigationStore(copy state.covered)
+        navigationStore(copy state.covered)
         navigationTransitionSpring(state, from, 1.0, carried)
         return
     }
-    kiraUiNavigationStore(copy state.front)
+    navigationStore(copy state.front)
     navigationTransitionSpring(state, from, 0.0, carried)
-    return
 }

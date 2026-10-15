@@ -25,8 +25,8 @@ public enum SurfaceShape {
 }
 
 public enum ContentMargins {
-    automatic: Float = 0.0
-    fixed: Float
+    automatic: Number = 0.0
+    fixed: Number
 }
 
 public construct Widget {
@@ -38,23 +38,30 @@ public construct Widget {
     // compositor reconciles into its retained `CALayerTree`, so a rebuild sets
     // properties on layers that were already there and every change animates.
     // Content leaves emit their content; containers emit sublayers; modifier
-    // layers mutate the description their child produced. Consuming: a widget
-    // tree is single-owner and produces its description once.
-    @Consuming
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    // layers mutate the description their child produced.
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         return self.body.describe(context, modifiers)
+    }
+
+    // The words a menu row made of this widget shows: a `Text`'s, or a
+    // `Label`'s title. A widget made of anything else has none to export.
+    function menuTitle() -> String {
+        return ""
+    }
+
+    // Whether this widget is a `Section`, which a grouped list sets as one:
+    // the rows standing outside every section are grouped in sections of
+    // their own.
+    function isSection() -> Bool {
+        return false
     }
 }
 
 public function surfaceMaterialSubtle() -> SurfaceTint {
-    return SurfaceTint(
-        color: Color {
-            r: 0.16,
-            g: 0.19,
-            b: 0.26,
-            a: 0.88
-        }
-    )
+    return SurfaceTint(color: RGBAColor { r: 0.16, g: 0.19, b: 0.26, a: 0.88 })
 }
 
 public function transparentFoundationColor() -> FoundationColor {
@@ -67,30 +74,24 @@ public function modifierTokens(modifiers: borrow ModifierContext) -> ThemeTokens
     if modifiers.hasTheme {
         return modifiers.theme.tokens()
     }
-    return kiraUiDefaultTokens()
+    return defaultTokens()
 }
 
 // The library theme's tokens, resolved once for each scheme the window shows.
 // Every widget asks for them, often more than once, and resolving them is every
 // color in the theme run through its appearance.
-public struct KiraUiTokenCache {
-    var scheme: Int
+public struct TokenCache {
+    var scheme: PlatformScheme
     var tokens: ThemeTokens
 }
 
-public function kiraUiTokenCacheKey() -> String {
-    return "kiraui.tokens"
-}
-
-public function kiraUiDefaultTokens() -> ThemeTokens {
-    let scheme = kiraUiPlatformScheme()
-    var slot = kiraUiStateSlotGet(kiraUiTokenCacheKey())
-    if slot == RawPtr.null {
-        let made = KiraUiTokenCache { scheme: scheme, tokens: defaultTheme.tokens() }
-        kiraUiStateSlotPut(kiraUiTokenCacheKey(), nativeUserData(nativeState(move made)))
-        slot = kiraUiStateSlotGet(kiraUiTokenCacheKey())
+public function defaultTokens() -> ThemeTokens {
+    let scheme = interfaceScheme()
+    if !ambientStateHas(StateSlot.tokens) {
+        let made = TokenCache { scheme: scheme, tokens: defaultTheme.tokens() }
+        ambientStatePut(StateSlot.tokens, nativeUserData(nativeState(move made)))
     }
-    var cache = nativeRecover<KiraUiTokenCache>(slot)
+    var cache = nativeRecover<TokenCache>(ambientStateGet(StateSlot.tokens))
     if cache.scheme != scheme {
         cache.tokens = defaultTheme.tokens()
         cache.scheme = scheme
@@ -98,7 +99,10 @@ public function kiraUiDefaultTokens() -> ThemeTokens {
     return copy cache.tokens
 }
 
-public function primaryColorAsColor(color: borrow PrimaryColor, tokens: borrow ThemeTokens) -> Color {
+public function primaryColorAsColor(
+    color: borrow PrimaryColor,
+    tokens: borrow ThemeTokens
+) -> RGBAColor {
     match color {
         Primary -> return tokens.foreground.primary
         Secondary -> return tokens.foreground.secondary
@@ -122,9 +126,9 @@ public function primaryColorAsColor(color: borrow PrimaryColor, tokens: borrow T
         Pink -> return tokens.palette.pink
         Brown -> return tokens.palette.brown
         Gray -> return tokens.palette.gray
-        Black -> return Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }
-        White -> return Color { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
-        Clear -> return Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }
+        Black -> return RGBAColor { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }
+        White -> return RGBAColor { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+        Clear -> return RGBAColor { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }
     }
 }
 
@@ -181,7 +185,10 @@ public function modifierSurfaceBorder(
         let tokens = modifierTokens(modifiers)
         match modifiers.themeBorder {
             Subtle -> return modifierColor(foundationColor(tokens.border.subtle.color), modifiers)
-            Standard -> return modifierColor(foundationColor(tokens.border.standard.color), modifiers)
+            Standard -> return modifierColor(
+                foundationColor(tokens.border.standard.color),
+                modifiers
+            )
             Strong -> return modifierColor(foundationColor(tokens.border.strong.color), modifiers)
             Focus -> return modifierColor(foundationColor(tokens.border.focus.color), modifiers)
         }
@@ -197,7 +204,10 @@ public function modifierSurfaceFill(
         return modifierColor(foundationColor(modifiers.fillColor), modifiers)
     }
     if modifiers.hasBackgroundStyle {
-        return modifierColor(modifierBackgroundStyle(modifiers.backgroundStyle, modifiers), modifiers)
+        return modifierColor(
+            modifierBackgroundStyle(modifiers.backgroundStyle, modifiers),
+            modifiers
+        )
     }
     return colorWithOpacity(fallback, modifiers.opacity)
 }
@@ -207,7 +217,7 @@ public function modifierCanvas(modifiers: borrow ModifierContext) -> FoundationC
     return modifierColor(foundationColor(modifierTokens(modifiers).background.canvas), modifiers)
 }
 
-public function foundationColor(color: Color) -> FoundationColor {
+public function foundationColor(color: RGBAColor) -> FoundationColor {
     return foundationRgba(color.r, color.g, color.b, color.a)
 }
 
@@ -227,18 +237,16 @@ public function foundationShape(shape: SurfaceShape) -> FoundationShape {
     }
 }
 
-public function uniformInsets(length: Float) -> EdgeInsets {
-    return EdgeInsets {
-        top: length,
-        trailing: length,
-        bottom: length,
-        leading: length
-    }
+public function uniformInsets(length: Number) -> EdgeInsets {
+    return EdgeInsets { top: length, trailing: length, bottom: length, leading: length }
 }
 
 // `.automatic` is the column's layout margin with any extra added on top;
 // `.fixed` is exactly the length it names.
-public function contentMarginsInset(margins: ContentMargins, modifiers: borrow ModifierContext) -> Float {
+public function contentMarginsInset(
+    margins: ContentMargins,
+    modifiers: borrow ModifierContext
+) -> Number {
     match margins {
         automatic(extra) -> {
             var inset = resolvedContentMargin(modifiers) + extra
@@ -275,39 +283,48 @@ public function describedChildren(
     return children
 }
 
-public function uiLerp(a: Float, b: Float, t: Float) -> Float {
+public function lerp(a: Number, b: Number, t: Number) -> Number {
     return a + (b - a) * t
 }
 
-public function lerpColor(start: borrow Color, end: borrow Color, t: Float) -> Color {
-    return Color {
-        r: uiLerp(start.r, end.r, t),
-        g: uiLerp(start.g, end.g, t),
-        b: uiLerp(start.b, end.b, t),
-        a: uiLerp(start.a, end.a, t)
+public function lerpColor(start: borrow RGBAColor, end: borrow RGBAColor, t: Number) -> RGBAColor {
+    return RGBAColor {
+        r: lerp(start.r, end.r, t),
+        g: lerp(start.g, end.g, t),
+        b: lerp(start.b, end.b, t),
+        a: lerp(start.a, end.a, t)
     }
 }
 
-public function colorWithOpacity(color: borrow FoundationColor, opacity: Float) -> FoundationColor {
+public function colorWithOpacity(
+    color: borrow FoundationColor,
+    opacity: Number
+) -> FoundationColor {
     return foundationRgba(color.r, color.g, color.b, color.a * opacity)
 }
 
-public function effectWithOpacity(effect: borrow FoundationEffect, opacity: Float) -> FoundationEffect {
+public function effectWithOpacity(
+    effect: borrow FoundationEffect,
+    opacity: Number
+) -> FoundationEffect {
     match effect {
         BackdropGlow(glow) -> {
-            return .BackdropGlow(Glow {
-                color: colorWithOpacity(glow.color, opacity),
-                radius: glow.radius,
-                intensity: glow.intensity
-            })
+            return .BackdropGlow(
+                Glow {
+                    color: colorWithOpacity(glow.color, opacity),
+                    radius: glow.radius,
+                    intensity: glow.intensity
+                }
+            )
         }
-
         LayerGlow(glow) -> {
-            return .LayerGlow(Glow {
-                color: colorWithOpacity(glow.color, opacity),
-                radius: glow.radius,
-                intensity: glow.intensity
-            })
+            return .LayerGlow(
+                Glow {
+                    color: colorWithOpacity(glow.color, opacity),
+                    radius: glow.radius,
+                    intensity: glow.intensity
+                }
+            )
         }
     }
 }
@@ -344,14 +361,14 @@ public function modifierEffects(
 public function cornerRadiusImplementation(
     style: CornerRadius,
     modifiers: borrow ModifierContext,
-) -> Float {
+) -> Number {
     return modifierCornerRadius(modifiers, style)
 }
 
 public function spacingImplementation(
     style: Spacing,
     modifiers: borrow ModifierContext,
-) -> Float {
+) -> Number {
     return modifierSpacing(modifiers, style)
 }
 
@@ -363,7 +380,7 @@ public function spacingImplementation(
 public function toolbarButtonDescription(
     context: borrow BuildContext,
     modifiers: borrow ModifierContext,
-    key: Int,
+    key: Number,
     label: borrow Any Widget,
 ) -> CALayerDescription {
     let metrics = windowChromeMetrics()
@@ -391,7 +408,10 @@ public function toolbarButtonDescription(
 // How far a bar button holds its label off its ends: a symbol sits in the
 // square the item's width makes and needs nothing more, words take the bar's
 // label inset.
-public function toolbarLabelInset(label: borrow CALayerDescription, metrics: borrow WindowChromeMetrics) -> Float {
+public function toolbarLabelInset(
+    label: borrow CALayerDescription,
+    metrics: borrow WindowChromeMetrics
+) -> Number {
     if drawsOnlySymbol(label) {
         return 0.0
     }
@@ -424,250 +444,12 @@ public function colorIsDark(fill: borrow FoundationColor) -> Bool {
     return (0.2126 * fill.r + 0.7152 * fill.g + 0.0722 * fill.b) < 0.5
 }
 
-public construct AppSurface() extends Widget {
-    let content: some Widget
-
-    // The canvas reaches the column's edges; what stands on it is held inside
-    // the column's layout margin, the way a list or form adopts the margins of
-    // the column it fills. Outside any column there is no margin to adopt, so
-    // the window's own surface runs edge to edge.
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        var described = content.describe(context, modifierContextForChildren(modifiers))
-        if modifiers.hasContentMargin {
-            described = insetDescription(move described, modifiers.contentMargin)
-        }
-        return CALayerDescription {
-            content: .Solid(CASolid {
-                fill: caColorFromFoundation(modifierCanvas(modifiers))
-            }),
-            sublayers: [described]
-        }
-    }
-}
-
-// A determinate progress bar. The fill takes the cascading `.tint(...)` when
-// one is set and the accent otherwise, like a slider's.
-public construct Progress(value: Float) extends Widget {
-
-    // A thin track across the room it is offered, filled with the tint up to
-    // the value: two shares of one row, so the fill is a fraction of whatever
-    // width the track ends up.
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let radius = progressTrackHeight() / 2.0
-        let filledShare = Int(controlClamp01(value) * 1000.0 + 0.5)
-        let filled = CALayerDescription {
-            layout: CALayoutIntent {
-                flex: filledShare
-            },
-            cornerRadius: radius,
-            content: .Solid(CASolid {
-                fill: caColorFromFoundation(modifierColor(controlActiveColor(modifiers), modifiers)),
-                cornerRadius: radius,
-                shapeKind: 1
-            })
-        }
-        return CALayerDescription {
-            layout: CALayoutIntent {
-                axis: .Row,
-                heightFill: false,
-                fixedHeight: progressTrackHeight(),
-                flex: 1
-            },
-            cornerRadius: radius,
-            content: .Solid(CASolid {
-                fill: caColorFromFoundation(modifierColor(foundationColor(themeAdaptiveColor(progressTrack, modifierAppearance(modifiers))), modifiers)),
-                cornerRadius: radius,
-                shapeKind: 1
-            }),
-            sublayers: [filled, CALayerDescription {
-                layout: CALayoutIntent {
-                    flex: 1000 - filledShare
-                }
-            }]
-        }
-    }
-}
-
-public construct Spacer() extends Widget {
-
-    // A flexing gap: no content, it takes the leftover main-axis space.
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        return CALayerDescription {
-            layout: CALayoutIntent {
-                flex: 1
-            }
-        }
-    }
-}
-
-public construct Circle() extends Widget {
-
-    // A capsule in a square box: the unbounded radius comes out at half the
-    // side.
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        return shapeDescription(context, modifiers, containerShapeUnbounded(), 0)
-    }
-}
-
-// Which way a gradient runs. The application names a direction rather than an
-// angle, because these are the ones a layout can answer without knowing how
-// large the surface came out — an angle over a box whose aspect changes is a
-// gradient that shears when the window is resized.
-public enum GradientDirection {
-    Down
-    Across
-    Diagonal
-}
-
-public function foundationGradient(direction: borrow GradientDirection) -> FoundationGradient {
-    match direction {
-        Down -> return .Down
-        Across -> return .Across
-        Diagonal -> return .Diagonal
-    }
-}
-
-// A fade from one color to another, across the space it is given.
-//
-//     LinearGradient(start: colorPurple(), end: colorBlue())
-//     LinearGradient(start: top, end: bottom, direction: .Across)
-//
-// ONE surface, blended per corner by the compositor. It used to be a column of
-// twelve strips, which is twelve quads, a visible band at every seam, and a
-// gradient that could only ever run downwards.
-public construct LinearGradient(
-    start: Color,
-    end: Color,
-    direction: GradientDirection = .Down,
-    radius: CornerRadius = .None,
-) extends Widget {
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        return CALayerDescription {
-            cornerRadius: cornerRadiusImplementation(radius, modifiers),
-            content: .Gradient(CAGradient {
-                start: caColorFromFoundation(modifierColor(foundationColor(start), modifiers)),
-                end: caColorFromFoundation(modifierColor(foundationColor(end), modifiers)),
-                axis: foundationLayerGradientAxis(foundationGradient(direction))
-            })
-        }
-    }
-}
-
-// A fill-sized wash in a background style — the band behind a list row, the pill
-// under a tab. The themed counterpart to SurfaceTint, which can only be handed a
-// color someone else already resolved.
-public construct BackgroundFill(style: BackgroundStyle, radius: CornerRadius = .None) extends Widget {
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let cr = cornerRadiusImplementation(radius, modifiers)
-        return CALayerDescription {
-            cornerRadius: cr,
-            content: .Solid(CASolid {
-                fill: caColorFromFoundation(modifierColor(modifierBackgroundStyle(style, modifiers), modifiers)),
-                cornerRadius: cr
-            })
-        }
-    }
-}
-
-public construct SurfaceTint(color: Color) extends Widget {
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        return CALayerDescription {
-            content: .Solid(CASolid {
-                fill: caColorFromFoundation(modifierSurfaceFill(foundationColor(color), modifiers))
-            })
-        }
-    }
-}
-
-// A container's own inset, in spacing tokens, one axis at a time.
-//
-// This is not padding: padding is a length someone chose at a call site, and
-// every one of them drifts. An inset states which spacing STEP a container holds
-// its content off its edges by, and the theme decides what that step measures.
-public construct Inset(
-    horizontal: Spacing = .None,
-    vertical: Spacing = .None,
-) extends Widget {
-    let content: some Widget
-
-    // A wrapper that insets the child by one spacing step per axis.
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let side = spacingImplementation(horizontal, modifiers)
-        let ends = spacingImplementation(vertical, modifiers)
-        let described = content.describe(context, modifierContextForChildren(modifiers))
-        let fillsWidth = described.layout.widthFill
-        let fillsHeight = described.layout.heightFill
-        return CALayerDescription {
-            layout: CALayoutIntent {
-                widthFill: fillsWidth,
-                heightFill: fillsHeight,
-                paddingLeading: side,
-                paddingTop: ends,
-                paddingTrailing: side,
-                paddingBottom: ends
-            },
-            sublayers: [described]
-        }
-    }
-}
-
-// A hairline between two things.
-//
-// Its color and its thickness are the theme's border tokens, and how far it is
-// held off the edges it runs between is the size class's — leading and trailing
-// separately, because a grouped list insets its separators to the label column
-// on one side and runs them to the edge on the other. `.themeBorder(...)` picks
-// which border it is drawn in.
-//
-// The inset lives on the divider rather than on whatever encloses it, so a
-// section, a sidebar and a toolbar all divide the same way without any of them
-// restating it.
-public construct Divider() extends Widget {
-
-    // A hairline across whatever holds it: the border's width tall, in the
-    // border's color.
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let border = modifierResolvedBorder(modifiers)
-        let line = CALayerDescription {
-            layout: CALayoutIntent {
-                heightFill: false,
-                fixedHeight: border.width
-            },
-            content: .Solid(CASolid {
-                fill: caColorFromFoundation(modifierSurfaceFill(foundationColor(border.color), modifiers))
-            })
-        }
-        // In a menu a divider is a GROUP BOUNDARY, and that is more than a line.
-        // Measured off the platform's menu (Examples/liquid-glass-menu): rows
-        // inside a group sit on a 42pt pitch, rows either side of a separator on
-        // 64 — so the separator is a rule with air above and below it, inset
-        // from each edge rather than running edge to edge.
-        if modifiers.controlPresentation == .MenuRow {
-            let menu = menuMetrics(modifiers)
-            return CALayerDescription {
-                layout: CALayoutIntent {
-                    heightFill: false,
-                    paddingLeading: menu.dividerInset,
-                    paddingTop: menu.dividerVerticalInset,
-                    paddingTrailing: menu.dividerInset,
-                    paddingBottom: menu.dividerVerticalInset
-                },
-                sublayers: [line]
-            }
-        }
-        return line
-    }
-}
-
 // The border a widget is drawn in: the named `.themeBorder(...)` when one is in
 // effect, the subtle hairline otherwise. Color and width together, because a
 // border is both.
 public function modifierResolvedBorder(modifiers: borrow ModifierContext) -> ResolvedBorder {
     let tokens = modifierTokens(modifiers)
-    if modifiers.hasThemeBorder == false {
+    if !modifiers.hasThemeBorder {
         return tokens.border.subtle
     }
     match modifiers.themeBorder {

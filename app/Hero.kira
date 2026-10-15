@@ -38,13 +38,19 @@ import KCoreAnimation
 // overlay is bounded by nothing, which is the only place a thing in transit can
 // correctly be drawn.
 
+public namespace HeroMotion {
+    // The curve an element travels on. Critically damped — a photograph that
+    // overshoots the frame it is opening into reads as dropped rather than placed.
+    let curve: MotionCurveName = .Reposition
+}
+
 // One element's journey.
-public struct KiraUiHero {
+public struct Hero {
     // Where it last came out, which is where a flight starts from.
-    var fromX: Float = 0.0
-    var fromY: Float = 0.0
-    var fromW: Float = 0.0
-    var fromH: Float = 0.0
+    var fromX: Number = 0.0
+    var fromY: Number = 0.0
+    var fromW: Number = 0.0
+    var fromH: Number = 0.0
     // The flight itself. `MotionMove` springs to a new place from wherever the
     // element currently is, which is what makes an interrupted transport
     // continue rather than restart — an element sent back while it is still
@@ -55,8 +61,8 @@ public struct KiraUiHero {
     // the right place at the wrong size.
     var width: MotionSpringState = MotionSpringState {}
     var height: MotionSpringState = MotionSpringState {}
-    var currentW: Float = 0.0
-    var currentH: Float = 0.0
+    var currentW: Number = 0.0
+    var currentH: Number = 0.0
     var flying: Bool = false
     // Whether this element has ever been placed. Its first appearance is not a
     // journey — it has nowhere to have come from, and an element that flies in
@@ -64,24 +70,23 @@ public struct KiraUiHero {
     var placed: Bool = false
 }
 
-public function heroSlotKey(id: Int) -> String {
-    return kiraUiSlotKey("kiraui.hero.", id)
+public function heroSlotKey(id: Number) -> String {
+    return slotKey("kiraui.hero.", id)
 }
 
 // The slot, made the first time it is asked for. A writer recovers it in
 // place after this: a recovered value handed back out of a function is a
 // copy, and what was written to it would be lost.
-public function heroEnsure(id: Int) {
-    if kiraUiStateSlotHas(heroSlotKey(id)) == false {
-        kiraUiStateSlotPut(heroSlotKey(id), nativeUserData(nativeState(KiraUiHero {})))
+public function heroEnsure(id: Number) {
+    if !ambientStateHas(heroSlotKey(id)) {
+        ambientStatePut(heroSlotKey(id), nativeUserData(nativeState(Hero {})))
     }
-    return
 }
 
 // The state as it stands, to read.
-public function heroState(id: Int) -> KiraUiHero {
+public function heroState(id: Number) -> Hero {
     heroEnsure(id)
-    return nativeRecover<KiraUiHero>(kiraUiStateSlotGet(heroSlotKey(id)))
+    return nativeRecover<Hero>(ambientStateGet(heroSlotKey(id)))
 }
 
 // The hit-region key a hero's view carries, so layout's record of where it came
@@ -90,14 +95,8 @@ public function heroState(id: Int) -> KiraUiHero {
 // Derived from the id rather than minted from the build sequence: a sequence key
 // changes the moment the element is declared somewhere else in the tree, which
 // is precisely the frame a hero needs its identity to survive.
-public function heroKey(id: Int) -> Int {
+public function heroKey(id: Number) -> Number {
     return 700000 + id
-}
-
-// The curve an element travels on. Critically damped — a photograph that
-// overshoots the frame it is opening into reads as dropped rather than placed.
-public function heroCurve() -> MotionCurveName {
-    return .Reposition
 }
 
 // Advance this hero against where layout says its element now is, and answer the
@@ -109,11 +108,11 @@ public function heroCurve() -> MotionCurveName {
 //   * placed, not moved   -> take it as given; the common case, and free
 //   * placed, moved       -> begin a flight from where it was
 //   * flying              -> advance, and report the interpolated rectangle
-public function heroAdvance(id: Int, destination: borrow Rect) -> Rect {
+public function heroAdvance(id: Number, destination: borrow Rect) -> Rect {
     heroEnsure(id)
-    var hero = nativeRecover<KiraUiHero>(kiraUiStateSlotGet(heroSlotKey(id)))
+    var hero = nativeRecover<Hero>(ambientStateGet(heroSlotKey(id)))
 
-    if hero.placed == false {
+    if !hero.placed {
         if destination.width <= 0.0 {
             // Not laid out yet either. There is nothing to say about where it
             // is, and the caller draws it in place.
@@ -127,7 +126,12 @@ public function heroAdvance(id: Int, destination: borrow Rect) -> Rect {
         hero.currentH = destination.height
         motionMovePlace(hero.move, destination.x, destination.y)
         hero.placed = true
-        return Rect { x: destination.x, y: destination.y, width: destination.width, height: destination.height }
+        return Rect {
+            x: destination.x,
+            y: destination.y,
+            width: destination.width,
+            height: destination.height
+        }
     }
 
     // The destination moved: start, or redirect, a flight toward it.
@@ -137,28 +141,44 @@ public function heroAdvance(id: Int, destination: borrow Rect) -> Rect {
             hero.fromY = destination.y
             hero.fromW = destination.width
             hero.fromH = destination.height
-            motionMoveTo(hero.move, destination.x, destination.y, heroCurve(), kiraUiReducedMotion())
+            motionMoveTo(
+                hero.move,
+                destination.x,
+                destination.y,
+                HeroMotion.curve,
+                prefersReducedMotion()
+            )
             heroSizeTo(hero, destination.width, destination.height)
             hero.flying = true
         }
     }
 
-    if hero.flying == false {
-        return Rect { x: hero.move.currentX, y: hero.move.currentY, width: hero.currentW, height: hero.currentH }
+    if !hero.flying {
+        return Rect {
+            x: hero.move.currentX,
+            y: hero.move.currentY,
+            width: hero.currentW,
+            height: hero.currentH
+        }
     }
 
-    let stillMoving = motionMoveAdvance(hero.move, kiraUiClockDelta())
+    let stillMoving = motionMoveAdvance(hero.move, clockDelta())
     let stillSizing = heroSizeAdvance(hero)
     if stillMoving || stillSizing {
-        kiraUiClockStillMoving()
+        clockStillMoving()
     } else {
         hero.flying = false
     }
-    return Rect { x: hero.move.currentX, y: hero.move.currentY, width: hero.currentW, height: hero.currentH }
+    return Rect {
+        x: hero.move.currentX,
+        y: hero.move.currentY,
+        width: hero.currentW,
+        height: hero.currentH
+    }
 }
 
 // Points the two extent springs at a new size, from whatever size they are.
-public function heroSizeTo(hero: borrow mut KiraUiHero, width: Float, height: Float) {
+public function heroSizeTo(hero: borrow mut Hero, width: Number, height: Number) {
     let nowW = motionSpringSample(hero.width, hero.width.elapsed)
     let nowH = motionSpringSample(hero.height, hero.height.elapsed)
     var fromW = nowW.value
@@ -169,20 +189,19 @@ public function heroSizeTo(hero: borrow mut KiraUiHero, width: Float, height: Fl
         fromW = hero.currentW
         fromH = hero.currentH
     }
-    let springW = motionCurveFor(heroCurve(), width, kiraUiReducedMotion())
-    let springH = motionCurveFor(heroCurve(), height, kiraUiReducedMotion())
+    let springW = motionCurveFor(HeroMotion.curve, width, prefersReducedMotion())
+    let springH = motionCurveFor(HeroMotion.curve, height, prefersReducedMotion())
     hero.width = motionSpringStart(move springW, fromW, nowW.velocity)
     hero.height = motionSpringStart(move springH, fromH, nowH.velocity)
-    return
 }
 
-public function heroSizeAdvance(hero: borrow mut KiraUiHero) -> Bool {
-    let sampleW = motionSpringAdvance(hero.width, kiraUiClockDelta())
-    let sampleH = motionSpringAdvance(hero.height, kiraUiClockDelta())
+public function heroSizeAdvance(hero: borrow mut Hero) -> Bool {
+    let sampleW = motionSpringAdvance(hero.width, clockDelta())
+    let sampleH = motionSpringAdvance(hero.height, clockDelta())
     hero.currentW = sampleW.value
     hero.currentH = sampleH.value
-    let restW = motionSpringSettled(hero.width, sampleW, motionSpringEpsilon())
-    let restH = motionSpringSettled(hero.height, sampleH, motionSpringEpsilon())
+    let restW = motionSpringSettled(hero.width, sampleW, MotionSpringLimit.epsilon)
+    let restH = motionSpringSettled(hero.height, sampleH, MotionSpringLimit.epsilon)
     if restW && restH {
         hero.currentW = hero.width.spring.target
         hero.currentH = hero.height.spring.target
@@ -192,7 +211,7 @@ public function heroSizeAdvance(hero: borrow mut KiraUiHero) -> Bool {
 }
 
 // Whether this element is currently between two places.
-public function kiraUiHeroFlying(id: Int) -> Bool {
+public function heroFlying(id: Number) -> Bool {
     return heroState(id).flying
 }
 
@@ -203,19 +222,21 @@ public function kiraUiHeroFlying(id: Int) -> Bool {
 // in transit it is drawn in the overlay at the rectangle the springs report and
 // its slot in the tree is held open at the same size, so neither parent reflows
 // around a hole.
-public construct MatchedGeometry(id: Int) extends Widget {
+public construct MatchedGeometry(id: Number) extends Widget {
     let content: some Widget
-
 
     // At rest the element is an ordinary view in place; in flight it is handed to
     // the overlay (still a FoundationView channel) and leaves its space behind.
     // The retained flight is a later refinement.
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         var childModifiers = modifierContextForChildren(modifiers)
-        if kiraUiHeroFlying(id) {
+        if heroFlying(id) {
             childModifiers = modifierContextForOverlay(modifiers)
         }
-        if kiraUiHeroFlying(id) == false {
+        if !heroFlying(id) {
             return content.describe(context, childModifiers)
         }
         // In flight the content still lowers, so it is in the overlay the

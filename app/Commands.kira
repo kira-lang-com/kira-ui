@@ -60,20 +60,20 @@ public enum CommandPlacement {
 
 // What a `CommandGroup` declared: where it goes, and its items, to be lowered
 // in the menu it goes into.
-public struct KiraUiCommandGroup {
+public struct DeclaredCommandGroup {
     var placement: CommandPlacement = .After(.Help)
     var items: Any Widget = EmptyView()
 }
 
 // What a `CommandMenu` declared.
-public struct KiraUiCommandMenu {
+public struct DeclaredCommandMenu {
     var title: String = ""
     var items: Any Widget = EmptyView()
 }
 
-public struct KiraUiCommandsSink {
-    var groups: [KiraUiCommandGroup] = []
-    var menus: [KiraUiCommandMenu] = []
+public struct CommandsSink {
+    var groups: [DeclaredCommandGroup] = []
+    var menus: [DeclaredCommandMenu] = []
     // What the application is called, which its menu is titled with.
     var applicationName: String = ""
     // Whether a window is collecting commands at all. Commands declared with
@@ -81,43 +81,36 @@ public struct KiraUiCommandsSink {
     var collecting: Bool = false
 }
 
-public function kiraUiCommandsSinkKey() -> String {
-    return "kiraui.commands"
-}
-
-public function kiraUiCommandsSinkEnsure() {
-    if kiraUiStateSlotHas(kiraUiCommandsSinkKey()) == false {
-        kiraUiStateSlotPut(kiraUiCommandsSinkKey(), nativeUserData(nativeState(KiraUiCommandsSink {})))
+public function commandsSinkEnsure() {
+    if !ambientStateHas(StateSlot.commands) {
+        ambientStatePut(StateSlot.commands, nativeUserData(nativeState(CommandsSink {})))
     }
-    return
 }
 
 // Open collection for the frame about to be built, in the application named
 // `applicationName`. The tree declares its commands again every frame, as it
 // does its toolbar.
-public function kiraUiCommandsCollect(applicationName: String) {
-    kiraUiCommandsSinkEnsure()
-    var sink = nativeRecover<KiraUiCommandsSink>(kiraUiStateSlotGet(kiraUiCommandsSinkKey()))
-    var noGroups: [KiraUiCommandGroup] = []
+public function commandsCollect(applicationName: String) {
+    commandsSinkEnsure()
+    var sink = nativeRecover<CommandsSink>(ambientStateGet(StateSlot.commands))
+    var noGroups: [DeclaredCommandGroup] = []
     sink.groups = move noGroups
-    var noMenus: [KiraUiCommandMenu] = []
+    var noMenus: [DeclaredCommandMenu] = []
     sink.menus = move noMenus
     sink.applicationName = applicationName
     sink.collecting = true
-    return
 }
 
-public function kiraUiCommandsStopCollecting() {
-    kiraUiCommandsSinkEnsure()
-    var sink = nativeRecover<KiraUiCommandsSink>(kiraUiStateSlotGet(kiraUiCommandsSinkKey()))
+public function commandsStopCollecting() {
+    commandsSinkEnsure()
+    var sink = nativeRecover<CommandsSink>(ambientStateGet(StateSlot.commands))
     sink.collecting = false
-    return
 }
 
 // The commands this frame declared, to read.
-public function kiraUiCommands() -> KiraUiCommandsSink {
-    kiraUiCommandsSinkEnsure()
-    return nativeRecover<KiraUiCommandsSink>(kiraUiStateSlotGet(kiraUiCommandsSinkKey()))
+public function declaredCommands() -> CommandsSink {
+    commandsSinkEnsure()
+    return nativeRecover<CommandsSink>(ambientStateGet(StateSlot.commands))
 }
 
 // --- Declaring them ----------------------------------------------------------
@@ -126,19 +119,24 @@ public function kiraUiCommands() -> KiraUiCommandsSink {
 public construct CommandMenu(title: String) extends Widget {
     let children: [some Widget]
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        kiraUiCommandsSinkEnsure()
-        var sink = nativeRecover<KiraUiCommandsSink>(kiraUiStateSlotGet(kiraUiCommandsSinkKey()))
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        commandsSinkEnsure()
+        var sink = nativeRecover<CommandsSink>(ambientStateGet(StateSlot.commands))
         if sink.collecting {
-            sink.menus.append(KiraUiCommandMenu {
-                title: copy title,
-                items: VStack(spacing: .None) {
-                    For(item in children) {
-                        item
+            sink.menus.append(
+                DeclaredCommandMenu {
+                    title: copy title,
+                    items: VStack(spacing: .None, alignment: .Leading) {
+                        For(item in children) {
+                            item
+                        }
+
                     }
                 }
-            })
+            )
         }
         return CALayerDescription {}
     }
@@ -149,19 +147,24 @@ public construct CommandMenu(title: String) extends Widget {
 public construct CommandGroup(placement: CommandPlacement) extends Widget {
     let children: [some Widget]
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        kiraUiCommandsSinkEnsure()
-        var sink = nativeRecover<KiraUiCommandsSink>(kiraUiStateSlotGet(kiraUiCommandsSinkKey()))
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        commandsSinkEnsure()
+        var sink = nativeRecover<CommandsSink>(ambientStateGet(StateSlot.commands))
         if sink.collecting {
-            sink.groups.append(KiraUiCommandGroup {
-                placement: copy placement,
-                items: VStack(spacing: .None) {
-                    For(item in children) {
-                        item
+            sink.groups.append(
+                DeclaredCommandGroup {
+                    placement: copy placement,
+                    items: VStack(spacing: .None, alignment: .Leading) {
+                        For(item in children) {
+                            item
+                        }
+
                     }
                 }
-            })
+            )
         }
         return CALayerDescription {}
     }
@@ -170,8 +173,10 @@ public construct CommandGroup(placement: CommandPlacement) extends Widget {
 public construct CommandsLayer(commands: Any Widget) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         // The commands put themselves on the bar as they lower; they lower to
         // nothing here.
         commands.describe(context, modifiers)
@@ -183,11 +188,13 @@ extend Widget {
     // The commands this view puts on the window's menu bar, matching SwiftUI's
     // `.commands { … }`.
     function commands(items: [some Widget]) -> Any Widget {
-        return CommandsLayer(commands: VStack(spacing: .None) {
-            For(item in items) {
-                item
+        return CommandsLayer(
+            commands: VStack(spacing: .None, alignment: .Leading) {
+                For(item in items) {
+                    item
+                }
             }
-        }) {
+        ) {
             self
         }
     }

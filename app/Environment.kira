@@ -1,0 +1,100 @@
+import Foundation
+import Ember
+
+// The environment, as SwiftUI's is: values the running app keeps for every
+// view, which a view reads by a key path into `EnvironmentValues`.
+//
+//     @Environment(\.scenePhase) private let scenePhase: ScenePhase
+//
+// The app's windows report what changes them, and a change rebuilds the
+// interface, so a view reads what holds while it is built.
+
+// Where the app's scene is in its life.
+@Derive(CustomStringConvertible)
+public enum ScenePhase {
+    // In front and taking input.
+    Active
+    // On screen but not taking input: another window has the focus.
+    Inactive
+    // Out of sight: minimized, or the app suspended.
+    Background
+}
+
+// The values the environment holds.
+public struct EnvironmentValues {
+    var scenePhase: ScenePhase = .Active
+    // Whether Stage Manager is on: the window in front stands on a stage and
+    // the others in a strip beside it. A desktop keeps its items out of sight
+    // then until it is clicked, as a Mac's does.
+    var isStageManagerActive: Bool = false
+}
+
+// Reads the value a key path into `EnvironmentValues` reaches. It keeps no
+// value of its own, so the property it wraps is a `let`, written with the
+// type of the value read. It is a generic struct, so a view in any module
+// wraps a property with it (KLF-RIDL section 30); a value of a type no
+// `@Instance` names here is read with `environmentValues()`. The key path is
+// held as the function it is, taking the values it reads from as its own, as
+// a function crossing a module boundary takes every parameter (KLF-RIDL
+// appendix A.2).
+@Instance(Bool)
+@Instance(ScenePhase)
+public struct Environment<Value> {
+    let keyPath: (EnvironmentValues) -> Value
+
+    function get() -> Value {
+        return self.keyPath(environmentValues())
+    }
+}
+
+// The slot, made the first time it is asked for. The process holds one
+// environment, so what a window reports holds in every scope.
+function environmentEnsure() {
+    if !ambientStateHas(StateSlot.environment) {
+        ambientStatePut(StateSlot.environment, nativeUserData(nativeState(EnvironmentValues {})))
+    }
+}
+
+// The values in effect.
+public function environmentValues() -> EnvironmentValues {
+    let previous = enterProcessScope()
+    environmentEnsure()
+    let values = copy nativeRecover<EnvironmentValues>(ambientStateGet(StateSlot.environment))
+    ambientScopeEnter(previous)
+    return values
+}
+
+// The host running the application says whether its windows are arranged by
+// Stage Manager.
+public function environmentNoteStageManager(active: Bool) {
+    let previous = enterProcessScope()
+    environmentEnsure()
+    var values = nativeRecover<EnvironmentValues>(ambientStateGet(StateSlot.environment))
+    values.isStageManagerActive = active
+    ambientScopeEnter(previous)
+}
+
+// Moves the scene to the phase a window event says it is in: focus makes it
+// active and losing focus inactive, and a window minimized or an app
+// suspended puts it in the background until it is restored or resumed.
+public function environmentNoteEvent(kind: borrow AppEventKind) {
+    var phase: ScenePhase? = .None
+    if kind == .Focused || kind == .Restored || kind == .Resumed {
+        phase = .Some(.Active)
+    }
+    if kind == .Unfocused {
+        phase = .Some(.Inactive)
+    }
+    if kind == .Iconified || kind == .Suspended {
+        phase = .Some(.Background)
+    }
+    let reported = match phase {
+        Some(value) -> value
+        None -> return
+    }
+    let previous = enterProcessScope()
+    environmentEnsure()
+    var values = nativeRecover<EnvironmentValues>(ambientStateGet(StateSlot.environment))
+    values.scenePhase = reported
+    ambientScopeEnter(previous)
+}

@@ -19,11 +19,14 @@ public enum NavigationSplitViewVisibility {
     DetailOnly
 }
 
-public function navigationShowsSidebar(visibility: NavigationSplitViewVisibility, hasContent: Bool) -> Bool {
+public function navigationShowsSidebar(
+    visibility: NavigationSplitViewVisibility,
+    hasContent: Bool
+) -> Bool {
     match visibility {
         Automatic -> return true
         All -> return true
-        DoubleColumn -> return hasContent == false
+        DoubleColumn -> return !hasContent
         DetailOnly -> return false
     }
 }
@@ -62,7 +65,6 @@ public construct NavigationSplitView(
     let content: some Widget = EmptyView()
     let detail: some Widget
 
-
     // The columns, each described under its own toolbar column so the items
     // and title each one declares land over it.
     //
@@ -73,42 +75,45 @@ public construct NavigationSplitView(
     // held clear of it: the glass is over the detail's canvas, and a view the
     // detail slides in or out passes under the glass rather than being cut at
     // the column's edge.
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         let metrics = navigationMetrics(context.viewportWidth)
         let split = metrics.presentation == .Split
         // The split view's own toggle is always on the bar; what it decides is
         // whether the sidebar is, and it slides there.
         let hasSidebar = split && navigationShowsSidebar(columnVisibility, false)
-        let shown = hasSidebar ? kiraUiSidebarShown(context) : 0.0
+        let shown = hasSidebar ? sidebarShown(context) : 0.0
         let showsSidebar = shown > 0.0
         let bleed = sidebarMetrics().glassBleed
         // Side by side, the row chosen in the sidebar is the root of what the
         // detail shows; stacked, the sidebar is the root and the row is pushed.
-        kiraUiNavigationSetRootDepth(split ? 1 : 0)
+        navigationSetRootDepth(split ? 1 : 0)
         let inner = insideSafeArea(context)
-        let previous = kiraUiNavigationEnter(true)
-        kiraUiInspectorCollect()
-        kiraUiToolbarEnterColumn(kiraUiToolbarSidebarColumn())
+        let previous = navigationEnter(true)
+        inspectorCollect()
+        toolbarEnterColumn(ToolbarColumn.sidebar)
         let sidebarModifiers = navigationSidebarModifiers(modifiers, metrics)
         var sidebarDesc = CALayerDescription {}
         var rootCarried = false
         if split {
-            kiraUiSidebarSelectionBegin()
+            sidebarSelectionBegin()
             sidebarDesc = sidebar.describe(inner, sidebarModifiers)
-            kiraUiSidebarSelectionEnd()
+            sidebarSelectionEnd()
         } else {
             // Stacked, the sidebar is the stack's root page, and is lowered as
             // one: its first scroll view runs up under the bar with its title.
-            let scope = kiraUiScrollScopeEnter(navigationStackedRootScope, context.safeArea.top)
+            let scope = scrollScopeEnter(navigationStackedRootScope, context.safeArea.top)
             sidebarDesc = sidebar.describe(inner, sidebarModifiers)
-            rootCarried = kiraUiScrollScopeLeave(move scope)
+            rootCarried = scrollScopeLeave(move scope)
         }
-        var rootTitle = KiraUiToolbarTitle {}
+        var rootTitle = ToolbarTitle {}
         if !split {
-            rootTitle = kiraUiToolbarTakeColumnTitle()
+            rootTitle = toolbarTakeColumnTitle()
             rootTitle.largeTitle = rootTitle.title.count > 0
         }
-        kiraUiToolbarEnterColumn(kiraUiToolbarContentColumn())
+        toolbarEnterColumn(ToolbarColumn.content)
         let contentDesc = content.describe(inner, navigationColumnModifiers(modifiers, metrics))
         // The detail is handed the window's safe area, and the sidebar and the
         // content column as more of it on the leading side: a stack in it
@@ -116,61 +121,85 @@ public construct NavigationSplitView(
         // Anything else is held clear here.
         var beside = metrics.primaryWidth * shown
         if split {
-            beside = beside + caMeasure(contentDesc, context.viewportWidth).width
+            beside = beside + contentDesc.measure(context.viewportWidth).width
         }
         var detailContext = copy context
         detailContext.safeArea.leading = detailContext.safeArea.leading + beside
-        kiraUiToolbarEnterColumn(kiraUiToolbarDetailColumn())
-        kiraUiChromeSafeAreaPending()
+        toolbarEnterColumn(ToolbarColumn.detail)
+        chromeSafeAreaPending()
         // Stacked, going on from the sidebar or back to it is this view's own
         // push and pop: the detail slides over the sidebar, showing the view
         // it is going to or leaving, and a stack in it holds still meanwhile,
         // since it has no sidebar to show under it.
-        kiraUiNavigationTransitionAdvance(context)
-        let transition = kiraUiNavigationTransition()
+        navigationTransitionAdvance(context)
+        let transition = navigationTransition()
         let slides = !split && transition.active && transition.covered.count == 0 && transition.front.count > 0
-        let current = kiraUiNavigationValues()
+        let current = navigationValues()
         if slides {
-            kiraUiNavigationStore(copy transition.front)
+            navigationStore(copy transition.front)
         }
-        kiraUiNavigationSetSplitSlides(slides)
-        var detailDesc = detail.describe(detailContext, navigationColumnModifiers(modifiers, metrics))
-        kiraUiNavigationSetSplitSlides(false)
-        kiraUiNavigationStore(move current)
-        if !kiraUiChromeSafeAreaWasHandled() {
+        navigationSetSplitSlides(slides)
+        var detailDesc = detail.describe(
+            detailContext,
+            navigationColumnModifiers(modifiers, metrics)
+        )
+        navigationSetSplitSlides(false)
+        navigationStore(move current)
+        if !chromeSafeAreaWasHandled() {
             detailDesc = safeAreaInset(move detailDesc, detailContext.safeArea)
         }
-        kiraUiInspectorStopCollecting()
-        kiraUiNavigationLeave(previous)
-        kiraUiChromeSafeAreaHandled()
+        inspectorStopCollecting()
+        navigationLeave(previous)
+        chromeSafeAreaHandled()
 
         if !split {
-            var root = navigationStackedRoot(move sidebarDesc, rootCarried, rootTitle.title, context, sidebarModifiers)
-            if !slides && kiraUiNavigationValues().count == 0 {
-                kiraUiToolbarShowPageTitle(rootTitle)
+            var root = navigationStackedRoot(
+                move sidebarDesc,
+                rootCarried,
+                rootTitle.title,
+                context,
+                sidebarModifiers
+            )
+            if !slides && navigationValues().count == 0 {
+                toolbarShowPageTitle(rootTitle)
             }
             root.key = 1
-            detailDesc.key = kiraUiNavigationDetailRun() + 2
+            detailDesc.key = navigationDetailRun() + 2
             var columns: [CALayerDescription] = []
             if slides {
                 let popping = navigationTransitionPopping(transition)
                 let animation = navigationTransitionAnimation(transition, context.frameCount)
-                columns.append(navigationCoveredPage(move root, transition.shown, navigationTransitionFrom(transition), context.viewportWidth, popping, copy animation))
-                columns.append(navigationMovingPage(move detailDesc, transition.shown, navigationTransitionFrom(transition), context.viewportWidth, popping, move animation))
-            } else if kiraUiNavigationValues().count == 0 {
+                columns.append(
+                    navigationCoveredPage(
+                        move root,
+                        transition.shown,
+                        navigationTransitionFrom(transition),
+                        context.viewportWidth,
+                        popping,
+                        copy animation
+                    )
+                )
+                columns.append(
+                    navigationMovingPage(
+                        move detailDesc,
+                        transition.shown,
+                        navigationTransitionFrom(transition),
+                        context.viewportWidth,
+                        popping,
+                        move animation
+                    )
+                )
+            } else if navigationValues().count == 0 {
                 columns.append(move root)
             } else {
                 columns.append(move detailDesc)
             }
-            return CALayerDescription {
-                clipsChildren: true,
-                sublayers: move columns
-            }
+            return CALayerDescription { clipsChildren: true, sublayers: move columns }
         }
 
-        kiraUiChromeShowSidebarToggle()
+        chromeShowSidebarToggle()
         if hasSidebar {
-            kiraUiChromeSetNavigationLayout(metrics.primaryWidth, true, shown, kiraUiToolbarDetailColumn())
+            chromeSetNavigationLayout(metrics.primaryWidth, true, shown, ToolbarColumn.detail)
         }
         // Each column is known by its own key, so the sidebar coming and going
         // never has the tree take the content column for it.
@@ -195,25 +224,34 @@ public construct NavigationSplitView(
                 0.0,
                 .Rect,
                 modifiers,
-                [safeAreaInset(move sidebarDesc, context.safeArea), sidebarShadow(metrics.primaryWidth, context.viewportHeight, modifiers)]
+                [safeAreaInset(move sidebarDesc, context.safeArea), sidebarShadow(
+                    metrics.primaryWidth,
+                    context.viewportHeight,
+                    modifiers
+                )]
             )
-            glass.content = .Glass(caGlassEdgeless(liquidGlassContent(.Rect, modifiers)))
-            columns.append(CALayerDescription {
-                key: 1,
-                layout: CALayoutIntent {
-                    widthFill: false,
-                    fixedWidth: metrics.primaryWidth * shown
-                },
-                sublayers: [CALayerDescription {
+            glass.content = .Glass((liquidGlassContent(.Rect, modifiers)).edgeless())
+            columns.append(
+                CALayerDescription {
+                    key: 1,
                     layout: CALayoutIntent {
-                        axis: .Row,
                         widthFill: false,
-                        heightFill: false,
-                        offset: Point { x: 0.0 - metrics.primaryWidth * (1.0 - shown) - bleed, y: 0.0 - bleed }
+                        fixedWidth: metrics.primaryWidth * shown
                     },
-                    sublayers: [move glass]
-                }]
-            })
+                    sublayers: [CALayerDescription {
+                        layout: CALayoutIntent {
+                            axis: .Row,
+                            widthFill: false,
+                            heightFill: false,
+                            offset: Point {
+                                x: -metrics.primaryWidth * (1.0 - shown) - bleed,
+                                y: -bleed
+                            }
+                        },
+                        sublayers: [move glass]
+                    }]
+                }
+            )
         }
         detailDesc = navigationSelectedDetail(move detailDesc)
         // An unwritten content column measures nothing.
@@ -223,10 +261,7 @@ public construct NavigationSplitView(
         columns.append(move contentColumn)
         return CALayerDescription {
             sublayers: [move detailDesc, CALayerDescription {
-                layout: CALayoutIntent {
-                    axis: .Row,
-                    widthFill: false
-                },
+                layout: CALayoutIntent { axis: .Row, widthFill: false },
                 sublayers: move columns
             }]
         }
@@ -237,22 +272,28 @@ public construct NavigationSplitView(
 // glass's trailing edge, `width` in, which the glass clips away, so only the
 // shadow it casts falls back inside along that edge. It runs past the
 // window's `height` at both ends, so the shadow does not thin out at them.
-public function sidebarShadow(width: Float, height: Float, modifiers: borrow ModifierContext) -> CALayerDescription {
-    let ink = caColorFromFoundation(modifierColor(foundationColor(themeAdaptiveColor(sidebarShadowColor, modifierAppearance(modifiers))), modifiers))
+public function sidebarShadow(
+    width: Number,
+    height: Number,
+    modifiers: borrow ModifierContext
+) -> CALayerDescription {
+    let ink = colorFromFoundation(
+        modifierColor(
+            foundationColor(themeAdaptiveColor(sidebarShadowColor, modifierAppearance(modifiers))),
+            modifiers
+        )
+    )
     let radius = sidebarMetrics().shadowRadius
     return CALayerDescription {
         disablesActions: true,
         backgroundColor: ink,
-        shadow: CAShadow {
-            color: ink,
-            radius: radius
-        },
+        shadow: CAShadow { color: ink, radius: radius },
         layout: CALayoutIntent {
             widthFill: false,
             heightFill: false,
             fixedWidth: radius * 2.0,
             fixedHeight: height + radius * 4.0,
-            offset: Point { x: width, y: 0.0 - radius * 2.0 }
+            offset: Point { x: width, y: -radius * 2.0 }
         }
     }
 }

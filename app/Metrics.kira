@@ -3,19 +3,15 @@ import KCoreAnimation
 
 // The sizes a control IS.
 //
-// Colors, radii, spacing and type were already tokens; the geometry a control is
-// actually built from — how tall a form row stands, how wide the numeric field
-// beside it runs, which column its label starts in — was not, so every
-// application re-derived it with literals at the call site and every panel came
-// out a little different from the one beside it.
+// A control's geometry at each size is the platform's, measured from it and
+// kept in the catalog (`controlSizeMetrics`): how tall a button and a text
+// field stand, how far their labels sit off their ends, the size the label is
+// set at. An application picks the size for a region and states nothing else:
 //
-// A style declares the table once per size class. An application picks the class
-// for a region and states nothing else:
-//
-//     Inspector()
+//     Form { ... }
 //         .controlSize(.Small)
 //
-// and every row, field, switch, glyph and separator inside follows.
+// and every button, field and menu inside follows.
 //
 // GAPS are not here. The distance between two things is a spacing token, and the
 // theme's spacing scale already names those steps; a second scale for the same
@@ -42,216 +38,18 @@ public enum IconScale {
     ExtraLarge
 }
 
-// One size class, resolved. The defaults are the regular class; a style states
-// all four.
-public struct ControlMetricsImplementation {
-    // How large TYPE is drawn in this size class, against the theme's scale.
-    //
-    // Type belongs to the size class. Stated globally, a `.Small` region shrinks
-    // its rows and its controls and leaves the text at full size — which is how
-    // a row label ends up filling almost half its row while the header above it
-    // is barely legible. The theme still owns the RELATIONSHIPS between roles;
-    // this decides how loudly the whole scale speaks here.
-    let typeScale: Float = 1.0
-    // A form row's height. Every row in a section stands the same height
-    // whatever control it carries — that is what makes a column of them read as
-    // a list rather than as a stack of unrelated widgets.
-    let rowHeight: Float = 34.0
-    // An inline control's own height: a numeric field, a menu pill, a segment.
-    let height: Float = 24.0
-    // A numeric field's width, fixed so a column of them aligns on its right
-    // edge no matter what the values currently are, and its inset.
-    let fieldWidth: Float = 64.0
-    let fieldInset: Float = 7.0
-    // A form row's own inset from the card's edges. The separators between rows
-    // run the card's full width, so the inset belongs to the row rather than to
-    // the card around it.
-    let rowInset: Float = 12.0
-    // The leading column a row's glyph sits in. A row WITHOUT a glyph still
-    // reserves it, so a sub-property lines up with the property above it.
-    let gutter: Float = 28.0
-    // How large a menu is drawn in this size class, against its geometry at
-    // the regular size. The geometry itself is the interface's -- a computer's
-    // menu is dense, a touch screen's roomy -- so it comes from the catalog
-    // (see `menuMetrics`), and the size class only scales it.
-    let menuScale: Float = 1.0
-    // One wheel notch. This is interaction geometry, so it scales with the
-    // region rather than ScrollView carrying one platform constant forever.
-    let scrollStep: Float = 48.0
-    // A two-dimensional value pad: its size, its knob, and the ruler along its
-    // bottom edge.
-    let padWidth: Float = 168.0
-    let padHeight: Float = 96.0
-    let padKnob: Float = 10.0
-    let padTick: Float = 6.0
-    // How far a COLUMN holds its content off its own leading and trailing edges.
-    //
-    // One margin for the whole column, and every part of it obeys the same one:
-    // the bar across its top, the rows in its list, the header above them. Each
-    // of them used to inset itself — a toolbar by one number, a row by another,
-    // a header by a third — and a column whose contents start at three different
-    // distances from its edge reads as three columns that happen to be adjacent.
-    //
-    // A column's edge margin is a property of the column, not of the control size
-    // inside it, so it does not scale with the class the way a control's own
-    // insets do: it is the same 16 in every class, as a platform's layout margin
-    // is one constant its content stands off its edges by.
-    let contentMargin: Float = 16.0
-    // The window's toolbar: how tall it stands.
-    let toolbarHeight: Float = 48.0
-    // Button geometry belongs to the size class, not to Button itself. A bordered
-    // button pads its label by the insets; system chrome can instead use the
-    // square buttonSize x buttonSize slot for an icon-only control.
-    let buttonSize: Float = 36.0
-    let buttonHorizontalInset: Float = 12.0
-    let buttonVerticalInset: Float = 7.0
-    // A window control's diameter.
-    let windowButton: Float = 12.0
-    // A list or outline row: its height, the list's inset, and one level of
-    // disclosure.
-    let listRowHeight: Float = 28.0
-    let listInset: Float = 6.0
-    let listIndent: Float = 16.0
-    // The default widths of the columns beside a document: the source list on
-    // the leading side and the property panel on the trailing one.
-    let sidebarWidth: Float = 260.0
-    let inspectorWidth: Float = 300.0
-    // A section card's own inset around its rows, its header's height and how
-    // far the header is held off the card's leading edge.
-    let cardPadding: Float = 0.0
-    let headerHeight: Float = 20.0
-    let headerInset: Float = 10.0
-    // How far a divider is held off the edges it runs between. Leading and
-    // trailing separately: a grouped list insets its separators to the label
-    // column on the leading side and runs them to the edge on the trailing one,
-    // and a single inset cannot say that.
-    let dividerLeading: Float = 0.0
-    let dividerTrailing: Float = 0.0
-    // A form's inset from the surface it is placed on.
-    let formInset: Float = 10.0
-}
-
-// The four size classes a style declares.
-public struct StyleMetricTokens {
-    let mini: ControlMetricsImplementation = ControlMetricsImplementation {
-        typeScale: 0.78,
-        menuScale: 16.0 / 21.0,
-        rowHeight: 24.0,
-        height: 18.0,
-        fieldWidth: 48.0,
-        fieldInset: 5.0,
-        rowInset: 8.0,
-        gutter: 21.0,
-        scrollStep: 36.0,
-        padWidth: 128.0,
-        padHeight: 68.0,
-        padKnob: 8.0,
-        padTick: 4.0,
-        toolbarHeight: 38.0,
-        contentMargin: 16.0,
-        buttonSize: 26.0,
-        buttonHorizontalInset: 8.0,
-        buttonVerticalInset: 4.0,
-        windowButton: 10.0,
-        listRowHeight: 22.0,
-        listIndent: 12.0,
-        sidebarWidth: 220.0,
-        inspectorWidth: 260.0,
-        cardPadding: 0.0,
-        headerHeight: 16.0,
-        headerInset: 6.0,
-        dividerLeading: 0.0,
-        dividerTrailing: 0.0,
-        formInset: 6.0
-    }
-    let small: ControlMetricsImplementation = ControlMetricsImplementation {
-        typeScale: 0.88,
-        menuScale: 18.0 / 21.0,
-        rowHeight: 30.0,
-        height: 21.0,
-        fieldWidth: 58.0,
-        fieldInset: 6.0,
-        rowInset: 10.0,
-        gutter: 25.0,
-        scrollStep: 42.0,
-        padWidth: 148.0,
-        padHeight: 84.0,
-        padKnob: 9.0,
-        padTick: 5.0,
-        toolbarHeight: 44.0,
-        contentMargin: 16.0,
-        buttonSize: 32.0,
-        buttonHorizontalInset: 10.0,
-        buttonVerticalInset: 5.0,
-        windowButton: 12.0,
-        listRowHeight: 26.0,
-        listIndent: 14.0,
-        sidebarWidth: 268.0,
-        inspectorWidth: 300.0,
-        cardPadding: 0.0,
-        headerHeight: 18.0,
-        headerInset: 8.0,
-        dividerLeading: 0.0,
-        dividerTrailing: 0.0,
-        formInset: 8.0
-    }
-    let regular: ControlMetricsImplementation = ControlMetricsImplementation {}
-    let large: ControlMetricsImplementation = ControlMetricsImplementation {
-        typeScale: 1.15,
-        menuScale: 25.0 / 21.0,
-        rowHeight: 40.0,
-        height: 28.0,
-        fieldWidth: 76.0,
-        fieldInset: 9.0,
-        rowInset: 14.0,
-        gutter: 32.0,
-        scrollStep: 56.0,
-        padWidth: 196.0,
-        padHeight: 112.0,
-        padKnob: 12.0,
-        padTick: 7.0,
-        toolbarHeight: 56.0,
-        contentMargin: 16.0,
-        buttonSize: 44.0,
-        buttonHorizontalInset: 20.0,
-        buttonVerticalInset: 14.0,
-        windowButton: 14.0,
-        listRowHeight: 32.0,
-        listIndent: 18.0,
-        sidebarWidth: 300.0,
-        inspectorWidth: 340.0,
-        cardPadding: 0.0,
-        headerHeight: 22.0,
-        headerInset: 12.0,
-        dividerLeading: 0.0,
-        dividerTrailing: 0.0,
-        formInset: 12.0
-    }
-}
-
-// The metrics for one class, from the theme in effect — the same rule every
-// other token family resolves by.
-public function controlMetricsImplementation(
-    size: ControlSize,
-    modifiers: borrow ModifierContext,
-) -> ControlMetricsImplementation {
-    return modifierControlMetrics(modifiers, size)
-}
-
 // The margin the COLUMN in effect holds its content off its edges by: what the
-// column said with `.contentMargin(...)`, and otherwise the size class's own.
+// column said with `.contentMargin(...)`, and outside any column the window's
+// own: the compact layout margin on a phone or tablet, the regular one on a
+// Mac, where a window holds a grouped `Form` and `.scenePadding()` 20 off its
+// edges.
 // Everything that stands against a column's edge asks this — the bar's sections,
 // a list row, a list's header — so one answer moves all of them together.
-public function resolvedContentMargin(modifiers: borrow ModifierContext) -> Float {
+public function resolvedContentMargin(modifiers: borrow ModifierContext) -> Number {
     if modifiers.hasContentMargin {
         return modifiers.contentMargin
     }
-    return resolvedControlMetrics(modifiers).contentMargin
-}
-
-// The metrics in effect here: the cascaded `.controlSize(...)`, or regular.
-public function resolvedControlMetrics(modifiers: borrow ModifierContext) -> ControlMetricsImplementation {
-    return controlMetricsImplementation(modifiers.controlSize, modifiers)
+    return interfaceMode() == .AdaptiveDesktop ? LayoutMargin.regular : LayoutMargin.compact
 }
 
 // How large a glyph is drawn here: on the EM of the type it stands in, the way
@@ -264,22 +62,26 @@ public function resolvedControlMetrics(modifiers: borrow ModifierContext) -> Con
 // device pixels high at one size. Fitting every glyph's INK to the cap band made
 // them one height, and all of them small: the platform's row glyph is 17.3pt of
 // ink beside 12.3pt capitals.
-public function iconScaleSize(scale: IconScale, modifiers: borrow ModifierContext) -> Float {
+public function iconScaleSize(scale: IconScale, modifiers: borrow ModifierContext) -> Number {
     return iconScaleFactor(scale) * iconTypeSize(modifiers)
 }
 
 // The cap band of the type in effect, measured from the face: `H` reaches the
 // cap line and sits on the baseline, so the top of its ink IS the band.
-public function iconCapBand(modifiers: borrow ModifierContext) -> Float {
-    return foundationTextRunInkTop("H", iconTypeSize(modifiers), iconTypeWeight(modifiers))
+public function iconCapBand(modifiers: borrow ModifierContext) -> Number {
+    return foundationTextRunInkTop(
+        "H",
+        iconTypeSize(modifiers),
+        iconTypeWeight(modifiers),
+        .Default
+    )
 }
-
 
 // The type a glyph is standing in, resolved through exactly the order a run of
 // text resolves its own size — so a glyph in a `.headline` is headline-sized, a
 // glyph in a `.font(...)` is that font's, and a glyph in neither is body-sized
 // like the words it stands with.
-public function iconTypeSize(modifiers: borrow ModifierContext) -> Float {
+public function iconTypeSize(modifiers: borrow ModifierContext) -> Number {
     if modifiers.hasFont {
         return modifiers.fontSize
     }
@@ -291,7 +93,7 @@ public function iconTypeSize(modifiers: borrow ModifierContext) -> Float {
 
 // The scale steps, against the cap band: a medium glyph IS the capitals beside
 // it, and the steps either side are the ones the platform's symbol scales take.
-public function iconScaleFactor(scale: borrow IconScale) -> Float {
+public function iconScaleFactor(scale: borrow IconScale) -> Number {
     match scale {
         Small -> return 0.85
         Medium -> return 1.0
@@ -303,8 +105,10 @@ public function iconScaleFactor(scale: borrow IconScale) -> Float {
 public construct ControlSizeLayer(value: ControlSize) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         let resolved = modifierContextApply(modifiers, modifierDeltaControlSize(value))
         return content.describe(context, resolved)
     }
@@ -313,8 +117,10 @@ public construct ControlSizeLayer(value: ControlSize) extends Widget {
 public construct ImageScaleLayer(value: IconScale) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         let resolved = modifierContextApply(modifiers, modifierDeltaImageScale(value))
         return content.describe(context, resolved)
     }
@@ -323,17 +129,24 @@ public construct ImageScaleLayer(value: IconScale) extends Widget {
 public construct SymbolVariantLayer(value: SymbolVariants) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        return content.describe(context, modifierContextApply(modifiers, modifierDeltaSymbolVariant(value)))
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        return content.describe(
+            context,
+            modifierContextApply(modifiers, modifierDeltaSymbolVariant(value))
+        )
     }
 }
 
 public construct TintLayer(value: PrimaryColor) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         let resolved = modifierContextApply(modifiers, modifierDeltaTint(value))
         return content.describe(context, resolved)
     }

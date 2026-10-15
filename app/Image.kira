@@ -1,0 +1,54 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's `Image("widgets")`: a drawing of the app's own, kept as
+// `Resources/Images/widgets.svg` among the assets its package declares.
+//
+//     construct showcase extends Package {
+//         let assets: [String] = ["Resources/Images"]
+//     }
+//
+//     Image(name: "widgets")
+//
+// It is drawn as a symbol is, in the ink and at the size of the text around
+// it, so it stands in a label's icon or a tab's item beside the library's.
+public construct Image(name: String) extends Widget {
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        return Artwork(svg: imageDrawing(name)).describe(context, modifiers)
+    }
+}
+
+// The drawings read so far, by name: a file is read the first time an image
+// names it, not each time the image is drawn.
+struct ImageDrawings {
+    var drawings: Map<String, String> = Map<String, String>()
+}
+
+// The drawing the app keeps under `name`, or nothing drawn when it keeps
+// none, which is said once.
+function imageDrawing(name: borrow String) -> String {
+    let previous = enterProcessScope()
+    if !ambientStateHas(StateSlot.imageDrawings) {
+        ambientStatePut(StateSlot.imageDrawings, nativeUserData(nativeState(ImageDrawings {})))
+    }
+    var state = nativeRecover<ImageDrawings>(ambientStateGet(StateSlot.imageDrawings))
+    let drawing = match state.drawings.value(copy name) {
+        Some(known) -> known
+        None -> {
+            let path = "Resources/Images/" + name + ".svg"
+            var read = ""
+            match readFile(path) {
+                Ok(contents) -> read = copy contents.text
+                Error(failure) -> log warn("the app keeps no image by this name", path: path, failure)
+            }
+            state.drawings.set(copy name, copy read)
+            read
+        }
+    }
+    ambientScopeEnter(previous)
+    return drawing
+}

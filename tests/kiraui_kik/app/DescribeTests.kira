@@ -18,13 +18,15 @@ function kuiDescribe(root: Any Widget) -> CALayerDescription {
 // A stack hands each child down as a sublayer.
 construct KuiAStackDescribesEachChild() extends Test {
     test {
-        let described = kuiDescribe(VStack(spacing: .None) {
-            Text(content: "A")
+        let described = kuiDescribe(
+            VStack(spacing: .None) {
+                Text(content: "A")
 
-            Text(content: "B")
+                Text(content: "B")
 
-            Text(content: "C")
-        })
+                Text(content: "C")
+            }
+        )
         return described.sublayers.count
     }
     expect {
@@ -79,12 +81,14 @@ construct KuiOpacityDescribesAsLayerOpacity() extends Test {
 // first, and both took a real height.
 construct KuiLayoutStacksAColumn() extends Test {
     test {
-        var root = kuiDescribe(VStack(spacing: .None) {
-            Text(content: "First")
+        var root = kuiDescribe(
+            VStack(spacing: .None) {
+                Text(content: "First")
 
-            Text(content: "Second")
-        })
-        caLayoutTree(root, 320.0, 480.0)
+                Text(content: "Second")
+            }
+        )
+        root.layoutTree(320.0, 480.0)
         var out = 0
         if root.sublayers.count == 2 {
             let top = root.sublayers[0]
@@ -104,8 +108,8 @@ construct KuiLayoutStacksAColumn() extends Test {
 // A fixed-size layer takes its fixed extent, not the offered one.
 construct KuiLayoutHonorsFixedSize() extends Test {
     test {
-        var root = kuiDescribe(Rectangle().width(40.0).height(24.0))
-        caLayoutTree(root, 320.0, 480.0)
+        var root = kuiDescribe(Rectangle().width(resolvedLength(40.0)).height(resolvedLength(24.0)))
+        root.layoutTree(320.0, 480.0)
         var out = 0
         if abs(root.size.width - 40.0) < 0.0001 && abs(root.size.height - 24.0) < 0.0001 {
             out = 1
@@ -121,15 +125,17 @@ construct KuiLayoutHonorsFixedSize() extends Test {
 // The whole thing reconciles into a retained tree with a real root layer.
 construct KuiADescriptionReconcilesIntoATree() extends Test {
     test {
-        let described = kuiDescribe(VStack(spacing: .None) {
-            Text(content: "A")
+        let described = kuiDescribe(
+            VStack(spacing: .None) {
+                Text(content: "A")
 
-            Text(content: "B")
-        })
-        var tree = caLayerTree()
-        let rootId = caReconcile(tree, described)
+                Text(content: "B")
+            }
+        )
+        var tree = layerTree()
+        let rootId = tree.reconcile(described)
         var out = 0
-        if rootId != caNoLayer() {
+        if rootId != Layers.none {
             out = 1
         }
         return out

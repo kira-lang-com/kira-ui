@@ -1,4 +1,5 @@
 import Foundation
+import KCoreAnimation
 
 // Which color scheme the interface is presenting.
 //
@@ -15,26 +16,155 @@ import Foundation
 // a correctly-read "light" turned back into the style's declared dark on the
 // very next read.
 //
+// What an application may do is prefer one, as SwiftUI's
+// `preferredColorScheme(_:)` does, for a setting of its own the person chose
+// in it: the window takes that scheme while a view asks for it, and the
+// person's once it no longer does.
+//
 // `KIRA_UI_APPEARANCE=light|dark` overrides everything, for the runs that need a
 // fixed answer: a screenshot comparison, a test.
 
-// What the platform reports: 1 light, 2 dark, anything else no preference.
-public function kiraUiPlatformScheme() -> Int {
-    return Int(kira_ui_platform_appearance())
+// What the platform reports.
+public enum PlatformScheme {
+    Light
+    Dark
+    // The platform states no preference, and the style's own scheme holds.
+    Unstated
 }
 
-// The scheme in effect: the host override, then the platform, then what the
-// style itself declared.
+// The variables the scheme is read from: the run's own override, and the one
+// the free desktops set.
+namespace AppearanceVariable {
+    let requested: String = "KIRA_UI_APPEARANCE"
+    let gtkTheme: String = "GTK_THEME"
+}
+
+public function platformScheme() -> PlatformScheme {
+    match targetPlatform!() {
+        Linux -> return desktopScheme()
+        MacOS -> return nativeScheme()
+        Ios -> return nativeScheme()
+        Windows -> return nativeScheme()
+        Wasm -> return nativeScheme()
+        Unknown -> return nativeScheme()
+        // A platform that publishes no scheme leaves the style's to hold.
+        else -> return .Unstated
+    }
+}
+
+// The free desktops publish the scheme over the XDG settings portal, which is
+// a D-Bus conversation rather than a value a process can read. `GTK_THEME` is
+// the one it can, and a name ending in `:dark` is the convention every toolkit
+// that reads it follows.
+function desktopScheme() -> PlatformScheme {
+    if !environmentIsSet(AppearanceVariable.gtkTheme) { return .Unstated }
+    return environmentValue(AppearanceVariable.gtkTheme).contains(":dark") ? .Dark : .Light
+}
+
+// The platforms that keep the scheme behind their own C interfaces: the
+// Windows registry, Apple's preferences and the web's media query.
+function nativeScheme() -> PlatformScheme {
+    return match Number(kira_ui_platform_appearance()) {
+        1 -> .Light
+        2 -> .Dark
+        else -> .Unstated
+    }
+}
+
+// The scheme `KIRA_UI_APPEARANCE=light|dark` fixes for this run.
+function requestedScheme() -> PlatformScheme {
+    if !environmentIsSet(AppearanceVariable.requested) { return .Unstated }
+    return match environmentValue(AppearanceVariable.requested) {
+        "light" -> .Light
+        "dark" -> .Dark
+        else -> .Unstated
+    }
+}
+
+// The scheme the window presents: the host override, then the scheme the
+// app's views prefer, then the platform's.
+public function interfaceScheme() -> PlatformScheme {
+    let requested = requestedScheme()
+    if requested != .Unstated {
+        return requested
+    }
+    match preferredScheme() {
+        Some(preferred) -> {
+            match preferred {
+                Light -> return .Light
+                Dark -> return .Dark
+            }
+        }
+        None -> return platformScheme()
+    }
+}
+
+// The scheme in effect: the scheme the window presents, then what the style
+// itself declared.
 public function resolvedAppearance(declared: Appearance) -> Appearance {
-    var scheme = Int(kira_ui_appearance_override())
-    if scheme == 0 {
-        scheme = kiraUiPlatformScheme()
+    match interfaceScheme() {
+        Light -> return .Light
+        Dark -> return .Dark
+        Unstated -> return declared
     }
-    if scheme == 1 {
-        return .Light
+}
+
+// SwiftUI's `ColorScheme`: the two schemes an interface is drawn in.
+public enum ColorScheme {
+    Light
+    Dark
+}
+
+// The scheme the app's views prefer, as the last description asked; none
+// while no view asks. The process presents one scheme, so it lives in the
+// process's own scope.
+struct PreferredScheme {
+    var scheme: Optional<ColorScheme> = .None
+}
+
+function preferredSchemeEnsure() {
+    if !ambientStateHas(StateSlot.preferredColorScheme) {
+        ambientStatePut(StateSlot.preferredColorScheme, nativeUserData(nativeState(PreferredScheme {})))
     }
-    if scheme == 2 {
-        return .Dark
+}
+
+public function preferredScheme() -> Optional<ColorScheme> {
+    let previous = enterProcessScope()
+    preferredSchemeEnsure()
+    let preferred = nativeRecover<PreferredScheme>(ambientStateGet(StateSlot.preferredColorScheme))
+    let scheme = copy preferred.scheme
+    ambientScopeEnter(previous)
+    return scheme
+}
+
+function preferScheme(scheme: Optional<ColorScheme>) {
+    let previous = enterProcessScope()
+    preferredSchemeEnsure()
+    var preferred = nativeRecover<PreferredScheme>(ambientStateGet(StateSlot.preferredColorScheme))
+    preferred.scheme = move scheme
+    ambientScopeEnter(previous)
+}
+
+// Its content, with the window presenting `scheme`, or the person's own when
+// it is none. The window takes the scheme the next time it is described: it
+// is a preference the content states, as SwiftUI's is, not a scheme the
+// content alone is drawn in.
+public construct PreferredColorSchemeLayer(scheme: Optional<ColorScheme>) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        preferScheme(copy scheme)
+        return content.describe(context, modifiers)
     }
-    return declared
+}
+
+extend Widget {
+    function preferredColorScheme(scheme: Optional<ColorScheme>) -> Any Widget {
+        return PreferredColorSchemeLayer(scheme: scheme) {
+            self
+        }
+    }
 }

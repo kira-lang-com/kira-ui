@@ -20,11 +20,11 @@ import KCoreAnimation
 // The retained tree reconciles nodes BY KEY, so two hit areas sharing a key
 // corrupt the reconcile and sibling subtrees silently drop. Widgets lower in a
 // deterministic order every frame, so a sequence counter (reset at the top of
-// each build via kiraUiTapSeqReset) yields stable, collision-free keys. Base
+// each build via tapSeqReset) yields stable, collision-free keys. Base
 // 600000 sits above app "sequence" ranges and the 100000-499999 band apps use
 // for semantic edTapKey-style keys, so auto keys never alias a decodable key.
-public struct KiraUiTapSeq {
-    var next: Int = 0
+public struct TapSeq {
+    var next: Number = 0
     // The counter for content being lowered into an OVERLAY, and whether we are
     // currently in one.
     //
@@ -38,105 +38,97 @@ public struct KiraUiTapSeq {
     //
     // A separate band keeps the main sequence identical whether an overlay is
     // open or not, which is the property that makes the keys stable.
-    var overlayNext: Int = 0
+    var overlayNext: Number = 0
     var inOverlay: Bool = false
     // The same for the view a stack shows under the one moving over it: it is
     // drawn beside the view on top only while the stack moves, and must not
     // shift the keys of the view that stays.
-    var coveredNext: Int = 0
+    var coveredNext: Number = 0
     var inCovered: Bool = false
-}
-
-public function kiraUiTapSeqSlotKey() -> String {
-    return "kiraui.tapseq"
 }
 
 // Reset the auto-key counter. An interactive app root calls this once at the top
 // of every frame's build so each frame gets the same stable key assignment.
-public function kiraUiTapSeqReset() {
-    if kiraUiStateSlotHas(kiraUiTapSeqSlotKey()) == false {
-        kiraUiStateSlotPut(kiraUiTapSeqSlotKey(), nativeUserData(nativeState(KiraUiTapSeq {})))
+public function tapSeqReset() {
+    if !ambientStateHas(StateSlot.tapSequence) {
+        ambientStatePut(StateSlot.tapSequence, nativeUserData(nativeState(TapSeq {})))
     }
-    var seq = nativeRecover<KiraUiTapSeq>(kiraUiStateSlotGet(kiraUiTapSeqSlotKey()))
+    var seq = nativeRecover<TapSeq>(ambientStateGet(StateSlot.tapSequence))
     seq.next = 0
     seq.overlayNext = 0
     seq.inOverlay = false
     seq.coveredNext = 0
     seq.inCovered = false
-    return
 }
 
 // Next auto key in the current build.
-public function kiraUiTapSeqKey() -> Int {
-    if kiraUiStateSlotHas(kiraUiTapSeqSlotKey()) == false {
-        kiraUiStateSlotPut(kiraUiTapSeqSlotKey(), nativeUserData(nativeState(KiraUiTapSeq {})))
+public function tapSeqKey() -> Number {
+    if !ambientStateHas(StateSlot.tapSequence) {
+        ambientStatePut(StateSlot.tapSequence, nativeUserData(nativeState(TapSeq {})))
     }
-    var seq = nativeRecover<KiraUiTapSeq>(kiraUiStateSlotGet(kiraUiTapSeqSlotKey()))
+    var seq = nativeRecover<TapSeq>(ambientStateGet(StateSlot.tapSequence))
     if seq.inOverlay {
-        seq.overlayNext = seq.overlayNext + 1
+        seq.overlayNext++
         return 800000 + seq.overlayNext
     }
     if seq.inCovered {
-        seq.coveredNext = seq.coveredNext + 1
+        seq.coveredNext++
         return 900000 + seq.coveredNext
     }
-    seq.next = seq.next + 1
+    seq.next++
     return 600000 + seq.next
 }
 
 // Draw keys from the overlay band while lowering a view presented over the
 // main build, so the main sequence carries on afterward exactly where it left
 // off. Answers whether the band was already in use, to be handed back to
-// `kiraUiTapSeqLeaveOverlay`: a submenu presented from inside a menu that is
+// `tapSeqLeaveOverlay`: a submenu presented from inside a menu that is
 // itself presented leaves the band only when the outer one does.
-public function kiraUiTapSeqEnterOverlay() -> Bool {
-    if kiraUiStateSlotHas(kiraUiTapSeqSlotKey()) == false {
-        kiraUiStateSlotPut(kiraUiTapSeqSlotKey(), nativeUserData(nativeState(KiraUiTapSeq {})))
+public function tapSeqEnterOverlay() -> Bool {
+    if !ambientStateHas(StateSlot.tapSequence) {
+        ambientStatePut(StateSlot.tapSequence, nativeUserData(nativeState(TapSeq {})))
     }
-    var seq = nativeRecover<KiraUiTapSeq>(kiraUiStateSlotGet(kiraUiTapSeqSlotKey()))
+    var seq = nativeRecover<TapSeq>(ambientStateGet(StateSlot.tapSequence))
     let was = seq.inOverlay
     seq.inOverlay = true
     return was
 }
 
-public function kiraUiTapSeqLeaveOverlay(was: Bool) {
-    if kiraUiStateSlotHas(kiraUiTapSeqSlotKey()) == false {
+public function tapSeqLeaveOverlay(was: Bool) {
+    if !ambientStateHas(StateSlot.tapSequence) {
         return
     }
-    var seq = nativeRecover<KiraUiTapSeq>(kiraUiStateSlotGet(kiraUiTapSeqSlotKey()))
+    var seq = nativeRecover<TapSeq>(ambientStateGet(StateSlot.tapSequence))
     seq.inOverlay = was
-    return
 }
 
 // Draw keys from the covered band while a stack lowers the view under the one
 // moving over it.
-public function kiraUiTapSeqEnterCovered() {
-    if kiraUiStateSlotHas(kiraUiTapSeqSlotKey()) == false {
-        kiraUiStateSlotPut(kiraUiTapSeqSlotKey(), nativeUserData(nativeState(KiraUiTapSeq {})))
+public function tapSeqEnterCovered() {
+    if !ambientStateHas(StateSlot.tapSequence) {
+        ambientStatePut(StateSlot.tapSequence, nativeUserData(nativeState(TapSeq {})))
     }
-    var seq = nativeRecover<KiraUiTapSeq>(kiraUiStateSlotGet(kiraUiTapSeqSlotKey()))
+    var seq = nativeRecover<TapSeq>(ambientStateGet(StateSlot.tapSequence))
     seq.inCovered = true
-    return
 }
 
-public function kiraUiTapSeqLeaveCovered() {
-    if kiraUiStateSlotHas(kiraUiTapSeqSlotKey()) == false {
+public function tapSeqLeaveCovered() {
+    if !ambientStateHas(StateSlot.tapSequence) {
         return
     }
-    var seq = nativeRecover<KiraUiTapSeq>(kiraUiStateSlotGet(kiraUiTapSeqSlotKey()))
+    var seq = nativeRecover<TapSeq>(ambientStateGet(StateSlot.tapSequence))
     seq.inCovered = false
-    return
 }
 
 // The wash a pressable region lights with while the pointer rests on it: the
 // theme's hover fill on a desktop, and nothing on a phone or a tablet, where
 // no pointer rests. The region only states it; the compositor knows what the
 // pointer is over and lays it on that region alone.
-public function kiraUiHoverColor(modifiers: borrow ModifierContext) -> CAColor {
+public function hoverHighlight(modifiers: borrow ModifierContext) -> CAColor {
     if !interfaceHovers() {
         return CAColor { a: 0.0 }
     }
-    return caColorFromFoundation(modifierColor(modifierBackgroundStyle(.Hover, modifiers), modifiers))
+    return colorFromFoundation(modifierColor(modifierBackgroundStyle(.Hover, modifiers), modifiers))
 }
 
 // --- Actions -----------------------------------------------------------------
@@ -156,24 +148,30 @@ public function kiraUiHoverColor(modifiers: borrow ModifierContext) -> CAColor {
 public construct ClickLayer(action: () -> Void) extends Widget {
     let content: some Widget
 
-
     // A hittable layer over the content. The key is registered against the
     // press action by the input stage that walks `hitKey`; the description
     // carries the key and the hover wash.
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let k = kiraUiTapSeqKey()
-        let radius = cornerRadiusImplementation(.Small, modifiers)
-        kiraUiLayerActionRegister(k, action)
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let k = tapSeqKey()
+        layerActionRegister(k, action)
+        let described = content.describe(context, modifiers)
+        // The hover wash takes the shape of what it wraps, as SwiftUI's
+        // content shape is the view's own: a capsule washes as a capsule. Only
+        // what states no corner of its own washes in the theme's small one.
+        let radius = described.cornerRadius > 0
+        ? described.cornerRadius
+        : cornerRadiusImplementation(.Small, modifiers)
         return CALayerDescription {
+            layout: surfaceFootprint(described.layout),
             hittable: !modifiers.disabled,
             hitKey: k,
-            hoverColor: kiraUiHoverColor(modifiers),
+            hoverColor: hoverHighlight(modifiers),
             cornerRadius: radius,
-            content: .Solid(CASolid {
-                fill: CAColor { a: 0.0 },
-                cornerRadius: radius
-            }),
-            sublayers: [content.describe(context, modifiers)]
+            content: .Solid(CASolid { fill: CAColor { a: 0.0 }, cornerRadius: radius }),
+            sublayers: [described]
         }
     }
 }
@@ -181,12 +179,14 @@ public construct ClickLayer(action: () -> Void) extends Widget {
 // A widget whose value is changed by dragging across it: the numeric field a
 // pro tool scrubs, the pad an aim is set on. The callback carries the CUMULATIVE
 // offset from the press point.
-public construct ScrubLayer(action: (Float, Float) -> Void) extends Widget {
+public construct ScrubLayer(action: (Number, Number) -> Void) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        let k = kiraUiTapSeqKey()
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let k = tapSeqKey()
         return CALayerDescription {
             hittable: !modifiers.disabled,
             hitKey: k,
@@ -204,26 +204,25 @@ public construct ScrubLayer(action: (Float, Float) -> Void) extends Widget {
 // away. `radius` is here for the same reason: the hover wash follows the shape
 // the control is drawn with, and a tile's corner is not a row's.
 public construct ClickRegion(
-    key: Int,
+    key: Number,
     onPress: () -> Void,
     radius: CornerRadius = .Small,
 ) extends Widget {
     let content: some Widget
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         let k = key
         let cr = cornerRadiusImplementation(radius, modifiers)
-        kiraUiLayerActionRegister(k, onPress)
+        layerActionRegister(k, onPress)
         return CALayerDescription {
             hittable: !modifiers.disabled,
             hitKey: k,
-            hoverColor: kiraUiHoverColor(modifiers),
+            hoverColor: hoverHighlight(modifiers),
             cornerRadius: cr,
-            content: .Solid(CASolid {
-                fill: CAColor { a: 0.0 },
-                cornerRadius: cr
-            }),
+            content: .Solid(CASolid { fill: CAColor { a: 0.0 }, cornerRadius: cr }),
             sublayers: [content.describe(context, modifiers)]
         }
     }
@@ -240,15 +239,17 @@ public construct ClickRegion(
 // `key` must be nonzero and stable across frames. Drag callbacks carry
 // CUMULATIVE deltas from the press point, not per-move increments.
 public construct DragRegion(
-    key: Int,
-    onDragStart: (Float, Float) -> Void,
-    onDragMove: (Float, Float) -> Void,
-    onDragEnd: (Float, Float) -> Void,
+    key: Number,
+    onDragStart: (Number, Number) -> Void,
+    onDragMove: (Number, Number) -> Void,
+    onDragEnd: (Number, Number) -> Void,
 ) extends Widget {
     let children: [some Widget]
 
-
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         return CALayerDescription {
             hittable: !modifiers.disabled,
             hitKey: key,
@@ -268,16 +269,16 @@ public construct DragRegion(
 // entire window for as long as the overlay is open. So this is its own leaf:
 // same HitArea node, no `backgroundFill`, and a transparent Fill/Fill Surface
 // child so the region has something to size against.
-public construct DismissArea(key: Int, onPress: () -> Void) extends Widget {
+public construct DismissArea(key: Number, onPress: () -> Void) extends Widget {
 
     // A window-filling hit region that paints nothing; a press runs the dismiss
     // action the key is bound to.
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
-        kiraUiLayerActionRegister(key, onPress)
-        return CALayerDescription {
-            hittable: !modifiers.disabled,
-            hitKey: key
-        }
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        layerActionRegister(key, onPress)
+        return CALayerDescription { hittable: !modifiers.disabled, hitKey: key }
     }
 }
 
@@ -291,26 +292,31 @@ public construct DismissArea(key: Int, onPress: () -> Void) extends Widget {
 // The texture fills whatever box the layout gives it; the whole region flexes
 // like a Fill leaf. `key` must be nonzero and stable across frames.
 public construct GestureTextureView(
-    key: Int,
+    key: Number,
     texture: TextureHandle,
     radius: CornerRadius = .None,
-    onScroll: (Float, Float) -> Void,
-    onDragStart: (Float, Float) -> Void,
-    onDragMove: (Float, Float) -> Void,
-    onDragEnd: (Float, Float) -> Void,
+    onScroll: (Number, Number) -> Void,
+    onDragStart: (Number, Number) -> Void,
+    onDragMove: (Number, Number) -> Void,
+    onDragEnd: (Number, Number) -> Void,
 ) extends Widget {
 
     // A hittable texture layer: the external handle as `.Texture` content, the
     // key registered against the scroll/drag callbacks by the input stage.
-    function describe(context: borrow BuildContext, modifiers: borrow ModifierContext) -> CALayerDescription {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
         return CALayerDescription {
             hittable: !modifiers.disabled,
             hitKey: key,
-            content: .Texture(CATexture {
-                handle: texture,
-                opacity: modifiers.opacity,
-                cornerRadius: cornerRadiusImplementation(radius, modifiers)
-            })
+            content: .Texture(
+                CATexture {
+                    handle: texture,
+                        opacity: modifiers.opacity,
+                        cornerRadius: cornerRadiusImplementation(radius, modifiers)
+                }
+            )
         }
     }
 }

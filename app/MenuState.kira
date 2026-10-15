@@ -12,80 +12,74 @@ import KCoreAnimation
 // is one motion shared by everything that is not the open submenu. A card that
 // sprang its own would have to be told when a submenu three rows down opened,
 // which is the wiring this avoids.
-public struct KiraUiMenuState {
+public struct MenuState {
     // The key of the expanded `Menu`, or 0 when none is.
-    var openKey: Int = 0
+    var openKey: Number = 0
     // The key of the `Menu` presented from a bar, whose card floats under
     // its button, or 0 when none is.
-    var presentedKey: Int = 0
+    var presentedKey: Number = 0
     // How far the menu behind has dimmed, on a spring of its own.
     var recede: MotionSpringState = MotionSpringState {}
-    var receded: Float = 0.0
+    var receded: Number = 0.0
     // How far it has shrunk, on a spring of its own.
     var shrink: MotionSpringState = MotionSpringState {}
-    var shrunk: Float = 0.0
+    var shrunk: Number = 0.0
     // Where across the screen the row that opened the submenu stood, its
     // center at the press. The menu gives way toward the side it stands on;
     // see `menuRecessionAnchor`.
-    var sideX: Float = 0.0
+    var sideX: Number = 0.0
     // Seconds still to wait before the recession starts moving. See
     // `recedeHold`: the menu stands at full strength while the submenu
     // arrives, and a spring has no way to say that — it leaves the instant it is
     // retargeted.
-    var holdRemaining: Float = 0.0
+    var holdRemaining: Number = 0.0
     // The point on the screen the receding menu shrinks toward, and whether a
     // menu has said where it is. A submenu open in it rides its shrink about
-    // the same point; see `kiraUiMenuRecedesFrom`.
+    // the same point; see `menuRecedesFrom`.
     var pivot: Point = Point {}
     var pivoted: Bool = false
     // The last frame the recession was advanced on. Several cards may read it in
     // one build and each would otherwise advance it again, integrating the
     // spring two or three times per frame — which is a transition that runs at
     // triple speed on exactly the layouts that nest menus.
-    var advancedOn: Int = 0
+    var advancedOn: Number = 0
     // The last frame a submenu was out, opening, open or closing: the menu
     // it is out of takes no press on any frame one is.
-    var outOn: Int = -1
-}
-
-public function kiraUiMenuSlotKey() -> String {
-    return "kiraui.menu"
+    var outOn: Number = -1
 }
 
 // The slot, made the first time it is asked for. A writer recovers it in
 // place after this: a recovered value handed back out of a function is a
 // copy, and what was written to it would be lost.
-public function kiraUiMenuEnsure() {
-    if kiraUiStateSlotHas(kiraUiMenuSlotKey()) == false {
-        kiraUiStateSlotPut(kiraUiMenuSlotKey(), nativeUserData(nativeState(KiraUiMenuState {})))
+public function menuEnsure() {
+    if !ambientStateHas(StateSlot.menu) {
+        ambientStatePut(StateSlot.menu, nativeUserData(nativeState(MenuState {})))
     }
-    return
 }
 
 // A submenu is out this frame.
 public function menuSubmenuOut(context: borrow BuildContext) {
-    kiraUiMenuEnsure()
-    var state = nativeRecover<KiraUiMenuState>(kiraUiStateSlotGet(kiraUiMenuSlotKey()))
+    menuEnsure()
+    var state = nativeRecover<MenuState>(ambientStateGet(StateSlot.menu))
     state.outOn = context.frameCount
-    return
 }
 
 // Whether a submenu is out this frame, as far as the menu built so far has
 // said. A menu asks once its rows are built, which is where its submenus say
 // so: while one is out, or still going back, the menu behind is only there to
 // be seen -- nothing in it is pressed, slid onto or pulled until it is gone.
-public function kiraUiMenuSubmenuIsOut(context: borrow BuildContext) -> Bool {
-    return kiraUiMenuState().outOn == context.frameCount
+public function menuSubmenuIsOut(context: borrow BuildContext) -> Bool {
+    return menuState().outOn == context.frameCount
 }
 
 // The state as it stands, to read.
-public function kiraUiMenuState() -> KiraUiMenuState {
-    kiraUiMenuEnsure()
-    return nativeRecover<KiraUiMenuState>(kiraUiStateSlotGet(kiraUiMenuSlotKey()))
+public function menuState() -> MenuState {
+    menuEnsure()
+    return nativeRecover<MenuState>(ambientStateGet(StateSlot.menu))
 }
 
-public function kiraUiOpenMenuKey() -> Int {
-    return kiraUiMenuState().openKey
+public function openMenuKey() -> Number {
+    return menuState().openKey
 }
 
 // Points a spring at a new end from wherever it currently is, on a named curve.
@@ -93,10 +87,15 @@ public function kiraUiOpenMenuKey() -> Int {
 // The sample-then-restart rather than `motionSpringRetarget` is what allows the
 // CURVE to change with the direction: a submenu closed while it is still opening
 // continues from where it is, at the speed it has, but on the closing curve.
-public function menuRetarget(state: borrow mut MotionSpringState, target: Float, spring: MotionSpring, launch: Float = 0.0) {
+public function menuRetarget(
+    state: borrow mut MotionSpringState,
+    target: Number,
+    spring: MotionSpring,
+    launch: Number = 0.0
+) {
     let now = motionSpringSample(state, state.elapsed)
     var curve = spring
-    if kiraUiReducedMotion() {
+    if prefersReducedMotion() {
         curve = motionCurveReduced(spring)
     }
     let started = motionSpringStart(move curve, now.value, now.velocity + launch)
@@ -104,7 +103,6 @@ public function menuRetarget(state: borrow mut MotionSpringState, target: Float,
     state.origin = started.origin
     state.velocity = started.velocity
     state.elapsed = started.elapsed
-    return
 }
 
 // Choosing an item dismisses the menu it was in.
@@ -113,12 +111,12 @@ public function menuRetarget(state: borrow mut MotionSpringState, target: Float,
 // open after its item was chosen would leave the user to close a panel they have
 // already finished with. The action runs first: what it does is the point, and
 // the dismissal is what happens to the menu afterwards.
-public function kiraUiMenuChooseFn(action: () -> Void) -> () -> Void {
+public function menuChooseFn(action: () -> Void) -> () -> Void {
     let chosen = action
     let press: () -> Void = { in
         chosen()
-        kiraUiMenuEnsure()
-        var state = nativeRecover<KiraUiMenuState>(kiraUiStateSlotGet(kiraUiMenuSlotKey()))
+        menuEnsure()
+        var state = nativeRecover<MenuState>(ambientStateGet(StateSlot.menu))
         if state.openKey != 0 {
             menuRevealRetarget(state.openKey, false)
             state.openKey = 0
@@ -136,11 +134,11 @@ public function kiraUiMenuChooseFn(action: () -> Void) -> () -> Void {
 
 // Presents a bar's menu under its button, or puts it away if it is the one
 // already out. Whatever other menu was out goes.
-public function kiraUiPresentMenuFn(key: Int) -> () -> Void {
+public function presentMenuFn(key: Number) -> () -> Void {
     let target = key
     let press: () -> Void = { in
-        kiraUiMenuEnsure()
-        var state = nativeRecover<KiraUiMenuState>(kiraUiStateSlotGet(kiraUiMenuSlotKey()))
+        menuEnsure()
+        var state = nativeRecover<MenuState>(ambientStateGet(StateSlot.menu))
         let presented = state.presentedKey
         if presented != 0 {
             menuMorphRetarget(presented, false)
@@ -156,10 +154,10 @@ public function kiraUiPresentMenuFn(key: Int) -> () -> Void {
 }
 
 // Puts away whichever bar menu is out: a press anywhere off its card.
-public function kiraUiDismissMenuFn() -> () -> Void {
+public function dismissMenuFn() -> () -> Void {
     let press: () -> Void = { in
-        kiraUiMenuEnsure()
-        var state = nativeRecover<KiraUiMenuState>(kiraUiStateSlotGet(kiraUiMenuSlotKey()))
+        menuEnsure()
+        var state = nativeRecover<MenuState>(ambientStateGet(StateSlot.menu))
         if state.presentedKey != 0 {
             menuMorphRetarget(state.presentedKey, false)
             state.presentedKey = 0
@@ -172,9 +170,9 @@ public function kiraUiDismissMenuFn() -> () -> Void {
 // Every menu out is put away at once, with no motion home: what it came out
 // of is gone, as when the path is replaced with one that starts elsewhere.
 // Its keys name controls of the new views now, which must not find it open.
-public function kiraUiMenuDismissAll() {
-    kiraUiMenuEnsure()
-    var state = nativeRecover<KiraUiMenuState>(kiraUiStateSlotGet(kiraUiMenuSlotKey()))
+public function menuDismissAll() {
+    menuEnsure()
+    var state = nativeRecover<MenuState>(ambientStateGet(StateSlot.menu))
     if state.openKey != 0 {
         menuRevealPutAway(state.openKey)
         state.openKey = 0
@@ -190,12 +188,11 @@ public function kiraUiMenuDismissAll() {
     state.holdRemaining = 0.0
     state.pivoted = false
     menuBarPutAway()
-    return
 }
 
-public function menuRevealPutAway(key: Int) {
+public function menuRevealPutAway(key: Number) {
     menuRevealEnsure(key)
-    var reveal = nativeRecover<KiraUiMenuReveal>(kiraUiStateSlotGet(menuRevealSlotKey(key)))
+    var reveal = nativeRecover<MenuReveal>(ambientStateGet(menuRevealSlotKey(key)))
     reveal.progress = MotionSpringState {}
     reveal.amount = 0.0
     reveal.widthAmount = 0.0
@@ -211,12 +208,11 @@ public function menuRevealPutAway(key: Int) {
     reveal.rise = MotionSpringState {}
     reveal.risen = 0.0
     reveal.opening = false
-    return
 }
 
 // Pressing a submenu's row opens it, or closes it if it is the one already
 // open -- unless the press was held there until it already had.
-public function kiraUiToggleMenuFn(key: Int) -> () -> Void {
+public function toggleMenuFn(key: Number) -> () -> Void {
     let target = key
     let press: () -> Void = { in
         if menuRevealState(target).dwelt {
@@ -229,9 +225,9 @@ public function kiraUiToggleMenuFn(key: Int) -> () -> Void {
 }
 
 // Opens a submenu, or closes it if it is the one already open.
-public function menuToggle(target: Int) {
-    kiraUiMenuEnsure()
-    var state = nativeRecover<KiraUiMenuState>(kiraUiStateSlotGet(kiraUiMenuSlotKey()))
+public function menuToggle(target: Number) {
+    menuEnsure()
+    var state = nativeRecover<MenuState>(ambientStateGet(StateSlot.menu))
     var opening = true
     // Whichever was open is told to close, whatever happens next.
     //
@@ -251,7 +247,6 @@ public function menuToggle(target: Int) {
     }
     menuRecessionRetarget(state, opening)
     menuRevealRetarget(target, opening)
-    return
 }
 
 // Where a held press is resting, as far as a submenu is concerned.
@@ -271,15 +266,15 @@ public enum MenuRest {
 // submenu closes it the same way. Each rest does it once: the finger leaves
 // and comes back to do it again, and letting go where it rested does nothing
 // more.
-public function menuDwellAdvance(context: borrow BuildContext, key: Int, away: Int) {
+public function menuDwellAdvance(context: borrow BuildContext, key: Number, away: Number) {
     var rest: MenuRest = .Away
     if context.heldControl == key {
         rest = .Header
-    } else if context.heldSlides && kiraUiOpenMenuKey() == key && context.hoveredKey == away {
+    } else if context.heldSlides && openMenuKey() == key && context.hoveredKey == away {
         rest = .Behind
     }
     menuRevealEnsure(key)
-    var reveal = nativeRecover<KiraUiMenuReveal>(kiraUiStateSlotGet(menuRevealSlotKey(key)))
+    var reveal = nativeRecover<MenuReveal>(ambientStateGet(menuRevealSlotKey(key)))
     if rest != reveal.rest {
         reveal.rest = move rest
         reveal.dwell = 0.0
@@ -288,23 +283,30 @@ public function menuDwellAdvance(context: borrow BuildContext, key: Int, away: I
     if reveal.rest == .Away || reveal.dwelt {
         return
     }
-    reveal.dwell = reveal.dwell + kiraUiClockDelta()
+    reveal.dwell = reveal.dwell + clockDelta()
     if reveal.dwell < menuSubmenuMetrics().dwell {
-        kiraUiClockStillMoving()
+        clockStillMoving()
         return
     }
     reveal.dwelt = true
     menuToggle(key)
-    return
 }
 
 // Sends the menu behind a submenu back, or brings it forward. Its size eases
 // out and back on one spring of its own, starting with the submenu and
 // settling well after it; its ink waits out the hold going and comes straight
 // back returning -- the swap described at the top of this file.
-public function menuRecessionRetarget(state: borrow mut KiraUiMenuState, opening: Bool) {
+public function menuRecessionRetarget(state: borrow mut MenuState, opening: Bool) {
     let metrics = menuSubmenuMetrics()
-    menuRetarget(state.shrink, opening ? 1.0 : 0.0, MotionSpring { response: metrics.shrinkResponse, damping: metrics.shrinkDamping, target: opening ? 1.0 : 0.0 })
+    menuRetarget(
+        state.shrink,
+        opening ? 1.0 : 0.0,
+        MotionSpring {
+            response: metrics.shrinkResponse,
+            damping: metrics.shrinkDamping,
+            target: opening ? 1.0 : 0.0
+        }
+    )
     if opening {
         state.sideX = foundationPressBoundsX() + foundationPressBoundsW() / 2.0
         menuRetarget(state.recede, 1.0, menuRecedeInSpring())
@@ -316,16 +318,15 @@ public function menuRecessionRetarget(state: borrow mut KiraUiMenuState, opening
     // submenu shut during the hold brings the menu straight back instead of
     // finishing a wait for a dim that never began.
     state.holdRemaining = 0.0
-    return
 }
 
 // --- one submenu's own reveal ------------------------------------------------
 
 // How far this submenu's card has grown. Per-menu, because a menu closing while
 // another opens are two motions at once and one value cannot hold both.
-public struct KiraUiMenuReveal {
+public struct MenuReveal {
     var progress: MotionSpringState = MotionSpringState {}
-    var amount: Float = 0.0
+    var amount: Number = 0.0
     // Where the row was when it was pressed.
     //
     // Captured at the press and kept, because `foundationPressBounds…` describes
@@ -333,10 +334,10 @@ public struct KiraUiMenuReveal {
     // whatever was clicked since, and the card would jump to it. Kept here it is
     // the rectangle of the row that owns this submenu, for as long as the
     // submenu is open.
-    var anchorX: Float = 0.0
-    var anchorY: Float = 0.0
-    var anchorW: Float = 0.0
-    var anchorH: Float = 0.0
+    var anchorX: Number = 0.0
+    var anchorY: Number = 0.0
+    var anchorW: Number = 0.0
+    var anchorH: Number = 0.0
     // A bar's menu only: whether it is on its way out or home, how far its
     // height has grown, how far its center has gone across and fallen from
     // the button toward the card's, and how far it has gone toward squaring
@@ -348,53 +349,52 @@ public struct KiraUiMenuReveal {
     // the spring as it is, overshoot and all, since cutting it off at either
     // end is a corner in the motion.
     var opening: Bool = false
-    var widthAmount: Float = 0.0
+    var widthAmount: Number = 0.0
     var height: MotionSpringState = MotionSpringState {}
-    var heightAmount: Float = 0.0
+    var heightAmount: Number = 0.0
     var across: MotionSpringState = MotionSpringState {}
-    var acrossAmount: Float = 0.0
+    var acrossAmount: Number = 0.0
     var fall: MotionSpringState = MotionSpringState {}
-    var fallen: Float = 0.0
+    var fallen: Number = 0.0
     var corner: MotionSpringState = MotionSpringState {}
-    var cornered: Float = 0.0
+    var cornered: Number = 0.0
     // How long, in seconds, it has been on its way home: what the button's
     // own glass, leading it there, is timed by.
-    var homeward: Float = 0.0
+    var homeward: Number = 0.0
     // A submenu only: how far its card has risen off its row. It is thrown
     // up as it opens, past where it rests, and settles back down onto it.
     var rise: MotionSpringState = MotionSpringState {}
-    var risen: Float = 0.0
+    var risen: Number = 0.0
     // Where a held press is resting, how long it has rested there, and
     // whether resting there has already opened or closed the submenu.
     var rest: MenuRest = .Away
-    var dwell: Float = 0.0
+    var dwell: Number = 0.0
     var dwelt: Bool = false
 }
 
-public function menuRevealSlotKey(key: Int) -> String {
-    return kiraUiSlotKey("kiraui.menu.", key)
+public function menuRevealSlotKey(key: Number) -> String {
+    return slotKey("kiraui.menu.", key)
 }
 
 // The slot, made the first time it is asked for. A writer recovers it in
 // place after this: a recovered value handed back out of a function is a
 // copy, and what was written to it would be lost.
-public function menuRevealEnsure(key: Int) {
-    if kiraUiStateSlotHas(menuRevealSlotKey(key)) == false {
-        kiraUiStateSlotPut(menuRevealSlotKey(key), nativeUserData(nativeState(KiraUiMenuReveal {})))
+public function menuRevealEnsure(key: Number) {
+    if !ambientStateHas(menuRevealSlotKey(key)) {
+        ambientStatePut(menuRevealSlotKey(key), nativeUserData(nativeState(MenuReveal {})))
     }
-    return
 }
 
 // The state as it stands, to read.
-public function menuRevealState(key: Int) -> KiraUiMenuReveal {
+public function menuRevealState(key: Number) -> MenuReveal {
     menuRevealEnsure(key)
-    return nativeRecover<KiraUiMenuReveal>(kiraUiStateSlotGet(menuRevealSlotKey(key)))
+    return nativeRecover<MenuReveal>(ambientStateGet(menuRevealSlotKey(key)))
 }
 
 // The rectangle this submenu hangs from, and the view slot to fill in.
-public function kiraUiMenuAnchor(key: Int) -> KiraUiOverlay {
+public function menuAnchor(key: Number) -> Overlay {
     let reveal = menuRevealState(key)
-    return KiraUiOverlay {
+    return Overlay {
         anchorX: reveal.anchorX,
         anchorY: reveal.anchorY,
         anchorW: reveal.anchorW,
@@ -402,9 +402,9 @@ public function kiraUiMenuAnchor(key: Int) -> KiraUiOverlay {
     }
 }
 
-public function menuRevealRetarget(key: Int, opening: Bool) {
+public function menuRevealRetarget(key: Number, opening: Bool) {
     menuRevealEnsure(key)
-    var reveal = nativeRecover<KiraUiMenuReveal>(kiraUiStateSlotGet(menuRevealSlotKey(key)))
+    var reveal = nativeRecover<MenuReveal>(ambientStateGet(menuRevealSlotKey(key)))
     // The row's own bounds, recorded just before this handler ran — but only
     // when the submenu is opening from FULLY CLOSED.
     //
@@ -425,6 +425,10 @@ public function menuRevealRetarget(key: Int, opening: Bool) {
     }
     reveal.opening = opening
     menuRetarget(reveal.progress, opening ? 1.0 : 0.0, menuSubmenuSpring(opening))
-    menuRetarget(reveal.rise, opening ? 1.0 : 0.0, menuSubmenuSpring(opening), opening ? menuSubmenuMetrics().riseLaunch : 0.0)
-    return
+    menuRetarget(
+        reveal.rise,
+        opening ? 1.0 : 0.0,
+        menuSubmenuSpring(opening),
+        opening ? menuSubmenuMetrics().riseLaunch : 0.0
+    )
 }
