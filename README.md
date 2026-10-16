@@ -89,6 +89,12 @@ See [Navigation.md](Navigation.md) for the responsive `NavigationPath`,
 `NavigationSplitView` API. The layered runnable app is in
 [`Examples/navigation-app`](Examples/navigation-app).
 
+## Accessibility
+
+See [Accessibility.md](Accessibility.md) for the elements each view makes,
+the `.accessibility…` modifiers, the accessibility environment values, and
+`accessibilityElementsOnScreen()`, the tree a UI test reads.
+
 ## Workspaces
 
 Editor windows: panels docked around a center, arranged by the person.

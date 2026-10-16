@@ -157,7 +157,8 @@ public construct ClickLayer(action: () -> Void) extends Widget {
     ) -> CALayerDescription {
         let k = tapSeqKey()
         layerActionRegister(k, action)
-        let described = content.describe(context, modifiers)
+        var described = content.describe(context, modifiers)
+        described.accessibilityActivates(action, modifiers)
         // The hover wash takes the shape of what it wraps, as SwiftUI's
         // content shape is the view's own: a capsule washes as a capsule. Only
         // what states no corner of its own washes in the theme's small one.
@@ -217,13 +218,15 @@ public construct ClickRegion(
         let k = key
         let cr = cornerRadiusImplementation(radius, modifiers)
         layerActionRegister(k, onPress)
+        var described = content.describe(context, modifiers)
+        described.accessibilityActivates(onPress, modifiers)
         return CALayerDescription {
             hittable: !modifiers.disabled,
             hitKey: k,
             hoverColor: hoverHighlight(modifiers),
             cornerRadius: cr,
             content: .Solid(CASolid { fill: CAColor { a: 0.0 }, cornerRadius: cr }),
-            sublayers: [content.describe(context, modifiers)]
+            sublayers: [move described]
         }
     }
 }

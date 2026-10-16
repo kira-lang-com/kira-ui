@@ -245,6 +245,7 @@ public construct Menu(title: String, systemImage: Symbol = .None) extends Widget
         let amount = menuRevealAdvance(key)
         let header = MenuHeader(title: title, systemImage: systemImage, amount: amount, key: key)
         var row = header.describe(context, modifiers)
+        row.accessibilityCombined(accessibilityPressable(.MenuButton, toggleMenuFn(key), modifiers))
         if amount <= 0.0 {
             return row
         }
@@ -326,6 +327,12 @@ public construct Menu(title: String, systemImage: Symbol = .None) extends Widget
         var button = modifiers.controlPresentation == .TabBar
         ? tabBarButtonDescription(context, modifiers, key, label)
         : toolbarButtonDescription(context, modifiers, key, label)
+        // A menu shown by its symbol alone is still named by its title.
+        var node = accessibilityPressable(.MenuButton, presentMenuFn(key), modifiers)
+        if systemImage != .None {
+            node.label = copy title
+        }
+        button.accessibilityCombined(move node)
         if !menuHoldsGlass(key) {
             return button
         }

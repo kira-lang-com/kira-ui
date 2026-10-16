@@ -1,0 +1,291 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's accessibility modifiers. Each changes the elements the view it is
+// on makes: the view's own element when it is one, and otherwise each of the
+// outermost elements inside it. A view that makes none, a shape or a color,
+// becomes an element to carry the change, as SwiftUI's does. Written twice,
+// the outer one wins.
+
+// One change an accessibility modifier makes to an element.
+public enum AccessibilityChange {
+    Label(String)
+    Value(String)
+    Hint(String)
+    Identifier(String)
+    AddTraits(AccessibilityTraits)
+    RemoveTraits(AccessibilityTraits)
+    Heading(AccessibilityHeadingLevel)
+    InputLabels([String])
+    SortPriority(Number)
+    Action(AccessibilityAction)
+    Adjustable((AccessibilityAdjustmentDirection) -> Void)
+    RespondsToUserInteraction(Bool)
+}
+
+extend AccessibilityNode {
+    function apply(borrow mut self, change: borrow AccessibilityChange) {
+        match change {
+            Label(label) -> self.label = copy label
+            Value(value) -> self.value = copy value
+            Hint(hint) -> self.hint = copy hint
+            Identifier(identifier) -> self.identifier = copy identifier
+            AddTraits(traits) -> self.traits = self.traits.union(traits)
+            RemoveTraits(traits) -> self.traits = self.traits.without(traits)
+            Heading(level) -> {
+                self.headingLevel = level
+                self.traits = self.traits.union(AccessibilityTraits.isHeader)
+            }
+            InputLabels(labels) -> self.inputLabels = copy labels
+            SortPriority(priority) -> self.sortPriority = priority
+            Action(action) -> self.setAction(copy action)
+            Adjustable(adjust) -> {
+                self.adjustable = true
+                self.adjust = adjust
+            }
+            RespondsToUserInteraction(responds) -> self.isEnabled = responds
+        }
+    }
+}
+
+public construct AccessibilityLayer(change: AccessibilityChange) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var described = content.describe(context, modifiers)
+        let keys = described.accessibilityElements()
+        // A view that is nothing is no element: an empty header stays empty.
+        if keys.count == 0 && describesNothing(described) {
+            return described
+        }
+        if keys.count == 0 {
+            var node = AccessibilityNode {}
+            node.apply(change)
+            described.accessibilityElementOf(move node)
+            return described
+        }
+        for key in keys {
+            var node = accessibilityNode(key)
+            node.apply(change)
+            accessibilityStore(key, move node)
+        }
+        return described
+    }
+}
+
+// `.accessibilityElement(children:)`: the view becomes one element, and the
+// elements inside it are dropped, merged into it, or held by it.
+public construct AccessibilityElementLayer(children: AccessibilityChildBehavior) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var described = content.describe(context, modifiers)
+        let node = AccessibilityNode { isEnabled: !modifiers.disabled }
+        match children {
+            Ignore -> {
+                described.accessibilityClear()
+                described.accessibilityElementOf(move node)
+            }
+            Combine -> described.accessibilityCombined(move node)
+            Contain -> {
+                let group = AccessibilityNode {
+                    role: .Group,
+                    isEnabled: !modifiers.disabled,
+                    contains: true
+                }
+                match described.accessibilityElement {
+                    None -> described.accessibilityElementOf(move group)
+                    // A view whose own layer is already an element is held
+                    // whole, in a layer of the group's own the size of it.
+                    Some(key) -> {
+                        var held = CALayerDescription {
+                            layout: surfaceFootprint(described.layout),
+                            sublayers: [move described]
+                        }
+                        held.accessibilityElementOf(move group)
+                        return held
+                    }
+                }
+            }
+        }
+        return described
+    }
+}
+
+// `.accessibilityHidden(_:)`: the view and everything in it are not shown to
+// assistive technology.
+public construct AccessibilityHiddenLayer(hidden: Bool) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var described = content.describe(context, modifiers)
+        if !hidden {
+            return described
+        }
+        // The view stays an element, hidden, so a modifier outside this one
+        // changes it rather than making the view an element again.
+        described.accessibilityClear()
+        described.accessibilityElementOf(AccessibilityNode { hidden: true })
+        return described
+    }
+}
+
+// `.accessibilityRepresentation(representation:)`: the view is, to
+// assistive technology, what `representation` would be in its place: a
+// custom-drawn switch reads and flips as a `Toggle` does.
+public construct AccessibilityRepresentationLayer(representation: Any Widget) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var described = content.describe(context, modifiers)
+        described.accessibilityClear()
+        let stand = representation.describe(context, modifiers)
+        let keys = stand.accessibilityElements()
+        if keys.count == 1 {
+            described.accessibilityElement = .Some(keys[0])
+            return described
+        }
+        // Several elements stand for the view as one, as a combined view's do.
+        var node = AccessibilityNode { isEnabled: !modifiers.disabled }
+        for key in keys {
+            node.absorb(accessibilityNode(key))
+        }
+        described.accessibilityElementOf(move node)
+        return described
+    }
+}
+
+extend Widget {
+    // `.accessibilityRepresentation(representation:)`.
+    function accessibilityRepresentation(representation: some Widget) -> Any Widget {
+        return AccessibilityRepresentationLayer(representation: representation) {
+            self
+        }
+    }
+
+    // `.accessibilityLabel(_:)`: the words VoiceOver reads for the element.
+    function accessibilityLabel(label: String) -> Any Widget {
+        return AccessibilityLayer(change: .Label(label)) {
+            self
+        }
+    }
+
+    // `.accessibilityValue(_:)`: the element's value, read after its label:
+    // "50%", "On".
+    function accessibilityValue(value: String) -> Any Widget {
+        return AccessibilityLayer(change: .Value(value)) {
+            self
+        }
+    }
+
+    // `.accessibilityHint(_:)`: what acting on the element does, read after a
+    // pause.
+    function accessibilityHint(hint: String) -> Any Widget {
+        return AccessibilityLayer(change: .Hint(hint)) {
+            self
+        }
+    }
+
+    // `.accessibilityIdentifier(_:)`: the name a UI test finds the element by.
+    // Never read aloud.
+    function accessibilityIdentifier(identifier: String) -> Any Widget {
+        return AccessibilityLayer(change: .Identifier(identifier)) {
+            self
+        }
+    }
+
+    // `.accessibilityAddTraits(_:)`.
+    function accessibilityAddTraits(traits: AccessibilityTraits) -> Any Widget {
+        return AccessibilityLayer(change: .AddTraits(traits)) {
+            self
+        }
+    }
+
+    // `.accessibilityRemoveTraits(_:)`.
+    function accessibilityRemoveTraits(traits: AccessibilityTraits) -> Any Widget {
+        return AccessibilityLayer(change: .RemoveTraits(traits)) {
+            self
+        }
+    }
+
+    // `.accessibilityHeading(_:)`: the element is a header at `level`.
+    function accessibilityHeading(level: AccessibilityHeadingLevel) -> Any Widget {
+        return AccessibilityLayer(change: .Heading(level)) {
+            self
+        }
+    }
+
+    // `.accessibilityInputLabels(_:)`: the names Voice Control and Full
+    // Keyboard Access know the element by, the most likely first.
+    function accessibilityInputLabels(labels: [String]) -> Any Widget {
+        return AccessibilityLayer(change: .InputLabels(labels)) {
+            self
+        }
+    }
+
+    // `.accessibilitySortPriority(_:)`: among the elements beside it, the
+    // higher is visited first.
+    function accessibilitySortPriority(priority: Number) -> Any Widget {
+        return AccessibilityLayer(change: .SortPriority(priority)) {
+            self
+        }
+    }
+
+    // `.accessibilityAction(_:_:)`: what the element does when VoiceOver asks
+    // for the action of `kind`. `.Named("Delete")` lists it in the actions
+    // rotor under that name.
+    function accessibilityAction(
+        kind: AccessibilityActionKind = .Default,
+        handler: () -> Void
+    ) -> Any Widget {
+        return AccessibilityLayer(
+            change: .Action(AccessibilityAction { kind: kind, handler: handler })
+        ) {
+            self
+        }
+    }
+
+    // `.accessibilityAdjustableAction(_:)`: the element is adjustable, and a
+    // swipe up or down runs `handler` with the direction.
+    function accessibilityAdjustableAction(
+        handler: (AccessibilityAdjustmentDirection) -> Void
+    ) -> Any Widget {
+        return AccessibilityLayer(change: .Adjustable(handler)) {
+            self
+        }
+    }
+
+    // `.accessibilityRespondsToUserInteraction(_:)`: whether the element can
+    // be acted on, or is only read.
+    function accessibilityRespondsToUserInteraction(responds: Bool = true) -> Any Widget {
+        return AccessibilityLayer(change: .RespondsToUserInteraction(responds)) {
+            self
+        }
+    }
+
+    // `.accessibilityElement(children:)`: the view is one element.
+    function accessibilityElement(children: AccessibilityChildBehavior = .Ignore) -> Any Widget {
+        return AccessibilityElementLayer(children: children) {
+            self
+        }
+    }
+
+    // `.accessibilityHidden(_:)`.
+    function accessibilityHidden(hidden: Bool) -> Any Widget {
+        return AccessibilityHiddenLayer(hidden: hidden) {
+            self
+        }
+    }
+}

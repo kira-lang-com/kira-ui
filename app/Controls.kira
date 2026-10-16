@@ -213,20 +213,37 @@ public construct Toggle(
         return title.count > 0 || !describesNothing(label.describe(context, modifiers))
     }
 
+    // One element, standing for the toggle and its title, that reads on or
+    // off and flips.
     function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        // In a grouped form a written title is the row's label, and the
+        // control stands in the row's value: the untitled toggle there is
+        // the element, and the row merges the title into it.
+        if hasTitle(context, modifiers) && title.count > 0 && modifiers.controlPresentation == .InsetGrouped {
+            let row = LabeledContent(label: title) {
+                Toggle(isOn: isOn, onChange: onChange)
+            }
+            var described = row.describe(context, modifiers)
+            described.accessibilityCombined(AccessibilityNode { role: toggleRole(modifiers) })
+            return described
+        }
+        var described = self.controlDescription(context, modifiers)
+        var node = accessibilityPressable(toggleRole(modifiers), toggleFlipFn(isOn, onChange), modifiers)
+        node.value = isOn ? AccessibilityToggleValue.on : AccessibilityToggleValue.off
+        node.traits = node.traits.union(AccessibilityTraits.isToggle)
+        described.accessibilityCombined(move node)
+        return described
+    }
+
+    function controlDescription(
         context: borrow BuildContext,
         modifiers: borrow ModifierContext
     ) -> CALayerDescription {
         let checkbox = toggleIsCheckbox(modifiers)
         let titled = hasTitle(context, modifiers)
-        // In a grouped form a written title is the row's label, and the
-        // control stands in the row's value.
-        if titled && title.count > 0 && modifiers.controlPresentation == .InsetGrouped {
-            let row = LabeledContent(label: title) {
-                Toggle(isOn: isOn, onChange: onChange)
-            }
-            return row.describe(context, modifiers)
-        }
         if checkbox {
             return checkboxDescription(titled, titleView(), isOn, onChange, context, modifiers)
         }
@@ -251,6 +268,21 @@ public construct Toggle(
         }
         return row.describe(context, modifiers)
     }
+}
+
+// What a toggle is to assistive technology here: the checkbox a Mac draws,
+// or a switch.
+function toggleRole(modifiers: borrow ModifierContext) -> AccessibilityRole {
+    if toggleIsCheckbox(modifiers) {
+        return .CheckBox
+    }
+    return .Switch
+}
+
+// The value a toggle reads, as UIKit's switch states it.
+public namespace AccessibilityToggleValue {
+    let on: String = "1"
+    let off: String = "0"
 }
 
 // Whether a toggle here is drawn as a checkbox: only on a Mac, when asked for
@@ -510,7 +542,7 @@ public construct Slider(
                 sublayers: sliderKnobLayers(context, k, held, modifiers)
             }]
         }
-        return CALayerDescription {
+        var described = CALayerDescription {
             layout: CALayoutIntent {
                 widthFill: width <= 0.0,
                 heightFill: false,
@@ -526,7 +558,43 @@ public construct Slider(
             hitKey: k,
             sublayers: [track, lane]
         }
+        described.accessibilityElementOf(sliderAccessibility(shown, onChange, modifiers))
+        return described
     }
+}
+
+namespace SliderAccessibility {
+    // How far one swipe moves a slider: a tenth of its range, as UIKit's does.
+    let step: Number = 0.1
+}
+
+// A slider to assistive technology: its value as a share of its range, and a
+// swipe up or down moving it a step.
+function sliderAccessibility(
+    value: Number,
+    onChange: (Number) -> Void,
+    modifiers: borrow ModifierContext
+) -> AccessibilityNode {
+    if modifiers.disabled {
+        return AccessibilityNode { role: .Slider, value: percentText(value), isEnabled: false }
+    }
+    let change = onChange
+    return AccessibilityNode {
+        role: .Slider,
+        value: percentText(value),
+        adjustable: true,
+        adjust: { direction in
+            match direction {
+                Increment -> change(controlClamp01(value + SliderAccessibility.step))
+                Decrement -> change(controlClamp01(value - SliderAccessibility.step))
+            }
+        }
+    }
+}
+
+// A share of a whole as VoiceOver reads it: `0.5` is "50%".
+public function percentText(share: Number) -> String {
+    return "\(round(share * 100))%"
 }
 
 // The knob as it stands this frame. At rest it is the white capsule. Held, it

@@ -51,7 +51,19 @@ public construct Button(role: ButtonRole = .Normal, action: () -> Void,) extends
         }
     }
 
+    // One element, standing for its label, that presses the button.
     function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var described = self.styledDescription(context, modifiers)
+        described.accessibilityCombined(
+            accessibilityPressable(.Button, buttonPress(action, modifiers.controlPresentation), modifiers)
+        )
+        return described
+    }
+
+    function styledDescription(
         context: borrow BuildContext,
         modifiers: borrow ModifierContext
     ) -> CALayerDescription {
@@ -156,6 +168,15 @@ public construct Button(role: ButtonRole = .Normal, action: () -> Void,) extends
             )
         }
         return bareButtonDescription(context, inked, k, label)
+    }
+}
+
+// What pressing a button here does: its action, and in a menu the menu's
+// dismissal after it.
+function buttonPress(action: () -> Void, presentation: borrow ControlPresentation) -> () -> Void {
+    match presentation {
+        MenuRow, MenuAction -> return menuChooseFn(move action)
+        Standalone, InsetGrouped, Sidebar, SidebarCell, Toolbar, TabBar, PhoneTabBar -> return action
     }
 }
 

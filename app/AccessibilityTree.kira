@@ -1,0 +1,335 @@
+import Foundation
+import KCoreAnimation
+import KiraLayout
+
+// The accessibility elements of a described tree: how a view makes its
+// element, how a modifier finds the elements it changes, and how the laid-out
+// tree is read back into the elements a window shows, each with its frame.
+
+// One element on screen as the last build left it: what it says, what it is,
+// where it stands in the window, what it does, and the elements it holds.
+// What a UI test queries and acts on.
+public struct AccessibilityElement {
+    let role: AccessibilityRole
+    let label: String
+    let value: String
+    let hint: String
+    // What a field shows while it is empty.
+    let placeholder: String
+    let identifier: String
+    let traits: AccessibilityTraits
+    let headingLevel: AccessibilityHeadingLevel
+    let inputLabels: [String]
+    let isEnabled: Bool
+    let sortPriority: Number
+    // The element's box in the window, in points from its top-leading corner.
+    let frame: Rect
+    let actions: [AccessibilityAction]
+    let adjustable: Bool
+    let adjust: (AccessibilityAdjustmentDirection) -> Void
+    let children: [AccessibilityElement]
+}
+
+extend AccessibilityElement {
+    // Run the action of `kind`, as VoiceOver does. Answers whether the
+    // element has one.
+    function perform(kind: borrow AccessibilityActionKind) -> Bool {
+        for action in actions {
+            if action.kind == kind {
+                action.handler()
+                return true
+            }
+        }
+        return false
+    }
+
+    // Run the element's default action: what a double tap does.
+    function activate() -> Bool {
+        return self.perform(.Default)
+    }
+
+    // Swipe the element up or down, as VoiceOver adjusts a slider. Answers
+    // whether the element is adjustable.
+    function adjustValue(direction: AccessibilityAdjustmentDirection) -> Bool {
+        if !adjustable {
+            return false
+        }
+        adjust(direction)
+        return true
+    }
+}
+
+extend AccessibilityNode {
+    // Merge an element inside a combined one into it: its words read after
+    // the words already there, and what it is and does become the combined
+    // element's.
+    function absorb(borrow mut self, inner: borrow AccessibilityNode) {
+        if inner.label.count > 0 {
+            self.label = self.label.count > 0 ? self.label + ", " + inner.label : copy inner.label
+        }
+        if inner.value.count > 0 {
+            self.value = self.value.count > 0 ? self.value + ", " + inner.value : copy inner.value
+        }
+        // Being text or an image is the inner element's own kind; what it
+        // is besides carries over.
+        self.traits = self.traits.union(
+            inner.traits.without(
+                AccessibilityTraits.isStaticText.union(AccessibilityTraits.isImage)
+            )
+        )
+        if self.headingLevel == .Unspecified {
+            self.headingLevel = inner.headingLevel
+        }
+        for action in inner.actions {
+            if !self.hasAction(action.kind) {
+                self.actions.append(copy action)
+            }
+        }
+        if !self.adjustable && inner.adjustable {
+            self.adjustable = true
+            self.adjust = inner.adjust
+        }
+    }
+
+    function hasAction(kind: borrow AccessibilityActionKind) -> Bool {
+        for action in actions {
+            if action.kind == kind {
+                return true
+            }
+        }
+        return false
+    }
+
+    // Set the action of `kind`, in place of one the element already had.
+    function setAction(borrow mut self, action: AccessibilityAction) {
+        var kept: [AccessibilityAction] = []
+        for existing in self.actions {
+            if existing.kind != action.kind {
+                kept.append(copy existing)
+            }
+        }
+        kept.append(move action)
+        self.actions = move kept
+    }
+}
+
+extend CALayerDescription {
+    // Make this layer the element `node` describes. For a view whose layer
+    // holds no other element: a run of text, a glyph.
+    function accessibilityElementOf(borrow mut self, node: AccessibilityNode) {
+        self.accessibilityElement = .Some(accessibilityRegister(move node))
+    }
+
+    // Make this layer one element standing for everything in it, as a button
+    // stands for its label: the elements inside are merged into `node`, and
+    // only it remains.
+    function accessibilityCombined(borrow mut self, node: AccessibilityNode) {
+        var combined = move node
+        for key in self.accessibilityElementsWithin() {
+            let inner = accessibilityNode(key)
+            if !inner.hidden {
+                combined.absorb(inner)
+            }
+        }
+        self.accessibilityClear()
+        self.accessibilityElementOf(move combined)
+    }
+
+    // Have the elements in this view run `action` when VoiceOver activates
+    // them, as a tap gesture's view does, unless they do something of their
+    // own; a view with none becomes one element that does. Nothing while the
+    // view is disabled.
+    function accessibilityActivates(
+        borrow mut self,
+        action: () -> Void,
+        modifiers: borrow ModifierContext
+    ) {
+        if modifiers.disabled {
+            return
+        }
+        let keys = self.accessibilityElements()
+        if keys.count == 0 {
+            self.accessibilityElementOf(
+                AccessibilityNode {
+                    actions: [AccessibilityAction { kind: .Default, handler: action }]
+                }
+            )
+            return
+        }
+        for key in keys {
+            var node = accessibilityNode(key)
+            if !node.hasAction(.Default) {
+                node.actions.append(AccessibilityAction { kind: .Default, handler: action })
+                accessibilityStore(key, move node)
+            }
+        }
+    }
+
+    // The keys of the outermost elements in this tree: this layer's own when
+    // it is one, and otherwise the outermost in each sublayer, in order. What
+    // a modifier on this view changes.
+    function accessibilityElements() -> [Number] {
+        match self.accessibilityElement {
+            Some(key) -> return [key]
+            None -> {}
+        }
+        var keys: [Number] = []
+        for sublayer in self.sublayers {
+            for key in sublayer.accessibilityElements() {
+                keys.append(key)
+            }
+        }
+        return keys
+    }
+
+    // The keys of every element in this tree, at any depth, in reading order.
+    function accessibilityElementsWithin() -> [Number] {
+        var keys: [Number] = []
+        match self.accessibilityElement {
+            Some(key) -> keys.append(key)
+            None -> {}
+        }
+        for sublayer in self.sublayers {
+            for key in sublayer.accessibilityElementsWithin() {
+                keys.append(key)
+            }
+        }
+        return keys
+    }
+
+    // Take every element out of this tree.
+    function accessibilityClear(borrow mut self) {
+        self.accessibilityElement = .None
+        for i in 0..self.sublayers.count {
+            self.sublayers[i].accessibilityClear()
+        }
+    }
+}
+
+// The elements a laid-out tree shows, in reading order, each with its frame in
+// the window. Hidden elements and those faded out entirely are not shown, nor
+// is anything inside them.
+public function accessibilityTree(described: borrow CALayerDescription) -> [AccessibilityElement] {
+    return accessibilitySorted(accessibilityElementsIn(described, Point {}))
+}
+
+// The elements in `layer`, whose parent's top-leading corner stands at
+// `origin` in the window.
+function accessibilityElementsIn(
+    layer: borrow CALayerDescription,
+    origin: Point
+) -> [AccessibilityElement] {
+    if layer.opacity == 0.0 {
+        return []
+    }
+    // A layer lifted over everything else is placed from the window itself.
+    let parentCorner = match layer.level {
+        Inline -> origin
+        Overlay(z) -> Point {}
+    }
+    let corner = Point {
+        x: parentCorner.x + layer.position.x,
+        y: parentCorner.y + layer.position.y
+    }
+    var inner: [AccessibilityElement] = []
+    for sublayer in layer.sublayers {
+        for element in accessibilityElementsIn(sublayer, copy corner) {
+            inner.append(copy element)
+        }
+    }
+    match layer.accessibilityElement {
+        None -> return inner
+        Some(key) -> {
+            let node = accessibilityNode(key)
+            if node.hidden {
+                return []
+            }
+            let frame = Rect {
+                x: corner.x,
+                y: corner.y,
+                width: layer.size.width,
+                height: layer.size.height
+            }
+            return [accessibilityElementFrom(node, move frame, accessibilitySorted(move inner))]
+        }
+    }
+}
+
+// The element a registered node is, standing at `frame`, holding `children`.
+// A node that stands for what is inside it holds nothing.
+function accessibilityElementFrom(
+    node: borrow AccessibilityNode,
+    frame: Rect,
+    children: [AccessibilityElement]
+) -> AccessibilityElement {
+    var held: [AccessibilityElement] = []
+    if node.contains {
+        held = move children
+    }
+    return AccessibilityElement {
+        role: accessibilityRole(node),
+        label: copy node.label,
+        value: copy node.value,
+        hint: copy node.hint,
+        placeholder: copy node.placeholder,
+        identifier: copy node.identifier,
+        traits: node.traits,
+        headingLevel: node.headingLevel,
+        inputLabels: copy node.inputLabels,
+        isEnabled: node.isEnabled,
+        sortPriority: node.sortPriority,
+        frame: frame,
+        actions: copy node.actions,
+        adjustable: node.adjustable,
+        adjust: node.adjust,
+        children: move held
+    }
+}
+
+// Siblings in the order VoiceOver visits them: the higher
+// `.accessibilitySortPriority` first, and those that share one in the order
+// they were written.
+function accessibilitySorted(elements: [AccessibilityElement]) -> [AccessibilityElement] {
+    var sorted = move elements
+    for i in 1..sorted.count {
+        var j = i
+        while j > 0 && sorted[j - 1].sortPriority < sorted[j].sortPriority {
+            let higher = copy sorted[j]
+            sorted[j] = copy sorted[j - 1]
+            sorted[j - 1] = move higher
+            j = j - 1
+        }
+    }
+    return sorted
+}
+
+// The elements the window showed when it was last laid out.
+struct AccessibilitySnapshot {
+    var elements: [AccessibilityElement] = []
+}
+
+// Read the laid-out tree a window is about to show into its elements, for
+// `accessibilityElementsOnScreen` to answer until the next build.
+public function accessibilityTakeSnapshot(described: borrow CALayerDescription) {
+    if !ambientStateHas(StateSlot.accessibilitySnapshot) {
+        ambientStatePut(
+            StateSlot.accessibilitySnapshot,
+            nativeUserData(nativeState(AccessibilitySnapshot {}))
+        )
+    }
+    var snapshot = nativeRecover<AccessibilitySnapshot>(
+        ambientStateGet(StateSlot.accessibilitySnapshot)
+    )
+    snapshot.elements = accessibilityTree(described)
+}
+
+// The elements the window shows, as its last build laid them out.
+public function accessibilityElementsOnScreen() -> [AccessibilityElement] {
+    if !ambientStateHas(StateSlot.accessibilitySnapshot) {
+        return []
+    }
+    let snapshot = nativeRecover<AccessibilitySnapshot>(
+        ambientStateGet(StateSlot.accessibilitySnapshot)
+    )
+    return copy snapshot.elements
+}

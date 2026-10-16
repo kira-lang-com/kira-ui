@@ -73,7 +73,20 @@ public construct Label(title: String = "", systemImage: Symbol = .None) extends 
         return systemImage != .None || !describesNothing(icon.describe(context, modifiers))
     }
 
+    // One element reading the title, its glyph a picture beside the words,
+    // as SwiftUI's label is.
     function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var described = self.styledDescription(context, modifiers)
+        described.accessibilityCombined(
+            AccessibilityNode { role: .StaticText, traits: AccessibilityTraits.isStaticText }
+        )
+        return described
+    }
+
+    function styledDescription(
         context: borrow BuildContext,
         modifiers: borrow ModifierContext
     ) -> CALayerDescription {
@@ -107,17 +120,20 @@ public construct Label(title: String = "", systemImage: Symbol = .None) extends 
             return stacked.describe(context, modifiers)
         }
         // On a phone's tab bar a label stacks too: the kit's tab sets its glyph,
-        // filled, on a line of its own over its title, both semibold.
+        // filled, on a line of its own over its title. Both weigh what UIKit's
+        // tab bar item sets them at: the glyph medium at the large scale, the
+        // title the medium system font.
         if modifiers.controlPresentation == .PhoneTabBar {
             let bar = phoneTabBarMetrics
             let stacked = VStack(spacing: .Length(bar.titleSpacing), alignment: .Center) {
                 iconView()
                 .symbolVariant(.Fill)
-                .font(size: resolvedLength(bar.symbolSize), weight: .SemiBold)
+                .imageScale(.Large)
+                .font(size: resolvedLength(bar.symbolSize), weight: .Medium)
                 .height(resolvedLength(bar.symbolLine))
 
                 titleView()
-                .font(size: resolvedLength(bar.titleSize), weight: .SemiBold)
+                .font(size: resolvedLength(bar.titleSize), weight: .Medium)
                 .height(resolvedLength(bar.titleLine))
             }
             return stacked.describe(context, modifiers)
@@ -344,7 +360,17 @@ public function pickerOption(
         setOpenPickerKey(0)
         return
     })
+    .accessibilityAddTraits(pickerOptionTraits(entry.selected))
     return row.describe(context, modifiers)
+}
+
+// An option in a picker's list is pressed as a button is, and is selected
+// while it is the selection.
+function pickerOptionTraits(selected: Bool) -> AccessibilityTraits {
+    if selected {
+        return AccessibilityTraits.isButton.union(AccessibilityTraits.isSelected)
+    }
+    return AccessibilityTraits.isButton
 }
 
 // A choice among values, as SwiftUI's `Picker` is: the row its title names,
@@ -383,11 +409,13 @@ public construct Picker<SelectionValue>(title: String, selection: Binding<Select
             // button opens under itself. An empty one is no title, so the
             // button stands where the picker does.
             let labeled = HStack(alignment: .Top) {
+                // The title names the pop-up, which reads it.
                 if shownTitle.count > 0 {
                     ZStack(alignment: .Leading) {
                         Text(content: shownTitle)
                     }
                     .height(resolvedLength(popUp.height))
+                    .accessibilityHidden(true)
                 }
 
                 VStack(spacing: .ExtraSmall, alignment: .Leading) {
@@ -416,6 +444,7 @@ public construct Picker<SelectionValue>(title: String, selection: Binding<Select
                     )
                     .hugWidth()
                     .onClick(pickerToggleFn(key))
+                    .pickerButton(title: shownTitle, press: pickerToggleFn(key))
 
                     if open {
                         PickerList(selection: selection) {
@@ -448,6 +477,7 @@ public construct Picker<SelectionValue>(title: String, selection: Binding<Select
                 }
                 .hugWidth()
                 .onClick(pickerToggleFn(key))
+                .pickerButton(title: shownTitle, press: pickerToggleFn(key))
 
                 if open {
                     PickerList(selection: selection) {
@@ -460,6 +490,37 @@ public construct Picker<SelectionValue>(title: String, selection: Binding<Select
             .hugWidth()
         }
         return picker.describe(context, modifiers)
+    }
+}
+
+// The button a picker opens its list with, to assistive technology: a pop-up
+// named by the picker's title, reading the option chosen as its value.
+construct PickerButtonLayer(title: String, press: () -> Void) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var described = content.describe(context, modifiers)
+        var chosen = AccessibilityNode {}
+        for key in described.accessibilityElementsWithin() {
+            chosen.absorb(accessibilityNode(key))
+        }
+        var node = accessibilityPressable(.PopUpButton, press, modifiers)
+        node.label = copy title
+        node.value = move chosen.label
+        described.accessibilityClear()
+        described.accessibilityElementOf(move node)
+        return described
+    }
+}
+
+extend Widget {
+    function pickerButton(title: String, press: () -> Void) -> Any Widget {
+        return PickerButtonLayer(title: title, press: press) {
+            self
+        }
     }
 }
 

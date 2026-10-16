@@ -131,11 +131,33 @@ public construct NavigationLink(value: Any NavigationRoute) extends Widget {
         return NavigationLink(value: value, label: Text(content: title))
     }
 
+    // One element, standing for its label, that goes to its value: a button,
+    // selected in a sidebar while the path starts there.
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var described = self.styledDescription(context, modifiers)
+        if modifiers.controlPresentation == .Sidebar || modifiers.controlPresentation == .SidebarCell {
+            var node = accessibilityPressable(.Button, navigationSelectAction(copy value), modifiers)
+            let selected = NavigationPath {}.startsWith(value: value)
+            if selected {
+                node.traits = node.traits.union(AccessibilityTraits.isSelected)
+            }
+            described.accessibilityCombined(move node)
+            return described
+        }
+        described.accessibilityCombined(
+            accessibilityPressable(.Button, navigationPushAction(copy value), modifiers)
+        )
+        return described
+    }
+
     // In a sidebar the link is one of its rows, selected while the path starts
     // at its value. In a grouped list it is a row that drills in: its label,
     // then the chevron at the trailing end, pressed anywhere down the row's
     // height. Anywhere else it is its label, pressed to push the value.
-    function describe(
+    function styledDescription(
         context: borrow BuildContext,
         modifiers: borrow ModifierContext
     ) -> CALayerDescription {

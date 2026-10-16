@@ -223,7 +223,18 @@ public construct TextField(title: String, text: Binding<String>, prompt: String 
         let key = tapSeqKey()
         textFieldFollow(key, text.get())
         let shown = prompt.isEmpty() ? copy title : copy prompt
-        return textFieldDescription(key, move shown, false, copy text.set, copy modifiers.submit, context, modifiers)
+        var described = textFieldDescription(key, copy shown, false, copy text.set, copy modifiers.submit, context, modifiers)
+        described.accessibilityClear()
+        described.accessibilityElementOf(
+            AccessibilityNode {
+                role: .TextField,
+                label: copy title,
+                value: copy text.get(),
+                placeholder: move shown,
+                isEnabled: !modifiers.disabled
+            }
+        )
+        return described
     }
 }
 
@@ -242,8 +253,29 @@ public construct SecureField(title: String, text: Binding<String>, prompt: Strin
         let key = tapSeqKey()
         textFieldFollow(key, text.get())
         let shown = prompt.isEmpty() ? copy title : copy prompt
-        return textFieldDescription(key, move shown, true, copy text.set, copy modifiers.submit, context, modifiers)
+        var described = textFieldDescription(key, copy shown, true, copy text.set, copy modifiers.submit, context, modifiers)
+        described.accessibilityClear()
+        described.accessibilityElementOf(
+            AccessibilityNode {
+                role: .SecureTextField,
+                label: copy title,
+                value: secureFieldDots(text.get()),
+                placeholder: move shown,
+                isEnabled: !modifiers.disabled
+            }
+        )
+        return described
     }
+}
+
+// What a secure field reads for the text it holds: a dot for each character,
+// as UIKit's does.
+function secureFieldDots(text: borrow String) -> String {
+    var dots = ""
+    for i in 0..text.count {
+        dots = dots + "•"
+    }
+    return dots
 }
 
 // The field kept under `key`: its text, or `placeholder` while it is empty,

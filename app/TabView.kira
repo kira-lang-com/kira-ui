@@ -42,21 +42,19 @@ public function tabDescribed(
     modifiers: borrow ModifierContext,
 ) -> CALayerDescription {
     let selected = entry.selected
+    var shown = CALayerDescription {}
     if tabBarAtFoot(context) {
-        chromeAppend(
-            .Tab,
-            ToolbarEntry {
-                content: phoneTabBarItem(item, selected, entry.select, context, modifiers)
-            }
-        )
+        shown = phoneTabBarItem(item, selected, copy entry.select, context, modifiers)
     } else {
-        chromeAppend(
-            .Tab,
-            ToolbarEntry {
-                content: tabBarItem(item, selected, entry.select, context, modifiers)
-            }
-        )
+        shown = tabBarItem(item, selected, copy entry.select, context, modifiers)
     }
+    // A tab is one element, reading its title, that selects it.
+    var node = accessibilityPressable(.Tab, copy entry.select, modifiers)
+    if selected {
+        node.traits = node.traits.union(AccessibilityTraits.isSelected)
+    }
+    shown.accessibilityCombined(move node)
+    chromeAppend(.Tab, ToolbarEntry { content: move shown })
     if !selected {
         return CALayerDescription {}
     }

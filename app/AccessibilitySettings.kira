@@ -1,0 +1,59 @@
+import Foundation
+
+// The person's accessibility settings, read from the platform beside its color
+// scheme (NativeLibs/Appearance) and kept in the environment, as SwiftUI's
+// are:
+//
+//     @Environment(\.accessibilityReduceMotion) let reduceMotion: Bool
+
+// SwiftUI's `ColorSchemeContrast`: whether the person asked for more contrast.
+@Derive(CustomStringConvertible)
+public enum ColorSchemeContrast {
+    Standard
+    Increased
+}
+
+// The settings the native library answers for, by the number it knows each by.
+enum AccessibilitySetting: I32 {
+    ReduceMotion = 1
+    ReduceTransparency = 2
+    IncreaseContrast = 3
+    DifferentiateWithoutColor = 4
+    InvertColors = 5
+    ScreenReader = 6
+}
+
+// Whether the platform has `setting` on. Linux publishes its settings over the
+// XDG settings portal, a D-Bus conversation rather than a value a process can
+// read, and the platforms the native library has no row for publish none.
+function platformAccessibilitySetting(setting: AccessibilitySetting) -> Bool {
+    match targetPlatform!() {
+        MacOS -> return kira_ui_accessibility_setting(code(setting)) == I32(1)
+        Ios -> return kira_ui_accessibility_setting(code(setting)) == I32(1)
+        Windows -> return kira_ui_accessibility_setting(code(setting)) == I32(1)
+        Wasm -> return kira_ui_accessibility_setting(code(setting)) == I32(1)
+        else -> return false
+    }
+}
+
+// Reads the platform's accessibility settings into the environment. The runner
+// calls this before each rebuild, so a view follows a setting changed while the
+// app runs.
+public function environmentNoteAccessibility() {
+    let reduceMotion = platformAccessibilitySetting(.ReduceMotion)
+    let reduceTransparency = platformAccessibilitySetting(.ReduceTransparency)
+    let differentiate = platformAccessibilitySetting(.DifferentiateWithoutColor)
+    let invert = platformAccessibilitySetting(.InvertColors)
+    let voiceOver = platformAccessibilitySetting(.ScreenReader)
+    let increased = platformAccessibilitySetting(.IncreaseContrast)
+    let previous = enterProcessScope()
+    environmentEnsure()
+    var values = nativeRecover<EnvironmentValues>(ambientStateGet(StateSlot.environment))
+    values.accessibilityReduceMotion = reduceMotion
+    values.accessibilityReduceTransparency = reduceTransparency
+    values.accessibilityDifferentiateWithoutColor = differentiate
+    values.accessibilityInvertColors = invert
+    values.accessibilityVoiceOverEnabled = voiceOver
+    values.colorSchemeContrast = increased ? .Increased : .Standard
+    ambientScopeEnter(previous)
+}
