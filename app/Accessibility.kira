@@ -109,6 +109,7 @@ public enum AccessibilityAdjustmentDirection {
 // What an element is to the platform: the role VoiceOver announces and a UI
 // test finds it by. Each control states its own; the traits an application
 // adds name a role of their own over it (see `accessibilityRole`).
+@Derive(Serializable)
 public enum AccessibilityRole {
     // An element that is none of the others: a shape given a label.
     Other
@@ -153,6 +154,8 @@ public struct AccessibilityNode {
     var inputLabels: [String] = []
     var sortPriority: Number = 0
     var isEnabled: Bool = true
+    // Whether the element is the field the keyboard types into.
+    var hasKeyboardFocus: Bool = false
     // `.accessibilityHidden(true)`: the element and everything in it are not
     // shown to assistive technology.
     var hidden: Bool = false
@@ -188,9 +191,12 @@ public function accessibilityRole(node: borrow AccessibilityNode) -> Accessibili
     return node.role
 }
 
-// The elements a build has described, by key.
+// The elements a build has described, by key, and the field an element's
+// action asked to give the keyboard to, which outlives the build it was
+// asked from.
 struct AccessibilityRegistry {
     var nodes: [AccessibilityNode] = []
+    var focusRequest: Number? = .None
 }
 
 function accessibilityRegistryEnsure() {
@@ -254,4 +260,23 @@ public function accessibilityPressable(
         traits: AccessibilityTraits.isButton,
         actions: [AccessibilityAction { kind: .Default, handler: pressed }]
     }
+}
+
+// Ask that the field under `key` take the keyboard, as activating a text
+// field does in VoiceOver. The runner gives it the keyboard before the next
+// build.
+public function accessibilityRequestFocus(key: Number) {
+    accessibilityRegistryEnsure()
+    var registry = nativeRecover<AccessibilityRegistry>(ambientStateGet(StateSlot.accessibility))
+    registry.focusRequest = .Some(key)
+}
+
+// The field an element asked to give the keyboard to since the runner last
+// asked, if any. Asking answers it once.
+public function accessibilityTakeFocusRequest() -> Number? {
+    accessibilityRegistryEnsure()
+    var registry = nativeRecover<AccessibilityRegistry>(ambientStateGet(StateSlot.accessibility))
+    let requested = copy registry.focusRequest
+    registry.focusRequest = .None
+    return requested
 }

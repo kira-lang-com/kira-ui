@@ -99,97 +99,24 @@ public function toolbarGlassLent(row: borrow CALayerDescription) -> Bool {
 // once there is text, the text and a button that clears it. A press anywhere
 // on the glass puts the caret where it landed.
 public function toolbarSearchField(
-    sink: borrow ToolbarSink,
+    search: borrow WindowSearch,
     metrics: borrow WindowChromeMetrics,
     context: borrow BuildContext,
     modifiers: borrow ModifierContext,
 ) -> CALayerDescription {
-    let key = SearchField.key
-    let size = modifierTextSize(modifiers)
-    let st = nativeRecover<TextFieldState>(ambientStateGet(textFieldSlotKey(key)))
-    let focused = context.focusedKey == key
-    var runs: [CALayerDescription] = []
     // Its symbols are the bar's, at the bar's size and weight.
-    let barModifiers = modifierContextPresenting(modifiers, .Toolbar)
-    runs.append(Icon(symbol: .Search).foregroundColor(.Secondary).describe(context, barModifiers))
-    if st.codes.count == 0 {
-        if focused {
-            runs.append(textFieldCaret(modifiers))
-        }
-        runs.append(
-            textFieldLine(
-                Text(sink.searchPrompt).font(
-                    size: resolvedLength(size),
-                    weight: .Medium
-                ).foregroundColor(.Secondary).describe(context, modifiers),
-                TextFieldPart.placeholder
-            )
-        )
-    } else if focused {
-        runs.append(
-            textFieldRun(
-                foundationStringFromCodepoints(st.codes, 0, st.caret),
-                size,
-                TextFieldPart.lead,
-                .Primary,
-                context,
-                modifiers
-            )
-        )
-        runs.append(textFieldCaret(modifiers))
-        runs.append(
-            textFieldRun(
-                foundationStringFromCodepoints(st.codes, st.caret, st.codes.count),
-                size,
-                TextFieldPart.trail,
-                .Primary,
-                context,
-                modifiers
-            )
-        )
-    } else {
-        runs.append(
-            textFieldRun(
-                foundationStringFromCodepoints(st.codes, 0, st.codes.count),
-                size,
-                TextFieldPart.lead,
-                .Primary,
-                context,
-                modifiers
-            )
-        )
-    }
-    var text = CALayerDescription {
-        layout: CALayoutIntent {
-            axis: .Row,
-            heightFill: false,
-            flex: 1,
-            alignment: Point { x: 0.0, y: 0.5 }
-        },
-        clipsChildren: true,
-        sublayers: [CALayerDescription {
-            layout: CALayoutIntent {
-                axis: .Row,
-                spacing: metrics.searchSpacing,
-                widthFill: false,
-                heightFill: false,
-                alignment: Point { x: 0.0, y: 0.5 }
-            },
-            sublayers: move runs
-        }]
-    }
-    var parts = [move text]
-    if st.codes.count > 0 {
-        var clear = Icon(symbol: .XmarkCircleFill)
-        .foregroundColor(.Tertiary)
-        .describe(context, barModifiers)
-        clear.hittable = true
-        clear.hitKey = sink.searchClearKey
-        parts.append(move clear)
-    }
+    let parts = searchFieldParts(
+        copy search.prompt,
+        .Medium,
+        .Secondary,
+        search.clearKey,
+        context,
+        modifierContextPresenting(modifiers, .Toolbar),
+        modifiers
+    )
     var glass = interactiveGlassDescription(
         context,
-        key,
+        SearchField.key,
         CALayoutIntent {
             axis: .Row,
             spacing: metrics.searchSpacing,

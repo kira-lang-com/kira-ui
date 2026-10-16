@@ -53,7 +53,7 @@ public construct Form() extends Widget {
         // The grouped canvas runs to the bottom of the form's frame, below
         // the last section too, as a Settings page's does.
         var layer = list.describe(context, modifiers)
-        let canvas = themeAdaptiveColor(groupedBackground, modifierAppearance(modifiers))
+        let canvas = themeAdaptiveColor(groupedBackground(), modifierAppearance(modifiers))
         layer.content = .Solid(
             CASolid {
                 fill: colorFromFoundation(modifierColor(foundationColor(move canvas), modifiers))
@@ -159,7 +159,11 @@ function labeledColumns(
 ) -> CALayerDescription {
     let share = listMetrics().valueColumnShare
     return CALayerDescription {
-        layout: CALayoutIntent { axis: .Row, heightFill: false, alignment: Point { x: 0.0, y: 0.5 } },
+        layout: CALayoutIntent {
+            axis: .Row,
+            heightFill: false,
+            alignment: Point { x: 0.0, y: 0.5 }
+        },
         sublayers: [
             CALayerDescription {
                 layout: CALayoutIntent {
@@ -335,7 +339,25 @@ public construct NumberField(key: Number, text: String, onSubmit: () -> Void) ex
         // What is typed stays in the field's buffer until Return submits it.
         textFieldSeed(key, text)
         let labeled = modifierContextApply(modifiers, modifierDeltaTypography(.label))
-        return textFieldDescription(key, "", false, { edited in return }, onSubmit, context, labeled)
+        var described = textFieldDescription(
+            key,
+            "",
+            false,
+            { edited in return },
+            onSubmit,
+            context,
+            labeled
+        )
+        let element = TextFieldElement {
+            role: .TextField,
+            key: key,
+            label: "",
+            value: copy text,
+            placeholder: ""
+        }
+        described.accessibilityClear()
+        described.accessibilityElementOf(element.node(context, modifiers))
+        return described
     }
 }
 

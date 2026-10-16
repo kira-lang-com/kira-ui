@@ -230,7 +230,10 @@ public construct NavigationSplitView(
                     modifiers
                 )]
             )
-            glass.content = .Glass((liquidGlassContent(.Rect, modifiers)).edgeless())
+            glass.content = .Glass(sidebarGlass(modifiers))
+            // Meeting the detail with no edge, it casts no shadow on it either:
+            // a panel's would fall across the detail as a dark band.
+            glass.shadow = CAShadow {}
             columns.append(
                 CALayerDescription {
                     key: 1,
@@ -295,6 +298,38 @@ public function sidebarShadow(
             fixedHeight: height + radius * 4.0,
             offset: Point { x: width, y: -radius * 2.0 }
         }
+    }
+}
+
+// What a split view's sidebar is cut from. On a desktop it is the Mac's
+// sidebar material, not Liquid Glass: what is behind it blurred, set at the
+// sidebar tone's luminance and drained of most of its color, so it reads as a
+// darker tone of the window. It has no lens and no rim, since it meets the
+// window's edges and the detail with none. Elsewhere it is Liquid Glass.
+function sidebarGlass(modifiers: borrow ModifierContext) -> CAGlass {
+    if interfaceMode() == .AdaptiveMobile {
+        return (liquidGlassContent(.Rect, modifiers)).edgeless()
+    }
+    let activity: FoundationWindowActivity = windowActive() ? .Active : .Inactive
+    let stack = foundationSidebarTint(surfaceGlassScheme(modifiers), activity)
+    let tone = stack.lower
+    return CAGlass {
+        blur: 1.0,
+        edgeRefraction: 0.0,
+        tint: CAColor { r: tone.color.r, g: tone.color.g, b: tone.color.b, a: tone.alpha },
+        material: foundationGlassMaterialWithTint(
+            CAGlassMaterial {
+                lensMaxBend: 0.0,
+                borderSpread: 0.0,
+                borderSideOffset: 0.0,
+                borderSideSpread: 0.0,
+                borderGray: 1.0,
+                borderSideGray: 1.0,
+                innerRimStrength: 0.0
+            },
+            stack
+        ),
+        shapeKind: surfaceLayerGlassShapeKind(.Rect)
     }
 }
 

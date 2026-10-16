@@ -165,6 +165,29 @@ cd Examples/basic-kira-ui-app
 kira run
 ```
 
+### Command line
+
+Every application run with `RunKiraWindowApp` reads these options from its
+command line, with nothing to declare; `--help` lists them:
+
+| Option | What it does |
+| --- | --- |
+| `--width N`, `--height N` | The window's size, in points |
+| `--scale N` | The pixels drawn for each point |
+| `--headless` | Draw into an image instead of a window |
+| `--capture PATH` | Draw with no window and write a frame to a PPM |
+| `--at N` | The frame to capture; the last one drawn when left out |
+| `--frames N` | Quit after this many frames; 60 when capturing |
+
+```bash
+app --capture /tmp/phone.ppm --width 390 --height 844 --scale 2
+```
+
+A capture needs no display server. An unknown option is reported with the
+usage, and the program exits with status 64. Operands are left for the
+application to read. An application that parses its own command line passes
+`arguments: []`, or the tokens it left over, to `RunKiraWindowApp`.
+
 ### Which `kira`
 
 These commands want **`kk`**, the native frontend of the

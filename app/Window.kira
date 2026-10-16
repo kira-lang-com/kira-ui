@@ -71,10 +71,10 @@ public function windowDescription(
     }
     chrome = safeAreaInset(move chrome, context.systemSafeArea)
     if tabBarAtFoot(context) {
-        // A phone's tab bar floats at the foot of the screen, over the content
-        // and the home indicator's room alike.
+        // A phone's tab bar, or its search field, floats at the foot of the
+        // screen, over the content and the home indicator's room alike.
         chrome = CALayerDescription {
-            sublayers: [move chrome, WindowTabBar().describe(context, modifiers)]
+            sublayers: [move chrome, WindowBottomBar().describe(context, modifiers)]
         }
     }
     if !windowDecorated() {
@@ -286,14 +286,14 @@ public function windowControlsInToolbar() -> Bool {
 }
 
 // The room above the bar's row. Where the window has a menu row, that row is
-// it. A window that draws its own close, minimize and zoom buttons with no
-// menu row -- its menus are on the platform's bar -- keeps the room still, so
-// the buttons stand off the top edge as far as they stand off the leading
-// one, as a Mac's do. A window whose controls are drawn for it, or that has
-// none, starts its bar at the top.
+// it. A window whose close, minimize and zoom buttons lead its bar -- its menus
+// are on the platform's bar -- keeps the room still, so the buttons stand off
+// the top edge as far as they stand off the leading one, as a Mac's do: AppKit
+// draws them 19 down and its toolbar items 8 down, whoever draws the buttons.
+// A window with no buttons, as a phone's screen, starts its bar at the top.
 public function windowTopClearance() -> Number {
     if menuBarShown() { return menuBarHeight() }
-    if !windowDecorated() { return 0.0 }
+    if !windowHasControls() { return 0.0 }
     let metrics = windowChromeMetrics()
     return max(0.0, metrics.controlsLeading + (metrics.controlDiameter - metrics.itemHeight) / 2.0)
 }

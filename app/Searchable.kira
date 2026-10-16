@@ -11,79 +11,473 @@ public namespace SearchField {
     let key: Number = 500000
 }
 
-// SwiftUI's `.searchable(text:prompt:)`: the window's search field, which
-// iPadOS sets at the trailing end of the toolbar over the view that asks
-// for it.
+// SwiftUI's `.searchable(text:isPresented:prompt:)`: the window's search
+// field, which iPadOS sets at the trailing end of the toolbar over the view
+// that asks for it. iOS 26 floats it at the foot of the screen, or, where a
+// tab bar holds the foot, sets it across the page under its large title,
+// going up with it.
 //
 //     @State var query: String = ""
 //
 //     body {
 //         ProjectList(query = query)
-//             .searchable(text = query, onChange = { text in
-//                 query = text
-//                 return
-//             })
+//             .searchable(text: $query)
 //     }
 //
-// SwiftUI takes the text as a binding. A binding is two things -- the value
-// the field shows and what to do when the field changes it -- and here they
-// are the two arguments: the field shows `text`, and hands every edit to
-// `onChange`. Setting the state to something else, an empty string to clear
-// the search, puts that in the field.
+// The field shows `text` and writes every edit to it; setting it to
+// something else, an empty string to clear the search, puts that in the
+// field. Pressing the field presents the search: on a phone the bar steps
+// aside and the field stands at the top of the screen with a button that
+// cancels it, which empties `text` and takes the presentation back.
+// `isPresented` reads and writes that presentation, and setting it moves the
+// keyboard into the field or out of it.
 public construct SearchableLayer(
-    text: String,
-    onChange: (String) -> Void,
+    text: Binding<String>,
+    isPresented: Binding<Bool>,
     prompt: String
 ) extends Widget {
     let content: some Widget
 
-    // The field is described by the bar; the view under it is described here.
-    // The bar is collected after the whole tree, so the field is asked for
-    // once the content -- which may hold the split view collecting it -- has
-    // lowered.
+    // In the page the field is handed over before the content lowers, so the
+    // page's scroll view finds it when it claims the page. Anywhere else the
+    // field is drawn with the bar, which is collected after the whole tree,
+    // so the field is asked for once the content -- which may hold the split
+    // view collecting it -- has lowered.
     function describe(
         context: borrow BuildContext,
         modifiers: borrow ModifierContext
     ) -> CALayerDescription {
-        let described = content.describe(context, modifiers)
         let key = SearchField.key
-        textFieldFollow(key, text)
+        textFieldFollow(key, text.get())
+        let presented = isPresented.get()
+        searchPresentationFollow(presented)
+        let search = WindowSearch {
+            prompt: copy prompt,
+            clearKey: tapSeqKey(),
+            cancelKey: tapSeqKey(),
+            presented: presented
+        }
+        let inPage = searchFieldInPage(context) && scrollPageSearch(copy search)
+        if inPage && presented {
+            toolbarPresentPageSearch()
+        }
+        let described = content.describe(context, modifiers)
         // Return submits nothing: the search is already the text.
         layerTextInputRegister(
             key,
-            textFieldTypeFn(key, onChange),
-            textFieldCommandFn(key, onChange, layerNoop)
+            textFieldTypeFn(key, copy text.set),
+            textFieldCommandFn(key, copy text.set, layerNoop)
         )
-        layerActionRegister(key, searchFieldPressFn(key, modifiers))
-        let clearKey = tapSeqKey()
-        layerActionRegister(clearKey, searchFieldClearFn(key, onChange))
-        toolbarSetSearch(copy prompt, clearKey)
+        layerActionRegister(key, searchFieldPressFn(key, tabBarAtFoot(context), modifiers))
+        layerActionRegister(search.clearKey, searchFieldClearFn(key, copy text.set))
+        layerActionRegister(
+            search.cancelKey,
+            searchCancelFn(key, copy text.set, copy isPresented.set)
+        )
+        layerFocusRegister(key, searchFocusFn(copy isPresented.set))
+        if !inPage {
+            toolbarSetSearch(move search)
+        }
         return described
     }
 }
 
+// The window's search field, as a view asked for it with `.searchable`: what
+// it prompts for, the keys of the buttons that clear it and cancel it, and
+// whether it is presented.
+public struct WindowSearch {
+    var prompt: String = ""
+    var clearKey: Number = 0
+    var cancelKey: Number = 0
+    var presented: Bool = false
+}
+
 extend Widget {
-    // The window's search field, matching SwiftUI's `.searchable(text:prompt:)`.
+    // The window's search field, matching SwiftUI's
+    // `.searchable(text:prompt:)`: presented while it is in use, as the
+    // window keeps it.
+    function searchable(text: Binding<String>, prompt: String = "Search") -> Any Widget {
+        return SearchableLayer(text: text, isPresented: searchPresentation(), prompt: prompt) {
+            self
+        }
+    }
+
+    // The window's search field, matching SwiftUI's
+    // `.searchable(text:isPresented:prompt:)`: presented while
+    // `isPresented` is true.
     function searchable(
-        text: String,
-        onChange: (String) -> Void,
+        text: Binding<String>,
+        isPresented: Binding<Bool>,
         prompt: String = "Search"
     ) -> Any Widget {
-        return SearchableLayer(text: text, onChange: onChange, prompt: prompt) {
+        return SearchableLayer(text: text, isPresented: isPresented, prompt: prompt) {
             self
         }
     }
 }
 
-// A press puts the caret where it landed, past the magnifier.
-public function searchFieldPressFn(key: Number, modifiers: borrow ModifierContext) -> () -> Void {
+// Whether the window's search is presented, as the window keeps it for a
+// field given no binding of its own, and as it was on the last build, so a
+// binding that changes moves the keyboard.
+public struct SearchPresentation {
+    var presented: Bool = false
+    var followed: Bool = false
+}
+
+public function searchPresentationEnsure() {
+    if !ambientStateHas(StateSlot.searchPresentation) {
+        ambientStatePut(
+            StateSlot.searchPresentation,
+            nativeUserData(nativeState(SearchPresentation {}))
+        )
+    }
+}
+
+// The presentation the window keeps, as a binding.
+public function searchPresentation() -> Binding<Bool> {
+    searchPresentationEnsure()
+    return Binding<Bool> {
+        get: { in
+            let kept = nativeRecover<SearchPresentation>(ambientStateGet(StateSlot.searchPresentation))
+            return kept.presented
+        },
+        set: { presented in
+            var kept = nativeRecover<SearchPresentation>(ambientStateGet(StateSlot.searchPresentation))
+            kept.presented = presented
+            return
+        }
+    }
+}
+
+// A search that has come to be presented takes the keyboard into its field,
+// and one taken back takes it out.
+public function searchPresentationFollow(presented: Bool) {
+    searchPresentationEnsure()
+    var kept = nativeRecover<SearchPresentation>(ambientStateGet(StateSlot.searchPresentation))
+    if presented && !kept.followed {
+        layerFocusClaim(SearchField.key)
+    } else if !presented && kept.followed {
+        layerFocusRelease(SearchField.key)
+    }
+    kept.followed = presented
+}
+
+// The field taking the keyboard presents the search.
+public function searchFocusFn(present: (Bool) -> Void) -> (Bool) -> Void {
+    let write = move present
+    let f: (Bool) -> Void = { gained in
+        if gained {
+            write(true)
+        }
+        return
+    }
+    return f
+}
+
+// The cancel button empties the field and takes the presentation back.
+public function searchCancelFn(
+    key: Number,
+    onChange: (String) -> Void,
+    present: (Bool) -> Void
+) -> () -> Void {
+    let clear = searchFieldClearFn(key, move onChange)
+    let write = move present
+    let f: () -> Void = { in
+        clear()
+        write(false)
+        return
+    }
+    return f
+}
+
+// Whether the search field stands in the page, under its title, as a
+// phone's does where its tab bar holds the foot of the screen. The tab
+// being lowered has put itself on the bar already.
+public function searchFieldInPage(context: borrow BuildContext) -> Bool {
+    return tabBarAtFoot(context) && toolbarHoldsTabs()
+}
+
+// A press puts the caret where it landed, past the magnifier: as a phone's
+// field sets it, or as the bar's does.
+public function searchFieldPressFn(
+    key: Number,
+    phone: Bool,
+    modifiers: borrow ModifierContext
+) -> () -> Void {
     let metrics = windowChromeMetrics()
-    return textFieldPressFn(
-        key,
-        modifierTextSize(modifiers),
-        textFieldWeight(modifiers),
-        metrics.searchLeading + metrics.symbolSize + metrics.searchSpacing
+    var textLeading = metrics.searchLeading + metrics.symbolSize + metrics.searchSpacing
+    if phone {
+        let field = searchFieldMetrics()
+        textLeading = field.leading + searchFieldTextSize(modifiers) + field.spacing
+    }
+    return textFieldPressFn(key, searchFieldTextSize(modifiers), textFieldWeight(modifiers), textLeading)
+}
+
+// The size a search field's text is set at: the body's, whatever control
+// size the field stands among, as UIKit's search field and the kits' are --
+// 17 points on a phone or a tablet, 13 on a Mac.
+public function searchFieldTextSize(modifiers: borrow ModifierContext) -> Number {
+    return modifierTypography(modifiers, .body).size
+}
+
+// What a search field holds, its magnifier first: the prompt while it is
+// empty, the caret before it while it is focused, and once there is text the
+// text -- parted at the caret while it is focused -- and a button that
+// clears it. The symbols are drawn as `symbolModifiers` say.
+public function searchFieldParts(
+    prompt: String,
+    promptWeight: FontWeight,
+    glyph: PrimaryColor,
+    clearKey: Number,
+    context: borrow BuildContext,
+    symbolModifiers: borrow ModifierContext,
+    modifiers: borrow ModifierContext,
+) -> [CALayerDescription] {
+    let key = SearchField.key
+    let size = searchFieldTextSize(modifiers)
+    let st = nativeRecover<TextFieldState>(ambientStateGet(textFieldSlotKey(key)))
+    let focused = context.focusedKey == key
+    var runs: [CALayerDescription] = []
+    if st.codes.count == 0 {
+        if focused {
+            runs.append(textFieldCaret(modifiers))
+        }
+        runs.append(
+            textFieldLine(
+                Text(move prompt).font(
+                    size: resolvedLength(size),
+                    weight: move promptWeight
+                ).foregroundColor(.Secondary).describe(context, modifiers),
+                TextFieldPart.placeholder
+            )
+        )
+    } else if focused {
+        runs.append(
+            textFieldRun(
+                foundationStringFromCodepoints(st.codes, 0, st.caret),
+                size,
+                TextFieldPart.lead,
+                .Primary,
+                context,
+                modifiers
+            )
+        )
+        runs.append(textFieldCaret(modifiers))
+        runs.append(
+            textFieldRun(
+                foundationStringFromCodepoints(st.codes, st.caret, st.codes.count),
+                size,
+                TextFieldPart.trail,
+                .Primary,
+                context,
+                modifiers
+            )
+        )
+    } else {
+        runs.append(
+            textFieldRun(
+                foundationStringFromCodepoints(st.codes, 0, st.codes.count),
+                size,
+                TextFieldPart.lead,
+                .Primary,
+                context,
+                modifiers
+            )
+        )
+    }
+    var text = CALayerDescription {
+        layout: CALayoutIntent {
+            axis: .Row,
+            heightFill: false,
+            flex: 1,
+            alignment: Point { x: 0.0, y: 0.5 }
+        },
+        clipsChildren: true,
+        sublayers: [CALayerDescription {
+            layout: CALayoutIntent {
+                axis: .Row,
+                widthFill: false,
+                heightFill: false,
+                alignment: Point { x: 0.0, y: 0.5 }
+            },
+            sublayers: move runs
+        }]
+    }
+    var parts = [
+        Icon(symbol: .Search).foregroundColor(move glyph).describe(context, symbolModifiers),
+        move text
+    ]
+    if st.codes.count > 0 {
+        var clear = Icon(symbol: .XmarkCircleFill)
+        .foregroundColor(.Tertiary)
+        .describe(context, symbolModifiers)
+        clear.hittable = true
+        clear.hitKey = clearKey
+        parts.append(move clear)
+    }
+    return parts
+}
+
+// The field a phone's page sets under its large title, as iOS draws it: a
+// capsule across the column in the tertiary system fill, the magnifier in the
+// label's ink and the prompt in the secondary label's. The fill deepens to
+// the secondary system fill while it is focused, as UIKit's does
+// (`-[_UISearchBarSearchFieldBackgroundView _automaticFillColorForActive:]`),
+// and once the search is presented the field is glass, as the bar's pieces
+// are. A press anywhere on it puts the caret where it landed.
+public function pageSearchField(
+    search: borrow WindowSearch,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let height = searchFieldMetrics().height
+    if search.presented {
+        return glassSearchField(search, height, context, modifiers)
+    }
+    let focused = context.focusedKey == SearchField.key
+    let fill = focused ? searchFieldFocusedFill : searchFieldFill
+    return CALayerDescription {
+        layout: searchFieldLayout(height),
+        hittable: true,
+        hitKey: SearchField.key,
+        content: .Solid(
+            CASolid {
+                fill: colorFromFoundation(
+                    modifierColor(
+                        foundationColor(themeAdaptiveColor(fill, modifierAppearance(modifiers))),
+                        modifiers
+                    )
+                ),
+                cornerRadius: height / 2.0
+            }
+        ),
+        sublayers: phoneSearchFieldParts(search, context, modifiers, modifiers)
+    }
+}
+
+// A phone's search field as a capsule of glass `height` tall: one of the
+// bar's pieces, its symbols drawn as the bar's are.
+public function glassSearchField(
+    search: borrow WindowSearch,
+    height: Number,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    var glass = interactiveGlassDescription(
+        context,
+        SearchField.key,
+        searchFieldLayout(height),
+        containerShapeRadius(.Capsule, modifiers),
+        .Capsule,
+        modifiers,
+        phoneSearchFieldParts(
+            search,
+            context,
+            modifierContextPresenting(modifiers, .Toolbar),
+            modifiers
+        )
     )
+    glass.hittable = true
+    return glass
+}
+
+// How a phone's search field `height` tall sets what it holds: in a row,
+// the magnifier the field's leading inset in.
+public function searchFieldLayout(height: Number) -> CALayoutIntent {
+    let metrics = searchFieldMetrics()
+    return CALayoutIntent {
+        axis: .Row,
+        spacing: metrics.spacing,
+        heightFill: false,
+        fixedHeight: height,
+        paddingLeading: metrics.leading,
+        paddingTrailing: windowChromeMetrics().searchTrailing,
+        alignment: Point { x: 0.0, y: 0.5 }
+    }
+}
+
+// What a phone's search field holds: the magnifier in the label's ink and the
+// prompt in the regular weight, the symbols drawn as `symbolModifiers` say.
+public function phoneSearchFieldParts(
+    search: borrow WindowSearch,
+    context: borrow BuildContext,
+    symbolModifiers: borrow ModifierContext,
+    modifiers: borrow ModifierContext,
+) -> [CALayerDescription] {
+    return searchFieldParts(
+        copy search.prompt,
+        .Regular,
+        .Primary,
+        search.clearKey,
+        context,
+        symbolModifiers,
+        modifiers
+    )
+}
+
+// The button that cancels a presented search: a circle of glass `diameter`
+// across, holding the bar's xmark.
+public function searchCancelButton(
+    search: borrow WindowSearch,
+    diameter: Number,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let barModifiers = modifierContextPresenting(modifiers, .Toolbar)
+    var cancel = interactiveGlassDescription(
+        context,
+        search.cancelKey,
+        CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedWidth: diameter,
+            fixedHeight: diameter,
+            alignment: Point { x: 0.5, y: 0.5 }
+        },
+        containerShapeRadius(.Capsule, barModifiers),
+        .Capsule,
+        barModifiers,
+        [Icon(symbol: .Xmark).describe(context, barModifiers)]
+    )
+    cancel.hittable = true
+    return cancel
+}
+
+// The search field floating at the foot of a phone's screen, as iOS 26 sets
+// it where no tab bar holds the foot: a capsule of glass off the screen's
+// sides and bottom. Presented, it reaches further toward the sides, its
+// cancel button after it.
+public function bottomSearchField(
+    search: borrow WindowSearch,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let metrics = searchFieldMetrics()
+    var field = glassSearchField(search, metrics.bottomHeight, context, modifiers)
+    field.layout.flex = 1
+    var parts = [move field]
+    var inset = metrics.bottomInset
+    if search.presented {
+        inset = metrics.bottomPresentedInset
+        parts.append(searchCancelButton(search, metrics.bottomHeight, context, modifiers))
+    }
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            paddingBottom: metrics.bottomInset,
+            alignment: Point { x: 0.5, y: 1.0 }
+        },
+        sublayers: [CALayerDescription {
+            layout: CALayoutIntent {
+                axis: .Row,
+                spacing: windowChromeMetrics().itemSpacing,
+                heightFill: false,
+                paddingLeading: inset,
+                paddingTrailing: inset,
+                alignment: Point { x: 0.0, y: 0.5 }
+            },
+            sublayers: move parts
+        }]
+    }
 }
 
 public function searchFieldClearFn(key: Number, onChange: (String) -> Void) -> () -> Void {

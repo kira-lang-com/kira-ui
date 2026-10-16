@@ -33,6 +33,8 @@ public struct WindowChromeMetrics {
     let itemSpacing: Number
     let spacerWidth: Number
     var edgeInset: Number
+    // Where a Mac's title starts, from its column's leading edge.
+    let titleLeading: Number
     let compactEdgeInset: Number
     let labelInset: Number
     let symbolSize: Number
@@ -70,6 +72,7 @@ public function catalogWindowChromeMetrics(mode: InterfaceMode) -> WindowChromeM
         itemSpacing: catalogMetric(catalogStack, MetricName.toolbarItemSpacing, mode),
         spacerWidth: catalogMetric(catalogStack, MetricName.toolbarSpacerWidth, mode),
         edgeInset: catalogMetric(catalogStack, MetricName.toolbarEdgeInset, mode),
+        titleLeading: catalogMetric(catalogStack, MetricName.toolbarTitleLeading, mode),
         compactEdgeInset: catalogMetric(catalogStack, MetricName.toolbarCompactEdgeInset, mode),
         labelInset: catalogMetric(catalogStack, MetricName.toolbarItemLabelInset, mode),
         symbolSize: catalogMetric(catalogStack, MetricName.toolbarSymbolSize, mode),
@@ -280,7 +283,11 @@ public function catalogListMetrics(mode: InterfaceMode) -> ListMetrics {
     return ListMetrics {
         readableWidth: catalogMetric(catalogStack, MetricName.listReadableWidth, mode),
         sectionSpacing: catalogMetric(catalogStack, MetricName.listSectionSpacing, mode),
-        labeledSectionSpacing: catalogMetric(catalogStack, MetricName.listLabeledSectionSpacing, mode),
+        labeledSectionSpacing: catalogMetric(
+            catalogStack,
+            MetricName.listLabeledSectionSpacing,
+            mode
+        ),
         topInset: catalogMetric(catalogStack, MetricName.listTopInset, mode),
         cornerRadius: catalogMetric(catalogStack, MetricName.listCornerRadius, mode),
         rowHeight: catalogMetric(catalogStack, MetricName.listRowHeight, mode),
@@ -308,11 +315,28 @@ public function listMetrics() -> ListMetrics {
 
 // What a grouped list is painted with: the canvas the sections sit on, the
 // card its rows share, and the hairline between two rows.
-public let groupedBackground = catalogAdaptive(catalogStack, ColorName.systemGroupedBackground)
-public let groupedCardBackground = catalogAdaptive(
+//
+// On a Mac the canvas is the window's own background, as every window of the
+// macOS kit is, and the card is the grouped step above it, the tertiary.
+// The iOS grouped canvas, black in the dark, reads as a hole in a Mac window.
+let mobileGroupedBackground = catalogAdaptive(catalogStack, ColorName.systemGroupedBackground)
+let mobileGroupedCardBackground = catalogAdaptive(
     catalogStack,
     ColorName.secondarySystemGroupedBackground
 )
+let desktopGroupedBackground = catalogAdaptive(catalogStack, ColorName.windowBackground)
+let desktopGroupedCardBackground = catalogAdaptive(
+    catalogStack,
+    ColorName.tertiarySystemGroupedBackground
+)
+
+public function groupedBackground() -> AdaptiveColor {
+    return interfaceMode() == .AdaptiveDesktop ? desktopGroupedBackground : mobileGroupedBackground
+}
+
+public function groupedCardBackground() -> AdaptiveColor {
+    return interfaceMode() == .AdaptiveDesktop ? desktopGroupedCardBackground : mobileGroupedCardBackground
+}
 public let listSeparator = catalogAdaptive(catalogStack, ColorName.separator)
 // A row held down lights in the fourth gray, as a cell does.
 public let listRowHighlight = catalogAdaptive(catalogStack, ColorName.systemGray4)
@@ -347,6 +371,43 @@ let mobileLargeTitleMetrics = catalogLargeTitleMetrics(.AdaptiveMobile)
 public function largeTitleMetrics() -> LargeTitleMetrics {
     return interfaceMode() == .AdaptiveDesktop ? desktopLargeTitleMetrics : mobileLargeTitleMetrics
 }
+
+// The search field a phone's page sets under its large title: how tall it
+// stands, how far in its magnifier and its text start, and how far under the
+// title's line it hangs. With no tab bar at the foot of the screen the field
+// floats there instead: how tall it stands then, and how far off the
+// screen's sides and bottom, at rest and presented.
+public struct SearchFieldMetrics {
+    let height: Number
+    let leading: Number
+    let spacing: Number
+    let titleSpacing: Number
+    let bottomHeight: Number
+    let bottomInset: Number
+    let bottomPresentedInset: Number
+}
+
+let phoneSearchFieldMetrics = SearchFieldMetrics {
+    height: catalogMetric(catalogStack, MetricName.searchFieldHeight, .AdaptiveMobile),
+    leading: catalogMetric(catalogStack, MetricName.searchFieldLeading, .AdaptiveMobile),
+    spacing: catalogMetric(catalogStack, MetricName.searchFieldSpacing, .AdaptiveMobile),
+    titleSpacing: catalogMetric(catalogStack, MetricName.searchFieldTitleSpacing, .AdaptiveMobile),
+    bottomHeight: catalogMetric(catalogStack, MetricName.bottomSearchFieldHeight, .AdaptiveMobile),
+    bottomInset: catalogMetric(catalogStack, MetricName.bottomSearchFieldInset, .AdaptiveMobile),
+    bottomPresentedInset: catalogMetric(
+        catalogStack,
+        MetricName.bottomSearchFieldPresentedInset,
+        .AdaptiveMobile
+    )
+}
+
+public function searchFieldMetrics() -> SearchFieldMetrics {
+    return phoneSearchFieldMetrics
+}
+
+// What the field is filled with at rest, and while it is focused.
+public let searchFieldFill = catalogAdaptive(catalogStack, ColorName.tertiarySystemFill)
+public let searchFieldFocusedFill = catalogAdaptive(catalogStack, ColorName.secondarySystemFill)
 
 // How a stack moves between its views: the moving view's corner, how dark
 // the view under it sits, and when a swipe back starts and goes

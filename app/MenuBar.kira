@@ -25,19 +25,29 @@ import KCoreAnimation
 
 // --- Whether the window has one ----------------------------------------------
 
-// Whether windows draw the menu bar. A runtime choice, the same build on every
-// host: `KIRA_UI_MENU_BAR=hidden` takes it away for a run, and an application
-// sets it with `setMenuBarVisibility`.
+// Whether windows draw the menu bar. Where the platform has a menu bar of its
+// own -- macOS and iPadOS across the top of the screen -- or none at all --
+// Android and Tessera -- the window draws none; elsewhere it does.
+// `KIRA_UI_MENU_BAR=hidden` or `=visible` decides it for a run, and an
+// application sets it with `setMenuBarVisibility`.
 public enum MenuBarVisibility {
     Visible
     Hidden
 }
 
 public function hostMenuBarVisibility() -> MenuBarVisibility {
-    if environmentValue("KIRA_UI_MENU_BAR") == "hidden" {
-        return .Hidden
+    match environmentValue("KIRA_UI_MENU_BAR") {
+        "hidden" -> return .Hidden
+        "visible" -> return .Visible
+        else -> return platformMenuBarVisibility()
     }
-    return .Visible
+}
+
+function platformMenuBarVisibility() -> MenuBarVisibility {
+    match targetPlatform!() {
+        MacOS, Ios, Android, Tessera -> return .Hidden
+        Linux, Windows, Wasm, Unknown -> return .Visible
+    }
 }
 
 // Whether the menu bar is drawn, as the host or `setMenuBarVisibility` last

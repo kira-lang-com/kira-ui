@@ -235,11 +235,11 @@ public struct ToolbarSink {
     // Where the view on top's own entries end: anything after was declared by
     // the views around the stack, and is on the bar for both views.
     var pageEnd: ToolbarMark = ToolbarMark {}
-    // The search field a view asked for with `.searchable`, if one did: what
-    // it prompts with while empty, and the key its clear button answers to.
-    var searching: Bool = false
-    var searchPrompt: String = ""
-    var searchClearKey: Number = 0
+    // The search field a view asked for with `.searchable`, if one did.
+    var search: WindowSearch? = .None
+    // Whether a phone's page has its search presented, which the bar steps
+    // aside for, as UIKit's navigation bar does during a search.
+    var searchPresented: Bool = false
 }
 
 public function toolbarSinkEnsure() {
@@ -290,9 +290,8 @@ public function toolbarCollect() {
     sink.covered = ToolbarPage {}
     sink.coveredShown = 0.0
     sink.motion = .Inherit
-    sink.searching = false
-    sink.searchPrompt = ""
-    sink.searchClearKey = 0
+    sink.search = .None
+    sink.searchPresented = false
 }
 
 // What each bucket holds so far.
@@ -449,15 +448,30 @@ public function toolbarSetTitle(title: String) {
 
 // A view asked for the window's search field. The last to ask wins, as the
 // last title does.
-public function toolbarSetSearch(prompt: String, clearKey: Number) {
+public function toolbarSetSearch(search: WindowSearch) {
     toolbarSinkEnsure()
     var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
     if !sink.collecting {
         return
     }
-    sink.searching = true
-    sink.searchPrompt = move prompt
-    sink.searchClearKey = clearKey
+    sink.search = .Some(move search)
+}
+
+// Whether a tab view has put its tabs on the bar.
+public function toolbarHoldsTabs() -> Bool {
+    toolbarSinkEnsure()
+    let sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+    return sink.tabs.count > 0
+}
+
+// The page's search field is presented, so the bar steps aside for it.
+public function toolbarPresentPageSearch() {
+    toolbarSinkEnsure()
+    var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+    if !sink.collecting {
+        return
+    }
+    sink.searchPresented = true
 }
 
 // What the column being lowered calls itself, so far.

@@ -12,6 +12,9 @@ import KCoreAnimation
 //
 // It is drawn as a symbol is, in the ink and at the size of the text around
 // it, so it stands in a label's icon or a tab's item beside the library's.
+// A custom symbol exported from SF Symbols, which draws it at every weight
+// and scale, is drawn at the weight of the type around it and the
+// `.imageScale(...)` in effect, at the size the template gives that type.
 public construct Image(name: String) extends Widget {
 
     // An image element, read by the name the app keeps it under, as SwiftUI's
@@ -32,7 +35,35 @@ public construct Image(name: String) extends Widget {
         context: borrow BuildContext,
         modifiers: borrow ModifierContext
     ) -> CALayerDescription {
-        return Artwork(svg: imageDrawing(name)).describe(context, modifiers)
+        let drawing = imageDrawing(name)
+        if !isSymbolTemplate(drawing) {
+            return Artwork(svg: drawing).describe(context, modifiers)
+        }
+        let scale = modifiers.imageScale
+        let variant = match symbolTemplateVariant(drawing, iconTypeWeight(modifiers), templateScale(scale)) {
+            Some(variant) -> variant
+            None -> {
+                log warn("the symbol has no drawing at this weight and scale", name)
+                return Artwork(svg: "").describe(context, modifiers)
+            }
+        }
+        // A template draws no step past large: the extra large step is its
+        // large drawing grown as the library's own symbols grow it.
+        var size = variant.em * iconTypeSize(modifiers)
+        if scale == .ExtraLarge {
+            size = size * iconScaleFactor(.ExtraLarge) / iconScaleFactor(.Large)
+        }
+        return Artwork(svg: variant.svg, points: size).describe(context, modifiers)
+    }
+}
+
+// The template row an image scale draws from.
+function templateScale(scale: borrow IconScale) -> SymbolTemplateScale {
+    match scale {
+        Small -> return .Small
+        Medium -> return .Medium
+        Large -> return .Large
+        ExtraLarge -> return .Large
     }
 }
 

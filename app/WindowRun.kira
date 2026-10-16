@@ -46,20 +46,26 @@ function kiraLayerWindowRun(
     rootBuilder: borrow () -> Any Widget,
     transparent: Bool,
     engineFrame: borrow (borrow mut RenderFrame) -> Void,
-    rebuildsEveryFrame: Bool
+    rebuildsEveryFrame: Bool,
+    arguments: borrow [String]
 ) {
+    let launch = launchOptions(title, width, height, arguments)
     let previousStateScope = ambientScopeCurrent()
     let layerStateScope = ambientScopeCreate()
     ambientScopeEnter(layerStateScope)
     let runtimeStorage = nativeState(
-        KiraLayerAppState { stateScope: layerStateScope, transparent: transparent }
+        KiraLayerAppState {
+            stateScope: layerStateScope,
+            transparent: transparent,
+            uiTest: uiTestHost()
+        }
     )
     let runtimeUser = nativeUserDataBorrow(runtimeStorage)
 
     var app = GraphicsApplication {
         title: title,
-        width: UN32(width),
-        height: UN32(height),
+        width: UN32(launch.width),
+        height: UN32(launch.height),
         sampleCount: 1,
         transparent: transparent,
         // An opaque window is a document window: its title and toolbar share
@@ -71,7 +77,8 @@ function kiraLayerWindowRun(
             let state = nativeRecover<KiraLayerAppState>(runtimeUser)
             return kiraLayerWindowDragRegion(state, x, y)
         },
-        backend: graphicsDefaultBackend()
+        backend: graphicsDefaultBackend(),
+        harness: launch.harness
     }
 
     // The device the window draws with, and the batch that owns the glyph
@@ -85,20 +92,7 @@ function kiraLayerWindowRun(
 
     app.onEvent { event in
         var state = nativeRecover<KiraLayerAppState>(runtimeUser)
-        kiraLayerNoteEvent(state, event.kind)
-        if event.kind == .PointerMoved || event.kind == .PointerDown || event.kind == .PointerUp {
-            kiraLayerDispatch(state, event.pointerX, event.pointerY, event.kind)
-        }
-        if event.kind == .TextInput || event.kind == .KeyDown {
-            kiraLayerDispatchKeyboard(state, event)
-        }
-        if event.kind == .Scroll {
-            kiraLayerDispatchScroll(state, event)
-        }
-        if event.kind == .TouchesBegan || event.kind == .TouchesMoved || event.kind == .TouchesEnded || event.kind == .TouchesCancelled {
-            kiraLayerDispatchTouch(state, event)
-        }
-        return
+        kiraLayerHandleEvent(state, event)
     }
 
     app.onFrame { frame in
@@ -115,14 +109,26 @@ function kiraLayerWindowRun(
         let hostFrame: borrow (borrow mut RenderFrame) -> Void = engineFrame
         hostFrame(frame)
         var state = nativeRecover<KiraLayerAppState>(frame.userData)
-        let viewport = kiraLayerViewport(frame, width, height)
+        let viewport = kiraLayerViewport(frame, launch.width, launch.height)
         // A window being resized lays its content out again every frame, and
         // the content takes the new size as the window does, as UIKit's does in
         // a live resize: nothing slides to where the new layout puts it, and
         // nothing already animating is cut short.
         let resized = viewport.width != state.ui.viewport.width || viewport.height != state.ui.viewport.height
         state.ui.viewport = viewport
+        // Before anything builds: a body that lays itself out by the window's
+        // width, through `viewportWidth()`, reads this frame's.
+        foundationWriteViewportSnapshot(viewport.width, viewport.height)
         state.ui.frameCount = state.frameCount
+        // What a UI test asked for since the last frame happens now, and a
+        // field an element's action asked to take the keyboard takes it, both
+        // before the build that shows what they did.
+        kiraLayerTakeUITestRequest(state)
+        match accessibilityTakeFocusRequest() {
+            Some(key) -> kiraLayerFocus(state, key)
+            // No element asked for the keyboard since the last frame.
+            None -> {}
+        }
         // An interface costs nothing while nothing changes. It is rebuilt when
         // input arrived, the window changed size, scheme or mode, something in the
         // last build was still moving, or a motion the compositor carried has
@@ -131,7 +137,9 @@ function kiraLayerWindowRun(
         // presents nothing, and the window keeps the last one.
         let scheme = interfaceScheme()
         let mode = interfaceMode()
-        let changed = state.ui.eventCount != state.builtEventCount || scheme != state.builtScheme || mode != state.builtMode
+        let accessibility = platformAccessibilitySettings()
+        let settingsChanged = !eq_AccessibilitySettings(accessibility, state.builtAccessibility)
+        let changed = state.ui.eventCount != state.builtEventCount || scheme != state.builtScheme || mode != state.builtMode || settingsChanged
         let waiting = clockRunning() || clockWakeDue(clockTime(frame))
         if !rebuildsEveryFrame && state.frameCount > 0 && !resized && !changed && !waiting {
             let moving = state.compositor.advance(frame)
@@ -140,11 +148,13 @@ function kiraLayerWindowRun(
             }
             state.layersMoving = moving
             state.frameCount++
+            kiraLayerAnswerUITest(state)
             return
         }
         state.builtEventCount = state.ui.eventCount
         state.builtScheme = scheme
         state.builtMode = mode
+        state.builtAccessibility = copy accessibility
 
         // Build the widget tree, lower it to a description, lay it out against the
         // window, and reconcile it into the retained tree. On the first frame the
@@ -156,7 +166,7 @@ function kiraLayerWindowRun(
         // last frame -- the key the pointer found it by.
         layerActionsReset()
         accessibilityReset()
-        environmentNoteAccessibility()
+        environmentNoteAccessibility(accessibility)
         tapSeqReset()
         scrollScopeReset()
         // What this frame took, for whatever springs advance while it lowers.
@@ -252,7 +262,7 @@ function kiraLayerWindowRun(
         kiraLayerDraw(state, frame, viewport, graphics, batch)
         state.frameCount++
         state.ui.clickedKey = 0
-        return
+        kiraLayerAnswerUITest(state)
     }
 
     app.run(runtimeUser)

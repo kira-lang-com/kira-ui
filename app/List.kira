@@ -90,7 +90,7 @@ public construct InsetGroupedList() extends Widget {
         context: borrow BuildContext,
         modifiers: borrow ModifierContext
     ) -> CALayerDescription {
-        let canvas = themeAdaptiveColor(groupedBackground, modifierAppearance(modifiers))
+        let canvas = themeAdaptiveColor(groupedBackground(), modifierAppearance(modifiers))
         navigationSetBackground(copy canvas)
         let sectionModifiers = modifierContextPresenting(modifiers, .InsetGrouped)
         var grouped: [Any Widget] = []
@@ -188,9 +188,9 @@ public function insetGroupedSection(
             CALayerDescription {
                 layout: CALayoutIntent {
                     heightFill: false,
-                    paddingLeading: listMetrics().rowInset,
+                    paddingLeading: listRowInset(modifiers),
                     paddingTop: listMetrics().headerTopInset,
-                    paddingTrailing: listMetrics().rowInset,
+                    paddingTrailing: listRowInset(modifiers),
                     paddingBottom: listMetrics().headerBottomInset
                 },
                 sublayers: [move header]
@@ -207,7 +207,10 @@ public function insetGroupedSection(
                     fill: colorFromFoundation(
                         modifierColor(
                             foundationColor(
-                                themeAdaptiveColor(groupedCardBackground, modifierAppearance(modifiers))
+                                themeAdaptiveColor(
+                                    groupedCardBackground(),
+                                    modifierAppearance(modifiers)
+                                )
                             ),
                             modifiers
                         )
@@ -224,9 +227,9 @@ public function insetGroupedSection(
             CALayerDescription {
                 layout: CALayoutIntent {
                     heightFill: false,
-                    paddingLeading: listMetrics().rowInset,
+                    paddingLeading: listRowInset(modifiers),
                     paddingTop: listMetrics().footerTopInset,
-                    paddingTrailing: listMetrics().rowInset,
+                    paddingTrailing: listRowInset(modifiers),
                     paddingBottom: listMetrics().footerBottomInset
                 },
                 sublayers: [move footer]
@@ -244,10 +247,24 @@ public function insetGroupedSection(
     }
 }
 
+// How far a row's content stands in from its card's edge. On a phone or a
+// tablet that is the margin the column holds content off the screen with:
+// UIKit gives a cell the table's own margin (`_defaultMarginWidthForTableView:`),
+// 20 on a large-format phone and 16 on any other. A desktop's row keeps the
+// kit's.
+function listRowInset(modifiers: borrow ModifierContext) -> Number {
+    if interfaceMode() == .AdaptiveDesktop {
+        return listMetrics().rowInset
+    }
+    return resolvedContentMargin(modifiers)
+}
+
 // One row of a grouped card: its content across the row, held off the card's
 // edges and off the row's top and bottom, and centered down at least the row
-// height, under a hairline when a row comes before it. A control taller than
-// a line makes its row taller, as it does in a grouped `Form`.
+// height, over a hairline when a row comes after it. The hairline is the
+// row's last point, as a UIKit cell's separator is, and the content centers
+// in what is over it. A control taller than a line makes its row taller, as
+// it does in a grouped `Form`.
 //
 // A row whose content can be pressed is pressed as a whole: the hit region is
 // lifted off the content onto the row, and the row lights edge to edge while
@@ -255,10 +272,11 @@ public function insetGroupedSection(
 // the pointer rests on it.
 public function insetGroupedRow(
     content: CALayerDescription,
-    separated: Bool,
+    followed: Bool,
     context: borrow BuildContext,
     modifiers: borrow ModifierContext,
 ) -> CALayerDescription {
+    let separator = followed ? listMetrics().separatorThickness : 0.0
     var inner = content
     let key = inner.hitKey
     let pressable = inner.hittable
@@ -268,7 +286,7 @@ public function insetGroupedRow(
         CALayerDescription {
             layout: CALayoutIntent {
                 heightFill: false,
-                minHeight: listMetrics().rowHeight,
+                minHeight: listMetrics().rowHeight - separator,
                 paddingTop: listMetrics().rowVerticalInset,
                 paddingBottom: listMetrics().rowVerticalInset,
                 alignment: Point { x: 0.0, y: 0.5 }
@@ -278,7 +296,7 @@ public function insetGroupedRow(
     )
     // The hairline starts where the row says its separator does -- a label's
     // title, past its glyph -- and at the row's edge when nothing says.
-    if separated {
+    if followed {
         layers.append(
             CALayerDescription {
                 layout: CALayoutIntent {
@@ -303,9 +321,10 @@ public function insetGroupedRow(
     }
     return CALayerDescription {
         layout: CALayoutIntent {
+            axis: .Column,
             heightFill: false,
-            paddingLeading: listMetrics().rowInset,
-            paddingTrailing: listMetrics().rowInset
+            paddingLeading: listRowInset(modifiers),
+            paddingTrailing: listRowInset(modifiers)
         },
         hittable: pressable,
         hitKey: pressable ? key : 0,

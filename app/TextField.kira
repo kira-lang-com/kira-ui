@@ -224,16 +224,15 @@ public construct TextField(title: String, text: Binding<String>, prompt: String 
         textFieldFollow(key, text.get())
         let shown = prompt.isEmpty() ? copy title : copy prompt
         var described = textFieldDescription(key, copy shown, false, copy text.set, copy modifiers.submit, context, modifiers)
+        let element = TextFieldElement {
+            role: .TextField,
+            key: key,
+            label: copy title,
+            value: copy text.get(),
+            placeholder: move shown
+        }
         described.accessibilityClear()
-        described.accessibilityElementOf(
-            AccessibilityNode {
-                role: .TextField,
-                label: copy title,
-                value: copy text.get(),
-                placeholder: move shown,
-                isEnabled: !modifiers.disabled
-            }
-        )
+        described.accessibilityElementOf(element.node(context, modifiers))
         return described
     }
 }
@@ -254,17 +253,50 @@ public construct SecureField(title: String, text: Binding<String>, prompt: Strin
         textFieldFollow(key, text.get())
         let shown = prompt.isEmpty() ? copy title : copy prompt
         var described = textFieldDescription(key, copy shown, true, copy text.set, copy modifiers.submit, context, modifiers)
+        let element = TextFieldElement {
+            role: .SecureTextField,
+            key: key,
+            label: copy title,
+            value: secureFieldDots(text.get()),
+            placeholder: move shown
+        }
         described.accessibilityClear()
-        described.accessibilityElementOf(
-            AccessibilityNode {
-                role: .SecureTextField,
-                label: copy title,
-                value: secureFieldDots(text.get()),
-                placeholder: move shown,
-                isEnabled: !modifiers.disabled
-            }
-        )
+        described.accessibilityElementOf(element.node(context, modifiers))
         return described
+    }
+}
+
+// What a field is to assistive technology: its title, the text it holds and
+// what it shows while empty. Activated, it takes the keyboard, as a tap on it
+// does, and it says whether it has it.
+struct TextFieldElement {
+    let role: AccessibilityRole
+    let key: Number
+    let label: String
+    let value: String
+    let placeholder: String
+
+    function node(context: borrow BuildContext, modifiers: borrow ModifierContext) -> AccessibilityNode {
+        var node = AccessibilityNode {
+            role: role,
+            label: copy label,
+            value: copy value,
+            placeholder: copy placeholder,
+            isEnabled: !modifiers.disabled,
+            hasKeyboardFocus: context.focusedKey == key
+        }
+        if !modifiers.disabled {
+            let field = key
+            node.actions = [
+                AccessibilityAction {
+                    kind: .Default,
+                    handler: { in
+                        accessibilityRequestFocus(field)
+                    }
+                }
+            ]
+        }
+        return node
     }
 }
 

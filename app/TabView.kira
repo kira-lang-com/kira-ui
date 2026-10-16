@@ -453,7 +453,7 @@ public function phoneTabBarItem(
 // What a phone's tab looks like, with nothing to press: its label stacked
 // under its top and held off its ends, on the selection capsule when it is the
 // one selected. The capsule is the tab's whole box, which reaches past the
-// tab's own ends into the next one's.
+// tab's own ends into the next one's; the bar gives it its width.
 public function phoneTabBarItemFace(
     label: CALayerDescription,
     selected: Bool,
@@ -466,7 +466,6 @@ public function phoneTabBarItemFace(
             axis: .Column,
             widthFill: false,
             heightFill: false,
-            fixedWidth: bar.tabWidth,
             fixedHeight: bar.tabHeight,
             paddingLeading: bar.sideInset,
             paddingTop: bar.topInset,
@@ -536,8 +535,8 @@ public function phoneTabBarInkedLabel(
 }
 
 // The bar a phone's tabs float in: one capsule of glass reaching past them,
-// centered at the foot of the window. Its tabs keep their width while they
-// fit inside the screen's margins, and share that room when they do not.
+// centered at the foot of the window. Its row grows by a tab's advance for
+// each tab, as far as the screen's margins, and its tabs share it equally.
 public function phoneTabBar(
     tabs: [CALayerDescription],
     context: borrow BuildContext,
@@ -547,11 +546,10 @@ public function phoneTabBar(
     var row = move tabs
     let count = Number(row.count)
     let room = context.viewportWidth - bar.edgeInset * 2.0
-    if count * bar.tabWidth - (count - 1.0) * bar.tabOverlap > room {
-        let width = (room + (count - 1.0) * bar.tabOverlap) / count
-        for i in 0..row.count {
-            row[i].layout.fixedWidth = width
-        }
+    let span = min(count * bar.tabAdvance + bar.rowInset * 2.0, room)
+    let width = (span + (count - 1.0) * bar.tabOverlap) / count
+    for i in 0..row.count {
+        row[i].layout.fixedWidth = width
     }
     let tabsRow = CALayerDescription {
         layout: CALayoutIntent {

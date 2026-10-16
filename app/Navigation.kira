@@ -131,6 +131,16 @@ public construct NavigationLink(value: Any NavigationRoute) extends Widget {
         return NavigationLink(value: value, label: Text(content: title))
     }
 
+    // SwiftUI's `NavigationLink("Details") { DetailView() }`: a link to a
+    // view rather than to a value. The view is the route, keyed by the title
+    // that leads to it.
+    init(title: String, destination: some Widget) {
+        return NavigationLink(
+            value: DestinationRoute(title: title, view: destination),
+            label: Text(content: title)
+        )
+    }
+
     // One element, standing for its label, that goes to its value: a button,
     // selected in a sidebar while the path starts there.
     function describe(
@@ -177,17 +187,26 @@ public construct NavigationLink(value: Any NavigationRoute) extends Widget {
                 label
 
                 Spacer()
-
-                Icon(symbol: .ChevronForward)
-                .font(size: resolvedLength(face.size), weight: .SemiBold)
-                .foregroundColor(.Tertiary)
             }
-            .minHeight(resolvedLength(listMetrics().rowHeight))
+            // The chevron is the cell's accessory, as UIKit's disclosure
+            // indicator is: the body's emphasized face at the small symbol
+            // scale (`-[UITableConstants_IOS
+            // _defaultDisclosureImageForTraitCollection:]`), centered down the
+            // row in a box no taller than its ink, so the label alone sets the
+            // row's height.
+            var chevron = Icon(symbol: .ChevronForward)
+            .imageScale(.Small)
+            .font(size: resolvedLength(face.size), weight: .SemiBold)
+            .foregroundColor(.Tertiary)
+            .describe(context, modifiers)
+            chevron.layout.fixedHeight = -1.0
+            chevron.layout.heightFill = true
             // The press is the whole row's, which the list lights across the
             // card: the link only says what it does.
             let key = tapSeqKey()
             layerActionRegister(key, navigationPushAction(copy value))
             var described = row.describe(context, modifiers)
+            described.sublayers.append(move chevron)
             described.hittable = !modifiers.disabled
             described.hitKey = key
             return described

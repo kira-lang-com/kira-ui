@@ -45,7 +45,20 @@ public construct ScrollView() extends Widget {
     ) -> CALayerDescription {
         let key = scrollIdentity()
         let indicatorKey = tapSeqKey()
-        let page = scrollClaimPage()
+        var page = scrollClaimPage()
+        // A presented search stands where the bar did, at the top of the
+        // screen, and the page runs on under it without its large title.
+        var presented = false
+        match page.search {
+            Some(search) -> {
+                if search.presented {
+                    presented = true
+                    page.title = ""
+                    page.barInset = context.systemSafeArea.top + searchFieldMetrics().height
+                }
+            }
+            None -> {}
+        }
         let document = content.describe(context, modifierContextForChildren(modifiers))
 
         // Recovered in place rather than through a helper: a recovered value
@@ -141,8 +154,26 @@ public construct ScrollView() extends Widget {
         let opacity = scroll.opacity
 
         var moved = move document
+        var bar: [CALayerDescription] = []
+        match page.search {
+            Some(search) -> {
+                if presented {
+                    bar.append(scrollSearchPresented(search, context, modifiers))
+                } else {
+                    moved = scrollSearchDrawn(move moved, search, context, modifiers)
+                }
+            }
+            None -> {}
+        }
         if page.title.count > 0 {
-            moved = scrollLargeTitled(move moved, copy page.title, barShown, context, modifiers)
+            moved = scrollLargeTitled(
+                move moved,
+                copy page.title,
+                barShown,
+                page.search != .None,
+                context,
+                modifiers
+            )
         }
         if page.barInset > 0.0 {
             moved = CALayerDescription {
@@ -183,6 +214,9 @@ public construct ScrollView() extends Widget {
             layers.append(scrollEdgeEffect(page.barInset, barShown, modifiers))
         }
         layers.append(move indicator)
+        for field in bar {
+            layers.append(field)
+        }
         return CALayerDescription {
             layout: CALayoutIntent { flex: 1, alignment: Point { x: 1.0, y: 0.0 } },
             sublayers: move layers
@@ -192,21 +226,72 @@ public construct ScrollView() extends Widget {
 
 // The page's large title over `document`, going up with it, faded out as far
 // as the bar has gone over to its own title -- which `inline` is -- so it
-// never shows through the bar.
+// never shows through the bar. A search field under it hangs closer than
+// content does.
 public function scrollLargeTitled(
     document: CALayerDescription,
     title: String,
     inline: Number,
+    searched: Bool,
     context: borrow BuildContext,
     modifiers: borrow ModifierContext,
 ) -> CALayerDescription {
     var heading = navigationLargeTitle(move title, context, modifiers)
+    if searched {
+        heading.layout.paddingBottom = searchFieldMetrics().titleSpacing
+    }
     toolbarCollapseLargeTitle(inline)
     heading.opacity = 1.0 - inline
     heading.disablesActions = true
     return CALayerDescription {
         layout: CALayoutIntent { axis: .Column, heightFill: false },
         sublayers: [move heading, move document]
+    }
+}
+
+// The page's search field over `document`, across the column, going up with
+// it.
+public function scrollSearchDrawn(
+    document: CALayerDescription,
+    search: borrow WindowSearch,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let field = CALayerDescription {
+        layout: CALayoutIntent {
+            heightFill: false,
+            paddingLeading: resolvedContentMargin(modifiers),
+            paddingTrailing: resolvedContentMargin(modifiers)
+        },
+        sublayers: [pageSearchField(search, context, modifiers)]
+    }
+    return CALayerDescription {
+        layout: CALayoutIntent { axis: .Column, heightFill: false },
+        sublayers: [move field, move document]
+    }
+}
+
+// The page's search field presented, standing at the top of the screen
+// across the column, its cancel button after it.
+public function scrollSearchPresented(
+    search: borrow WindowSearch,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let height = searchFieldMetrics().height
+    var field = pageSearchField(search, context, modifiers)
+    field.layout.flex = 1
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            axis: .Row,
+            spacing: windowChromeMetrics().itemSpacing,
+            heightFill: false,
+            paddingTop: context.systemSafeArea.top,
+            paddingLeading: resolvedContentMargin(modifiers),
+            paddingTrailing: resolvedContentMargin(modifiers),
+            alignment: Point { x: 0.0, y: 0.5 }
+        },
+        sublayers: [move field, searchCancelButton(search, height, context, modifiers)]
     }
 }
 
@@ -475,13 +560,17 @@ public struct ScrollScope {
     var page: Bool = false
     var pageTaken: Bool = false
     var barInset: Number = 0.0
+    // The search field the page sets under its title, as a phone's does.
+    var search: WindowSearch? = .None
 }
 
 // What a page hands the scroll view that claims it: its large title, empty
-// when it sets none, and how deep the bar stands over the page's top edge.
+// when it sets none, how deep the bar stands over the page's top edge, and
+// the search field it sets under the title.
 public struct ScrollPage {
     var title: String = ""
     var barInset: Number = 0.0
+    var search: WindowSearch? = .None
 }
 
 public function scrollScopeEnsure() {
@@ -499,6 +588,7 @@ public function scrollScopeReset() {
     current.page = false
     current.pageTaken = false
     current.barInset = 0.0
+    current.search = .None
 }
 
 // A stack's page starts lowering in `scope`, under a bar `barInset` deep. What
@@ -511,13 +601,15 @@ public function scrollScopeEnter(scope: Number, barInset: Number) -> ScrollScope
         built: current.built,
         page: current.page,
         pageTaken: current.pageTaken,
-        barInset: current.barInset
+        barInset: current.barInset,
+        search: copy current.search
     }
     current.scope = scope
     current.built = 0
     current.page = true
     current.pageTaken = false
     current.barInset = barInset
+    current.search = .None
     return previous
 }
 
@@ -531,6 +623,7 @@ public function scrollScopeLeave(previous: ScrollScope) -> Bool {
     current.page = previous.page
     current.pageTaken = previous.pageTaken
     current.barInset = previous.barInset
+    current.search = copy previous.search
     return taken
 }
 
@@ -551,7 +644,23 @@ public function scrollClaimPage() -> ScrollPage {
         return ScrollPage {}
     }
     current.pageTaken = true
-    return ScrollPage { title: toolbarColumnTitle(), barInset: current.barInset }
+    return ScrollPage {
+        title: toolbarColumnTitle(),
+        barInset: current.barInset,
+        search: copy current.search
+    }
+}
+
+// A view on the page being lowered asked for a search field the page sets in
+// its content. Whether there is such a page, still unclaimed, to set it.
+public function scrollPageSearch(search: WindowSearch) -> Bool {
+    scrollScopeEnsure()
+    var current = nativeRecover<ScrollScope>(ambientStateGet(StateSlot.scrollScope))
+    if !current.page || current.pageTaken {
+        return false
+    }
+    current.search = .Some(move search)
+    return true
 }
 
 // --- Input -----------------------------------------------------------------------

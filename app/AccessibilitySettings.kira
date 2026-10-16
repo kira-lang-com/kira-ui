@@ -36,24 +36,42 @@ function platformAccessibilitySetting(setting: AccessibilitySetting) -> Bool {
     }
 }
 
-// Reads the platform's accessibility settings into the environment. The runner
-// calls this before each rebuild, so a view follows a setting changed while the
-// app runs.
-public function environmentNoteAccessibility() {
-    let reduceMotion = platformAccessibilitySetting(.ReduceMotion)
-    let reduceTransparency = platformAccessibilitySetting(.ReduceTransparency)
-    let differentiate = platformAccessibilitySetting(.DifferentiateWithoutColor)
-    let invert = platformAccessibilitySetting(.InvertColors)
-    let voiceOver = platformAccessibilitySetting(.ScreenReader)
-    let increased = platformAccessibilitySetting(.IncreaseContrast)
+// The person's accessibility settings at one moment, as the platform reports
+// them.
+@Derive(Equatable)
+public struct AccessibilitySettings {
+    var reduceMotion: Bool = false
+    var reduceTransparency: Bool = false
+    var differentiateWithoutColor: Bool = false
+    var invertColors: Bool = false
+    var voiceOverEnabled: Bool = false
+    var increaseContrast: Bool = false
+}
+
+// The settings the platform reports now. The runner asks every frame, as it
+// asks for the color scheme, so a setting the person changes while the app
+// runs rebuilds the interface at once.
+public function platformAccessibilitySettings() -> AccessibilitySettings {
+    return AccessibilitySettings {
+        reduceMotion: platformAccessibilitySetting(.ReduceMotion),
+        reduceTransparency: platformAccessibilitySetting(.ReduceTransparency),
+        differentiateWithoutColor: platformAccessibilitySetting(.DifferentiateWithoutColor),
+        invertColors: platformAccessibilitySetting(.InvertColors),
+        voiceOverEnabled: platformAccessibilitySetting(.ScreenReader),
+        increaseContrast: platformAccessibilitySetting(.IncreaseContrast)
+    }
+}
+
+// Puts `settings` in the environment the next build reads.
+public function environmentNoteAccessibility(settings: borrow AccessibilitySettings) {
     let previous = enterProcessScope()
     environmentEnsure()
     var values = nativeRecover<EnvironmentValues>(ambientStateGet(StateSlot.environment))
-    values.accessibilityReduceMotion = reduceMotion
-    values.accessibilityReduceTransparency = reduceTransparency
-    values.accessibilityDifferentiateWithoutColor = differentiate
-    values.accessibilityInvertColors = invert
-    values.accessibilityVoiceOverEnabled = voiceOver
-    values.colorSchemeContrast = increased ? .Increased : .Standard
+    values.accessibilityReduceMotion = settings.reduceMotion
+    values.accessibilityReduceTransparency = settings.reduceTransparency
+    values.accessibilityDifferentiateWithoutColor = settings.differentiateWithoutColor
+    values.accessibilityInvertColors = settings.invertColors
+    values.accessibilityVoiceOverEnabled = settings.voiceOverEnabled
+    values.colorSchemeContrast = settings.increaseContrast ? .Increased : .Standard
     ambientScopeEnter(previous)
 }

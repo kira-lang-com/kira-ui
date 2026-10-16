@@ -241,8 +241,14 @@ function appStorageFile(bundleIdentifier: borrow String) -> String {
 
 // The directory the platform keeps an app's own data in: Application Support
 // on Apple's, the roaming application data on Windows, and the XDG data home
-// elsewhere.
+// elsewhere. An app a UI test launched keeps its data in the test's session
+// instead, so every test finds it as it was installed.
 function appDataDirectory() -> String {
+    match uiTestSessionDirectory() {
+        Some(session) -> return session + "/" + UITestSession.dataDirectory
+        // A person launched the app: its data is kept where the platform's is.
+        None -> {}
+    }
     match targetPlatform!() {
         MacOS -> return environmentValue("HOME") + "/Library/Application Support"
         Ios -> return environmentValue("HOME") + "/Library/Application Support"

@@ -16,7 +16,7 @@ public namespace ToolbarPieceKey {
     // The keys the pieces of a document's section are known by. See
     // `documentSection`.
     let back: Number = 1
-
+    let title: Number = 2
     let space: Number = 3
     let search: Number = 4
 }
@@ -39,9 +39,11 @@ public namespace ToolbarPieceKey {
 // Every length comes from the catalog (`windowChromeMetrics()`), and the band
 // paints nothing of its own: the glass under each group of items is the only
 // surface it has, which is the Liquid Glass bar.
-// A phone's tab bar, floating over the window's content at its foot: what the
-// toolbar's row holds on a larger screen.
-public construct WindowTabBar() extends Widget {
+// What floats over a phone's content at the foot of the screen: its tab bar,
+// which the toolbar's row holds on a larger screen, or with no tabs the
+// search field, as iOS 26 sets `.searchable` where nothing else holds the
+// foot.
+public construct WindowBottomBar() extends Widget {
 
     function describe(
         context: borrow BuildContext,
@@ -49,9 +51,14 @@ public construct WindowTabBar() extends Widget {
     ) -> CALayerDescription {
         toolbarSinkEnsure()
         let sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
-        return CALayerDescription {
-            sublayers: chromeTabBars(sink, context, modifierContextPresenting(modifiers, .Toolbar))
+        var bars = chromeTabBars(sink, context, modifierContextPresenting(modifiers, .Toolbar))
+        if bars.count == 0 {
+            match sink.search {
+                Some(search) -> bars.append(bottomSearchField(search, context, modifiers))
+                None -> {}
+            }
         }
+        return CALayerDescription { sublayers: move bars }
     }
 }
 
@@ -112,6 +119,12 @@ public construct WindowChrome() extends Widget {
         let metrics = windowChromeMetricsFor(context.viewportWidth)
         sink.windowDragHeight = windowTopClearance() + metrics.toolbarHeight
         let barModifiers = modifierContextPresenting(modifiers, .Toolbar)
+        // A presented page search has the band to itself.
+        if sink.searchPresented {
+            return CALayerDescription {
+                layout: CALayoutIntent { heightFill: false, fixedHeight: metrics.toolbarHeight }
+            }
+        }
 
         var sections: [CALayerDescription] = []
         var leading: [CALayerDescription] = []
@@ -137,7 +150,7 @@ public construct WindowChrome() extends Widget {
             },
             sublayers: move sections
         }
-        // A phone's tabs float at the foot of the window instead (`WindowTabBar`).
+        // A phone's tabs float at the foot of the window instead (`WindowBottomBar`).
         if tabBarAtFoot(context) || sink.tabs.count == 0 && sink.covered.tabs.count == 0 {
             return band
         }
@@ -145,11 +158,13 @@ public construct WindowChrome() extends Widget {
         for bar in chromeTabBars(sink, context, barModifiers) {
             layers.append(bar)
         }
+        // The tabs stand in the items' row, at the band's top, with the gap
+        // under both.
         return CALayerDescription {
             layout: CALayoutIntent {
                 heightFill: false,
                 fixedHeight: metrics.toolbarHeight,
-                alignment: Point { x: 0.5, y: 0.5 }
+                alignment: Point { x: 0.5, y: 0.0 }
             },
             sublayers: move layers
         }
@@ -169,7 +184,12 @@ public construct WindowChrome() extends Widget {
         if windowControlsInToolbar() {
             parts.append(windowControlsArea(metrics, context, modifiers))
         }
-        parts.append(toolbarFlexibleSpace())
+        // A Mac's toggle follows the window's buttons, as AppKit sets the items
+        // before the sidebar's separator; a tablet's stands at the sidebar's
+        // trailing edge, as UIKit's does.
+        if interfaceMode() == .AdaptiveMobile {
+            parts.append(toolbarFlexibleSpace())
+        }
         for group in toolbarGroups(sink.navigation, metrics, context, modifiers) {
             parts.append(group)
         }
@@ -177,7 +197,15 @@ public construct WindowChrome() extends Widget {
             parts.append(sidebarToggle(metrics, context, modifiers))
         }
         let shown = sink.navigationShown
-        var section = toolbarSection(move parts, metrics, sink.navigationWidth * shown, 0.0)
+        // The buttons stand off the window's side by their own inset; with none
+        // before it, the toggle stands off it by the bar's.
+        let leadingInset = windowControlsInToolbar() ? 0.0 : metrics.edgeInset
+        var section = toolbarSection(
+            move parts,
+            metrics,
+            sink.navigationWidth * shown,
+            leadingInset
+        )
         section.layout.paddingTrailing = metrics.edgeInset * shown + metrics.itemSpacing * (
             1.0 - shown
         )
@@ -231,9 +259,25 @@ public construct WindowChrome() extends Widget {
             back.key = ToolbarPieceKey.back
             parts.append(move back)
         }
+        // On a Mac the title leads the section, centered on the items' row,
+        // as the macOS kit's toolbar sets it: 18 into the column, or after
+        // whatever leads it.
+        let titleLeads = interfaceMode() == .AdaptiveDesktop
+        if titleLeads && toolbarTitleWanted(sink) {
+            var title = toolbarTitle(sink, context, modifiers)
+            title.key = ToolbarPieceKey.title
+            title.layout.staysWithinGuide = 0
+            title.layout.fixedHeight = metrics.itemHeight
+            title.layout.alignment = Point { x: 0.0, y: 0.5 }
+            if !followsBack && leading.count == 0 {
+                title.layout.paddingLeading = max(metrics.titleLeading - leadingInset, 0.0)
+            }
+            parts.append(move title)
+        }
         // The space between the leading pieces and the trailing ones is the
-        // room the title has: it is centered on the section, and slides off
-        // center rather than under an item, as a navigation bar's does.
+        // room the title has elsewhere: it is centered on the section, and
+        // slides off center rather than under an item, as a navigation bar's
+        // does.
         var space = toolbarFlexibleSpace()
         space.key = ToolbarPieceKey.space
         space.layout.guide = guideTag(ToolbarTitleRoom())
@@ -269,10 +313,16 @@ public construct WindowChrome() extends Widget {
             parts.append(move piece)
             place++
         }
-        if sink.searching {
-            var search = toolbarSearchField(sink, metrics, context, modifiers)
-            search.key = ToolbarPieceKey.search
-            parts.append(move search)
+        // A phone's bar holds no search field: it floats at the foot.
+        match sink.search {
+            Some(search) -> {
+                if !tabBarAtFoot(context) {
+                    var field = toolbarSearchField(search, metrics, context, modifiers)
+                    field.key = ToolbarPieceKey.search
+                    parts.append(move field)
+                }
+            }
+            None -> {}
         }
         // The window's own pieces lead the section and stay what they are;
         // the page's follow, known by the path's generation, so a path that
@@ -305,12 +355,7 @@ public construct WindowChrome() extends Widget {
         var layers = [toolbarSection(move sectionParts, metrics, -1.0, leadingInset)]
         if sink.principal.count > 0 || sink.covered.principal.count > 0 {
             layers.append(principalRow(sink, metrics, context, modifiers))
-        } else if sink.moving || (
-            sink.detailTitle.count > 0 && toolbarInlineTitleShown(
-                sink.largeTitle,
-                sink.titleCollapse
-            ) > 0.0
-        ) {
+        } else if !titleLeads && toolbarTitleWanted(sink) {
             layers.append(toolbarTitle(sink, context, modifiers))
         }
         return CALayerDescription {
@@ -376,6 +421,17 @@ public construct WindowChrome() extends Widget {
     }
 }
 
+// Whether the bar shows a title: the page's while it is inline, and either
+// page's while one moves over the other.
+function toolbarTitleWanted(sink: borrow ToolbarSink) -> Bool {
+    return sink.moving || (
+        sink.detailTitle.count > 0 && toolbarInlineTitleShown(
+            sink.largeTitle,
+            sink.titleCollapse
+        ) > 0.0
+    )
+}
+
 public function toolbarPieceTrailing(place: Number) -> Number {
     return 100 + place
 }
@@ -422,6 +478,9 @@ public function windowControlsArea(
             widthFill: false,
             heightFill: false,
             fixedWidth: metrics.controlsEnd() - metrics.itemSpacing,
+            // As tall as the items' row, so the buttons are centered on the
+            // items beside them: 19 from the window's top as from its side.
+            fixedHeight: metrics.itemHeight,
             paddingLeading: metrics.controlsLeading,
             alignment: Point { x: 0.0, y: 0.5 }
         },

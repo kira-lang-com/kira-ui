@@ -1,6 +1,7 @@
 import Ember
 import KiraLayout
 import Foundation
+import ArgumentParser
 import Heap
 import KCoreAnimation
 
@@ -56,15 +57,36 @@ public struct KiraLayerAppState {
     var touchScrolling: Bool = false
     var touchNavigating: Bool = false
     // What the last rebuild was built from: the input it had seen, and the
-    // color scheme and interface mode it was drawn in. A frame that finds all
-    // three as they were, and nothing moving, has nothing new to show and is
-    // not drawn at all.
+    // color scheme, interface mode and accessibility settings it was drawn
+    // in. A frame that finds them all as they were, and nothing moving, has
+    // nothing new to show and is not drawn at all.
     var builtEventCount: Number = -1
     var builtScheme: PlatformScheme = .Unstated
     var builtMode: InterfaceMode = .AdaptiveDesktop
+    var builtAccessibility: AccessibilitySettings = AccessibilitySettings {}
     // Whether the retained tree was still animating on the last frame drawn,
     // so the frame it settles on is drawn too.
     var layersMoving: Bool = false
+    // The UI test driving the app, when one launched it.
+    var uiTest: UITestHost? = .None
+}
+
+// One event from the window, or from a UI test pressing and typing as a
+// person would.
+public function kiraLayerHandleEvent(state: borrow mut KiraLayerAppState, event: borrow AppEvent) {
+    kiraLayerNoteEvent(state, event.kind)
+    if event.kind == .PointerMoved || event.kind == .PointerDown || event.kind == .PointerUp {
+        kiraLayerDispatch(state, event.pointerX, event.pointerY, event.kind)
+    }
+    if event.kind == .TextInput || event.kind == .KeyDown {
+        kiraLayerDispatchKeyboard(state, event)
+    }
+    if event.kind == .Scroll {
+        kiraLayerDispatchScroll(state, event)
+    }
+    if event.kind == .TouchesBegan || event.kind == .TouchesMoved || event.kind == .TouchesEnded || event.kind == .TouchesCancelled {
+        kiraLayerDispatchTouch(state, event)
+    }
 }
 
 public function kiraLayerViewport(
@@ -231,7 +253,10 @@ public function kiraLayerFocusRequested(state: borrow mut KiraLayerAppState) {
 // and Escape puts the menu bar's menu away. Anything else goes to the focused
 // field: a typed character as text, any other key as a command. Escape ends
 // the editing instead.
-public function kiraLayerDispatchKeyboard(state: borrow mut KiraLayerAppState, event: borrow AppEvent) {
+public function kiraLayerDispatchKeyboard(
+    state: borrow mut KiraLayerAppState,
+    event: borrow AppEvent
+) {
     let focused = state.ui.focusedKey
     if event.kind == .KeyDown {
         let pressed = shortcutPerform(event.key, event.modifiers, focused != 0)
@@ -313,7 +338,10 @@ public function kiraLayerHoldSurface(
 
 // A touch has one owner: a control press until motion claims scrolling or
 // navigation. The winner cancels the press, and lifting cannot also tap a control.
-public function kiraLayerDispatchTouch(state: borrow mut KiraLayerAppState, event: borrow AppEvent) {
+public function kiraLayerDispatchTouch(
+    state: borrow mut KiraLayerAppState,
+    event: borrow AppEvent
+) {
     let x = event.pointerX
     let y = event.pointerY
     if event.kind == .TouchesBegan {
@@ -410,6 +438,10 @@ public function RunKiraLayerApp(
     // The identifier the app's Info.klist names it by, which its
     // `@AppStorage` values are kept under; see AppStorage.kira.
     bundleIdentifier: String = "",
+    // The command line, which every application reads the options in
+    // LaunchOptions.kira from. An application that parses its own passes what
+    // it left over, or none.
+    arguments: [String] = commandLineArguments(),
 ) {
     appStorageIdentify(move bundleIdentifier)
     kiraLayerPlatformRun(
@@ -419,6 +451,7 @@ public function RunKiraLayerApp(
         rootBuilder,
         transparent,
         engineFrame,
-        rebuildsEveryFrame
+        rebuildsEveryFrame,
+        arguments
     )
 }

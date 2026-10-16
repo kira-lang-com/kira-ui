@@ -73,11 +73,22 @@ function shootForeignApp(parsed: borrow ShotArguments, app: borrow String) -> Nu
 }
 
 // The capture settings, in the environment Ember resolves its harness from when
-// a run is handed none: a child inherits them, and the gallery run here reads them.
+// a run is handed none: a child inherits them.
 function setCaptureEnvironment(parsed: borrow ShotArguments) {
     kira_ui_launch_set("KIRA_GRAPHICS_CAPTURE_FRAME", parsed.out)
     kira_ui_launch_set("KIRA_GRAPHICS_CAPTURE_AT", String(parsed.at))
     kira_ui_launch_set("KIRA_GRAPHICS_QUIT_AFTER_FRAMES", String(parsed.frames))
+}
+
+// The capture, in the options every KiraUI application reads: the gallery is
+// one, so it is driven as any other would be from its command line.
+function galleryArguments(parsed: borrow ShotArguments) -> [String] {
+    var arguments = ["--capture", copy parsed.out, "--frames", String(parsed.frames)]
+    if parsed.at > 0 {
+        arguments.append("--at")
+        arguments.append(String(parsed.at))
+    }
+    return arguments
 }
 
 construct ShotCommand() extends ParsableCommand {
@@ -115,14 +126,14 @@ construct ShotCommand() extends ParsableCommand {
             // No application: the built-in gallery is drawn.
             None -> {}
         }
-        setCaptureEnvironment(parsed)
         RunKiraWindowApp(
             "Kira UI Gallery",
             parsed.width,
             parsed.height,
             { in
                 return Gallery()
-            }
+            },
+            arguments: galleryArguments(parsed)
         )
         print("captured " + parsed.out)
         return 0
@@ -148,7 +159,7 @@ construct RootCommand() extends ParsableCommand {
 }
 
 @Main
-function main() -> Int {
+function main() -> Number {
     let root = RootCommand()
     let children: [Any ParsableCommand] = [ShotCommand()]
     return runCommandRouter(root, children, commandLineArguments())
