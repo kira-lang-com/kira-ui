@@ -28,7 +28,7 @@ public namespace UITestSession {
 
 // The session directory of the UI test that launched this application, if
 // one did.
-public function uiTestSessionDirectory() -> String? {
+public function testSessionDirectory() -> String? {
     if !environmentIsSet(UITestSession.variable) {
         return .None
     }
@@ -104,54 +104,61 @@ public struct UITestElement {
     let children: [UITestElement]
 }
 
-// The element on screen, as a test is told of it.
-public function uiTestElement(element: borrow AccessibilityElement) -> UITestElement {
-    var children: [UITestElement] = []
-    for child in element.children {
-        children.append(uiTestElement(child))
-    }
-    return UITestElement {
-        role: element.role,
-        label: copy element.label,
-        value: copy element.value,
-        placeholder: copy element.placeholder,
-        identifier: copy element.identifier,
-        traits: element.traits.raw,
-        isEnabled: element.isEnabled,
-        hasKeyboardFocus: element.hasKeyboardFocus,
-        x: element.frame.x,
-        y: element.frame.y,
-        width: element.frame.width,
-        height: element.frame.height,
-        children: move children
+extend AccessibilityElement {
+    // The element, as a test is told of it.
+    function testElement() -> UITestElement {
+        var held: [UITestElement] = []
+        for child in children {
+            held.append(child.testElement())
+        }
+        return UITestElement {
+            role: role,
+            label: copy label,
+            value: copy value,
+            placeholder: copy placeholder,
+            identifier: copy identifier,
+            traits: traits.raw,
+            isEnabled: isEnabled,
+            hasKeyboardFocus: hasKeyboardFocus,
+            x: frame.x,
+            y: frame.y,
+            width: frame.width,
+            height: frame.height,
+            children: move held
+        }
     }
 }
 
-// The line an answer travels on.
-public function uiTestAnswerLine(answer: borrow UITestAnswer) -> String {
-    return UITestSession.answerMarker + serialize_UITestAnswer(answer)
+extend UITestAnswer {
+    // The line the answer travels on.
+    function line() -> String {
+        return UITestSession.answerMarker + serialize_UITestAnswer(self)
+    }
 }
 
 // The answer a line of the application's output carries, if it carries one.
-public function uiTestAnswerFrom(line: borrow String) -> UITestAnswer? {
+public function answerOnLine(line: borrow String) -> UITestAnswer? {
     if !line.startsWith(UITestSession.answerMarker) {
         return .None
     }
-    return .Some(deserialize_UITestAnswer(line.substring(UITestSession.answerMarker.count, line.count)))
+    return .Some(
+        deserialize_UITestAnswer(line.substring(UITestSession.answerMarker.count, line.count))
+    )
 }
 
-// Hands `request` to the application whose session is `directory`.
-public function uiTestSend(
-    request: borrow UITestRequest,
-    directory: borrow String
-) -> Result<Void, FileFailure> {
-    let pending = directory + "/" + UITestSession.pendingRequestFile
-    try writeFile(pending, serialize_UITestRequest(request))
-    return renamePath(pending, directory + "/" + UITestSession.requestFile)
+extend UITestRequest {
+    // Hands the request to the application whose session is `directory`.
+    function send(directory: borrow String) -> Result<Void, FileFailure> {
+        let pending = directory + "/" + UITestSession.pendingRequestFile
+        try writeFile(pending, serialize_UITestRequest(self))
+        return renamePath(pending, directory + "/" + UITestSession.requestFile)
+    }
 }
 
 // The request waiting in the session `directory`, taken from it, if one is.
-public function uiTestReceive(directory: borrow String) -> Result<UITestRequest?, FileFailure> {
+public function receiveTestRequest(
+    directory: borrow String
+) -> Result<UITestRequest?, FileFailure> {
     let path = directory + "/" + UITestSession.requestFile
     if !fileExists(path) {
         return .Ok(.None)

@@ -95,6 +95,12 @@ See [Accessibility.md](Accessibility.md) for the elements each view makes,
 the `.accessibility…` modifiers, the accessibility environment values, and
 `accessibilityElementsOnScreen()`, the tree a UI test reads.
 
+## UI Testing
+
+See [UITesting.md](UITesting.md) for KiraUITesting, XCUITest for KiraUI:
+`XCUIApplication`, element queries, taps and typing, and `ui test`, which
+builds an application and runs its UI tests against it.
+
 ## Workspaces
 
 Editor windows: panels docked around a center, arranged by the person.

@@ -1,0 +1,167 @@
+import Foundation
+import ArgumentParser
+import KiraUI
+import KiraUITesting
+
+// `ui test`: builds an application, then runs its UI test package against
+// it, as Xcode runs a UI testing bundle beside its target application. Each
+// test launches the application afresh through `XCUIApplication`, in a
+// session of its own under the tests' build directory; when the run ends
+// the sessions are removed, and any application a test left running ends
+// with its session.
+//
+//     ui test Examples/showcase
+//     ui test Examples/showcase --windowed
+
+@Derive(Parsable)
+struct TestArguments {
+    let app: String
+    let tests: String?
+    let windowed: Bool
+}
+
+namespace UITestLayout {
+    // The UI test package an application keeps beside its own sources.
+    let tests: String = "UITests"
+    // Where the built application and the sessions go, in the test package.
+    let build: String = ".kira-build/ui-test"
+    let application: String = "Application"
+    let sessions: String = "Sessions"
+}
+
+// Why a UI test run could not start.
+enum TestRunFailure {
+    NoTests(String)
+    Directory(ProcessFailure)
+    Files(FileFailure)
+    Toolchain(ProcessFailure)
+    // The application did not build; the compiler has said why.
+    Build
+}
+
+construct TestCommand() extends ParsableCommand {
+    let configuration: CommandConfiguration {
+        return CommandConfiguration {
+            name: "test",
+            abstract: "Build an application and run its UI tests against it"
+        }
+    }
+
+    let arguments: [ArgumentSpec] {
+        return [
+            argument(name: "app", help: "The application's package").defaulting("."),
+            option(
+                name: "tests",
+                help: "The UI test package; the application's UITests when left out"
+            ).placeholder("PATH"),
+            flag(name: "windowed", help: "Show the application's window while the tests drive it")
+        ]
+    }
+
+    function run(arguments: borrow ParsedArguments) -> Number {
+        let parsed = parse_TestArguments(arguments)
+        return match runUITests(parsed) {
+            Ok(status) -> status
+            Error(failure) -> {
+                printError("ui test: " + failure.reason())
+                return 1
+            }
+        }
+    }
+}
+
+// Builds the application and runs the tests, answering the status `kira
+// test` ended with.
+function runUITests(parsed: borrow TestArguments) -> Result<Number, TestRunFailure> {
+    let working = match currentDirectory() {
+        Ok(directory) -> directory
+        Error(failure) -> return .Error(.Directory(failure))
+    }
+    let app = absolutePath(parsed.app, working)
+    let tests = match parsed.tests {
+        Some(path) -> absolutePath(path, working)
+        None -> app + "/" + UITestLayout.tests
+    }
+    if !fileExists(tests + "/package.kira") {
+        return .Error(.NoTests(tests))
+    }
+    let build = tests + "/" + UITestLayout.build
+    let application = build + "/" + UITestLayout.application
+    let sessions = build + "/" + UITestLayout.sessions
+    match makeDirectories(sessions) {
+        Ok -> {}
+        Error(failure) -> return .Error(.Files(failure))
+    }
+    let built = try toolchain(["build", app, "--emit", "bin", "-o", application], [])
+    if built != 0 {
+        return .Error(.Build)
+    }
+    var environment = [
+        EnvironmentEntry { name: UITestRun.target, value: application },
+        EnvironmentEntry { name: UITestRun.sessions, value: sessions }
+    ]
+    if parsed.windowed {
+        environment.append(EnvironmentEntry { name: UITestRun.windowed, value: "1" })
+    }
+    let status = try toolchain(["test", tests], move environment)
+    match removeTree(sessions) {
+        Ok -> {}
+        Error(failure) -> log warn("could not remove the UI test sessions", sessions, failure)
+    }
+    return .Ok(status)
+}
+
+// Runs `kira` with `arguments`, its output the run's own, and answers the
+// status it ended with.
+function toolchain(
+    arguments: [String],
+    environment: [EnvironmentEntry]
+) -> Result<Number, TestRunFailure> {
+    let command = ProcessCommand { program: "kira", arguments: arguments, environment: environment }
+    let child = match command.start() {
+        Ok(child) -> child
+        Error(failure) -> return .Error(.Toolchain(failure))
+    }
+    let exit = match child.wait() {
+        Ok(exit) -> exit
+        Error(failure) -> return .Error(.Toolchain(failure))
+    }
+    match child.release() {
+        Ok -> {}
+        Error(failure) -> log warn("could not release the toolchain's process", failure)
+    }
+    return match exit {
+        Status(status) -> .Ok(status)
+        Signalled(signal) -> .Ok(1)
+    }
+}
+
+function absolutePath(path: borrow String, working: borrow String) -> String {
+    if path.startsWith("/") {
+        return copy path
+    }
+    return working + "/" + path
+}
+
+// Removes `path` and everything under it.
+function removeTree(path: borrow String) -> Result<Void, FileFailure> {
+    if isDirectory(path) {
+        let listing = try listDirectory(path)
+        for name in listing.entries {
+            try removeTree(path + "/" + name)
+        }
+    }
+    return removePath(path)
+}
+
+extend TestRunFailure {
+    function reason() -> String {
+        match self {
+            NoTests(path) -> return "no UI test package at \(path)"
+            Directory(failure) -> return "the working directory could not be read: \(failure)"
+            Files(failure) -> return "the build directory could not be made: \(failure)"
+            Toolchain(failure) -> return "kira could not be run: \(failure)"
+            Build -> return "the application did not build"
+        }
+    }
+}

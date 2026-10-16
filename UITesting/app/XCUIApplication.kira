@@ -1,0 +1,65 @@
+import Foundation
+import KiraUI
+
+// XCUITest's `XCUIApplication`: the application under test, which a UI test
+// launches and then finds and drives the elements of.
+//
+//     @Test
+//     function submitsTheField() {
+//         let app = XCUIApplication()
+//         app.launch()
+//
+//         let field = app.textFields.matching(identifier: "Name").element
+//         field.tap()
+//         field.typeText("Ada\n")
+//
+//         expect!(app.staticTexts.matching(identifier: "Hello, Ada").element.exists)
+//     }
+//
+// The application is the one `ui test` built beside the tests. It runs with
+// no window unless `ui test --windowed` asked for one, and keeps its data in
+// the test's session, so each test starts from it as it was installed.
+public construct XCUIApplication() extends XCUIElementTypeQueryProvider {
+    // What the application is launched with, after the options its runner
+    // reads.
+    var launchArguments: [String] = []
+    // Variables set over the environment the application inherits.
+    var launchEnvironment: [EnvironmentEntry] = []
+    let session: ApplicationSession = ApplicationSession()
+
+    function descendants(matching: AccessibilityRole) -> XCUIElementQuery {
+        return XCUIElementQuery(session: session, scope: [], role: matching)
+    }
+
+    // Launches the application, ending it first if it runs, and waits for it
+    // to settle on its first screen.
+    function launch() {
+        match session.launch(launchArguments, launchEnvironment) {
+            Ok(tree) -> absorb tree
+            Error(failure) -> recordTestIssue(failure.reason())
+        }
+    }
+
+    // Ends the application.
+    function terminate() {
+        session.terminate()
+    }
+
+    // Types `text` into the field that holds the keyboard. A line break
+    // presses Return.
+    function typeText(text: String) {
+        match session.ask(.TypeText(UITestText { text: text })) {
+            Ok(answer) -> {
+                match answer {
+                    NoKeyboardFocus -> recordTestIssue(
+                        "could not type: no field has keyboard focus"
+                    )
+                    // The application typed the text.
+                    Done -> {}
+                    Elements(tree) -> absorb tree
+                }
+            }
+            Error(failure) -> recordTestIssue(failure.reason())
+        }
+    }
+}

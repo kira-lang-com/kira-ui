@@ -44,7 +44,7 @@ VStack {
 | `Toggle` | `.Switch`, or `.CheckBox` on a Mac; `isToggle` | its title, value `1` or `0`; activating it flips it |
 | `Slider` | `.Slider`, adjustable | value as a percent; adjusting steps it by a tenth |
 | `ProgressView` | `.ProgressIndicator`, `updatesFrequently` | value as a percent |
-| `TextField` / `SecureField` | `.TextField` / `.SecureTextField` | its title, its text (dots when secure), its prompt as the placeholder |
+| `TextField` / `SecureField` | `.TextField` / `.SecureTextField` | its title, its text (dots when secure), its prompt as the placeholder; activating it gives it the keyboard, and `hasKeyboardFocus` says it has it |
 | `Section` header | `isHeader` | the header's words |
 | `.onClick { }` | its content's elements | activating one runs the action, as a tap gesture's view does |
 
@@ -85,7 +85,8 @@ Traits combine with `|`, as `EdgeSet` does:
 
 ## Environment
 
-The platform's settings are read before each rebuild:
+The platform's settings are read every frame, as the color scheme is, and a
+setting the person changes while the app runs rebuilds the interface at once:
 
 ```kira
 @Environment(\.accessibilityReduceMotion) let reduceMotion: Bool
@@ -105,13 +106,15 @@ does not read, so they are all off there. Every motion in KiraUI follows
 After each layout the window reads its laid-out tree into
 `AccessibilityElement`s. `accessibilityElementsOnScreen()` answers them until
 the next build. Each element has its role, label, value, hint, placeholder,
-identifier, traits, heading level, input labels, `isEnabled`, its `frame` in
-the window in points, and the elements it holds. It runs its actions with
+identifier, traits, heading level, input labels, `isEnabled`,
+`hasKeyboardFocus`, its `frame` in the window in points, and the elements it
+holds. It runs its actions with
 `activate()`, `perform(kind:)` and `adjustValue(direction:)`.
 
 `accessibilityElementsForTest(root:width:height:)` builds and lays out a view
 with no window and answers the same elements. KiraUI's own tests use it, in
-`tests/kiraui_kik/app/AccessibilityTests.kira`.
+`tests/kiraui_kik/app/AccessibilityTests.kira`. A UI test reads the same
+elements from a running application: see [UITesting.md](UITesting.md).
 
 A layer carries only the key of the element it is (`accessibilityElement` on
 `CALayerDescription`), as it carries only the key of its press. What the

@@ -1,0 +1,227 @@
+import Foundation
+import KiraUI
+
+// XCUITest's `XCUIElementTypeQueryProvider`: an application or an element,
+// whose descendants a test asks for by type.
+//
+//     app.buttons.matching(identifier: "Send").element.tap()
+//     app.groups.firstMatch.staticTexts.count
+public construct XCUIElementTypeQueryProvider {
+    @Required function descendants(matching: AccessibilityRole) -> XCUIElementQuery
+
+    let groups: XCUIElementQuery {
+        return descendants(matching: .Group)
+    }
+    let otherElements: XCUIElementQuery {
+        return descendants(matching: .Other)
+    }
+    let staticTexts: XCUIElementQuery {
+        return descendants(matching: .StaticText)
+    }
+    let images: XCUIElementQuery {
+        return descendants(matching: .Image)
+    }
+    let buttons: XCUIElementQuery {
+        return descendants(matching: .Button)
+    }
+    let links: XCUIElementQuery {
+        return descendants(matching: .Link)
+    }
+    let textFields: XCUIElementQuery {
+        return descendants(matching: .TextField)
+    }
+    let secureTextFields: XCUIElementQuery {
+        return descendants(matching: .SecureTextField)
+    }
+    let searchFields: XCUIElementQuery {
+        return descendants(matching: .SearchField)
+    }
+    let switches: XCUIElementQuery {
+        return descendants(matching: .Switch)
+    }
+    let checkBoxes: XCUIElementQuery {
+        return descendants(matching: .CheckBox)
+    }
+    let sliders: XCUIElementQuery {
+        return descendants(matching: .Slider)
+    }
+    let progressIndicators: XCUIElementQuery {
+        return descendants(matching: .ProgressIndicator)
+    }
+    let popUpButtons: XCUIElementQuery {
+        return descendants(matching: .PopUpButton)
+    }
+    let menuButtons: XCUIElementQuery {
+        return descendants(matching: .MenuButton)
+    }
+    let tabs: XCUIElementQuery {
+        return descendants(matching: .Tab)
+    }
+}
+
+// How a step of a query settles on its elements: every match, the first, the
+// one at an index, or the single element it has to find.
+enum QueryPick {
+    All
+    First
+    Index(Number)
+    Only
+}
+
+// One step from the elements found so far to the next: those of `role` among
+// their descendants, identified by `identifier` when one is given.
+struct QueryStep {
+    let role: AccessibilityRole
+    let identifier: String?
+    let pick: QueryPick
+}
+
+// What the steps of a query found on screen.
+enum Resolution {
+    Found([UITestElement])
+    // A step had to find one element, and found none.
+    Missing
+    // A step had to find one element, and found this many.
+    Ambiguous(Number)
+}
+
+// XCUITest's `XCUIElementQuery`: the elements of a type below an application
+// or an element, found afresh on screen each time the query is read. Its own
+// descendants are found below every element it finds.
+public construct XCUIElementQuery(
+    session: ApplicationSession,
+    scope: [QueryStep],
+    role: AccessibilityRole,
+    identifier: String? = .None
+) extends XCUIElementTypeQueryProvider {
+
+    function descendants(matching: AccessibilityRole) -> XCUIElementQuery {
+        var steps = copy scope
+        steps.append(QueryStep { role: role, identifier: copy identifier, pick: .All })
+        return XCUIElementQuery(session: session, scope: move steps, role: matching)
+    }
+
+    // XCUITest's `app.buttons["Send"]`: the elements whose identifier or
+    // label is `identifier`.
+    function matching(identifier: String) -> XCUIElementQuery {
+        return XCUIElementQuery(
+            session: session,
+            scope: copy scope,
+            role: role,
+            identifier: .Some(identifier)
+        )
+    }
+
+    // The one element the query finds. Acting on it fails the test when it
+    // finds none, or more than one.
+    let element: XCUIElement {
+        return self.picking(.Only)
+    }
+
+    // The first element the query finds.
+    let firstMatch: XCUIElement {
+        return self.picking(.First)
+    }
+
+    // The element at `index` among those the query finds, in the order
+    // VoiceOver visits them.
+    function element(boundBy: Number) -> XCUIElement {
+        return self.picking(.Index(boundBy))
+    }
+
+    // How many elements the query finds on screen now.
+    let count: Number {
+        return match self.found() {
+            Found(elements) -> elements.count
+            Missing -> 0
+            Ambiguous(count) -> count
+        }
+    }
+
+    // Every element the query finds, each standing for its place in the
+    // order.
+    let allElementsBoundByIndex: [XCUIElement] {
+        var elements: [XCUIElement] = []
+        for index in 0..self.count {
+            elements.append(self.element(boundBy: index))
+        }
+        return elements
+    }
+
+    function picking(pick: QueryPick) -> XCUIElement {
+        var steps = copy scope
+        steps.append(QueryStep { role: role, identifier: copy identifier, pick: pick })
+        return XCUIElement(session: session, steps: move steps)
+    }
+
+    function found() -> Resolution {
+        var steps = copy scope
+        steps.append(QueryStep { role: role, identifier: copy identifier, pick: .All })
+        return match session.snapshot() {
+            Ok(tree) -> resolve(steps, tree.elements)
+            Error(failure) -> {
+                recordTestIssue(failure.reason())
+                return .Found([])
+            }
+        }
+    }
+}
+
+// The elements `steps` find, starting from the elements on screen.
+function resolve(steps: borrow [QueryStep], screen: borrow [UITestElement]) -> Resolution {
+    var scopes: [[UITestElement]] = [copy screen]
+    var picked: [UITestElement] = []
+    for step in steps {
+        var matches: [UITestElement] = []
+        for scope in scopes {
+            for element in descendantsOf(scope) {
+                if step.matches(element) {
+                    matches.append(element)
+                }
+            }
+        }
+        picked = match step.pick {
+            All -> move matches
+            First -> matches.count > 0 ? [copy matches[0]] : []
+            Index(index) -> index < matches.count ? [copy matches[index]] : []
+            Only -> {
+                if matches.count == 0 {
+                    return .Missing
+                }
+                if matches.count > 1 {
+                    return .Ambiguous(matches.count)
+                }
+                [copy matches[0]]
+            }
+        }
+        scopes = []
+        for element in picked {
+            scopes.append(copy element.children)
+        }
+    }
+    return .Found(move picked)
+}
+
+// `elements` and everything inside them, each before what it holds.
+function descendantsOf(elements: borrow [UITestElement]) -> [UITestElement] {
+    var all: [UITestElement] = []
+    for element in elements {
+        all.append(copy element)
+        for inner in descendantsOf(element.children) {
+            all.append(inner)
+        }
+    }
+    return all
+}
+
+extend QueryStep {
+    function matches(element: borrow UITestElement) -> Bool {
+        if element.role != role {
+            return false
+        }
+        return match identifier {
+            Some(identifier) -> element.identifier == identifier || element.label == identifier
+            None -> true
+        }
+    }
+}

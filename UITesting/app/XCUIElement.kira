@@ -1,0 +1,237 @@
+import Foundation
+import KiraUI
+
+// XCUITest's `XCUIElement`: one element of the application's interface, found
+// afresh on screen every time it is read or acted on, so it follows the
+// interface as it changes. Reading or acting on an element the screen does
+// not show fails the test, as XCUITest's does.
+public construct XCUIElement(
+    session: ApplicationSession,
+    steps: [QueryStep]
+) extends XCUIElementTypeQueryProvider {
+
+    function descendants(matching: AccessibilityRole) -> XCUIElementQuery {
+        return XCUIElementQuery(session: session, scope: copy steps, role: matching)
+    }
+
+    // Whether the screen shows the element now.
+    let exists: Bool {
+        return match self.resolved() {
+            Found(elements) -> elements.count > 0
+            Missing -> false
+            Ambiguous(count) -> true
+        }
+    }
+
+    // Waits for the element to appear, up to `timeout` seconds, as the
+    // application settles from one change to the next. Answers whether it
+    // did.
+    function waitForExistence(timeout: Number) -> Bool {
+        let deadline = monotonicNanoseconds() + timeout * UITestTiming.nanosecondsPerSecond
+        while true {
+            if self.exists {
+                return true
+            }
+            if monotonicNanoseconds() >= deadline {
+                return false
+            }
+        }
+    }
+
+    // What VoiceOver reads the element as.
+    let label: String {
+        return self.attribute().label
+    }
+
+    let value: String {
+        return self.attribute().value
+    }
+
+    // What a field shows while it is empty.
+    let placeholderValue: String {
+        return self.attribute().placeholder
+    }
+
+    let identifier: String {
+        return self.attribute().identifier
+    }
+
+    let elementType: AccessibilityRole {
+        return self.attribute().role
+    }
+
+    let isEnabled: Bool {
+        return self.attribute().isEnabled
+    }
+
+    let isSelected: Bool {
+        return AccessibilityTraits(self.attribute().traits).has(AccessibilityTraits.isSelected)
+    }
+
+    // Whether the element is the field the keyboard types into.
+    let hasFocus: Bool {
+        return self.attribute().hasKeyboardFocus
+    }
+
+    // The element's box in the window, in points from its top-leading corner.
+    let frame: Rect {
+        let element = self.attribute()
+        return Rect { x: element.x, y: element.y, width: element.width, height: element.height }
+    }
+
+    // Whether a tap at the element's center would land on it: it is on
+    // screen, has a size, and takes input.
+    let isHittable: Bool {
+        return match self.resolved() {
+            Found(
+                elements
+            ) -> elements.count > 0 && elements[0].isEnabled && elements[0].width > 0 && elements[0].height > 0
+            Missing -> false
+            Ambiguous(count) -> false
+        }
+    }
+
+    // A tap at the element's center.
+    function tap() {
+        self.tapped(1, "tap")
+    }
+
+    function doubleTap() {
+        self.tapped(2, "double tap")
+    }
+
+    // Types `text` into the element, which has to hold the keyboard: tap a
+    // field first. A line break presses Return.
+    function typeText(text: String) {
+        let element = match self.located("type into") {
+            Some(element) -> element
+            None -> return
+        }
+        if !element.hasKeyboardFocus {
+            recordTestIssue(
+                "could not type into \(self.described()): it does not have keyboard focus"
+            )
+            return
+        }
+        self.perform(.TypeText(UITestText { text: text }))
+    }
+
+    // Turns the scroll wheel over the element's center by points along each
+    // axis, positive toward the content's end, as XCUITest's
+    // `scroll(byDeltaX:deltaY:)` does.
+    function scroll(byDeltaX: Number, deltaY: Number) {
+        let element = match self.located("scroll") {
+            Some(element) -> element
+            None -> return
+        }
+        self.perform(
+            .Scroll(
+                UITestScroll {
+                    x: element.x + element.width / 2,
+                    y: element.y + element.height / 2,
+                    deltaX: byDeltaX,
+                    deltaY: deltaY
+                }
+            )
+        )
+    }
+
+    function tapped(count: Number, action: borrow String) {
+        let element = match self.located(action) {
+            Some(element) -> element
+            None -> return
+        }
+        self.perform(
+            .Tap(
+                UITestTap {
+                    x: element.x + element.width / 2,
+                    y: element.y + element.height / 2,
+                    count: count
+                }
+            )
+        )
+    }
+
+    function perform(request: UITestRequest) {
+        match session.ask(move request) {
+            Ok(answer) -> {
+                match answer {
+                    NoKeyboardFocus -> recordTestIssue("no field has keyboard focus")
+                    // The application carried the request out.
+                    Done -> {}
+                    Elements(tree) -> absorb tree
+                }
+            }
+            Error(failure) -> recordTestIssue(failure.reason())
+        }
+    }
+
+    // The element as the screen shows it now, for `action`; the test fails
+    // when the screen shows none, or more than one.
+    function located(action: borrow String) -> UITestElement? {
+        match self.resolved() {
+            Found(elements) -> {
+                if elements.count > 0 {
+                    return .Some(copy elements[0])
+                }
+                recordTestIssue("could not \(action) \(self.described()): no element matches")
+                return .None
+            }
+            Missing -> {
+                recordTestIssue("could not \(action) \(self.described()): no element matches")
+                return .None
+            }
+            Ambiguous(count) -> {
+                recordTestIssue("could not \(action) \(self.described()): \(count) elements match")
+                return .None
+            }
+        }
+    }
+
+    // The element, for an attribute read. One the screen does not show fails
+    // the test, and reads as an empty element.
+    function attribute() -> UITestElement {
+        return match self.located("read") {
+            Some(element) -> element
+            None -> UITestElement {
+                role: .Other,
+                label: "",
+                value: "",
+                placeholder: "",
+                identifier: "",
+                traits: 0,
+                isEnabled: false,
+                hasKeyboardFocus: false,
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+                children: []
+            }
+        }
+    }
+
+    function resolved() -> Resolution {
+        return match session.snapshot() {
+            Ok(tree) -> resolve(steps, tree.elements)
+            Error(failure) -> {
+                recordTestIssue(failure.reason())
+                return .Missing
+            }
+        }
+    }
+
+    // The element as a failure names it: the type and identifier of each step
+    // that finds it.
+    function described() -> String {
+        var parts: [String] = []
+        for step in steps {
+            let name = match step.identifier {
+                Some(identifier) -> "\(step.role) \"\(identifier)\""
+                None -> "\(step.role)"
+            }
+            parts.append(name)
+        }
+        return joined(parts, " › ")
+    }
+}

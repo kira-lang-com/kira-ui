@@ -23,8 +23,8 @@ public enum UITestOwed {
 }
 
 // The host for the UI test that launched this application, if one did.
-public function uiTestHost() -> UITestHost? {
-    return match uiTestSessionDirectory() {
+public function launchingTest() -> UITestHost? {
+    return match testSessionDirectory() {
         Some(directory) -> .Some(UITestHost { directory: directory })
         None -> .None
     }
@@ -46,7 +46,7 @@ public function kiraLayerTakeUITestRequest(state: borrow mut KiraLayerAppState) 
     if !isDirectory(host.directory) {
         processExit(0)
     }
-    match uiTestReceive(host.directory) {
+    match receiveTestRequest(host.directory) {
         Ok(received) -> {
             match received {
                 Some(request) -> host.owed = .Some(kiraLayerPerform(state, request))
@@ -73,22 +73,25 @@ public function kiraLayerAnswerUITest(state: borrow mut KiraLayerAppState) {
     if state.layersMoving || clockRunning() {
         return
     }
-    print(uiTestAnswerLine(uiTestAnswer(owed)))
+    print(owed.answer().line())
     host.owed = .None
     state.uiTest = .Some(move host)
 }
 
-function uiTestAnswer(owed: borrow UITestOwed) -> UITestAnswer {
-    match owed {
-        Snapshot -> {
-            var elements: [UITestElement] = []
-            for element in accessibilityElementsOnScreen() {
-                elements.append(uiTestElement(element))
+extend UITestOwed {
+    // The answer owed, as the interface stands now.
+    function answer() -> UITestAnswer {
+        match self {
+            Snapshot -> {
+                var elements: [UITestElement] = []
+                for element in accessibilityElementsOnScreen() {
+                    elements.append(element.testElement())
+                }
+                return .Elements(UITestTree { elements: move elements })
             }
-            return .Elements(UITestTree { elements: move elements })
+            Done -> return .Done
+            NoKeyboardFocus -> return .NoKeyboardFocus
         }
-        Done -> return .Done
-        NoKeyboardFocus -> return .NoKeyboardFocus
     }
 }
 
@@ -118,21 +121,11 @@ function kiraLayerTap(state: borrow mut KiraLayerAppState, tap: borrow UITestTap
     for press in 0..tap.count {
         kiraLayerHandleEvent(
             state,
-            AppEvent {
-                kind: .PointerDown,
-                pointerButton: .Left,
-                pointerX: tap.x,
-                pointerY: tap.y
-            }
+            AppEvent { kind: .PointerDown, pointerButton: .Left, pointerX: tap.x, pointerY: tap.y }
         )
         kiraLayerHandleEvent(
             state,
-            AppEvent {
-                kind: .PointerUp,
-                pointerButton: .Left,
-                pointerX: tap.x,
-                pointerY: tap.y
-            }
+            AppEvent { kind: .PointerUp, pointerButton: .Left, pointerX: tap.x, pointerY: tap.y }
         )
     }
 }
@@ -147,7 +140,10 @@ function kiraLayerType(state: borrow mut KiraLayerAppState, text: borrow String)
             kiraLayerHandleEvent(state, AppEvent { kind: .KeyDown, key: .Enter })
             kiraLayerHandleEvent(state, AppEvent { kind: .KeyUp, key: .Enter })
         } else {
-            kiraLayerHandleEvent(state, AppEvent { kind: .TextInput, textCodepoint: UN32(codepoint) })
+            kiraLayerHandleEvent(
+                state,
+                AppEvent { kind: .TextInput, textCodepoint: UN32(codepoint) }
+            )
         }
     }
     return .Done
