@@ -1,0 +1,356 @@
+import Foundation
+import Ember
+import KCoreAnimation
+
+// The key a button answers to, matching SwiftUI's `.keyboardShortcut(...)`.
+//
+//     Button("New File", action: newFile)
+//         .keyboardShortcut("N")
+//
+// A shortcut belongs to the button it is written on, wherever that button is:
+// in a menu it is set at the trailing end of the row, as the platform sets it,
+// and anywhere in the window the keys press the button whether its menu is
+// out or not.
+//
+// # The modifier is taken by the button under it
+//
+// A modifier context only travels downward, and a shortcut must not: the
+// button it is written on takes it, and a button inside that button's label
+// does not. So the modifier leaves the shortcut pending while its content
+// lowers, and the first button to lower takes it -- the one moment it can
+// belong to exactly that button. `.sharedBackgroundVisibility(...)` reaches its
+// toolbar item the same way.
+
+// A key held with a shortcut's key, as SwiftUI's `EventModifiers` names them.
+// `Command` is the platform's command key: ⌘ on Apple's systems, Control on
+// every other.
+public enum EventModifier {
+    Command
+    Shift
+    Option
+    Control
+}
+
+public struct KeyboardShortcut {
+    // The key, as the character on it: a letter or a digit.
+    let key: String = ""
+    let modifiers: [EventModifier] = []
+
+    // Whether there is a shortcut at all.
+    function isEmpty() -> Bool {
+        return key.count == 0
+    }
+
+    function holds(modifier: borrow EventModifier) -> Bool {
+        for index in 0..modifiers.count {
+            if modifiers[index] == modifier {
+                return true
+            }
+        }
+        return false
+    }
+
+    // Whether a key going down with these keys held is this shortcut: the
+    // character on its cap is the shortcut's.
+    function matches(pressed: borrow Key, held: borrow ModifierState) -> Bool {
+        if isEmpty() || keyCapText(pressed) != shortcutKeyText(key) {
+            return false
+        }
+        let apple = hostUsesCommandKey()
+        let command = apple ? held.superKey : held.control
+        let control = apple ? held.control : false
+        return command == holds(.Command) &&
+            held.shift == holds(.Shift) &&
+            held.alt == holds(.Option) &&
+            control == holds(.Control)
+    }
+
+    // How a menu sets it. On Apple's systems, the platform's glyphs in its
+    // order -- ⌃⌥⇧⌘ -- run against the key; everywhere else the keys are
+    // named and joined, the way those systems write them.
+    function label() -> String {
+        let key = keyGlyph(shortcutKeyText(key))
+        if hostUsesCommandKey() {
+            var glyphs = ""
+            if holds(.Control) { glyphs = glyphs + "⌃" }
+            if holds(.Option) { glyphs = glyphs + "⌥" }
+            if holds(.Shift) { glyphs = glyphs + "⇧" }
+            if holds(.Command) { glyphs = glyphs + "⌘" }
+            return glyphs + key
+        }
+        var named = ""
+        if holds(.Command) || holds(.Control) { named = named + "Ctrl+" }
+        if holds(.Option) { named = named + "Alt+" }
+        if holds(.Shift) { named = named + "Shift+" }
+        return named + key
+    }
+}
+
+// Whether the platform's command key is ⌘: on Apple's systems, and where the
+// host running the application says its keyboard's GUI key is ⌘
+// (`hostUsesCommandKeySet`), as a host drawing a Mac's or an iPad's
+// interface does.
+public function hostUsesCommandKey() -> Bool {
+    let platform = targetPlatform!()
+    if platform == .MacOS || platform == .Ios { return true }
+    let previous = enterProcessScope()
+    var uses = false
+    if ambientStateHas(StateSlot.commandKey) {
+        uses = nativeRecover<CommandKey>(ambientStateGet(StateSlot.commandKey)).command
+    }
+    ambientScopeEnter(previous)
+    return uses
+}
+
+// What the host said of its keyboard's GUI key.
+struct CommandKey {
+    var command: Bool = false
+}
+
+// The host running the application says whether its keyboard's GUI key is
+// ⌘, as a Mac's is; shortcuts then answer to it and menus show ⌘.
+public function hostUsesCommandKeySet(uses: Bool) {
+    let previous = enterProcessScope()
+    if !ambientStateHas(StateSlot.commandKey) {
+        ambientStatePut(StateSlot.commandKey, nativeUserData(nativeState(CommandKey {})))
+    }
+    var key = nativeRecover<CommandKey>(ambientStateGet(StateSlot.commandKey))
+    key.command = uses
+    ambientScopeEnter(previous)
+}
+
+// The keys a shortcut names that carry no character, as SwiftUI's
+// `KeyEquivalent` names them: `.keyboardShortcut(KeyEquivalent.leftArrow,
+// modifiers: [])`. A menu shows each as its glyph (`keyGlyph`).
+public namespace KeyEquivalent {
+    let upArrow: String = "UpArrow"
+    let downArrow: String = "DownArrow"
+    let leftArrow: String = "LeftArrow"
+    let rightArrow: String = "RightArrow"
+    let returnKey: String = "Return"
+    let escape: String = "Escape"
+    let delete: String = "Delete"
+    let deleteForward: String = "DeleteForward"
+    let tab: String = "Tab"
+    let home: String = "Home"
+    let end: String = "End"
+    let pageUp: String = "PageUp"
+    let pageDown: String = "PageDown"
+}
+
+// Each key a shortcut can name and the text on its cap: a letter in capitals,
+// a digit, a space, or a `KeyEquivalent`.
+let keyCaps: [(Key, String)] = [
+    (.A, "A"), (.B, "B"), (.C, "C"), (.D, "D"), (.E, "E"), (.F, "F"), (.G, "G"), (.H, "H"),
+    (.I, "I"), (.J, "J"), (.K, "K"), (.L, "L"), (.M, "M"), (.N, "N"), (.O, "O"), (.P, "P"),
+    (.Q, "Q"), (.R, "R"), (.S, "S"), (.T, "T"), (.U, "U"), (.V, "V"), (.W, "W"), (.X, "X"),
+    (.Y, "Y"), (.Z, "Z"), (.Digit0, "0"), (.Digit1, "1"), (.Digit2, "2"), (.Digit3, "3"),
+    (.Digit4, "4"), (.Digit5, "5"), (.Digit6, "6"), (.Digit7, "7"), (.Digit8, "8"),
+    (.Digit9, "9"), (.Space, " "), (.Up, KeyEquivalent.upArrow),
+    (.Down, KeyEquivalent.downArrow), (.Left, KeyEquivalent.leftArrow),
+    (.Right, KeyEquivalent.rightArrow), (.Enter, KeyEquivalent.returnKey),
+    (.Escape, KeyEquivalent.escape), (.Backspace, KeyEquivalent.delete),
+    (.Delete, KeyEquivalent.deleteForward), (.Tab, KeyEquivalent.tab),
+    (.Home, KeyEquivalent.home), (.End, KeyEquivalent.end), (.PageUp, KeyEquivalent.pageUp),
+    (.PageDown, KeyEquivalent.pageDown),
+]
+
+// The glyph a menu shows for a `KeyEquivalent`, and any other key as it is.
+function keyGlyph(key: borrow String) -> String {
+    return match key {
+        "UpArrow" -> "↑"
+        "DownArrow" -> "↓"
+        "LeftArrow" -> "←"
+        "RightArrow" -> "→"
+        "Return" -> "↩"
+        "Escape" -> "⎋"
+        "Delete" -> "⌫"
+        "DeleteForward" -> "⌦"
+        "Tab" -> "⇥"
+        "Home" -> "↖"
+        "End" -> "↘"
+        "PageUp" -> "⇞"
+        "PageDown" -> "⇟"
+        else -> copy key
+    }
+}
+
+// The text on `pressed`'s cap, a letter in capitals or a `KeyEquivalent`, or
+// nothing for a key a shortcut cannot name.
+public function keyCapText(pressed: borrow Key) -> String {
+    for (key, cap) in keyCaps {
+        if key == pressed { return copy cap }
+    }
+    return ""
+}
+
+// Whether `key` still reaches shortcuts while a field is typed in: the keys
+// a one-line field does nothing with.
+function passesTyping(key: borrow String) -> Bool {
+    return match key {
+        "UpArrow", "DownArrow", "Escape", "PageUp", "PageDown" -> true
+        else -> false
+    }
+}
+
+// The code a key reports: its character, uppercase.
+public function shortcutKeyCode(key: borrow String) -> Number {
+    let code = Number(key.charAt(0))
+    if code >= 97 && code <= 122 {
+        return code - 32
+    }
+    return code
+}
+
+// The key as its cap reads: a letter in capitals, or a `KeyEquivalent` as
+// it is.
+public function shortcutKeyText(key: borrow String) -> String {
+    for (_, cap) in keyCaps {
+        if cap == key { return copy cap }
+    }
+    let code = shortcutKeyCode(key)
+    if code >= 65 && code <= 90 {
+        return "ABCDEFGHIJKLMNOPQRSTUVWXYZ".substring(code - 65, code - 64)
+    }
+    return key.substring(0, 1)
+}
+
+// --- Which button each shortcut presses ---------------------------------------
+
+// A shortcut and the press it makes, bound for one frame beside the press
+// actions; see `layerActionsReset`.
+public struct ShortcutEntry {
+    var shortcut: KeyboardShortcut = KeyboardShortcut {}
+    var action: () -> Void = layerNoop
+}
+
+// The shortcut written on the content lowering now, until a button takes it.
+public struct PendingShortcut {
+    var shortcut: KeyboardShortcut = KeyboardShortcut {}
+}
+
+public function pendingShortcutEnsure() {
+    if !ambientStateHas(StateSlot.pendingShortcut) {
+        ambientStatePut(StateSlot.pendingShortcut, nativeUserData(nativeState(PendingShortcut {})))
+    }
+}
+
+// What the next button to lower answers to, and none after it.
+public function shortcutTake() -> KeyboardShortcut {
+    pendingShortcutEnsure()
+    var pending = nativeRecover<PendingShortcut>(ambientStateGet(StateSlot.pendingShortcut))
+    let taken = pending.shortcut
+    pending.shortcut = KeyboardShortcut {}
+    return taken
+}
+
+public function shortcutRegister(shortcut: borrow KeyboardShortcut, action: () -> Void) {
+    if shortcut.isEmpty() {
+        return
+    }
+    layerActionSinkEnsure()
+    var sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+    sink.shortcuts.append(ShortcutEntry { shortcut: copy shortcut, action: action })
+}
+
+// Presses the button a key going down is the shortcut of, and says whether
+// there was one. A shortcut held with no modifier is the field's key while a
+// field is being typed in, except the keys a one-line field has no use for
+// (`passesTyping`), so a list under a search field can be walked.
+public function shortcutPerform(
+    pressed: borrow Key,
+    held: borrow ModifierState,
+    typing: Bool
+) -> Bool {
+    layerActionSinkEnsure()
+    let sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+    for index in 0..sink.shortcuts.count {
+        let shortcut = sink.shortcuts[index].shortcut
+        let typed = typing && shortcut.modifiers.count == 0 && !passesTyping(shortcut.key)
+        if shortcut.matches(pressed, held) && !typed {
+            sink.shortcuts[index].action()
+            return true
+        }
+    }
+    return false
+}
+
+public construct KeyboardShortcutLayer(shortcut: KeyboardShortcut) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        pendingShortcutEnsure()
+        var pending = nativeRecover<PendingShortcut>(ambientStateGet(StateSlot.pendingShortcut))
+        pending.shortcut = copy shortcut
+        let described = content.describe(context, modifiers)
+        // Content with no button in it leaves the shortcut to nothing.
+        pending.shortcut = KeyboardShortcut {}
+        return described
+    }
+}
+
+extend Widget {
+    // The key that presses this button, held with `modifiers`: ⌘ and the key
+    // unless it says otherwise.
+    function keyboardShortcut(key: String, modifiers: [EventModifier] = [.Command]) -> Any Widget {
+        return KeyboardShortcutLayer(
+            shortcut: KeyboardShortcut { key: key, modifiers: modifiers }
+        ) {
+            self
+        }
+    }
+}
+
+// Content that answers a key going down with `shortcut`'s modifiers held, as
+// SwiftUI's `.onKeyPress(...)` does, for as long as it is drawn; no button
+// is needed. Keys held with no modifier still reach a field being typed in.
+public construct KeyPressLayer(shortcut: KeyboardShortcut, action: () -> Void) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        // The content's own keys are bound first, so a key it answers is
+        // its own before the content around it is asked.
+        let described = content.describe(context, modifiers)
+        shortcutRegister(shortcut, copy action)
+        return described
+    }
+}
+
+extend Widget {
+    // Calls `action` when `key` goes down with exactly `modifiers` held while
+    // this content is drawn: a letter, a digit, or a `KeyEquivalent`.
+    function onKeyPress(
+        key: String,
+        modifiers: [EventModifier] = [],
+        action: () -> Void
+    ) -> Any Widget {
+        return KeyPressLayer(
+            shortcut: KeyboardShortcut { key: key, modifiers: modifiers },
+            action: action
+        ) {
+            self
+        }
+    }
+}
+
+// A shortcut set at the trailing end of a menu's row, in the row's secondary
+// ink.
+public function menuShortcutDescription(
+    context: borrow BuildContext,
+    shortcut: borrow KeyboardShortcut,
+    modifiers: borrow ModifierContext
+) -> CALayerDescription {
+    var keys = Text(content: shortcut.label())
+    .font(size: resolvedLength(menuLabelSize(modifiers)))
+    .foregroundColor(.Secondary)
+    .describe(context, modifiers)
+    keys.layout.widthFill = false
+    keys.layout.heightFill = false
+    return keys
+}

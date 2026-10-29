@@ -1,0 +1,111 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's `Image("widgets")`: a drawing of the app's own, kept as
+// `Resources/Images/widgets.svg` among the assets its package declares.
+//
+//     construct showcase extends Package {
+//         let assets: [String] = ["Resources/Images"]
+//     }
+//
+//     Image(name: "widgets")
+//
+// It is drawn as a symbol is, in the ink and at the size of the text around
+// it, so it stands in a label's icon or a tab's item beside the library's.
+// A custom symbol exported from SF Symbols, which draws it at every weight
+// and scale, is drawn at the weight of the type around it and the
+// `.imageScale(...)` in effect, at the size the template gives that type.
+public construct Image(name: String) extends Widget {
+
+    // An image element, read by the name the app keeps it under, as SwiftUI's
+    // is.
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var described = self.drawingDescription(context, modifiers)
+        described.accessibilityClear()
+        described.accessibilityElementOf(
+            AccessibilityNode {
+                role: .Image,
+                label: copy name,
+                traits: AccessibilityTraits.isImage
+            }
+        )
+        return described
+    }
+
+    function drawingDescription(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let drawing = imageDrawing(name)
+        if !isSymbolTemplate(drawing) {
+            return Artwork(svg: drawing).describe(context, modifiers)
+        }
+        let scale = modifiers.imageScale
+        let variant = match symbolTemplateVariant(
+            drawing,
+            iconTypeWeight(modifiers),
+            templateScale(scale)
+        ) {
+            Some(variant) -> variant
+            None -> {
+                log warn("the symbol has no drawing at this weight and scale", name)
+                return Artwork(svg: "").describe(context, modifiers)
+            }
+        }
+        // A template draws no step past large: the extra large step is its
+        // large drawing grown as the library's own symbols grow it.
+        var size = variant.em * iconTypeSize(modifiers)
+        if scale == .ExtraLarge {
+            size = size * iconScaleFactor(.ExtraLarge) / iconScaleFactor(.Large)
+        }
+        return Artwork(svg: variant.svg, points: size).describe(context, modifiers)
+    }
+}
+
+// The template row an image scale draws from.
+function templateScale(scale: borrow IconScale) -> SymbolTemplateScale {
+    match scale {
+        Small -> return .Small
+        Medium -> return .Medium
+        Large -> return .Large
+        ExtraLarge -> return .Large
+    }
+}
+
+// The drawings read so far, by name: a file is read the first time an image
+// names it, not each time the image is drawn.
+struct ImageDrawings {
+    var drawings: Map<String, String> = Map<String, String>()
+}
+
+// The drawing the app keeps under `name`, or nothing drawn when it keeps
+// none, which is said once.
+function imageDrawing(name: borrow String) -> String {
+    let previous = enterProcessScope()
+    if !ambientStateHas(StateSlot.imageDrawings) {
+        ambientStatePut(StateSlot.imageDrawings, nativeUserData(nativeState(ImageDrawings {})))
+    }
+    var state = nativeRecover<ImageDrawings>(ambientStateGet(StateSlot.imageDrawings))
+    let drawing = match state.drawings.value(copy name) {
+        Some(known) -> known
+        None -> {
+            let path = "Resources/Images/" + name + ".svg"
+            var read = ""
+            match readFile(path) {
+                Ok(contents) -> read = copy contents.text
+                Error(failure) -> log warn(
+                    "the app keeps no image by this name",
+                    path: path,
+                    failure
+                )
+            }
+            state.drawings.set(copy name, copy read)
+            read
+        }
+    }
+    ambientScopeEnter(previous)
+    return drawing
+}

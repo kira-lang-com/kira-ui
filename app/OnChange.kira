@@ -1,0 +1,38 @@
+import Foundation
+
+// `.onChange(of: value) { oldValue, newValue in ... }`, as SwiftUI's: runs
+// the action when a value the view is built with differs from the one it was
+// built with last, handing it the value it was and the value it is.
+//
+// A view is built again whenever the interface is, so the modifier keeps the
+// value it saw under the key its place in the build draws (`tapSeqKey`), the
+// same each build while the interface keeps its shape. The first build only
+// remembers the value.
+
+// The value an `.onChange` saw when the view was last built.
+struct ObservedValue<Value> {
+    var value: Value
+}
+
+extend Widget {
+    function onChange<Value>(of: Value, action: (Value, Value) -> Void) -> Any Widget {
+        let slot = slotKey("kiraui.change.", tapSeqKey())
+        if !ambientStateHasView(slot) {
+            ambientStatePutView(
+                copy slot,
+                nativeUserData(nativeState(ObservedValue<Value> { value: copy of }))
+            )
+            return self
+        }
+        var observed = nativeRecover<ObservedValue<Value>>(ambientStateGetView(slot))
+        if observed.value != of {
+            let old = copy observed.value
+            observed.value = copy of
+            action(move old, move of)
+            // What the action changed was read before it ran, so the
+            // interface is described again at once to show it.
+            redrawAfter(0.0)
+        }
+        return self
+    }
+}

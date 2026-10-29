@@ -1,0 +1,67 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// SwiftUI's `Menu { … } label: { … }`, and the inline picker a menu holds.
+
+@Derive(CaseIterable)
+enum KuiFocus {
+    DoNotDisturb
+    Sleep
+    Work
+}
+
+// An inline picker sets every option in place, each one press away, the
+// chosen one selected.
+construct KuiAnInlinePickerSetsItsOptionsInPlace() extends Test {
+    test {
+        var chosen = "Sleep"
+        let elements = kuiElements(
+            Picker(
+                title: "Focus",
+                selection: Binding<String> {
+                    get: { in
+                        return chosen
+                    },
+                    set: { value in
+                        chosen = value
+                    }
+                }
+            ) {
+                Text(content: "Do Not Disturb").tag("Do Not Disturb")
+                Text(content: "Sleep").tag("Sleep")
+                Text(content: "Work").tag("Work")
+            }.pickerStyle(.Inline)
+        )
+        var shown = ""
+        for element in elements {
+            shown = shown + element.label + (
+                element.traits.contains(AccessibilityTraits.isSelected) ? "*" : ""
+            ) + " "
+        }
+        let activated = elements[2].activate()
+        return "\(shown)\(activated) \(chosen)"
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok("Do Not Disturb Sleep* Work true Work")
+        return expected
+    }
+}
+
+// A menu written with a label is that view, one menu button named by it.
+construct KuiAMenuIsTheLabelItIsWrittenWith() extends Test {
+    test {
+        let elements = kuiElements(
+            Menu {
+                Button(title: "Sleep", action: { in })
+            } label: {
+                Text(content: "Focus")
+            }
+        )
+        return "\(elements.count) \(elements[0].role) \(elements[0].label) \(allCases_KuiFocus().count)"
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok("1 AccessibilityRole.MenuButton Focus 3")
+        return expected
+    }
+}

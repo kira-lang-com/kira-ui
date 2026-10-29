@@ -1,0 +1,112 @@
+import Foundation
+import KCoreAnimation
+
+// Alignment guides, resolved once everything is placed: a layer that
+// publishes one, and the layers that take their leading edge from it or stay
+// inside its span. Those that cover its box are in `LayerSpans`.
+
+extend CALayerDescription {
+    // Moves each follower's leading edge to the guide it follows, as published by
+    // the sublayers placed before it, in the follower's parent's coordinates.
+    function resolveGuides(borrow mut self) {
+        for i in 0..self.sublayers.count {
+            let tag = self.sublayers[i].layout.followsGuide
+            if tag != 0 {
+                var found = false
+                var at: Number = 0.0
+                for j in 0..i {
+                    if !found {
+                        let answer = self.sublayers[j].guideIn(tag)
+                        if answer.found {
+                            found = true
+                            at = self.sublayers[j].position.x + answer.x
+                        }
+                    }
+                }
+                if found {
+                    let trailing = self.sublayers[i].position.x + self.sublayers[i].size.width
+                    self.sublayers[i].position = Point { x: at, y: self.sublayers[i].position.y }
+                    self.sublayers[i].size = Size {
+                        width: max(trailing - at, 0.0),
+                        height: self.sublayers[i].size.height
+                    }
+                }
+            }
+            self.spanGuide(i)
+            self.keepWithinGuide(i)
+            self.sublayers[i].resolveGuides()
+        }
+    }
+}
+
+public struct CAGuideAnswer {
+    var found: Bool = false
+    var x: Number = 0.0
+    // The top of the layer publishing the guide.
+    var y: Number = 0.0
+    // How wide and tall the layer publishing the guide is.
+    var width: Number = 0.0
+    var height: Number = 0.0
+}
+
+extend CALayerDescription {
+    // Keeps the sublayer at `index` inside the span of the sibling that
+    // publishes the guide it stays within: where it was placed while it fits,
+    // slid along the span to where it does, and not drawn when the span is
+    // narrower than it is.
+    function keepWithinGuide(borrow mut self, index: Number) {
+        let tag = self.sublayers[index].layout.staysWithinGuide
+        if tag == 0 { return }
+        for j in 0..self.sublayers.count {
+            if j != index {
+                let answer = self.sublayers[j].guideIn(tag)
+                if answer.found {
+                    let start = self.sublayers[j].position.x + answer.x
+                    let width = self.sublayers[index].size.width
+                    if width > answer.width {
+                        self.sublayers[index].opacity = 0.0
+                        return
+                    }
+                    let x = clamp(
+                        self.sublayers[index].position.x,
+                        start,
+                        start + answer.width - width
+                    )
+                    self.sublayers[index].position = Point {
+                        x: x,
+                        y: self.sublayers[index].position.y
+                    }
+                    return
+                }
+            }
+        }
+    }
+}
+
+extend CALayerDescription {
+    // Where `tag` sits in a layer's own coordinates, as the layer or the first of
+    // its sublayers to publish it answers.
+    function guideIn(tag: Number) -> CAGuideAnswer {
+        if self.layout.guide == tag {
+            return CAGuideAnswer {
+                found: true,
+                x: self.layout.guideFraction * self.size.width + self.layout.guidePosition,
+                width: self.size.width,
+                height: self.size.height
+            }
+        }
+        for child in self.sublayers {
+            let answer = child.guideIn(tag)
+            if answer.found {
+                return CAGuideAnswer {
+                    found: true,
+                    x: child.position.x + answer.x,
+                    y: child.position.y + answer.y,
+                    width: answer.width,
+                    height: answer.height
+                }
+            }
+        }
+        return CAGuideAnswer {}
+    }
+}

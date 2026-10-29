@@ -1,0 +1,68 @@
+import Foundation
+import Ember
+
+// `kiraLayerPlatformRun`, which runs the application the way its platform
+// runs one. Where Ember opens windows, it runs the application in one, through
+// WindowRun.kira. A platform whose windows Ember does not open has a host of
+// its own that runs the application; reached here, it has nowhere to draw.
+// WindowRun.kira takes part only in a build for the platforms whose windows
+// Ember opens (KLF section 27.8), so only those builds name it.
+comptime macro KiraLayerPlatformRunner {
+    kind { function }
+    expand(input: Syntax) -> Syntax {
+        let windowed = match Build.platform() {
+            "macos" -> true
+            "ios" -> true
+            "windows" -> true
+            "linux" -> true
+            "android" -> true
+            "web" -> true
+            "unknown" -> true
+            else -> false
+        }
+        if !windowed {
+            return quote {
+                function kiraLayerPlatformRun(
+                    title: String,
+                    width: Number,
+                    height: Number,
+                    rootBuilder: borrow () -> Any Widget,
+                    transparent: Bool,
+                    engineFrame: borrow (borrow mut RenderFrame) -> Void,
+                    rebuildsEveryFrame: Bool,
+                    arguments: borrow [String]
+                ) {
+                    log fault(
+                        "this platform has no window to run the application in; its host runs it",
+                        application: title
+                    )
+                }
+            }
+        }
+        return quote {
+            function kiraLayerPlatformRun(
+                title: String,
+                width: Number,
+                height: Number,
+                rootBuilder: borrow () -> Any Widget,
+                transparent: Bool,
+                engineFrame: borrow (borrow mut RenderFrame) -> Void,
+                rebuildsEveryFrame: Bool,
+                arguments: borrow [String]
+            ) {
+                kiraLayerWindowRun(
+                    move title,
+                    width,
+                    height,
+                    rootBuilder,
+                    transparent,
+                    engineFrame,
+                    rebuildsEveryFrame,
+                    arguments
+                )
+            }
+        }
+    }
+}
+
+KiraLayerPlatformRunner!()

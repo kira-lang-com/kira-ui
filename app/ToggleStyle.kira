@@ -1,0 +1,171 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's `ToggleStyle`: how a toggle is drawn. A style makes the toggle's
+// body from its configuration, the label and the binding it flips, as
+// SwiftUI's `makeBody(configuration:)` does:
+//
+//     construct StarToggleStyle() extends ToggleStyle {
+//         function makeBody(configuration: borrow ToggleStyleConfiguration) -> Any Widget {
+//             let isOn = configuration.isOn
+//             return Button(action = { in isOn.toggle() }) {
+//                 Icon(symbol: isOn.get() ? .StarFill : .Star)
+//                 configuration.label
+//             }
+//         }
+//     }
+//
+//     Toggle(title: "Favorite", isOn: $favorite)
+//         .toggleStyle(StarToggleStyle {})
+//
+// Whatever a style draws, the toggle is one element that reads on or off and
+// flips (Controls.kira). A style that makes no body of its own is the
+// platform's choice, SwiftUI's `.automatic`: on a Mac a checkbox standing on
+// its own and a switch in a grouped form, a switch everywhere else.
+public construct ToggleStyle {
+    function makeBody(configuration: borrow ToggleStyleConfiguration) -> Any Widget {
+        return PlatformToggle(kind: .Automatic, configuration: copy configuration)
+    }
+}
+
+// SwiftUI's `ToggleStyleConfiguration`: what a style draws a toggle from.
+public struct ToggleStyleConfiguration {
+    // The toggle's title: the view written for it, its text, or nothing.
+    let label: Any Widget
+    let isOn: Binding<Bool>
+    // Whether the toggle stands for several values that are not all on.
+    let isMixed: Bool = false
+}
+
+// SwiftUI's `.automatic`.
+public construct DefaultToggleStyle() extends ToggleStyle {}
+
+// SwiftUI's `.switch`.
+public construct SwitchToggleStyle() extends ToggleStyle {
+    function makeBody(configuration: borrow ToggleStyleConfiguration) -> Any Widget {
+        return PlatformToggle(kind: .Switch, configuration: copy configuration)
+    }
+}
+
+// SwiftUI's `.checkbox`: a Mac's alone, as it is SwiftUI's. Elsewhere a toggle
+// asked for one is a switch.
+public construct CheckboxToggleStyle() extends ToggleStyle {
+    function makeBody(configuration: borrow ToggleStyleConfiguration) -> Any Widget {
+        return PlatformToggle(kind: .Checkbox, configuration: copy configuration)
+    }
+}
+
+enum PlatformToggleKind {
+    Automatic
+    Switch
+    Checkbox
+}
+
+public construct ToggleStyleLayer(style: Any ToggleStyle) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let resolved = modifierContextApply(modifiers, modifierDeltaToggleStyle(copy style))
+        return content.describe(context, resolved)
+    }
+}
+
+// The toggle a platform draws: a Mac's checkbox, whose title trails the box
+// and takes the press with it, or a switch, whose title leads it: across the
+// whole row on a phone, beside it on a Mac, and in the label's column of a
+// grouped form. Untitled, or under `.labelsHidden()`, it is the control alone.
+construct PlatformToggle(
+    kind: PlatformToggleKind,
+    configuration: ToggleStyleConfiguration
+) extends Widget {
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let isOn = configuration.isOn.get()
+        let onChange = configuration.isOn.set
+        let checkbox = toggleIsCheckbox(kind, modifiers)
+        let titled = !modifiers.labelsHidden && !describesNothing(
+            configuration.label.describe(context, modifiers)
+        )
+        var described = self.controlDescription(
+            titled,
+            checkbox,
+            isOn,
+            move onChange,
+            context,
+            modifiers
+        )
+        described.accessibilityCombined(AccessibilityNode { role: checkbox ? .CheckBox : .Switch })
+        return described
+    }
+
+    function controlDescription(
+        titled: Bool,
+        checkbox: Bool,
+        isOn: Bool,
+        onChange: (Bool) -> Void,
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        // In a grouped form the title is the row's label, and the control
+        // stands in the row's value.
+        if titled && modifiers.controlPresentation == .InsetGrouped {
+            let untitled = ToggleStyleConfiguration {
+                label: EmptyView(),
+                isOn: copy configuration.isOn
+            }
+            let row = LabeledRow(title: configuration.label.foregroundColor(rowLabelInk(true))) {
+                PlatformToggle(kind: kind, configuration: untitled)
+            }
+            return row.describe(context, modifiers)
+        }
+        if checkbox {
+            return checkboxDescription(
+                titled,
+                copy configuration.label,
+                isOn,
+                move onChange,
+                context,
+                modifiers
+            )
+        }
+        if !titled {
+            return ToggleSwitch(isOn: isOn, onChange: onChange).describe(context, modifiers)
+        }
+        if interfaceMode() == .AdaptiveDesktop {
+            let titled = HStack(alignment: .Center) {
+                configuration.label
+
+                ToggleSwitch(isOn: isOn, onChange: onChange)
+            }
+            .hugWidth()
+            return titled.describe(context, modifiers)
+        }
+        let row = HStack(alignment: .Center) {
+            configuration.label
+
+            Spacer()
+
+            ToggleSwitch(isOn: isOn, onChange: onChange)
+        }
+        return row.describe(context, modifiers)
+    }
+}
+
+// Whether a platform toggle of `kind` is drawn as a checkbox here: only on a
+// Mac, when asked for one or left to the platform outside a grouped form.
+function toggleIsCheckbox(kind: PlatformToggleKind, modifiers: borrow ModifierContext) -> Bool {
+    if interfaceMode() != .AdaptiveDesktop {
+        return false
+    }
+    match kind {
+        Automatic -> return modifiers.controlPresentation != .InsetGrouped
+        Switch -> return false
+        Checkbox -> return true
+    }
+}

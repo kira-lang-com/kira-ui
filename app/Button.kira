@@ -1,0 +1,438 @@
+import KiraLayout
+import Ember
+import Foundation
+import KCoreAnimation
+
+public enum ButtonRole {
+    Normal
+    Destructive
+}
+
+// SwiftUI's `ButtonStyle`, set with `.buttonStyle(...)` and inherited by every
+// button under it. `.Automatic` is the platform's choice for where the button
+// is: a menu's row, the bar's glass, a grouped list's accent words, and
+// borderless anywhere else. `.Borderless` is the label alone in the accent,
+// `.Plain` the label in its own ink, `.Bordered` the accent's words on a wash
+// of it in a capsule, and `.BorderedProminent` a capsule of the accent with
+// white words.
+public enum ButtonStyle {
+    Automatic
+    Borderless
+    Plain
+    Bordered
+    BorderedProminent
+}
+
+// SwiftUI's button is a LABEL and an action, and the label is a view:
+//
+//     Button(action: copy) {
+//         Label("Copy", systemImage: .DocOnDoc)
+//     }
+//
+// with `Button("Copy", action: copy)` as the shorthand for the case where the
+// label is only a run of text. Those are not two widgets — the second builds the
+// first's label out of a `Text` and hands it straight over — so they are one
+// name with two ways in, which is what an `init` on a construct-backed
+// declaration is. A widget that only ever took a String could not put a glyph,
+// a badge or a two-line label on a button at all. The cascading
+// `.foregroundColor(...)` names the label's ink, as it does on a bare Text.
+public construct Button(role: ButtonRole = .Normal, action: () -> Void,) extends Widget {
+    let label: some Widget
+
+    init(title: String, action: () -> Void) {
+        return Button(role: .Normal, action: action) {
+            Text(content: title)
+        }
+    }
+
+    init(title: String, role: ButtonRole, action: () -> Void) {
+        return Button(role: role, action: action) {
+            Text(content: title)
+        }
+    }
+
+    // One element, standing for its label, that presses the button.
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var described = self.styledDescription(context, modifiers)
+        described.accessibilityCombined(
+            accessibilityPressable(
+                .Button,
+                buttonPress(action, modifiers.controlPresentation),
+                modifiers
+            )
+        )
+        return described
+    }
+
+    function styledDescription(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let k = tapSeqKey()
+        // Taken before the label lowers, so a button in the label does not.
+        let shortcut = shortcutTake()
+        if !modifiers.disabled {
+            shortcutRegister(shortcut, menuChooseFn(action))
+        }
+        if modifiers.buttonStyle == .Automatic {
+            // In a menu a button is the menu's row or action: no fill of its
+            // own, the highlight is the menu's, and choosing it dismisses the
+            // menu.
+            match modifiers.controlPresentation {
+                MenuRow -> {
+                    layerActionRegister(k, menuChooseFn(action))
+                    menuExportRow(
+                        label.menuTitle(),
+                        shortcut,
+                        !modifiers.disabled,
+                        menuChooseFn(action)
+                    )
+                    if menuExportRecording() { return CALayerDescription {} }
+                    match role {
+                        Normal -> {}
+                        // A destructive row is set in the danger ink, glyph and title.
+                        Destructive -> {
+                            return menuRowDescription(
+                                context,
+                                modifierContextApply(
+                                    modifiers,
+                                    modifierDeltaForegroundColor(.Danger)
+                                ),
+                                k,
+                                shortcut,
+                                label
+                            )
+                        }
+                    }
+                    return menuRowDescription(context, modifiers, k, shortcut, label)
+                }
+                MenuAction -> {
+                    layerActionRegister(k, menuChooseFn(action))
+                    return menuActionDescription(context, modifiers, k, label)
+                }
+                Toolbar -> {
+                    layerActionRegister(k, action)
+                    return toolbarButtonDescription(context, modifiers, k, label)
+                }
+                TabBar, PhoneTabBar -> {
+                    layerActionRegister(k, action)
+                    return tabBarButtonDescription(context, modifiers, k, label)
+                }
+                InsetGrouped -> {}
+                Sidebar -> {}
+                SidebarCell -> {}
+                Standalone -> {}
+            }
+        }
+        layerActionRegister(k, action)
+        let labelModifiers = modifierContextForPresentation(modifiers)
+        match modifiers.buttonStyle {
+            Bordered -> return borderedButtonDescription(
+                context,
+                labelModifiers,
+                k,
+                role,
+                false,
+                label
+            )
+            BorderedProminent -> return borderedButtonDescription(
+                context,
+                labelModifiers,
+                k,
+                role,
+                true,
+                label
+            )
+            Plain -> return bareButtonDescription(context, labelModifiers, k, label)
+            // A Mac's automatic button is its push button, standing on its
+            // own and in a grouped form alike; a sidebar's stays its row.
+            Automatic -> {
+                if interfaceMode() == .AdaptiveDesktop && buttonPushes(
+                    modifiers.controlPresentation
+                ) {
+                    return borderedButtonDescription(context, labelModifiers, k, role, false, label)
+                }
+            }
+            Borderless -> {}
+        }
+        var inked = labelModifiers
+        if (
+            !modifiers.hasForegroundColor || modifiers.foregroundIsValue
+        ) && !modifiers.hasTextColor {
+            inked = modifierContextApply(
+                labelModifiers,
+                modifierDeltaForegroundColor(buttonInk(role, modifiers.disabled))
+            )
+        }
+        return bareButtonDescription(context, inked, k, label)
+    }
+}
+
+// What pressing a button here does: its action, and in a menu the menu's
+// dismissal after it.
+function buttonPress(action: () -> Void, presentation: borrow ControlPresentation) -> () -> Void {
+    match presentation {
+        MenuRow, MenuAction -> return menuChooseFn(move action)
+        Standalone, InsetGrouped, Sidebar, SidebarCell, Toolbar, TabBar, PhoneTabBar -> return action
+    }
+}
+
+// Whether a Mac draws an automatic button here as its push button: on its own
+// and in a grouped form, not as a sidebar's row.
+function buttonPushes(presentation: borrow ControlPresentation) -> Bool {
+    match presentation {
+        Standalone -> return true
+        InsetGrouped -> return true
+        Sidebar -> return false
+        SidebarCell -> return false
+        MenuRow -> return false
+        MenuAction -> return false
+        Toolbar -> return false
+        TabBar -> return false
+        PhoneTabBar -> return false
+    }
+}
+
+// A button's accent ink, where the ink is all it has: the accent, the danger
+// tint for a destructive role, and the tertiary ink while disabled.
+public function buttonInk(role: borrow ButtonRole, disabled: Bool) -> PrimaryColor {
+    if disabled {
+        return .Tertiary
+    }
+    match role {
+        Normal -> return .Accent
+        Destructive -> return .Danger
+    }
+}
+
+// The words on a Mac push button: the label ink, red for a destructive role,
+// and the tertiary ink while it cannot be pressed.
+function buttonPushInk(role: borrow ButtonRole, disabled: Bool) -> PrimaryColor {
+    if disabled {
+        return .Tertiary
+    }
+    match role {
+        Normal -> return .Primary
+        Destructive -> return .Danger
+    }
+}
+
+// The label alone as the button, its press on the label's own box.
+function bareButtonDescription(
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+    key: Number,
+    label: borrow Any Widget,
+) -> CALayerDescription {
+    var button = label.describe(
+        context,
+        buttonPressedModifiers(modifiers, key, context, buttonPressedTextOpacity)
+    )
+    button.hittable = !modifiers.disabled
+    button.hitKey = key
+    buttonPressTiming(button, key, context)
+    return button
+}
+
+// A capsule around the label: a wash of the button's ink under the ink's own
+// words, or, prominent, the ink itself under white words.
+function borderedButtonDescription(
+    context: borrow BuildContext,
+    unpressed: borrow ModifierContext,
+    key: Number,
+    role: borrow ButtonRole,
+    prominent: Bool,
+    label: borrow Any Widget,
+) -> CALayerDescription {
+    let modifiers = buttonPressedModifiers(unpressed, key, context, buttonPressedBorderedOpacity)
+    let size = buttonControlSizeMetrics(modifiers)
+    let ink = modifierPrimaryColor(buttonInk(role, modifiers.disabled), modifiers)
+    var fill = foundationRgba(ink.r, ink.g, ink.b, ink.a * buttonWashOpacity)
+    var words: PrimaryColor = buttonInk(role, modifiers.disabled)
+    // On a desktop a bordered button is the Mac's push button: the system
+    // fill, with its words in the label ink, and red only for a destructive
+    // role. The tinted wash is the iOS and iPadOS kit's.
+    if interfaceMode() == .AdaptiveDesktop {
+        fill = modifierBackgroundStyle(.Control, modifiers)
+        words = buttonPushInk(role, modifiers.disabled)
+    }
+    if prominent {
+        fill = copy ink
+        words = .White
+    }
+    // A value's ink is not the button's: a push button in a row's value
+    // keeps its own words, as it does anywhere else.
+    var labelModifiers = copy modifiers
+    if (!modifiers.hasForegroundColor || modifiers.foregroundIsValue) && !modifiers.hasTextColor {
+        labelModifiers = modifierContextApply(modifiers, modifierDeltaForegroundColor(move words))
+    }
+    // The label is set at the size's own type unless something above it set
+    // a font, as an iPad button's title is.
+    if !modifiers.hasFont && !modifiers.hasTypography {
+        labelModifiers = modifierContextApply(
+            labelModifiers,
+            modifierDeltaFont(size.fontSize, modifiers.fontWeight)
+        )
+    }
+    let radius = buttonBorderRadius(modifiers.buttonBorderShape, modifiers)
+    let described = label.describe(context, labelModifiers)
+    // The button stands the control size's height with its label centered in
+    // it and held its inset off the ends, as UIKit's and AppKit's do.
+    var horizontalInset = size.labelInset
+    var side: Number = 0.0
+    // A circle stands as wide as it is tall: the control's height, or the
+    // longer side of its label when that is more -- the size the label was
+    // given, when it was given one, else its own.
+    if modifiers.buttonBorderShape == .Circle {
+        horizontalInset = 0.0
+        let labelWidth = described.layout.fixedWidth >= 0.0
+        ? described.layout.fixedWidth
+        : described.layout.intrinsicWidth
+        let labelHeight = described.layout.fixedHeight >= 0.0
+        ? described.layout.fixedHeight
+        : described.layout.intrinsicHeight
+        side = max(size.height, max(labelWidth, labelHeight))
+    }
+    // The one label laid over the button as a ZStack lays its child, centered
+    // both ways: a button made wider or taller than its label, as an alert's
+    // are, keeps it in the middle. A stack would center it only across its
+    // axis.
+    var button = CALayerDescription {
+        layout: CALayoutIntent {
+            axis: .None,
+            widthFill: false,
+            heightFill: false,
+            minWidth: side,
+            minHeight: max(side, size.height),
+            paddingLeading: horizontalInset,
+            paddingTrailing: horizontalInset,
+            alignment: Point { x: 0.5, y: 0.5 }
+        },
+        hittable: !modifiers.disabled,
+        hitKey: key,
+        cornerRadius: radius,
+        content: .Solid(
+            CASolid {
+                fill: colorFromFoundation(modifierSurfaceFill(move fill, modifiers)),
+                cornerRadius: radius
+            }
+        ),
+        sublayers: [move described]
+    }
+    buttonPressTiming(button, key, context)
+    return button
+}
+
+// Whether the button under `key` is held down with the pointer still on it.
+function buttonHeld(key: Number, context: borrow BuildContext) -> Bool {
+    return key != 0 && context.pressedKey == key
+}
+
+// A held button, as the platform highlights one: its own inks -- the label's,
+// and a bordered one's fill -- lighten to `pressed` of themselves. The inks
+// carry it, not a pass over the whole layer, so the label stays its hue.
+function buttonPressedModifiers(
+    modifiers: borrow ModifierContext,
+    key: Number,
+    context: borrow BuildContext,
+    pressed: Number
+) -> ModifierContext {
+    if !buttonHeld(key, context) {
+        return copy modifiers
+    }
+    return modifierContextApply(modifiers, modifierDeltaOpacity(pressed))
+}
+
+// Held, it dims at once; let go, it eases back.
+function buttonPressTiming(
+    button: borrow mut CALayerDescription,
+    key: Number,
+    context: borrow BuildContext
+) {
+    if buttonHeld(key, context) {
+        button.animation = .Timed(immediateTiming())
+    }
+}
+
+// How far a held button dims: a text-only one to a lighter step of its ink, a
+// bordered one only a step.
+let buttonPressedTextOpacity: Number = 0.6
+let buttonPressedBorderedOpacity: Number = 0.7
+
+// How strong the wash of its ink a bordered button is drawn on.
+let buttonWashOpacity: Number = 0.15
+
+public construct ButtonStyleLayer(style: ButtonStyle) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let delta = modifierDeltaButtonStyle(style)
+        let resolved = modifierContextApply(modifiers, move delta)
+        return content.describe(context, resolved)
+    }
+}
+
+// SwiftUI's `ButtonBorderShape`: the outline of a bordered button.
+// `.Automatic` is a capsule at every control size, as iPadOS 26's is;
+// `.RoundedRectangle` is the theme's small rounded rectangle, and
+// `.RoundedRectangleRadius` names the radius.
+public enum ButtonBorderShape {
+    Automatic
+    Capsule
+    RoundedRectangle
+    RoundedRectangleRadius: Number
+    Circle
+}
+
+// A bordered button is sized at the control size in effect. On a desktop the
+// capsule stands at the Mac's own capsule size, 28 tall with a 13 title, for
+// regular and large alike; mini and small keep the Mac's. Elsewhere it is
+// iPadOS's: 28, 34 and 50 tall, its title at 15 and 17.
+public function buttonControlSizeMetrics(modifiers: borrow ModifierContext) -> ControlSizeMetrics {
+    if interfaceMode() == .AdaptiveDesktop {
+        match modifiers.controlSize {
+            Mini -> return desktopControlSizes.mini
+            Small -> return desktopControlSizes.small
+            Regular -> return desktopControlSizes.large
+            Large -> return desktopControlSizes.large
+        }
+    }
+    match modifiers.controlSize {
+        Mini -> return mobileControlSizes.mini
+        Small -> return mobileControlSizes.small
+        Regular -> return mobileControlSizes.regular
+        Large -> return mobileControlSizes.large
+    }
+}
+
+public function buttonBorderRadius(
+    shape: borrow ButtonBorderShape,
+    modifiers: borrow ModifierContext
+) -> Number {
+    match shape {
+        Automatic -> return containerShapeUnbounded()
+        RoundedRectangle -> return cornerRadiusImplementation(.Small, modifiers)
+        RoundedRectangleRadius(radius) -> return radius
+        Capsule -> return containerShapeUnbounded()
+        Circle -> return containerShapeUnbounded()
+    }
+}
+
+public construct ButtonBorderShapeLayer(shape: ButtonBorderShape) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let delta = modifierDeltaButtonBorderShape(shape)
+        let resolved = modifierContextApply(modifiers, move delta)
+        return content.describe(context, resolved)
+    }
+}

@@ -1,0 +1,37 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// SwiftUI's `Path`: lines and curves in points in the view's own box.
+
+// A stroked path is drawn on the whole of the box it is placed in, as the
+// outline of what was built.
+construct KuiAPathDrawsWhatItWasBuiltWith() extends Test {
+    test {
+        var described = kuiDescribe(
+            Path { path in
+                path.move (to: Point { x: 0.0, y: 0.0 })
+                path.addLine(to: Point { x: 20.0, y: 10.0 })
+                return
+            }.stroke(style: StrokeStyle { lineWidth: 2.0, lineCap: .Round }).frame(
+                width: 20.0,
+                height: 10.0
+            )
+        )
+        layOutLayerTree(described, 400.0, 300.0)
+        var drawn = copy described
+        while drawn.sublayers.count == 1 { drawn = copy drawn.sublayers[0] }
+        match drawn.content {
+            Icon(
+                icon
+            ) -> return "\(icon.wholeCanvas) \(drawn.size.width)x\(drawn.size.height) \(icon.svg)"
+            else -> return "nothing drawn"
+        }
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok(
+            "true 20x10 <svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 20 10\"><path d=\"M0 0L20 10\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"/></svg>"
+        )
+        return expected
+    }
+}

@@ -1,0 +1,394 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's `.popover(isPresented:arrowEdge:content:)` and
+// `.fullScreenCover(isPresented:content:)`: a view presented over the window
+// while a binding holds.
+//
+//     Button(action = { in shown.set(true) return }) { Text("Model") }
+//         .popover(isPresented = shown, arrowEdge = .Bottom) {
+//             ModelBrowser(model = model)
+//         }
+//
+// A popover is a card with an arrow on its `arrowEdge` that points at the
+// control that opened it, as a Mac's popover does; a press anywhere off the
+// card puts it away. A full-screen cover takes the whole window, as an
+// iPhone's does, and goes away only when the binding is set false. Either
+// hangs from the control the press that opened it landed on, and stays there
+// while it is out.
+
+// The scroll scope what a presentation shows lowers in: a page of its own,
+// apart from the window's (`scrollScopeEnterFloating`).
+let presentationScrollScope = 999998
+
+struct PresentedViewState {
+    var active: Bool = false
+    var anchor: Overlay = Overlay {}
+}
+
+// A popover's card and arrow, in points, as macOS 26 draws them.
+namespace PopoverMetrics {
+    let corner: Number = 16
+    // The arrow's base along the edge, and how far its tip stands off it.
+    let arrowWidth: Number = 22
+    let arrowHeight: Number = 11
+    // Between the arrow's tip and the control it points at.
+    let gap: Number = 2
+    // How far the arrow reaches into the card, over its outline.
+    let seam: Number = 1
+    // What lifts the card off the window.
+    let shadow: CAShadow = CAShadow {
+        color: CAColor { a: 0.3 },
+        radius: 18,
+        offset: Point { y: 6 }
+    }
+}
+
+public construct PopoverLayer(
+    isPresented: Binding<Bool>,
+    arrowEdge: Edge,
+    popover: Any Widget
+) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let described = content.describe(context, modifiers)
+        match presentationAnchor(isPresented.get()) {
+            Some(anchor) -> presentPopover(anchor, context, modifiers)
+            None -> {}
+        }
+        return described
+    }
+
+    function presentPopover(
+        anchor: borrow Overlay,
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) {
+        let band = tapSeqEnterOverlay()
+        let dismiss = tapSeqKey()
+        let shown = isPresented
+        layerActionRegister(
+            dismiss,
+            { in
+                shown.set(false)
+                return
+            }
+        )
+        let blocker = tapSeqKey()
+        layerActionRegister(blocker, layerNoop)
+        let scope = scrollScopeEnterFloating(presentationScrollScope)
+        var card = popover
+        .background(RoundedRectangle(cornerRadius: PopoverMetrics.corner, style: .Continuous))
+        .backgroundStyle(.Raised)
+        .themeBorder(.Subtle)
+        .describe(context, modifierContextForOverlay(modifiers))
+        let claimed = scrollScopeLeave(move scope)
+        let size = card.measure(context.viewportWidth)
+        card.layout.fixedWidth = size.width
+        card.layout.fixedHeight = size.height
+        card.cornerRadius = PopoverMetrics.corner
+        card.clipsChildren = true
+        card.hittable = true
+        card.hitKey = blocker
+        card.shadow = PopoverMetrics.shadow
+        let fill = colorFromFoundation(modifierBackgroundStyle(.Raised, modifiers))
+        let placed = popoverPlacement(anchor, size, arrowEdge, context)
+        tapSeqLeaveOverlay(band)
+        overlayPresent(
+            Overlay {
+                anchorX: placed.x,
+                anchorY: placed.y,
+                z: OverlayLevel.surface,
+                content: popoverCard(move card, size, placed, arrowEdge, fill),
+                dismissKey: dismiss
+            }
+        )
+    }
+}
+
+public construct FullScreenCoverLayer(
+    isPresented: Binding<Bool>,
+    cover: Any Widget
+) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var described = content.describe(context, modifiers)
+        // A cover hangs from no control, so the anchor its presentation
+        // keeps is not read.
+        match presentationAnchor(isPresented.get()) {
+            Some -> {
+                let band = tapSeqEnterOverlay()
+                // The cover takes every press: nothing under it is live.
+                let blocker = tapSeqKey()
+                layerActionRegister(blocker, layerNoop)
+                // The cover is opaque, as a screen of its own is, and holds
+                // its content inside the window's safe area, as an iPhone's
+                // cover keeps clear of the status bar and the home indicator.
+                let inset = context.safeArea
+                let scope = scrollScopeEnterFloating(presentationScrollScope)
+                var inner = cover.describe(
+                    insideSafeArea(context),
+                    modifierContextForOverlay(modifiers)
+                )
+                let claimed = scrollScopeLeave(move scope)
+                inner.layout.widthFill = false
+                inner.layout.heightFill = false
+                inner.layout.fixedWidth = context.viewportWidth - inset.leading - inset.trailing
+                inner.layout.fixedHeight = context.viewportHeight - inset.top - inset.bottom
+                inner.layout.offset = Point { x: inset.leading, y: inset.top }
+                let fill = colorFromFoundation(modifierBackgroundStyle(.Window, modifiers))
+                var shown = CALayerDescription {
+                    content: .Solid(CASolid { fill: fill }),
+                    layout: CALayoutIntent {
+                        widthFill: false,
+                        heightFill: false,
+                        fixedWidth: context.viewportWidth,
+                        fixedHeight: context.viewportHeight
+                    },
+                    sublayers: [move inner]
+                }
+                shown.hittable = true
+                shown.hitKey = blocker
+                tapSeqLeaveOverlay(band)
+                overlayPresent(
+                    Overlay {
+                        anchorW: context.viewportWidth,
+                        z: OverlayLevel.surface,
+                        content: move shown,
+                        dismissKey: blocker
+                    }
+                )
+                // What the cover hides is not there for assistive technology
+                // either.
+                presentationHideAccessibility(described)
+            }
+            None -> {}
+        }
+        return described
+    }
+}
+
+// The anchor a presentation hangs from while `shown` holds: the bounds of the
+// press that opened it, kept from the frame it was opened in. None while it
+// is not out.
+function presentationAnchor(shown: Bool) -> Overlay? {
+    let slot = slotKey("kiraui.presentation.", tapSeqKey())
+    if !ambientStateHasView(slot) {
+        ambientStatePutView(copy slot, nativeUserData(nativeState(PresentedViewState {})))
+    }
+    var state = nativeRecover<PresentedViewState>(ambientStateGetView(slot))
+    if !shown {
+        state.active = false
+        return .None
+    }
+    if !state.active {
+        state.anchor = pressAnchor()
+        state.active = true
+    }
+    return .Some(copy state.anchor)
+}
+
+// Where a popover's card and arrow stand in the window: the top-leading
+// corner of both together, and how far along its edge the arrow sits.
+struct PopoverPlacement {
+    let x: Number
+    let y: Number
+    let arrowAlong: Number
+}
+
+// The card on the side of the anchor away from `arrowEdge`, centered on it
+// and held inside the window's margin; the arrow at the anchor's middle,
+// kept off the card's rounded corners.
+function popoverPlacement(
+    anchor: borrow Overlay,
+    card: borrow Size,
+    arrowEdge: Edge,
+    context: borrow BuildContext
+) -> PopoverPlacement {
+    let margin = windowChromeMetrics().edgeInset
+    let middleX = anchor.anchorX + anchor.anchorW / 2.0
+    let middleY = anchor.anchorY + anchor.anchorH / 2.0
+    let reach = PopoverMetrics.arrowHeight + PopoverMetrics.gap
+    let lowest = PopoverMetrics.corner
+    return match arrowEdge {
+        Top -> horizontalPlacement(
+            middleX,
+            anchor.anchorY + anchor.anchorH + PopoverMetrics.gap,
+            card,
+            margin,
+            context
+        )
+        Bottom -> horizontalPlacement(
+            middleX,
+            anchor.anchorY - reach - card.height,
+            card,
+            margin,
+            context
+        )
+        Leading -> verticalPlacement(
+            anchor.anchorX + anchor.anchorW + PopoverMetrics.gap,
+            middleY,
+            card,
+            margin,
+            context
+        )
+        Trailing -> verticalPlacement(
+            anchor.anchorX - reach - card.width,
+            middleY,
+            card,
+            margin,
+            context
+        )
+    }
+}
+
+function horizontalPlacement(
+    middle: Number,
+    top: Number,
+    card: borrow Size,
+    margin: Number,
+    context: borrow BuildContext
+) -> PopoverPlacement {
+    let x = clamp(
+        middle - card.width / 2.0,
+        margin,
+        max(margin, context.viewportWidth - margin - card.width)
+    )
+    let along = clamp(
+        middle - x - PopoverMetrics.arrowWidth / 2.0,
+        PopoverMetrics.corner,
+        max(PopoverMetrics.corner, card.width - PopoverMetrics.corner - PopoverMetrics.arrowWidth)
+    )
+    return PopoverPlacement { x: x, y: top, arrowAlong: along }
+}
+
+function verticalPlacement(
+    left: Number,
+    middle: Number,
+    card: borrow Size,
+    margin: Number,
+    context: borrow BuildContext
+) -> PopoverPlacement {
+    let y = clamp(
+        middle - card.height / 2.0,
+        margin,
+        max(margin, context.viewportHeight - margin - card.height)
+    )
+    let along = clamp(
+        middle - y - PopoverMetrics.arrowWidth / 2.0,
+        PopoverMetrics.corner,
+        max(PopoverMetrics.corner, card.height - PopoverMetrics.corner - PopoverMetrics.arrowWidth)
+    )
+    return PopoverPlacement { x: left, y: y, arrowAlong: along }
+}
+
+// The card with its arrow beside it, both in one layer the size of the two.
+// The arrow is a square of the card's fill turned on its corner, half of it
+// cut away by a box the arrow's size, so what shows is the triangle whose
+// base meets the card.
+function popoverCard(
+    card: CALayerDescription,
+    size: borrow Size,
+    placed: borrow PopoverPlacement,
+    arrowEdge: Edge,
+    fill: borrow CAColor
+) -> CALayerDescription {
+    let width = PopoverMetrics.arrowWidth
+    let height = PopoverMetrics.arrowHeight
+    let side = width / sqrt(2.0)
+    let vertical = arrowEdge == .Top || arrowEdge == .Bottom
+    let boxWidth = vertical ? width : height + PopoverMetrics.seam
+    let boxHeight = vertical ? height + PopoverMetrics.seam : width
+    // Where the square's middle sits in the box: on the edge the card is on.
+    // The box reaches one point into the card, so the arrow covers the
+    // card's outline where it meets it and the two read as one shape.
+    let overlap = PopoverMetrics.seam
+    let middle = match arrowEdge {
+        Top -> Point { x: width / 2.0, y: height }
+        Bottom -> Point { x: width / 2.0, y: overlap }
+        Leading -> Point { x: height, y: width / 2.0 }
+        Trailing -> Point { x: overlap, y: width / 2.0 }
+    }
+    var square = CALayerDescription {
+        content: .Solid(CASolid { fill: copy fill }),
+        rotation: 0.785398163397448309,
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedWidth: side,
+            fixedHeight: side,
+            offset: Point { x: middle.x - side / 2.0, y: middle.y - side / 2.0 }
+        }
+    }
+    let boxOffset = match arrowEdge {
+        Top -> Point { x: placed.arrowAlong, y: 0.0 }
+        Bottom -> Point { x: placed.arrowAlong, y: size.height - overlap }
+        Leading -> Point { x: 0.0, y: placed.arrowAlong }
+        Trailing -> Point { x: size.width - overlap, y: placed.arrowAlong }
+    }
+    let arrow = CALayerDescription {
+        clipsChildren: true,
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedWidth: boxWidth,
+            fixedHeight: boxHeight,
+            offset: boxOffset
+        },
+        sublayers: [move square]
+    }
+    var placedCard = card
+    placedCard.layout.widthFill = false
+    placedCard.layout.heightFill = false
+    placedCard.layout.offset = match arrowEdge {
+        Top -> Point { x: 0.0, y: height }
+        Bottom -> Point {}
+        Leading -> Point { x: height, y: 0.0 }
+        Trailing -> Point {}
+    }
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedWidth: vertical ? size.width : size.width + height,
+            fixedHeight: vertical ? size.height + height : size.height
+        },
+        sublayers: [move placedCard, move arrow]
+    }
+}
+
+function presentationHideAccessibility(layer: borrow mut CALayerDescription) {
+    layer.accessibilityClear()
+    for index in 0..layer.sublayers.count { presentationHideAccessibility(layer.sublayers[index]) }
+}
+
+extend Widget {
+    // SwiftUI's `.popover(isPresented:arrowEdge:content:)`: `content` on a
+    // card with an arrow at `arrowEdge` that points at this view, while
+    // `isPresented` holds.
+    function popover(
+        isPresented: Binding<Bool>,
+        arrowEdge: Edge = .Top,
+        content: some Widget
+    ) -> Any Widget {
+        return PopoverLayer(isPresented: isPresented, arrowEdge: arrowEdge, popover: content) {
+            self
+        }
+    }
+
+    // SwiftUI's `.fullScreenCover(isPresented:content:)`: `content` over the
+    // whole window while `isPresented` holds.
+    function fullScreenCover(isPresented: Binding<Bool>, content: some Widget) -> Any Widget {
+        return FullScreenCoverLayer(isPresented: isPresented, cover: content) {
+            self
+        }
+    }
+}

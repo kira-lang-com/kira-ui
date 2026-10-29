@@ -1,0 +1,472 @@
+import KiraLayout
+import Ember
+import Foundation
+import KCoreAnimation
+
+public enum Material {
+    Flat
+    Frosted
+    LayeredGlass
+    // What is behind the WINDOW, blurred and tinted by the desktop compositor:
+    // the material a platform sidebar is made of.
+    //
+    // Frosted and LayeredGlass blur what the application drew underneath them.
+    // This one does not blur anything the application can see — the surface
+    // becomes a hole in the window and the compositor fills it with everything
+    // under the window, which is the only place that view exists. It needs a
+    // transparent window (RunWidgetInteractiveApp(transparent: true)); in an
+    // ordinary one there is no hole to fill and it draws flat.
+    WindowBackdrop
+}
+
+public enum SurfaceShape {
+    RegularRoundedRect
+    Squircle
+}
+
+public enum ContentMargins {
+    automatic: Number = 0.0
+    fixed: Number
+}
+
+public construct Widget {
+    @Required let body: Any Widget
+
+    // Emit the retained-tree description this widget reconciles into.
+    //
+    // The sole lowering: a widget produces the `CALayerDescription` the
+    // compositor reconciles into its retained `CALayerTree`, so a rebuild sets
+    // properties on layers that were already there and every change animates.
+    // Content leaves emit their content; containers emit sublayers; modifier
+    // layers mutate the description their child produced.
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        stateMarkPresent(self.wrappedStateKeys())
+        var described = self.body.describe(context, modifiers)
+        // The view's type is part of its identity, as SwiftUI's is: the
+        // layer it makes is never one another kind of view made.
+        described.kind = Number(hash(self.type.name))
+        return described
+    }
+
+    // The keys of the state this widget declares, which the compiler gives a
+    // widget with `@State` fields: described, the widget keeps it
+    // (StateLifetime.kira).
+    function wrappedStateKeys() -> [String] {
+        return []
+    }
+
+    // The words a menu row made of this widget shows: a `Text`'s, or a
+    // `Label`'s title. A widget made of anything else has none to export.
+    function menuTitle() -> String {
+        return ""
+    }
+
+    // Whether this widget is a `Section`, which a grouped list sets as one:
+    // the rows standing outside every section are grouped in sections of
+    // their own.
+    function isSection() -> Bool {
+        return false
+    }
+}
+
+public function surfaceMaterialSubtle() -> SurfaceTint {
+    return SurfaceTint(color: RGBAColor { r: 0.16, g: 0.19, b: 0.26, a: 0.88 })
+}
+
+public function transparentFoundationColor() -> FoundationColor {
+    return foundationRgba(0.0, 0.0, 0.0, 0.0)
+}
+
+// The tokens in effect for this widget: the theme in effect resolves them, and
+// the library's own theme is in effect when the application applied none.
+public function modifierTokens(modifiers: borrow ModifierContext) -> ThemeTokens {
+    if modifiers.hasTheme {
+        return modifiers.theme.tokens()
+    }
+    return defaultTokens()
+}
+
+// The library theme's tokens, resolved once for each scheme the window shows.
+// Every widget asks for them, often more than once, and resolving them is every
+// color in the theme run through its appearance.
+public struct TokenCache {
+    var scheme: PlatformScheme
+    var tokens: ThemeTokens
+}
+
+public function defaultTokens() -> ThemeTokens {
+    let scheme = interfaceScheme()
+    if !ambientStateHas(StateSlot.tokens) {
+        let made = TokenCache { scheme: scheme, tokens: defaultTheme.tokens() }
+        ambientStatePut(StateSlot.tokens, nativeUserData(nativeState(move made)))
+    }
+    var cache = nativeRecover<TokenCache>(ambientStateGet(StateSlot.tokens))
+    if cache.scheme != scheme {
+        cache.tokens = defaultTheme.tokens()
+        cache.scheme = scheme
+    }
+    return copy cache.tokens
+}
+
+public function primaryColorAsColor(
+    color: borrow PrimaryColor,
+    tokens: borrow ThemeTokens
+) -> RGBAColor {
+    match color {
+        Primary -> return tokens.foreground.primary
+        Secondary -> return tokens.foreground.secondary
+        Tertiary -> return tokens.foreground.tertiary
+        Quaternary -> return tokens.foreground.quaternary
+        Inverse -> return tokens.foreground.inverse
+        Success -> return tokens.tint.success
+        Warning -> return tokens.tint.warning
+        Danger -> return tokens.tint.danger
+        Accent -> return tokens.tint.accent
+        Red -> return tokens.palette.red
+        Orange -> return tokens.palette.orange
+        Yellow -> return tokens.palette.yellow
+        Green -> return tokens.palette.green
+        Mint -> return tokens.palette.mint
+        Teal -> return tokens.palette.teal
+        Cyan -> return tokens.palette.cyan
+        Blue -> return tokens.palette.blue
+        Indigo -> return tokens.palette.indigo
+        Purple -> return tokens.palette.purple
+        Pink -> return tokens.palette.pink
+        Brown -> return tokens.palette.brown
+        Gray -> return tokens.palette.gray
+        Black -> return RGBAColor { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }
+        White -> return RGBAColor { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+        Clear -> return RGBAColor { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }
+    }
+}
+
+public function modifierPrimaryColor(
+    color: PrimaryColor,
+    modifiers: borrow ModifierContext,
+) -> FoundationColor {
+    let tokens = modifierTokens(modifiers)
+    // SwiftUI's `.tint` is the accent of everything under it, so `.Accent`
+    // names the tint wherever one was set.
+    if color == .Accent && modifiers.hasTint && modifiers.tint != .Accent {
+        return foundationColor(primaryColorAsColor(modifiers.tint, tokens))
+    }
+    return foundationColor(primaryColorAsColor(color, tokens))
+}
+
+public function modifierTextColor(modifiers: borrow ModifierContext) -> FoundationColor {
+    if modifiers.hasTextColor {
+        return foundationColor(modifiers.textColor)
+    }
+    if modifiers.hasForegroundColor {
+        return modifierPrimaryColor(modifiers.foregroundColor, modifiers)
+    }
+    // The primary ink of the tokens IN EFFECT — the applied theme's, or the
+    // default style's when none was applied. A separate hardcoded ink for the
+    // unthemed case is how an application with no theme drew near-white text on
+    // the default style's light surface.
+    return foundationColor(modifierTokens(modifiers).foreground.primary)
+}
+
+public function modifierBackgroundStyle(
+    style: borrow BackgroundStyle,
+    modifiers: borrow ModifierContext,
+) -> FoundationColor {
+    let tokens = modifierTokens(modifiers)
+    match style {
+        Clear -> return transparentFoundationColor()
+        Window -> return foundationColor(tokens.background.canvas)
+        Surface -> return foundationColor(tokens.background.surface)
+        Raised -> return foundationColor(tokens.background.raised)
+        Control -> return foundationColor(tokens.fill.control)
+        Overlay -> return foundationColor(tokens.background.overlay)
+        Accent -> return foundationColor(tokens.tint.accent)
+        Selection -> return foundationColor(tokens.fill.selection)
+        Hover -> return foundationColor(tokens.fill.hover)
+    }
+}
+
+public function modifierSurfaceBorder(
+    fallback: FoundationColor,
+    modifiers: borrow ModifierContext,
+) -> FoundationColor {
+    if modifiers.hasThemeBorder {
+        let tokens = modifierTokens(modifiers)
+        match modifiers.themeBorder {
+            Subtle -> return modifierColor(foundationColor(tokens.border.subtle.color), modifiers)
+            Standard -> return modifierColor(
+                foundationColor(tokens.border.standard.color),
+                modifiers
+            )
+            Strong -> return modifierColor(foundationColor(tokens.border.strong.color), modifiers)
+            Focus -> return modifierColor(foundationColor(tokens.border.focus.color), modifiers)
+        }
+    }
+    return colorWithOpacity(fallback, modifiers.opacity)
+}
+
+public function modifierSurfaceFill(
+    fallback: FoundationColor,
+    modifiers: borrow ModifierContext,
+) -> FoundationColor {
+    if modifiers.hasFill {
+        return modifierColor(foundationColor(modifiers.fillColor), modifiers)
+    }
+    if modifiers.hasBackgroundStyle {
+        return modifierColor(
+            modifierBackgroundStyle(modifiers.backgroundStyle, modifiers),
+            modifiers
+        )
+    }
+    return colorWithOpacity(fallback, modifiers.opacity)
+}
+
+// What the window itself is painted in: the canvas of the theme in effect.
+public function modifierCanvas(modifiers: borrow ModifierContext) -> FoundationColor {
+    return modifierColor(foundationColor(modifierTokens(modifiers).background.canvas), modifiers)
+}
+
+public function foundationColor(color: RGBAColor) -> FoundationColor {
+    return foundationRgba(color.r, color.g, color.b, color.a)
+}
+
+public function foundationMaterial(material: borrow Material) -> FoundationMaterial {
+    match material {
+        Flat -> return .Flat
+        Frosted -> return .Frosted
+        LayeredGlass -> return .LiquidGlass
+        WindowBackdrop -> return .WindowBackdrop
+    }
+}
+
+public function foundationShape(shape: SurfaceShape) -> FoundationShape {
+    match shape {
+        RegularRoundedRect -> return .RegularRoundedRect
+        Squircle -> return .Squircle
+    }
+}
+
+public function uniformInsets(length: Number) -> EdgeInsets {
+    return EdgeInsets { top: length, trailing: length, bottom: length, leading: length }
+}
+
+// `.automatic` is the column's layout margin with any extra added on top;
+// `.fixed` is exactly the length it names.
+public function contentMarginsInset(
+    margins: ContentMargins,
+    modifiers: borrow ModifierContext
+) -> Number {
+    match margins {
+        automatic(extra) -> {
+            var inset = resolvedContentMargin(modifiers) + extra
+            if inset < 0.0 {
+                inset = 0.0
+            }
+            return inset
+        }
+        fixed(length) -> {
+            if length < 0.0 {
+                return 0.0
+            }
+            return length
+        }
+    }
+}
+
+// Each child's description, under the same inherited modifier context a child
+// receives.
+public function describedChildren(
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+    widgets: [Any Widget],
+) -> [CALayerDescription] {
+    var children: [CALayerDescription] = []
+    let childModifiers = modifierContextForChildren(modifiers)
+    for widget in widgets {
+        let child = widget.describe(context, childModifiers)
+        if !describesNothing(child) {
+            children.append(move child)
+        }
+    }
+    return children
+}
+
+public function lerp(a: Number, b: Number, t: Number) -> Number {
+    return a + (b - a) * t
+}
+
+public function lerpColor(start: borrow RGBAColor, end: borrow RGBAColor, t: Number) -> RGBAColor {
+    return RGBAColor {
+        r: lerp(start.r, end.r, t),
+        g: lerp(start.g, end.g, t),
+        b: lerp(start.b, end.b, t),
+        a: lerp(start.a, end.a, t)
+    }
+}
+
+public function colorWithOpacity(
+    color: borrow FoundationColor,
+    opacity: Number
+) -> FoundationColor {
+    return foundationRgba(color.r, color.g, color.b, color.a * opacity)
+}
+
+public function effectWithOpacity(
+    effect: borrow FoundationEffect,
+    opacity: Number
+) -> FoundationEffect {
+    match effect {
+        BackdropGlow(glow) -> {
+            return .BackdropGlow(
+                Glow {
+                    color: colorWithOpacity(glow.color, opacity),
+                    radius: glow.radius,
+                    intensity: glow.intensity
+                }
+            )
+        }
+        LayerGlow(glow) -> {
+            return .LayerGlow(
+                Glow {
+                    color: colorWithOpacity(glow.color, opacity),
+                    radius: glow.radius,
+                    intensity: glow.intensity
+                }
+            )
+        }
+    }
+}
+
+// Structural modifiers rebuild one FoundationView node to change its layout or
+// surface shape. Their children are transferred unchanged; semantic modifiers
+// are consumed before lowering and never walk a completed descendant tree.
+
+public function identityEffects(effects: [FoundationEffect]) -> [FoundationEffect] {
+    return effects
+}
+
+public function modifierColor(
+    color: FoundationColor,
+    modifiers: borrow ModifierContext,
+) -> FoundationColor {
+    return colorWithOpacity(color, modifiers.opacity)
+}
+
+public function modifierEffects(
+    effects: [FoundationEffect],
+    modifiers: borrow ModifierContext,
+) -> [FoundationEffect] {
+    if modifiers.opacity == 1.0 {
+        return effects
+    }
+    var adjusted: [FoundationEffect] = []
+    for effect in effects {
+        adjusted.append(effectWithOpacity(effect, modifiers.opacity))
+    }
+    return adjusted
+}
+
+public function cornerRadiusImplementation(
+    style: CornerRadius,
+    modifiers: borrow ModifierContext,
+) -> Number {
+    return modifierCornerRadius(modifiers, style)
+}
+
+public function spacingImplementation(
+    style: Spacing,
+    modifiers: borrow ModifierContext,
+) -> Number {
+    return modifierSpacing(modifiers, style)
+}
+
+// A button on the window's bar: its label in the bar's ink on no fill of its
+// own, because the glass under its group is its surface. Its box is the whole
+// of its piece of glass -- as tall, a symbol centered in a square of it, words
+// held off its ends -- so a press anywhere on the glass is a press on it. Held
+// down, it is the glass under it that answers.
+public function toolbarButtonDescription(
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+    key: Number,
+    label: borrow Any Widget,
+) -> CALayerDescription {
+    let metrics = windowChromeMetrics()
+    var described = label.describe(context, modifierContextForPresentation(modifiers))
+    described.layout.widthFill = false
+    described.layout.heightFill = false
+    let inset = toolbarLabelInset(described, metrics)
+    return CALayerDescription {
+        hittable: !modifiers.disabled,
+        hitKey: key,
+        opacity: modifiers.disabled ? 0.4 : 1.0,
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedHeight: metrics.itemHeight,
+            minWidth: metrics.itemWidth,
+            paddingLeading: inset,
+            paddingTrailing: inset,
+            alignment: Point { x: 0.5, y: 0.5 }
+        },
+        sublayers: [described]
+    }
+}
+
+// How far a bar button holds its label off its ends: a symbol sits in the
+// square the item's width makes and needs nothing more, words take the bar's
+// label inset.
+public function toolbarLabelInset(
+    label: borrow CALayerDescription,
+    metrics: borrow WindowChromeMetrics
+) -> Number {
+    if drawsOnlySymbol(label) {
+        return 0.0
+    }
+    return metrics.labelInset
+}
+
+// Whether a description draws one symbol and nothing else: the glyph itself,
+// or boxes around it that draw nothing of their own.
+public function drawsOnlySymbol(layer: borrow CALayerDescription) -> Bool {
+    match layer.content {
+        Icon(i) -> return true
+        Empty -> {
+            if layer.sublayers.count != 1 {
+                return false
+            }
+            return drawsOnlySymbol(layer.sublayers[0])
+        }
+        Text(t) -> return false
+        Solid(s) -> return false
+        Glass(g) -> return false
+        Gradient(r) -> return false
+        Texture(x) -> return false
+    }
+}
+
+// Whether a fill is dark enough that light ink reads on it. The usual weighted
+// luminance, so a saturated accent answers the way the eye does rather than the
+// way an average of three channels would.
+public function colorIsDark(fill: borrow FoundationColor) -> Bool {
+    return (0.2126 * fill.r + 0.7152 * fill.g + 0.0722 * fill.b) < 0.5
+}
+
+// The border a widget is drawn in: the named `.themeBorder(...)` when one is in
+// effect, the subtle hairline otherwise. Color and width together, because a
+// border is both.
+public function modifierResolvedBorder(modifiers: borrow ModifierContext) -> ResolvedBorder {
+    let tokens = modifierTokens(modifiers)
+    if !modifiers.hasThemeBorder {
+        return tokens.border.subtle
+    }
+    match modifiers.themeBorder {
+        Subtle -> return tokens.border.subtle
+        Standard -> return tokens.border.standard
+        Strong -> return tokens.border.strong
+        Focus -> return tokens.border.focus
+    }
+}

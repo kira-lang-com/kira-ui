@@ -1,0 +1,60 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's `.statusBarHidden(_:)`: a view that asks for the status bar to be
+// hidden while it is shown, as a game or a video played over the whole screen
+// does. Any view in the window that asks hides it; the host reads what the
+// last build asked (`statusBarHiddenRequested`) and tells the platform, whose
+// status bar otherwise stands over everything.
+//
+//     GameView()
+//     .statusBarHidden()
+
+// What the build under way has asked of the status bar.
+struct StatusBarRequest {
+    var hidden: Bool = false
+}
+
+function statusBarRequestEnsure() {
+    if !ambientStateHas(StateSlot.statusBar) {
+        ambientStatePut(StateSlot.statusBar, nativeUserData(nativeState(StatusBarRequest {})))
+    }
+}
+
+// Forgets what the last build asked, before the next one.
+public function statusBarRequestBegin() {
+    statusBarRequestEnsure()
+    var request = nativeRecover<StatusBarRequest>(ambientStateGet(StateSlot.statusBar))
+    request.hidden = false
+}
+
+// Whether a view in the last build asked for the status bar to be hidden.
+public function statusBarHiddenRequested() -> Bool {
+    statusBarRequestEnsure()
+    return nativeRecover<StatusBarRequest>(ambientStateGet(StateSlot.statusBar)).hidden
+}
+
+public construct StatusBarHiddenLayer(hidden: Bool) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        if hidden {
+            statusBarRequestEnsure()
+            var request = nativeRecover<StatusBarRequest>(ambientStateGet(StateSlot.statusBar))
+            request.hidden = true
+        }
+        return content.describe(context, modifiers)
+    }
+}
+
+extend Widget {
+    // SwiftUI's `.statusBarHidden(_:)`.
+    function statusBarHidden(hidden: Bool = true) -> Any Widget {
+        return StatusBarHiddenLayer(hidden: hidden) {
+            self
+        }
+    }
+}

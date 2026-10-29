@@ -1,0 +1,48 @@
+import KiraUI
+import Foundation
+
+// Isolated compositor passes whose targets change size on every toggle: a
+// faded group inside a blurred one, each resized by the press.
+construct PassView() extends Widget {
+    @State var big: Bool = false
+
+    body {
+        VStack {
+            Button(action: { in
+                big = !big
+                return
+            }) {
+                Text("Toggle")
+            }
+            VStack {
+                VStack {
+                    Text("faded group one")
+                    Text("faded group two")
+                }
+                .frame(width: big ? 520.0 : 240.0, height: big ? 300.0 : 120.0)
+                .opacity(0.5)
+                Text("blurred sibling")
+            }
+            .frame(width: big ? 640.0 : 320.0, height: big ? 420.0 : 220.0)
+            .blur(radius: scaledMetric(4.0))
+            .animation(.Default)
+        }
+        .padding()
+    }
+}
+
+@Main
+function main() {
+    let bundleIdentifier: String = klist!("Info.klist", "BundleIdentifier")
+    RunKiraWindowApp(
+        "PassRepro",
+        900,
+        700,
+        { in
+            return PassView()
+        },
+        noopEngineFrame,
+        false,
+        move bundleIdentifier
+    )
+}

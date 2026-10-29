@@ -1,0 +1,401 @@
+import Foundation
+
+// KiraUI's canonical style vocabulary. An application fills the tokens once,
+// and component style values are construct-backed updates of the same
+// implementation.
+//
+// Color tokens are separated by what they are FOR, never mixed in one struct:
+//
+//   palette      the standard colors — what `.foregroundColor(.Blue)` resolves
+//   foregrounds  the content hierarchy: primary through quaternary ink
+//   backgrounds  the elevation roles a container paints
+//   fills        control interiors and interaction washes
+//   tints        the accent and the semantic roles
+//   borders      separator and focus hairlines, color and width together
+//   materials    frosted and Liquid Glass, including the glass wash
+
+// The presentation a style's tokens are authored around. A style declares the
+// branch it wants by default; the host environment overrides it with
+// KIRA_UI_APPEARANCE=light|dark. Without this the only way an application could
+// pick a default was to re-encode the choice inside every single adaptive token,
+// which is exactly the duplication the token vocabulary exists to remove.
+public enum Appearance {
+    Light
+    Dark
+}
+
+public struct AdaptiveColor {
+    let light: RGBAColor
+    let dark: RGBAColor
+}
+
+// The standard colors, one adaptive pair per name. These are the values behind
+// `PrimaryColor` — a theme retunes the whole palette (a softer red, a warmer
+// gray) and every `.foregroundColor(.Red)` in the application follows.
+public struct StylePaletteTokens {
+    let red: AdaptiveColor
+    let orange: AdaptiveColor
+    let yellow: AdaptiveColor
+    let green: AdaptiveColor
+    let mint: AdaptiveColor
+    let teal: AdaptiveColor
+    let cyan: AdaptiveColor
+    let blue: AdaptiveColor
+    let indigo: AdaptiveColor
+    let purple: AdaptiveColor
+    let pink: AdaptiveColor
+    let brown: AdaptiveColor
+    let gray: AdaptiveColor
+}
+
+// The content hierarchy: how loudly a run of text or an icon speaks. `inverse`
+// is the ink that stays readable ON a filled control — without it, filled
+// buttons hardcode white and go unreadable in a light theme.
+public struct StyleForegroundTokens {
+    let primary: AdaptiveColor
+    let secondary: AdaptiveColor
+    let tertiary: AdaptiveColor
+    let quaternary: AdaptiveColor
+    let inverse: AdaptiveColor
+}
+
+// The elevation roles a container paints, bottom to top.
+public struct StyleBackgroundTokens {
+    let canvas: AdaptiveColor
+    let surface: AdaptiveColor
+    let raised: AdaptiveColor
+    let overlay: AdaptiveColor
+}
+
+// Control interiors and interaction washes. `hover` and `selection` are
+// declared rather than derived so a theme can hold a selection band that is not
+// literally its accent at some alpha.
+public struct StyleFillTokens {
+    let control: AdaptiveColor
+    let hover: AdaptiveColor
+    let selection: AdaptiveColor
+}
+
+// The accent and the semantic roles. These are intents, not hues: a destructive
+// button asks for `danger`, never for `palette.red`.
+public struct StyleTintTokens {
+    let accent: AdaptiveColor
+    let success: AdaptiveColor
+    let warning: AdaptiveColor
+    let danger: AdaptiveColor
+}
+
+public struct StyleCornerRadiusTokens {
+    let none: Number
+    let small: Number
+    let medium: Number
+    let large: Number
+    let extraLarge: Number
+    let capsule: Number
+}
+
+public struct StyleSpacingTokens {
+    // The gap a stack leaves between its children when it asks for none in
+    // particular: SwiftUI's `Spacing.defaultValue`, 8 by 8 in SwiftUICore.
+    let standard: Number
+    let none: Number
+    let micro: Number
+    let extraSmall: Number
+    let small: Number
+    let medium: Number
+    let large: Number
+    let extraLarge: Number
+    let section: Number
+}
+
+public struct FontImplementation {
+    let size: Number
+    let weight: FontWeight
+    let lineHeight: Number
+    let tracking: Number
+}
+
+// Every entry here must be reachable from `.typography(...)`. `control` and
+// `title` are required tokens on the style, so leaving them out of this enum
+// left applications with no way to ask for the font their own theme declared —
+// which is how explicit `.font(size:weight:)` calls creep back in.
+public enum TypographyStyle {
+    caption
+    body
+    control
+    subheadline
+    callout
+    caption2
+    bodyEmphasis
+    footnote
+    overline
+    label
+    section
+    headline
+    title
+    title1
+    title2
+    title3
+    largeTitle
+}
+
+public enum Spacing {
+    // The platform's gap between adjacent views, what SwiftUI gives a stack
+    // whose spacing is nil.
+    Default
+    None
+    Micro
+    ExtraSmall
+    Small
+    Medium
+    Large
+    ExtraLarge
+    Section
+    // A gap the layout computes rather than the theme owns, such as a grid's
+    // gutter derived from its tile size or a catalog metric.
+    Length(Number)
+}
+
+// Corner radii were the one token family with no way to ask for them by name, so
+// every container carried a literal and a theme could not restate its own shape
+// language. These are the same six steps StyleCornerRadiusTokens declares.
+public enum CornerRadius {
+    None
+    Small
+    Medium
+    Large
+    ExtraLarge
+    Capsule
+}
+
+public struct StyleTypographyTokens {
+    let caption: FontImplementation
+    let caption2: FontImplementation
+    let callout: FontImplementation
+    let body: FontImplementation
+    let control: FontImplementation
+    let title: FontImplementation
+    let bodyEmphasis: FontImplementation = FontImplementation {
+        size: 14.0,
+        weight: .SemiBold,
+        lineHeight: 20.0,
+        tracking: 0.0
+    }
+    let subheadline: FontImplementation = FontImplementation {
+        size: 13.0,
+        weight: .Regular,
+        lineHeight: 18.0,
+        tracking: 0.0
+    }
+    let footnote: FontImplementation = FontImplementation {
+        size: 11.0,
+        weight: .Regular,
+        lineHeight: 15.0,
+        tracking: 0.0
+    }
+    let overline: FontImplementation = FontImplementation {
+        size: 10.0,
+        weight: .SemiBold,
+        lineHeight: 13.0,
+        tracking: 0.5
+    }
+    let label: FontImplementation = FontImplementation {
+        size: 12.0,
+        weight: .SemiBold,
+        lineHeight: 16.0,
+        tracking: 0.0
+    }
+    let section: FontImplementation = FontImplementation {
+        size: 16.0,
+        weight: .Bold,
+        lineHeight: 20.0,
+        tracking: 0.0
+    }
+    let headline: FontImplementation = FontImplementation {
+        size: 18.0,
+        weight: .SemiBold,
+        lineHeight: 23.0,
+        tracking: 0.0
+    }
+    let title1: FontImplementation = FontImplementation {
+        size: 30.0,
+        weight: .Bold,
+        lineHeight: 36.0,
+        tracking: -0.3
+    }
+    let title2: FontImplementation = FontImplementation {
+        size: 24.0,
+        weight: .Bold,
+        lineHeight: 29.0,
+        tracking: -0.2
+    }
+    let title3: FontImplementation = FontImplementation {
+        size: 28.0,
+        weight: .Bold,
+        lineHeight: 34.0,
+        tracking: -0.2
+    }
+    let largeTitle: FontImplementation = FontImplementation {
+        size: 34.0,
+        weight: .Regular,
+        lineHeight: 41.0,
+        tracking: 0.4
+    }
+}
+
+// A border is its color and its width together. The color lives here, adaptive,
+// rather than pointing back into a shared color struct: a hairline's color is a
+// border decision, not a general one.
+public struct BorderImplementation {
+    let color: AdaptiveColor
+    let width: Number
+}
+
+public struct StyleBorderTokens {
+    let none: BorderImplementation
+    let subtle: BorderImplementation
+    let standard: BorderImplementation
+    let strong: BorderImplementation
+    let focus: BorderImplementation
+}
+
+public enum MaterialLevel {
+    Low
+    Medium
+    High
+    XHigh
+}
+
+public struct FrostedMaterialImplementation {
+    let level: MaterialLevel
+}
+
+public struct LiquidGlassMaterialImplementation {
+    // Liquid Glass is its own material family. It is not an ultrathin/thin/
+    // regular/thick blur-material rung, so there is deliberately no `level`.
+    // The platform element owns its wash, blur and border stack; a theme may
+    // still opt out of its edge treatment or shade the material via `glassTint`.
+    let edgeLighting: Bool
+}
+
+// The wash a glass surface shades itself with belongs to the material, so it
+// lives with the material tokens rather than among content colors.
+public struct StyleMaterialTokens {
+    let frosted: FrostedMaterialImplementation
+    let liquidGlass: LiquidGlassMaterialImplementation
+    let glassTint: AdaptiveColor = AdaptiveColor {
+        light: RGBAColor { r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
+        dark: RGBAColor { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+    }
+}
+
+public enum ShadowLevel {
+    Light
+    Medium
+    Heavy
+}
+
+public struct ShadowEffect {
+    let level: ShadowLevel
+}
+
+// The default palette is the system palette: one adaptive pair per standard
+// color, the darker branch tuned for dark backdrops.
+public function defaultStylePaletteTokens() -> StylePaletteTokens {
+    return copy catalogPalette
+}
+
+public function defaultStyleForegroundTokens() -> StyleForegroundTokens {
+    return copy catalogForegrounds
+}
+
+public function defaultStyleBackgroundTokens() -> StyleBackgroundTokens {
+    return copy catalogBackgrounds
+}
+
+public function defaultStyleFillTokens() -> StyleFillTokens {
+    return copy catalogFills
+}
+
+public function defaultStyleTintTokens() -> StyleTintTokens {
+    return copy catalogTints
+}
+
+public function defaultStyleCornerRadiusTokens() -> StyleCornerRadiusTokens {
+    return StyleCornerRadiusTokens {
+        none: 0.0,
+        small: 8.0,
+        medium: 12.0,
+        large: 18.0,
+        extraLarge: 24.0,
+        capsule: ShapeLimits.maximumRadius
+    }
+}
+
+public function defaultStyleSpacingTokens() -> StyleSpacingTokens {
+    return StyleSpacingTokens {
+        standard: 8.0,
+        none: 0.0,
+        micro: 2.0,
+        extraSmall: 4.0,
+        small: 8.0,
+        medium: 12.0,
+        large: 18.0,
+        extraLarge: 24.0,
+        section: 32.0
+    }
+}
+
+public function defaultStyleTypographyTokens() -> StyleTypographyTokens {
+    return catalogTypography()
+}
+
+public function defaultStyleBorderTokens() -> StyleBorderTokens {
+    return copy catalogBorders
+}
+
+public function defaultStyleMaterialTokens() -> StyleMaterialTokens {
+    return StyleMaterialTokens {
+        frosted: FrostedMaterialImplementation { level: .Medium },
+        liquidGlass: LiquidGlassMaterialImplementation { edgeLighting: true }
+    }
+}
+
+public construct StyleImplementation {
+    @Required let palette: StylePaletteTokens
+    @Required let foregrounds: StyleForegroundTokens
+    @Required let backgrounds: StyleBackgroundTokens
+    @Required let fills: StyleFillTokens
+    @Required let tints: StyleTintTokens
+    @Required let cornerRadii: StyleCornerRadiusTokens
+    @Required let spacing: StyleSpacingTokens
+    @Required let typography: StyleTypographyTokens
+    @Required let borders: StyleBorderTokens
+    @Required let materials: StyleMaterialTokens
+    // The drawings behind the symbol names, so a theme can redraw a glyph the
+    // way it retunes a color.
+    let symbols: StyleSymbolTokens = StyleSymbolTokens {}
+    // Which branch of every AdaptiveColor this style presents when the host has
+    // no appearance preference.
+    let appearance: Appearance = .Dark
+    // The grouped token is the canonical source; this flattened member is the
+    // component-override surface for Liquid Glass behavior.
+    let liquidGlass: LiquidGlassMaterialImplementation = LiquidGlassMaterialImplementation {
+        edgeLighting: true
+    }
+    let additionalEffect: [ShadowEffect] = []
+    let thickness: Number = 1.0
+}
+
+public construct DefaultStyle() extends StyleImplementation {
+    let palette = defaultStylePaletteTokens()
+    let foregrounds = defaultStyleForegroundTokens()
+    let backgrounds = defaultStyleBackgroundTokens()
+    let fills = defaultStyleFillTokens()
+    let tints = defaultStyleTintTokens()
+    let cornerRadii = defaultStyleCornerRadiusTokens()
+    let spacing = defaultStyleSpacingTokens()
+    let typography = defaultStyleTypographyTokens()
+    let borders = defaultStyleBorderTokens()
+    let materials = defaultStyleMaterialTokens()
+}

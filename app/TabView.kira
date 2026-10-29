@@ -1,0 +1,712 @@
+import Foundation
+import Ember
+import KiraLayout
+import KCoreAnimation
+
+// Top-level application destinations, matching SwiftUI's `TabView`:
+//
+//     @State var selection: Destination = .home
+//
+//     TabView(selection: $selection) {
+//         Tab(title: "Home", systemImage: .House, value: Destination.home) { HomePage() }
+//         Tab(title: "Search", systemImage: .Search, value: Destination.search) { SearchPage() }
+//     }
+//
+// or, as SwiftUI's views written before `Tab` do, any view tagged with its
+// value and given the item it shows on the bar:
+//
+//     HomePage()
+//         .tag(Destination.home)
+//         .tabItem { Label(title: "Home", systemImage: .House) }
+//
+// A tab is selected when its value is the selection, and pressing it makes it
+// so (Tag.kira). The selected tab's content is the window's content. Every tab puts
+// itself on the window's chrome as it is lowered, and the chrome floats them
+// in one capsule of glass: in the toolbar's row, as iPad does, and at the foot
+// of the screen on a phone, as iPhone does.
+
+// Whether a tab view's bar floats at the foot of the window, as a phone's
+// does, rather than in the toolbar's row.
+public function tabBarAtFoot(context: borrow BuildContext) -> Bool {
+    return resolvedNavigationDevice(context.viewportWidth) == .Phone
+}
+
+// The tab `entry` is, shown on the bar as `item`: it puts itself on the bar,
+// and its content is the window's when it is the one selected. The content
+// is built outside the tab view, so a tag inside it is not taken for a tab.
+public function tabDescribed(
+    entry: TagEntry,
+    item: borrow Any Widget,
+    content: borrow Any Widget,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let selected = entry.selected
+    var shown = CALayerDescription {}
+    if tabBarAtFoot(context) {
+        shown = phoneTabBarItem(item, selected, copy entry.select, context, modifiers)
+    } else {
+        shown = tabBarItem(item, selected, copy entry.select, context, modifiers)
+    }
+    // A tab is one element, reading its title, that selects it.
+    var node = accessibilityPressable(.Tab, copy entry.select, modifiers)
+    if selected {
+        node.traits = node.traits.union(AccessibilityTraits.isSelected)
+    }
+    shown.accessibilityCombined(move node)
+    let place = chromeTabCount()
+    chromeAppend(.Tab, ToolbarEntry { content: move shown })
+    // A tab not selected keeps its state, as each of SwiftUI's does.
+    let kept = slotKey("kiraui.tab.", place).name
+    if !selected {
+        stateScopeRetain(kept)
+        return CALayerDescription {}
+    }
+    let previous = tagEnter(TagEnvironment {})
+    stateScopeRecord(kept)
+    var described = content.describe(context, modifiers)
+    stateScopeRecorded()
+    tagLeave(move previous)
+    // Each tab's content is its own layers, as each of UIKit's tabs is its
+    // own view controller: a tab chosen shows at once where it stands, and
+    // nothing of the one before is taken over and moved to it.
+    if described.key == 0 {
+        described.key = tabContentKey + place
+    }
+    return described
+}
+
+// Where the keys a tab's content takes start: past any a view gives itself.
+let tabContentKey: Number = 7340000
+
+@Instance(Number)
+@Instance(String)
+public construct Tab<Value>(title: String, systemImage: Symbol, value: Value) extends Widget {
+    let content: some Widget
+
+    // The iPad's bar names a tab by its title alone; the symbol is for the
+    // sidebar a tab view becomes, and for a phone's bar, which stacks it over
+    // the title.
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        match tagEnvironment().selector {
+            Some(selector) -> {
+                if selector.role == .Tab {
+                    if tabBarAtFoot(context) {
+                        return tabDescribed(
+                            tagEntry(selector, value),
+                            Label(title: title, systemImage: systemImage),
+                            content,
+                            context,
+                            modifiers
+                        )
+                    }
+                    return tabDescribed(
+                        tagEntry(selector, value),
+                        Text(content: title),
+                        content,
+                        context,
+                        modifiers
+                    )
+                }
+            }
+            None -> {}
+        }
+        return content.describe(context, modifiers)
+    }
+}
+
+extend Widget {
+    // What this view shows on a tab view's bar.
+    function tabItem(label: some Widget) -> Any Widget {
+        return TabItemLayer(label: label) {
+            self
+        }
+    }
+}
+
+// A tagged view inside a tab view: a tab, once its bar item is known, which a
+// `tabItem` written either side of the tag gives.
+public function taggedTab(
+    entry: TagEntry,
+    content: borrow Any Widget,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    var environment = tagEnvironment()
+    match environment.item {
+        Some(item) -> return tabDescribed(move entry, item, content, context, modifiers)
+        None -> {}
+    }
+    environment.entry = .Some(move entry)
+    let previous = tagEnter(move environment)
+    let described = content.describe(context, modifiers)
+    tagLeave(move previous)
+    return described
+}
+
+// A view with the item it shows on a tab view's bar. Inside a tab view, it is
+// a tab once its tag is known.
+public construct TabItemLayer(label: Any Widget) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var environment = tagEnvironment()
+        if !environment.within(.Tab) {
+            return content.describe(context, modifiers)
+        }
+        match environment.entry {
+            Some(entry) -> return tabDescribed(move entry, label, content, context, modifiers)
+            None -> {}
+        }
+        environment.item = .Some(copy label)
+        let previous = tagEnter(move environment)
+        let described = content.describe(context, modifiers)
+        tagLeave(move previous)
+        return described
+    }
+}
+
+// One tab on the bar, pressed to select it.
+public function tabBarItem(
+    label: borrow Any Widget,
+    selected: Bool,
+    select: () -> Void,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let key = tapSeqKey()
+    layerActionRegister(key, move select)
+    var item = tabBarItemFace(
+        tabBarInkedLabel(label, selected, context, modifiers),
+        selected,
+        modifiers
+    )
+    item.hittable = !modifiers.disabled
+    item.hitKey = key
+    return item
+}
+
+// What a tab looks like, with nothing to press: its label held off the ends
+// of a capsule the bar's height less its inset. The selected one draws no
+// capsule of its own; it publishes its box for the bar's one selection
+// capsule to move to, as UIKit's floating tab bar moves its selection view.
+public function tabBarItemFace(
+    label: CALayerDescription,
+    selected: Bool,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let metrics = tabBarMetrics()
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            axis: .Row,
+            widthFill: false,
+            heightFill: false,
+            fixedHeight: metrics.tabHeight,
+            paddingLeading: metrics.labelInset,
+            paddingTrailing: metrics.labelInset,
+            alignment: Point { x: 0.5, y: 0.5 },
+            guide: selected ? guideTag(TabBarSelection()) : guideTag(TabBarTab())
+        },
+        cornerRadius: metrics.tabHeight / 2.0,
+        sublayers: [move label]
+    }
+}
+
+// A button standing in a tab bar: the kit's symbol cell, its label held the
+// tab's symbol inset off either end of a box the tab's height, in an
+// unselected tab's ink. Nothing is drawn behind it; the bar's glass is its
+// surface.
+public function tabBarButtonDescription(
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+    key: Number,
+    label: borrow Any Widget,
+) -> CALayerDescription {
+    let metrics = tabBarMetrics()
+    let ink = tabBarItemInk(false, modifierContextForPresentation(modifiers))
+    var described = label.describe(
+        context,
+        buttonPressedModifiers(ink, key, context, buttonPressedTextOpacity)
+    )
+    described.layout.widthFill = false
+    described.layout.heightFill = false
+    var cell = CALayerDescription {
+        hittable: !modifiers.disabled,
+        hitKey: key,
+        opacity: modifiers.disabled ? 0.4 : 1.0,
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedHeight: metrics.tabHeight,
+            paddingLeading: metrics.symbolInset,
+            paddingTrailing: metrics.symbolInset,
+            alignment: Point { x: 0.5, y: 0.5 }
+        },
+        sublayers: [described]
+    }
+    buttonPressTiming(cell, key, context)
+    return cell
+}
+
+// A tab's label: its symbol and title, set as `tabBarInkedLabel` sets them.
+public function tabBarItemLabel(
+    title: borrow String,
+    systemImage: Symbol,
+    selected: Bool,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    // The symbol at its own width, not centered in a list's icon column: a
+    // tab's inset is to its ink, so the column's empty side would widen the
+    // leading end past the trailing one.
+    let column = sidebarMetrics()
+    let label = HStack(spacing: .Length(tabBarLabelGap()), alignment: .Center) {
+        if systemImage != .None {
+            Icon(symbol: systemImage).font(size: resolvedLength(column.symbolSize))
+        }
+        Text(content: copy title)
+    }
+    return tabBarInkedLabel(label, selected, context, modifiers)
+}
+
+// `label` set as a tab's label is: in the subheadline face, medium, in the
+// bar's ink; bold in the primary ink when the tab is selected.
+public function tabBarInkedLabel(
+    label: borrow Any Widget,
+    selected: Bool,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let face = modifierTypography(modifiers, .subheadline)
+    let styled = label
+    .hugWidth()
+    .font(size: resolvedLength(face.size), weight: selected ? .Bold : .Medium)
+    if selected {
+        var layers: [CALayerDescription] = []
+        for ink in tabBarSelectedInks(modifiers) {
+            layers.append(styled.describe(context, ink))
+        }
+        return tabBarInked(move layers)
+    }
+    // Wrapped as a selected one is, so a tab changing selection keeps its
+    // layers and only its ink changes, instead of its symbol and title being
+    // handed to the copies of a selected label and moving across to them.
+    return tabBarInked([styled.describe(context, tabBarItemInk(false, modifiers))])
+}
+
+// The gap between a tab's symbol and its title: the one a label's column
+// leaves after its symbol.
+public function tabBarLabelGap() -> Number {
+    let column = sidebarMetrics()
+    return column.titleSpacing + (column.iconColumn - column.symbolSize) / 2.0
+}
+
+// The kit's selected tab sets its title through a mask over two fills: black
+// at half in the dark, then the accent dodged into what that leaves; white at
+// half in the light, then the accent burned into it. Each fill is one ink, and
+// the title is drawn once in each, the second over the first.
+public function tabBarSelectedInks(modifiers: borrow ModifierContext) -> [ModifierContext] {
+    if tabBarTinted(modifiers) {
+        return [tabBarItemInk(true, modifiers)]
+    }
+    var inks: [ModifierContext] = []
+    for pass in tabBarSelectedPasses(modifiers) {
+        inks.append(
+            modifierContextApply(
+                modifiers,
+                modifierDeltaTextInk(pass.color.toFoundation(1.0), copy pass.blend)
+            )
+        )
+    }
+    return inks
+}
+
+// The fills of `tabBarSelectedInks`, in the order they are drawn: the
+// application's tint alone when it set one.
+public function tabBarSelectedPasses(modifiers: borrow ModifierContext) -> [VibrantInk] {
+    if tabBarTinted(modifiers) {
+        return [
+            VibrantInk {
+                color: colorFromFoundation(
+                    primaryColorAsColor(modifiers.tint, modifierTokens(modifiers))
+                ),
+                blend: .Normal
+            }
+        ]
+    }
+    if modifierAppearance(modifiers) == .Dark {
+        return [
+            VibrantInk { color: CAColor { r: 0.0, g: 0.0, b: 0.0, a: 0.5 }, blend: .Normal },
+            VibrantInk {
+                color: CAColor { r: 0.0, g: 145.0 / 255.0, b: 1.0, a: 1.0 },
+                blend: .LinearDodge
+            }
+        ]
+    }
+    return [
+        VibrantInk { color: CAColor { r: 1.0, g: 1.0, b: 1.0, a: 0.5 }, blend: .Normal },
+        VibrantInk {
+            color: CAColor { r: 0.0, g: 136.0 / 255.0, b: 1.0, a: 1.0 },
+            blend: .LinearBurn
+        }
+    ]
+}
+
+// The passes of one selected label laid over each other, centered in the box
+// the largest of them needs.
+//
+// A label changes its ink at once, as a `UILabel`'s color does inside an
+// animation: its two passes fading across would show the half-way inks --
+// the burn over a darkening title, a washed gray -- that no tab ever shows.
+// Where the label stands still moves with its tab.
+public function tabBarInked(layers: [CALayerDescription]) -> CALayerDescription {
+    var inked = CALayerDescription {
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            alignment: Point { x: 0.5, y: 0.5 }
+        },
+        sublayers: move layers
+    }
+    inked.makeImmediate()
+    return inked
+}
+
+// Whether the application tinted the bar with an ink of its own rather than
+// the accent: then every item on it, selected or not, is set plainly in that
+// ink, and the selection is the capsule behind it and the heavier title.
+public function tabBarTinted(modifiers: borrow ModifierContext) -> Bool {
+    return modifiers.hasTint && modifiers.tint != .Accent
+}
+
+// The ink everything on a tab is set in: the accent when it is selected, the
+// bar's own otherwise, and the application's tint either way when it set one.
+// A selected label is drawn in `tabBarSelectedInks`.
+public function tabBarItemInk(
+    selected: Bool,
+    modifiers: borrow ModifierContext
+) -> ModifierContext {
+    if tabBarTinted(modifiers) {
+        let tint = primaryColorAsColor(modifiers.tint, modifierTokens(modifiers))
+        return modifierContextApply(modifiers, modifierDeltaTextInk(move tint, .Normal))
+    }
+    if selected {
+        return modifierContextApply(modifiers, modifierDeltaForegroundColor(.Accent))
+    }
+    let ink = tabBarUnselectedInk(modifiers)
+    return modifierContextApply(
+        modifiers,
+        modifierDeltaTextInk(ink.color.toFoundation(1.0), copy ink.blend)
+    )
+}
+
+// An unselected tab's ink: the catalog's gray, burned into the bar's light
+// glass or dodged into its dark.
+public function tabBarUnselectedInk(modifiers: borrow ModifierContext) -> VibrantInk {
+    if modifierAppearance(modifiers) == .Dark {
+        return copy tabLabel.dark
+    }
+    return copy tabLabel.light
+}
+
+// The capsule behind a tab: the selection's when it is selected, burned or
+// dodged into the glass, and nothing otherwise.
+public function tabBarItemFill(
+    selected: Bool,
+    radius: Number,
+    modifiers: borrow ModifierContext
+) -> CASolid {
+    if !selected {
+        return CASolid { fill: CAColor { a: 0.0 }, cornerRadius: radius }
+    }
+    var ink = tabSelection.light
+    if modifierAppearance(modifiers) == .Dark {
+        ink = tabSelection.dark
+    }
+    return CASolid {
+        fill: colorFromFoundation(
+            modifierColor(foundationColor(ink.color.toFoundation(1.0)), modifiers)
+        ),
+        cornerRadius: radius,
+        blend: ink.blend
+    }
+}
+
+// The bar a tab view's tabs float in: one capsule of glass holding them off
+// every side.
+function tabBarCapsule(
+    tabs: [CALayerDescription],
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let metrics = tabBarMetrics()
+    let row = CALayerDescription {
+        key: 2,
+        layout: CALayoutIntent {
+            axis: .Row,
+            guide: guideTag(TabBarRow()),
+            widthFill: false,
+            heightFill: false,
+            paddingLeading: metrics.inset,
+            paddingTop: metrics.inset,
+            paddingTrailing: metrics.inset,
+            paddingBottom: metrics.inset,
+            alignment: Point { x: 0.0, y: 0.5 }
+        },
+        sublayers: move tabs
+    }
+    // The selection capsule shares the row's box, under its tabs; the lens
+    // lifted off it stands over the whole bar, past its edge.
+    let key = tapSeqKey()
+    let hold = tabBarSelectionHold(key, context, metrics.tabHeight, metrics.height, false)
+    let selection = CALayerDescription {
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            alignment: Point { x: 0.0, y: 0.5 }
+        },
+        sublayers: tabBarSelectionLayers(hold, copy row, modifiers)
+    }
+    var bar = interactiveGlassDescription(
+        context,
+        key,
+        CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedHeight: metrics.height,
+            alignment: Point { x: 0.0, y: 0.5 }
+        },
+        containerShapeRadius(.Capsule, modifiers),
+        .Capsule,
+        modifiers,
+        [selection]
+    )
+    // A press slides from tab to tab, and the one let go on is selected.
+    bar.slidesPress = true
+    let lens = tabBarSelectionLens(hold, row, modifiers)
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            alignment: Point { x: 0.0, y: 0.5 }
+        },
+        sublayers: [move bar, move lens]
+    }
+}
+
+// --- The phone's bar -----------------------------------------------------------
+
+// One tab on a phone's bar, pressed to select it.
+public function phoneTabBarItem(
+    label: borrow Any Widget,
+    selected: Bool,
+    select: () -> Void,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let key = tapSeqKey()
+    layerActionRegister(key, move select)
+    var item = phoneTabBarItemFace(
+        phoneTabBarInkedLabel(label, selected, context, modifiers),
+        selected,
+        modifiers
+    )
+    item.hittable = !modifiers.disabled
+    item.hitKey = key
+    return item
+}
+
+// What a phone's tab looks like, with nothing to press: its label stacked
+// under its top and held off its ends. The selected one publishes its box,
+// which reaches past the tab's own ends into the next one's, for the bar's
+// one selection capsule to move to; the bar gives it its width.
+public function phoneTabBarItemFace(
+    label: CALayerDescription,
+    selected: Bool,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let bar = phoneTabBarMetrics
+    let radius = bar.tabHeight / 2.0
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            axis: .Column,
+            widthFill: false,
+            heightFill: false,
+            fixedHeight: bar.tabHeight,
+            paddingLeading: bar.sideInset,
+            paddingTop: bar.topInset,
+            paddingTrailing: bar.sideInset,
+            alignment: Point { x: 0.5, y: 0.0 },
+            guide: selected ? guideTag(TabBarSelection()) : guideTag(TabBarTab())
+        },
+        cornerRadius: radius,
+        sublayers: [move label]
+    }
+}
+
+// The capsule behind a phone's selected tab: the selection's ink laid over the
+// glass as it is, where the iPad's is burned or dodged into it, and nothing
+// behind any other tab.
+public function phoneTabBarItemFill(
+    selected: Bool,
+    radius: Number,
+    modifiers: borrow ModifierContext
+) -> CASolid {
+    if !selected {
+        return CASolid { fill: CAColor { a: 0.0 }, cornerRadius: radius }
+    }
+    var ink = tabSelection.light
+    if modifierAppearance(modifiers) == .Dark {
+        ink = tabSelection.dark
+    }
+    return CASolid {
+        fill: colorFromFoundation(
+            modifierColor(foundationColor(ink.color.toFoundation(1.0)), modifiers)
+        ),
+        cornerRadius: radius
+    }
+}
+
+// `label` set as a phone's tab sets it: its symbol over its title, in the
+// vibrant label's ink, or through the selected tab's mask when it is the one
+// selected.
+public function phoneTabBarInkedLabel(
+    label: borrow Any Widget,
+    selected: Bool,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let presented = modifierContextPresenting(modifiers, .PhoneTabBar)
+    if selected {
+        var layers: [CALayerDescription] = []
+        for ink in tabBarSelectedInks(presented) {
+            layers.append(label.describe(context, ink))
+        }
+        return tabBarInked(move layers)
+    }
+    // Wrapped as a selected one is; see `tabBarInkedLabel`.
+    if tabBarTinted(presented) {
+        return tabBarInked([label.describe(context, tabBarItemInk(false, presented))])
+    }
+    let ink = phoneTabBarUnselectedInk(presented)
+    return tabBarInked(
+        [
+            label.describe(
+                context,
+                modifierContextApply(
+                    presented,
+                    modifierDeltaTextInk(ink.color.toFoundation(1.0), copy ink.blend)
+                )
+            )
+        ]
+    )
+}
+
+// An unselected tab's ink on a phone's bar: the vibrant label's.
+public function phoneTabBarUnselectedInk(modifiers: borrow ModifierContext) -> VibrantInk {
+    return vibrantLabel(modifiers)
+}
+
+// The bar a phone's tabs float in: one capsule of glass reaching past them,
+// centered at the foot of the window. Its row grows by a tab's advance for
+// each tab, as far as the screen's margins, and its tabs share it equally.
+public function phoneTabBar(
+    tabs: [CALayerDescription],
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let bar = phoneTabBarMetrics
+    var row = move tabs
+    let count = Number(row.count)
+    let room = context.viewportWidth - bar.edgeInset * 2.0
+    let span = min(count * bar.tabAdvance + bar.rowInset * 2.0, room)
+    let width = (span + (count - 1.0) * bar.tabOverlap) / count
+    for i in 0..row.count {
+        row[i].layout.fixedWidth = width
+    }
+    let tabsRow = CALayerDescription {
+        key: 2,
+        layout: CALayoutIntent {
+            axis: .Row,
+            guide: guideTag(TabBarRow()),
+            spacing: -bar.tabOverlap,
+            widthFill: false,
+            heightFill: false,
+            paddingLeading: bar.glassOutset,
+            paddingTop: bar.glassOutset,
+            paddingTrailing: bar.glassOutset,
+            paddingBottom: bar.glassOutset,
+            alignment: Point { x: 0.0, y: 0.5 }
+        },
+        sublayers: move row
+    }
+    // Held and slid along as the iPad's is (`tabBarCapsule`): the selection
+    // capsule under the row, and the lens lifted off it over the bar.
+    let key = tapSeqKey()
+    let height = bar.tabHeight + bar.glassOutset * 2.0
+    let hold = tabBarSelectionHold(key, context, bar.tabHeight, height, true)
+    let selection = CALayerDescription {
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            alignment: Point { x: 0.0, y: 0.5 }
+        },
+        sublayers: tabBarSelectionLayers(hold, copy tabsRow, modifiers)
+    }
+    var glass = interactiveGlassDescription(
+        context,
+        key,
+        CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedHeight: height,
+            alignment: Point { x: 0.0, y: 0.5 }
+        },
+        containerShapeRadius(.Capsule, modifiers),
+        .Capsule,
+        modifiers,
+        [selection]
+    )
+    glass.slidesPress = true
+    let lens = tabBarSelectionLens(hold, tabsRow, modifiers)
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            paddingBottom: bar.bottomInset - bar.glassOutset,
+            alignment: Point { x: 0.5, y: 1.0 }
+        },
+        sublayers: [
+            CALayerDescription {
+                layout: CALayoutIntent {
+                    widthFill: false,
+                    heightFill: false,
+                    alignment: Point { x: 0.0, y: 0.5 }
+                },
+                sublayers: [move glass, move lens]
+            }
+        ]
+    }
+}
+
+@Instance(Number)
+@Instance(String)
+public construct TabView<SelectionValue>(selection: Binding<SelectionValue>) extends Widget {
+    let children: [some Widget]
+
+    body {
+        TagScope(selector: tagSelector(.Tab, selection)) {
+            ZStack(alignment: .TopLeading) {
+                For(tab in children) {
+                    tab
+                }
+            }
+            .fillWidth()
+            .fillHeight()
+        }
+    }
+}

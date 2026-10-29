@@ -1,0 +1,468 @@
+import Foundation
+import Ember
+import KiraLayout
+import KCoreAnimation
+
+// The pieces the bar is set in: runs of entries collapsed into capsules of
+// glass and the bare items between them, the title over the document, and how
+// each turns from one view's into the next while a stack moves under the bar.
+// `ToolbarBar.kira` arranges them in sections.
+
+// What one run of entries comes to on the bar: a row of items to set on one
+// piece of glass, or something that stands bare -- an item that opted out of
+// the shared background, or a spacer.
+public struct ToolbarPiece {
+    var layer: CALayerDescription = CALayerDescription {}
+    var glass: Bool = false
+}
+
+// Entries, collapsed into the pieces of glass they describe.
+//
+// The items of one declaration share one capsule: a `ToolbarItemGroup` is one
+// control with seams, and each `ToolbarItem` is a piece of glass of its own --
+// what the platform draws for each. An item that opted out of the shared
+// background stands bare, and a spacer closes whatever was open.
+public function toolbarPieces(
+    entries: borrow [ToolbarEntry],
+    metrics: borrow WindowChromeMetrics
+) -> [ToolbarPiece] {
+    var pieces: [ToolbarPiece] = []
+    var run: [CALayerDescription] = []
+    var runGroup = 0
+    for entry in entries {
+        let continuesRun = entry.shared && !entry.isSpacer && run.count > 0 && entry.group == runGroup
+        if !continuesRun && run.count > 0 {
+            pieces.append(ToolbarPiece { layer: toolbarGlassRow(move run, metrics), glass: true })
+            run = []
+        }
+        if entry.isSpacer {
+            if entry.flexible {
+                pieces.append(ToolbarPiece { layer: toolbarFlexibleSpace() })
+            } else if metrics.spacerWidth > metrics.itemSpacing * 2.0 {
+                pieces.append(ToolbarPiece { layer: toolbarFixedSpace(metrics) })
+            }
+        } else if entry.shared {
+            run.append(toolbarItemFrame(entry.content, metrics))
+            runGroup = entry.group
+        } else {
+            pieces.append(ToolbarPiece { layer: toolbarItemFrame(entry.content, metrics) })
+        }
+    }
+    if run.count > 0 {
+        pieces.append(ToolbarPiece { layer: toolbarGlassRow(move run, metrics), glass: true })
+    }
+    return pieces
+}
+
+public function toolbarGroups(
+    entries: borrow [ToolbarEntry],
+    metrics: borrow WindowChromeMetrics,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> [CALayerDescription] {
+    var groups: [CALayerDescription] = []
+    for piece in toolbarPieces(entries, metrics) {
+        groups.append(toolbarPieceLayer(piece, metrics, context, modifiers))
+    }
+    return groups
+}
+
+public function toolbarPieceLayer(
+    piece: borrow ToolbarPiece,
+    metrics: borrow WindowChromeMetrics,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    if piece.glass {
+        var glass = toolbarGlass(copy piece.layer, -1.0, metrics, context, modifiers)
+        if toolbarGlassLent(piece.layer) {
+            glass.content = .Empty
+            glass.capturesBackdrop = false
+        }
+        return glass
+    }
+    return copy piece.layer
+}
+
+// Whether a piece's glass is out as a menu: the piece is one item, and that
+// item is a menu whose card is the glass it would sit on. The piece keeps its
+// place and its press, and draws no glass until the menu comes home.
+public function toolbarGlassLent(row: borrow CALayerDescription) -> Bool {
+    if row.sublayers.count != 1 || row.sublayers[0].sublayers.count != 1 {
+        return false
+    }
+    return menuHoldsGlass(row.sublayers[0].sublayers[0].hitKey)
+}
+
+// The field `.searchable` puts at the trailing end of the bar, as iPadOS sets
+// it: a capsule of glass of its own, the magnifier leading the prompt -- or,
+// once there is text, the text and a button that clears it. A press anywhere
+// on the glass puts the caret where it landed.
+public function toolbarSearchField(
+    search: borrow WindowSearch,
+    metrics: borrow WindowChromeMetrics,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    // Its symbols are the bar's, at the bar's size and weight.
+    let parts = searchFieldParts(
+        copy search.prompt,
+        .Medium,
+        .Secondary,
+        search.clearKey,
+        context,
+        modifierContextPresenting(modifiers, .Toolbar),
+        modifiers
+    )
+    var glass = interactiveGlassDescription(
+        context,
+        SearchField.key,
+        CALayoutIntent {
+            axis: .Row,
+            spacing: metrics.searchSpacing,
+            widthFill: false,
+            heightFill: false,
+            fixedWidth: metrics.searchWidth,
+            fixedHeight: metrics.itemHeight,
+            paddingLeading: metrics.searchLeading,
+            paddingTrailing: metrics.searchTrailing,
+            alignment: Point { x: 0.0, y: 0.5 }
+        },
+        containerShapeRadius(.Capsule, modifiers),
+        .Capsule,
+        modifiers,
+        move parts
+    )
+    glass.hittable = true
+    return glass
+}
+
+// The back button's place, known by a key of its own so nothing else on the
+// bar is ever matched to it. Going back to a view with nowhere further back,
+// it stays as it is while the view goes, and only then leaves: it swells a
+// little as it fades.
+public function toolbarBackArea(
+    groups: [CALayerDescription],
+    metrics: borrow WindowChromeMetrics
+) -> CALayerDescription {
+    return CALayerDescription {
+        key: 1,
+        layout: CALayoutIntent {
+            axis: .Row,
+            spacing: metrics.itemSpacing,
+            widthFill: false,
+            heightFill: false,
+            alignment: Point { x: 0.0, y: 0.5 }
+        },
+        removal: CARemoval {
+            scale: metrics.backRemovalScale,
+            opacity: 0.0,
+            duration: metrics.backRemovalDuration
+        },
+        sublayers: move groups
+    }
+}
+
+// Two views' entries for one place on the bar, while a stack moves between the
+// views. The bar does not move: each piece of glass the two have in the same
+// place, counted from the leading end, stays one piece, its width going from
+// one view's to the other's as its items cross-fade, and a piece only one of
+// them has fades and folds away on its own -- except, going back, one only
+// the leaving view has, which stays as it is to leave once the view is gone.
+// The covered view's items answer nothing until it is the view showing.
+public function toolbarMorphGroups(
+    top: borrow [ToolbarEntry],
+    covered: borrow [ToolbarEntry],
+    shown: Number,
+    moving: Bool,
+    metrics: borrow WindowChromeMetrics,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+    goingBack: Bool = false,
+) -> [CALayerDescription] {
+    if !moving {
+        return toolbarGroups(top, metrics, context, modifiers)
+    }
+    let above = toolbarPieces(top, metrics)
+    let below = toolbarPieces(covered, metrics)
+    let count = above.count > below.count ? above.count : below.count
+    var groups: [CALayerDescription] = []
+    for slot in 0..count {
+        let hasAbove = slot < above.count
+        let hasBelow = slot < below.count
+        if hasAbove && hasBelow && above[slot].glass && below[slot].glass {
+            var under = copy below[slot].layer
+            under.makeInert()
+            groups.append(
+                toolbarMorphGlass(
+                    copy above[slot].layer,
+                    move under,
+                    shown,
+                    metrics,
+                    context,
+                    modifiers
+                )
+            )
+        } else if hasAbove && hasBelow && !above[slot].glass && !below[slot].glass {
+            var under = copy below[slot].layer
+            under.makeInert()
+            groups.append(toolbarCrossFade(copy above[slot].layer, move under, shown))
+        } else {
+            if hasAbove && goingBack {
+                groups.append(toolbarPieceLayer(above[slot], metrics, context, modifiers))
+            } else if hasAbove {
+                groups.append(
+                    toolbarFolding(
+                        toolbarPieceLayer(above[slot], metrics, context, modifiers),
+                        1.0 - shown
+                    )
+                )
+            }
+            if hasBelow {
+                var under = toolbarPieceLayer(below[slot], metrics, context, modifiers)
+                under.makeInert()
+                groups.append(toolbarFolding(move under, shown))
+            }
+        }
+    }
+    return groups
+}
+
+// Two bare pieces in one place: one box going from the first's width to the
+// second's, the first fading out over the second fading in.
+public function toolbarCrossFade(
+    from: CALayerDescription,
+    to: CALayerDescription,
+    shown: Number
+) -> CALayerDescription {
+    let fromWidth = from.measure(windowChromeMetrics().toolbarHeight * 100.0).width
+    let toWidth = to.measure(windowChromeMetrics().toolbarHeight * 100.0).width
+    var both = CALayerDescription {
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedWidth: fromWidth + (toWidth - fromWidth) * shown,
+            alignment: Point { x: 0.5, y: 0.5 }
+        },
+        sublayers: [toolbarFaded(move from, 1.0 - shown), toolbarFaded(move to, shown)]
+    }
+    both.makeImmediate()
+    return both
+}
+
+// A piece only one view has: as visible as that view, as wide, and as present
+// in the bar, so the pieces beside it close up over its gap too as it goes.
+public function toolbarFolding(piece: CALayerDescription, shown: Number) -> CALayerDescription {
+    let width = piece.measure(windowChromeMetrics().toolbarHeight * 100.0).width
+    var folded = CALayerDescription {
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedWidth: width * shown,
+            presence: shown,
+            alignment: Point { x: 0.0, y: 0.5 }
+        },
+        sublayers: [toolbarFaded(move piece, shown)]
+    }
+    folded.makeImmediate()
+    return folded
+}
+
+// One piece of glass between two rows of items: as wide as the first row
+// turning into as wide as the second, the first fading out over the second
+// fading in.
+public function toolbarMorphGlass(
+    from: CALayerDescription,
+    to: CALayerDescription,
+    shown: Number,
+    metrics: borrow WindowChromeMetrics,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let fromWidth = from.measure(windowChromeMetrics().toolbarHeight * 100.0).width
+    let toWidth = to.measure(windowChromeMetrics().toolbarHeight * 100.0).width
+    var leaving = move from
+    leaving.opacity = 1.0 - shown
+    var coming = move to
+    coming.opacity = shown
+    let rows = CALayerDescription {
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            alignment: Point { x: 0.5, y: 0.5 }
+        },
+        sublayers: [move leaving, move coming]
+    }
+    var glass = toolbarGlass(
+        move rows,
+        fromWidth + (toWidth - fromWidth) * shown,
+        metrics,
+        context,
+        modifiers
+    )
+    glass.makeImmediate()
+    return glass
+}
+
+// A piece drawn at `opacity`, following the stack's motion frame by frame.
+public function toolbarFaded(piece: CALayerDescription, opacity: Number) -> CALayerDescription {
+    var faded = move piece
+    faded.opacity = opacity
+    faded.makeImmediate()
+    return faded
+}
+
+// How much of a view's title the band shows inline: all of it, unless the
+// title is set large under the bar, and then as far as the large one has
+// faded over to it.
+public function toolbarInlineTitleShown(largeTitle: Bool, collapse: Number) -> Number {
+    return largeTitle ? collapse : 1.0
+}
+
+// The room between a bar's leading pieces and its trailing ones, which the
+// title is kept inside.
+public construct ToolbarTitleRoom() extends AlignmentGuide {
+    let name = "toolbarTitleRoom"
+    let axis: GuideAxis = .Horizontal
+
+    function defaultValue(dimensions: borrow ViewDimensions) -> Number {
+        return dimensions.subscript(.Leading)
+    }
+}
+
+// The title centered in the band -- both views' while a push or a pop moves
+// between them, cross-fading with the views. One a large title hands over to
+// rises into place out of a blur as it fades in, and sinks into one as it
+// fades out.
+public function toolbarTitle(
+    sink: borrow ToolbarSink,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    var titles: [CALayerDescription] = []
+    let shown = toolbarInlineTitleShown(sink.largeTitle, sink.titleCollapse)
+    let leaving = sink.moving ? sink.coveredShown : 0.0
+    if sink.detailTitle.count > 0 && shown > 0.0 {
+        var title = toolbarFaded(
+            windowTitle(sink.detailTitle, context, modifiers),
+            (1.0 - leaving) * shown
+        )
+        title.layout.offset = Point { x: 0.0, y: (1.0 - shown) * largeTitleMetrics().inlineTravel }
+        title.blur = (1.0 - shown) * largeTitleMetrics().inlineBlur
+        titles.append(move title)
+    }
+    let coveredShown = toolbarInlineTitleShown(sink.covered.largeTitle, sink.covered.titleCollapse)
+    if sink.moving && sink.covered.title.count > 0 && coveredShown > 0.0 {
+        titles.append(
+            toolbarFaded(
+                windowTitle(sink.covered.title, context, modifiers),
+                leaving * coveredShown
+            )
+        )
+    }
+    var title = CALayerDescription {
+        // The page's, like the principal item it stands in for.
+        key: currentNavigationGeneration() + 1,
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            alignment: Point { x: 0.5, y: 0.5 },
+            staysWithinGuide: guideTag(ToolbarTitleRoom())
+        },
+        sublayers: move titles
+    }
+    title.makeImmediate()
+    return title
+}
+
+// A fixed spacer wider than the gap the section already leaves between two
+// pieces of glass holds the rest open. At the platform's own numbers the gap
+// alone is the spacer -- 8 points between the glass either side -- and nothing
+// is added.
+public function toolbarFixedSpace(metrics: borrow WindowChromeMetrics) -> CALayerDescription {
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedWidth: metrics.spacerWidth - metrics.itemSpacing * 2.0
+        }
+    }
+}
+
+// One item's box on the bar: as tall as a piece of glass, the item centered in
+// it. A button already is that box; anything else -- a run of text, a picker --
+// hugs its content.
+public function toolbarItemFrame(
+    content: borrow CALayerDescription,
+    metrics: borrow WindowChromeMetrics
+) -> CALayerDescription {
+    var item = copy content
+    item.layout.widthFill = false
+    item.layout.heightFill = false
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedHeight: metrics.itemHeight,
+            alignment: Point { x: 0.5, y: 0.5 }
+        },
+        sublayers: [item]
+    }
+}
+
+// A run of shared items in a row, ready for its glass: an item alone is its
+// glass; two or more are held a little off the capsule's ends.
+public function toolbarGlassRow(
+    items: [CALayerDescription],
+    metrics: borrow WindowChromeMetrics
+) -> CALayerDescription {
+    let inset = items.count > 1 ? metrics.groupInset : 0.0
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            axis: .Row,
+            spacing: metrics.groupSpacing,
+            paddingLeading: inset,
+            paddingTrailing: inset,
+            widthFill: false,
+            heightFill: false,
+            alignment: Point { x: 0.0, y: 0.5 }
+        },
+        sublayers: move items
+    }
+}
+
+// A row on one capsule of glass, `width` wide or as wide as the row when
+// negative. The capsule is interactive glass: a press on any item in it moves
+// the whole capsule, as the platform's does, while the item takes the action.
+public function toolbarGlass(
+    row: CALayerDescription,
+    width: Number,
+    metrics: borrow WindowChromeMetrics,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    return interactiveGlassDescription(
+        context,
+        tapSeqKey(),
+        CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedWidth: width,
+            fixedHeight: metrics.itemHeight,
+            alignment: Point { x: 0.5, y: 0.5 }
+        },
+        containerShapeRadius(.Capsule, modifiers),
+        .Capsule,
+        modifiers,
+        [move row]
+    )
+}
+
+public function toolbarGlassGroup(
+    items: [CALayerDescription],
+    metrics: borrow WindowChromeMetrics,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    return toolbarGlass(toolbarGlassRow(move items, metrics), -1.0, metrics, context, modifiers)
+}

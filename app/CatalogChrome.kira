@@ -1,0 +1,530 @@
+import Foundation
+import KCoreUI
+
+// The lengths the window's chrome, the sidebar, lists, titles, the stack's
+// transitions and scroll views are laid out and moved with, and the colors
+// they are painted with.
+//
+// Every group is resolved once for each interface mode, and read through a
+// function that answers with the one the interface is drawn at, so switching
+// the mode costs a comparison rather than a catalog lookup.
+
+// --- Window chrome ---------------------------------------------------------
+
+// The lengths the window's chrome is laid out with, read once from the catalog.
+//
+// Every one is a catalog metric, so the bar is the platform's bar wherever the
+// catalog has measured it and an application overrides a length with a partial
+// blob rather than with code.
+public struct WindowChromeMetrics {
+    // The band the bar takes: the window kit's on a tablet or a computer, and
+    // the compact one under an iPhone's status bar. `windowChromeMetricsFor`
+    // says which a window of a given width is drawn with. The content is held
+    // under `bandHeight`, which on a computer is the bar's own height and on an
+    // iPhone runs past its row.
+    var toolbarHeight: Number
+    var bandHeight: Number
+    let compactToolbarHeight: Number
+    let compactBandHeight: Number
+    let itemHeight: Number
+    let itemWidth: Number
+    let groupSpacing: Number
+    let groupInset: Number
+    let itemSpacing: Number
+    let spacerWidth: Number
+    var edgeInset: Number
+    // Where a Mac's title starts, from its column's leading edge.
+    let titleLeading: Number
+    let compactEdgeInset: Number
+    let labelInset: Number
+    let symbolSize: Number
+    let symbolWeight: Number
+    let controlsLeading: Number
+    let controlDiameter: Number
+    let controlSpacing: Number
+    let controlsTrailing: Number
+    let backRemovalScale: Number
+    let searchWidth: Number
+    let searchLeading: Number
+    let searchTrailing: Number
+    let searchSpacing: Number
+    let backRemovalDuration: Number
+    // The window's own corner.
+    let cornerRadius: Number
+
+    // Where the bar's own content may start: past the close, minimize and zoom
+    // buttons and the room the platform leaves after them.
+    function controlsEnd() -> Number {
+        return controlsLeading + controlDiameter * 3.0 + controlSpacing * 2.0 + controlsTrailing
+    }
+}
+
+public function catalogWindowChromeMetrics(mode: InterfaceMode) -> WindowChromeMetrics {
+    return WindowChromeMetrics {
+        toolbarHeight: catalogMetric(catalogStack, MetricName.toolbarHeight, mode),
+        bandHeight: catalogMetric(catalogStack, MetricName.toolbarHeight, mode),
+        compactToolbarHeight: catalogMetric(catalogStack, MetricName.toolbarCompactHeight, mode),
+        compactBandHeight: catalogMetric(catalogStack, MetricName.toolbarCompactBandHeight, mode),
+        itemHeight: catalogMetric(catalogStack, MetricName.toolbarItemHeight, mode),
+        itemWidth: catalogMetric(catalogStack, MetricName.toolbarItemWidth, mode),
+        groupSpacing: catalogMetric(catalogStack, MetricName.toolbarGroupSpacing, mode),
+        groupInset: catalogMetric(catalogStack, MetricName.toolbarGroupInset, mode),
+        itemSpacing: catalogMetric(catalogStack, MetricName.toolbarItemSpacing, mode),
+        spacerWidth: catalogMetric(catalogStack, MetricName.toolbarSpacerWidth, mode),
+        edgeInset: catalogMetric(catalogStack, MetricName.toolbarEdgeInset, mode),
+        titleLeading: catalogMetric(catalogStack, MetricName.toolbarTitleLeading, mode),
+        compactEdgeInset: catalogMetric(catalogStack, MetricName.toolbarCompactEdgeInset, mode),
+        labelInset: catalogMetric(catalogStack, MetricName.toolbarItemLabelInset, mode),
+        symbolSize: catalogMetric(catalogStack, MetricName.toolbarSymbolSize, mode),
+        symbolWeight: catalogMetric(catalogStack, MetricName.toolbarSymbolWeight, mode),
+        controlsLeading: catalogMetric(catalogStack, MetricName.windowControlsLeading, mode),
+        controlDiameter: catalogMetric(catalogStack, MetricName.windowControlDiameter, mode),
+        controlSpacing: catalogMetric(catalogStack, MetricName.windowControlSpacing, mode),
+        controlsTrailing: catalogMetric(catalogStack, MetricName.windowControlsTrailing, mode),
+        backRemovalScale: catalogMetric(catalogStack, MetricName.toolbarBackRemovalScale, mode),
+        searchWidth: catalogMetric(catalogStack, MetricName.toolbarSearchWidth, mode),
+        searchLeading: catalogMetric(catalogStack, MetricName.toolbarSearchLeading, mode),
+        searchTrailing: catalogMetric(catalogStack, MetricName.toolbarSearchTrailing, mode),
+        searchSpacing: catalogMetric(catalogStack, MetricName.toolbarSearchSpacing, mode),
+        backRemovalDuration: catalogMetric(
+            catalogStack,
+            MetricName.toolbarBackRemovalDuration,
+            mode
+        ),
+        cornerRadius: catalogMetric(catalogStack, MetricName.windowCornerRadius, mode)
+    }
+}
+
+let desktopWindowChromeMetrics = catalogWindowChromeMetrics(.AdaptiveDesktop)
+let mobileWindowChromeMetrics = catalogWindowChromeMetrics(.AdaptiveMobile)
+
+public function windowChromeMetrics() -> WindowChromeMetrics {
+    return interfaceMode() == .AdaptiveDesktop ? desktopWindowChromeMetrics : mobileWindowChromeMetrics
+}
+
+// The chrome a window this wide is drawn with: on a phone, the compact bar. A
+// desktop window keeps its own bar however narrow it is drawn.
+public function windowChromeMetricsFor(width: Number) -> WindowChromeMetrics {
+    var metrics = windowChromeMetrics()
+    if interfaceMode() == .AdaptiveMobile && resolvedNavigationDevice(width) == .Phone {
+        metrics.toolbarHeight = metrics.compactToolbarHeight
+        metrics.bandHeight = metrics.compactBandHeight
+        metrics.edgeInset = metrics.compactEdgeInset
+    }
+    return metrics
+}
+
+// The window title's typeface: a toolkit text style, since Apple names none.
+public function catalogWindowTitleFont(mode: InterfaceMode) -> FontImplementation {
+    return catalogFont(catalogStack, "windowTitle", mode)
+}
+
+let desktopWindowTitleFont = catalogWindowTitleFont(.AdaptiveDesktop)
+let mobileWindowTitleFont = catalogWindowTitleFont(.AdaptiveMobile)
+let compactWindowTitleFont = catalogFont(catalogStack, "windowTitleCompact", .AdaptiveMobile)
+
+// The bar's title face for a window this wide: on a phone, the compact bar's.
+public function windowTitleFontFor(width: Number) -> FontImplementation {
+    if interfaceMode() == .AdaptiveDesktop {
+        return desktopWindowTitleFont
+    }
+    if resolvedNavigationDevice(width) == .Phone {
+        return compactWindowTitleFont
+    }
+    return mobileWindowTitleFont
+}
+
+// --- Menu bar --------------------------------------------------------------
+
+// The lengths the window's menu bar is laid out with: the row across the top
+// of the window, the pill each title lights in while its menu is out, the
+// room around a title and between two, and how far under the row a menu's
+// card hangs.
+public struct MenuBarMetrics {
+    let height: Number
+    let titleHeight: Number
+    let titlePadding: Number
+    let titleSpacing: Number
+    let cardGap: Number
+}
+
+public function catalogMenuBarMetrics(mode: InterfaceMode) -> MenuBarMetrics {
+    return MenuBarMetrics {
+        height: catalogMetric(catalogStack, MetricName.menuBarHeight, mode),
+        titleHeight: catalogMetric(catalogStack, MetricName.menuBarTitleHeight, mode),
+        titlePadding: catalogMetric(catalogStack, MetricName.menuBarTitlePadding, mode),
+        titleSpacing: catalogMetric(catalogStack, MetricName.menuBarTitleSpacing, mode),
+        cardGap: catalogMetric(catalogStack, MetricName.menuBarCardGap, mode)
+    }
+}
+
+let desktopMenuBarMetrics = catalogMenuBarMetrics(.AdaptiveDesktop)
+let mobileMenuBarMetrics = catalogMenuBarMetrics(.AdaptiveMobile)
+
+public function menuBarMetrics() -> MenuBarMetrics {
+    return interfaceMode() == .AdaptiveDesktop ? desktopMenuBarMetrics : mobileMenuBarMetrics
+}
+
+// A menu's title on the bar, and the application's, which is set heavier.
+let desktopMenuBarTitleFont = catalogFont(catalogStack, "menuBarTitle", .AdaptiveDesktop)
+let mobileMenuBarTitleFont = catalogFont(catalogStack, "menuBarTitle", .AdaptiveMobile)
+let desktopMenuBarApplicationFont = catalogFont(
+    catalogStack,
+    "menuBarApplicationTitle",
+    .AdaptiveDesktop
+)
+let mobileMenuBarApplicationFont = catalogFont(
+    catalogStack,
+    "menuBarApplicationTitle",
+    .AdaptiveMobile
+)
+
+public function menuBarTitleFont(application: Bool) -> FontImplementation {
+    if interfaceMode() == .AdaptiveDesktop {
+        return application ? desktopMenuBarApplicationFont : desktopMenuBarTitleFont
+    }
+    return application ? mobileMenuBarApplicationFont : mobileMenuBarTitleFont
+}
+
+// --- Sidebar ---------------------------------------------------------------
+
+// How wide a split view's sidebar column opens, in a window of regular width
+// and in an expanded one, and the lengths a `List` in it is laid out with, all
+// of them from the column's own edge: the section title's row, where its text
+// starts and how far down, the rows and where their content starts, the
+// selection band and its corner, and the column the glyph is centered in before
+// the title -- and the spring the column slides in and out on when its toggle
+// is pressed, which does not bounce: a sidebar is a pane, not a card. Its
+// glass runs past the window's edges by `glassBleed`, so the edge a piece of
+// glass draws -- its rim, its antialiased border -- is off the window, and a
+// view sliding under the pane never shows through it there. Along its
+// trailing edge the detail casts a shadow into it, `shadowRadius` soft.
+public struct SidebarMetrics {
+    let width: Number
+    let expandedWidth: Number
+    let headerHeight: Number
+    let headerInset: Number
+    let headerTopInset: Number
+    let rowHeight: Number
+    let rowInset: Number
+    let selectionInset: Number
+    let selectionRadius: Number
+    let iconColumn: Number
+    let titleSpacing: Number
+    let symbolSize: Number
+    let toggleResponse: Number
+    let toggleDamping: Number
+    let glassBleed: Number
+    let shadowRadius: Number
+}
+
+public function catalogSidebarMetrics(mode: InterfaceMode) -> SidebarMetrics {
+    return SidebarMetrics {
+        width: catalogMetric(catalogStack, MetricName.sidebarWidth, mode),
+        expandedWidth: catalogMetric(catalogStack, MetricName.sidebarExpandedWidth, mode),
+        headerHeight: catalogMetric(catalogStack, MetricName.sidebarHeaderHeight, mode),
+        headerInset: catalogMetric(catalogStack, MetricName.sidebarHeaderInset, mode),
+        headerTopInset: catalogMetric(catalogStack, MetricName.sidebarHeaderTopInset, mode),
+        rowHeight: catalogMetric(catalogStack, MetricName.sidebarRowHeight, mode),
+        rowInset: catalogMetric(catalogStack, MetricName.sidebarRowInset, mode),
+        selectionInset: catalogMetric(catalogStack, MetricName.sidebarSelectionInset, mode),
+        selectionRadius: catalogMetric(catalogStack, MetricName.sidebarSelectionRadius, mode),
+        iconColumn: catalogMetric(catalogStack, MetricName.sidebarIconColumn, mode),
+        titleSpacing: catalogMetric(catalogStack, MetricName.sidebarTitleSpacing, mode),
+        symbolSize: catalogMetric(catalogStack, MetricName.sidebarSymbolSize, mode),
+        toggleResponse: catalogMetric(catalogStack, MetricName.sidebarToggleResponse, mode),
+        toggleDamping: catalogMetric(catalogStack, MetricName.sidebarToggleDamping, mode),
+        glassBleed: catalogMetric(catalogStack, MetricName.sidebarGlassBleed, mode),
+        shadowRadius: catalogMetric(catalogStack, MetricName.sidebarShadowRadius, mode)
+    }
+}
+
+let desktopSidebarMetrics = catalogSidebarMetrics(.AdaptiveDesktop)
+let mobileSidebarMetrics = catalogSidebarMetrics(.AdaptiveMobile)
+
+public function sidebarMetrics() -> SidebarMetrics {
+    return interfaceMode() == .AdaptiveDesktop ? desktopSidebarMetrics : mobileSidebarMetrics
+}
+
+// The selected row's band: a wash over the column's glass, not the accent.
+public let sidebarSelection = catalogAdaptive(catalogStack, "sidebarSelection")
+
+// The shadow the detail casts into the sidebar's glass along its trailing
+// edge.
+public let sidebarShadowColor = catalogAdaptive(catalogStack, ColorName.sidebarShadow)
+
+// --- Inset grouped list ------------------------------------------------------
+
+// The lengths `Form` and an inset grouped `List` are laid out with: the
+// readable column and the gaps down it, the card and its rows, the room
+// around a header and a footer, and the faces the two are set in.
+public struct ListMetrics {
+    let readableWidth: Number
+    let sectionSpacing: Number
+    let labeledSectionSpacing: Number
+    let topInset: Number
+    let cornerRadius: Number
+    let rowHeight: Number
+    let rowInset: Number
+    let rowVerticalInset: Number
+    let separatorThickness: Number
+    let accessorySpacing: Number
+    let valueColumnShare: Number
+    let headerTopInset: Number
+    let headerBottomInset: Number
+    let footerTopInset: Number
+    let footerBottomInset: Number
+    let indentation: Number
+    let headerFont: FontImplementation
+    let footerFont: FontImplementation
+}
+
+public function catalogListMetrics(mode: InterfaceMode) -> ListMetrics {
+    return ListMetrics {
+        readableWidth: catalogMetric(catalogStack, MetricName.listReadableWidth, mode),
+        sectionSpacing: catalogMetric(catalogStack, MetricName.listSectionSpacing, mode),
+        labeledSectionSpacing: catalogMetric(
+            catalogStack,
+            MetricName.listLabeledSectionSpacing,
+            mode
+        ),
+        topInset: catalogMetric(catalogStack, MetricName.listTopInset, mode),
+        cornerRadius: catalogMetric(catalogStack, MetricName.listCornerRadius, mode),
+        rowHeight: catalogMetric(catalogStack, MetricName.listRowHeight, mode),
+        rowInset: catalogMetric(catalogStack, MetricName.listRowInset, mode),
+        rowVerticalInset: catalogMetric(catalogStack, MetricName.listRowVerticalInset, mode),
+        separatorThickness: catalogMetric(catalogStack, MetricName.listSeparatorThickness, mode),
+        accessorySpacing: catalogMetric(catalogStack, MetricName.listAccessorySpacing, mode),
+        valueColumnShare: catalogMetric(catalogStack, MetricName.listValueColumnShare, mode),
+        headerTopInset: catalogMetric(catalogStack, MetricName.listHeaderTopInset, mode),
+        headerBottomInset: catalogMetric(catalogStack, MetricName.listHeaderBottomInset, mode),
+        footerTopInset: catalogMetric(catalogStack, MetricName.listFooterTopInset, mode),
+        footerBottomInset: catalogMetric(catalogStack, MetricName.listFooterBottomInset, mode),
+        indentation: catalogMetric(catalogStack, MetricName.listIndentation, mode),
+        headerFont: catalogFont(catalogStack, "listSectionHeader", mode),
+        footerFont: catalogFont(catalogStack, "listSectionFooter", mode)
+    }
+}
+
+let desktopListMetrics = catalogListMetrics(.AdaptiveDesktop)
+let mobileListMetrics = catalogListMetrics(.AdaptiveMobile)
+
+public function listMetrics() -> ListMetrics {
+    return interfaceMode() == .AdaptiveDesktop ? desktopListMetrics : mobileListMetrics
+}
+
+// What a grouped list is painted with: the canvas the sections sit on, the
+// card its rows share, and the hairline between two rows.
+//
+// On a Mac the canvas is the window's own background, as every window of the
+// macOS kit is, and the card is the grouped step above it, the tertiary.
+// The iOS grouped canvas, black in the dark, reads as a hole in a Mac window.
+let mobileGroupedBackground = catalogAdaptive(catalogStack, ColorName.systemGroupedBackground)
+let mobileGroupedCardBackground = catalogAdaptive(
+    catalogStack,
+    ColorName.secondarySystemGroupedBackground
+)
+let desktopGroupedBackground = catalogAdaptive(catalogStack, ColorName.windowBackground)
+let desktopGroupedCardBackground = catalogAdaptive(
+    catalogStack,
+    ColorName.tertiarySystemGroupedBackground
+)
+
+public function groupedBackground() -> AdaptiveColor {
+    return interfaceMode() == .AdaptiveDesktop ? desktopGroupedBackground : mobileGroupedBackground
+}
+
+public function groupedCardBackground() -> AdaptiveColor {
+    return interfaceMode() == .AdaptiveDesktop ? desktopGroupedCardBackground : mobileGroupedCardBackground
+}
+public let listSeparator = catalogAdaptive(catalogStack, ColorName.separator)
+// A row held down lights in the fourth gray, as a cell does.
+public let listRowHighlight = catalogAdaptive(catalogStack, ColorName.systemGray4)
+
+// --- Large title -------------------------------------------------------------
+
+// Where a column's large title sits under the bar, and the room it leaves
+// before the content; how long it takes to fade over to the bar's inline
+// title once it goes under, and how far the inline one rises and how blurred
+// it starts as it comes.
+public struct LargeTitleMetrics {
+    let topInset: Number
+    let bottomInset: Number
+    let fadeDuration: Number
+    let inlineTravel: Number
+    let inlineBlur: Number
+}
+
+public function catalogLargeTitleMetrics(mode: InterfaceMode) -> LargeTitleMetrics {
+    return LargeTitleMetrics {
+        topInset: catalogMetric(catalogStack, MetricName.largeTitleTopInset, mode),
+        bottomInset: catalogMetric(catalogStack, MetricName.largeTitleBottomInset, mode),
+        fadeDuration: catalogMetric(catalogStack, MetricName.largeTitleFadeDuration, mode),
+        inlineTravel: catalogMetric(catalogStack, MetricName.largeTitleInlineTravel, mode),
+        inlineBlur: catalogMetric(catalogStack, MetricName.largeTitleInlineBlur, mode)
+    }
+}
+
+let desktopLargeTitleMetrics = catalogLargeTitleMetrics(.AdaptiveDesktop)
+let mobileLargeTitleMetrics = catalogLargeTitleMetrics(.AdaptiveMobile)
+
+public function largeTitleMetrics() -> LargeTitleMetrics {
+    return interfaceMode() == .AdaptiveDesktop ? desktopLargeTitleMetrics : mobileLargeTitleMetrics
+}
+
+// The search field a phone's page sets under its large title: how tall it
+// stands, how far in its magnifier and its text start, and how far under the
+// title's line it hangs. With no tab bar at the foot of the screen the field
+// floats there instead: how tall it stands then, and how far off the
+// screen's sides and bottom, at rest and presented.
+public struct SearchFieldMetrics {
+    let height: Number
+    let leading: Number
+    let spacing: Number
+    let titleSpacing: Number
+    let bottomHeight: Number
+    let bottomInset: Number
+    let bottomPresentedInset: Number
+}
+
+let phoneSearchFieldMetrics = SearchFieldMetrics {
+    height: catalogMetric(catalogStack, MetricName.searchFieldHeight, .AdaptiveMobile),
+    leading: catalogMetric(catalogStack, MetricName.searchFieldLeading, .AdaptiveMobile),
+    spacing: catalogMetric(catalogStack, MetricName.searchFieldSpacing, .AdaptiveMobile),
+    titleSpacing: catalogMetric(catalogStack, MetricName.searchFieldTitleSpacing, .AdaptiveMobile),
+    bottomHeight: catalogMetric(catalogStack, MetricName.bottomSearchFieldHeight, .AdaptiveMobile),
+    bottomInset: catalogMetric(catalogStack, MetricName.bottomSearchFieldInset, .AdaptiveMobile),
+    bottomPresentedInset: catalogMetric(
+        catalogStack,
+        MetricName.bottomSearchFieldPresentedInset,
+        .AdaptiveMobile
+    )
+}
+
+public function searchFieldMetrics() -> SearchFieldMetrics {
+    return phoneSearchFieldMetrics
+}
+
+// What the field is filled with at rest, and while it is focused.
+public let searchFieldFill = catalogAdaptive(catalogStack, ColorName.tertiarySystemFill)
+public let searchFieldFocusedFill = catalogAdaptive(catalogStack, ColorName.secondarySystemFill)
+
+// How a stack moves between its views: the moving view's corner, how dark
+// the view under it sits, and when a swipe back starts and goes
+// through.
+public struct NavigationTransitionMetrics {
+    let pageCornerRadius: Number
+    let coveredDim: Number
+    let coveredParallax: Number
+    let pushResponse: Number
+    let pushDamping: Number
+    let commitFraction: Number
+    let commitVelocity: Number
+    let swipeSlop: Number
+}
+
+public function catalogNavigationTransitionMetrics(
+    mode: InterfaceMode
+) -> NavigationTransitionMetrics {
+    return NavigationTransitionMetrics {
+        pageCornerRadius: catalogMetric(catalogStack, MetricName.navigationPageCornerRadius, mode),
+        coveredDim: catalogMetric(catalogStack, MetricName.navigationCoveredDim, mode),
+        coveredParallax: catalogMetric(catalogStack, MetricName.navigationCoveredParallax, mode),
+        pushResponse: catalogMetric(catalogStack, MetricName.navigationPushResponse, mode),
+        pushDamping: catalogMetric(catalogStack, MetricName.navigationPushDamping, mode),
+        commitFraction: catalogMetric(catalogStack, MetricName.navigationSwipeCommitFraction, mode),
+        commitVelocity: catalogMetric(catalogStack, MetricName.navigationSwipeCommitVelocity, mode),
+        swipeSlop: catalogMetric(catalogStack, MetricName.navigationSwipeSlop, mode)
+    }
+}
+
+let desktopNavigationTransitionMetrics = catalogNavigationTransitionMetrics(.AdaptiveDesktop)
+let mobileNavigationTransitionMetrics = catalogNavigationTransitionMetrics(.AdaptiveMobile)
+
+public function navigationTransitionMetrics() -> NavigationTransitionMetrics {
+    return interfaceMode() == .AdaptiveDesktop ? desktopNavigationTransitionMetrics : mobileNavigationTransitionMetrics
+}
+
+// The bar a scroll view shows along its trailing edge while it scrolls: how
+// thick it is, and how thick under a pointer that holds it; the shortest it
+// gets over long content, and the shortest it squeezes to past an end; how far
+// beyond it a pointer still takes it, across and along; how long it stays once
+// scrolling stops and how long it fades; how long it swells and thins back;
+// and what it is painted with.
+public struct ScrollIndicatorMetrics {
+    let thickness: Number
+    let expandedThickness: Number
+    let minimumLength: Number
+    let overscrolledLength: Number
+    let hitOutsetAcross: Number
+    let hitOutsetAlong: Number
+    let hideDelay: Number
+    let fadeDuration: Number
+    let expandDuration: Number
+    let collapseDuration: Number
+}
+
+public function catalogScrollIndicatorMetrics(mode: InterfaceMode) -> ScrollIndicatorMetrics {
+    return ScrollIndicatorMetrics {
+        thickness: catalogMetric(catalogStack, MetricName.scrollIndicatorThickness, mode),
+        expandedThickness: catalogMetric(
+            catalogStack,
+            MetricName.scrollIndicatorExpandedThickness,
+            mode
+        ),
+        minimumLength: catalogMetric(catalogStack, MetricName.scrollIndicatorMinimumLength, mode),
+        overscrolledLength: catalogMetric(
+            catalogStack,
+            MetricName.scrollIndicatorOverscrolledLength,
+            mode
+        ),
+        hitOutsetAcross: catalogMetric(
+            catalogStack,
+            MetricName.scrollIndicatorHitOutsetAcross,
+            mode
+        ),
+        hitOutsetAlong: catalogMetric(catalogStack, MetricName.scrollIndicatorHitOutsetAlong, mode),
+        hideDelay: catalogMetric(catalogStack, MetricName.scrollIndicatorHideDelay, mode),
+        fadeDuration: catalogMetric(catalogStack, MetricName.scrollIndicatorFadeDuration, mode),
+        expandDuration: catalogMetric(catalogStack, MetricName.scrollIndicatorExpandDuration, mode),
+        collapseDuration: catalogMetric(
+            catalogStack,
+            MetricName.scrollIndicatorCollapseDuration,
+            mode
+        )
+    }
+}
+
+let desktopScrollIndicatorMetrics = catalogScrollIndicatorMetrics(.AdaptiveDesktop)
+let mobileScrollIndicatorMetrics = catalogScrollIndicatorMetrics(.AdaptiveMobile)
+
+public function scrollIndicatorMetrics() -> ScrollIndicatorMetrics {
+    return interfaceMode() == .AdaptiveDesktop ? desktopScrollIndicatorMetrics : mobileScrollIndicatorMetrics
+}
+
+public let scrollIndicatorColor = catalogAdaptive(catalogStack, ColorName.scrollIndicator)
+
+// The hard scroll edge effect a scroll view lays under the bar once its
+// content runs under it: how far it blurs what passes beneath, the hairline
+// along its bottom edge, and what each is painted with.
+public struct ScrollEdgeMetrics {
+    let blurRadius: Number
+    let borderWidth: Number
+}
+
+public function catalogScrollEdgeMetrics(mode: InterfaceMode) -> ScrollEdgeMetrics {
+    return ScrollEdgeMetrics {
+        blurRadius: catalogMetric(catalogStack, MetricName.scrollEdgeBlurRadius, mode),
+        borderWidth: catalogMetric(catalogStack, MetricName.scrollEdgeBorderWidth, mode)
+    }
+}
+
+let desktopScrollEdgeMetrics = catalogScrollEdgeMetrics(.AdaptiveDesktop)
+let mobileScrollEdgeMetrics = catalogScrollEdgeMetrics(.AdaptiveMobile)
+
+public function scrollEdgeMetrics() -> ScrollEdgeMetrics {
+    return interfaceMode() == .AdaptiveDesktop ? desktopScrollEdgeMetrics : mobileScrollEdgeMetrics
+}
+
+public let scrollEdgeFillColor = catalogAdaptive(catalogStack, ColorName.scrollEdgeFill)
+public let scrollEdgeBorderColor = catalogAdaptive(catalogStack, ColorName.scrollEdgeBorder)

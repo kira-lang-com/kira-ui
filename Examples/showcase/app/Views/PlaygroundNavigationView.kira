@@ -1,0 +1,37 @@
+import KiraUI
+import Foundation
+
+// List to navigate to each playground.
+construct PlaygroundNavigationView() extends Widget {
+    @AppStorage("searchText") var searchText: String = ""
+
+    body {
+        NavigationStack {
+            List {
+                For(playground in matchingPlaygroundTypes(searchText)) {
+                    NavigationLink(value = PlaygroundRoute(playground: playground)) {
+                        Text(playground.title())
+                    }
+                }
+            }
+            .navigationTitle("Showcase")
+            .searchable(text: $searchText)
+        }
+    }
+}
+
+// The playgrounds with a word in their title that starts with the search
+// text.
+function matchingPlaygroundTypes(searchText: borrow String) -> [PlaygroundType] {
+    let prefix = searchText.lowercased().trim()
+    var matching: [PlaygroundType] = []
+    for playground in allCases_PlaygroundType() {
+        for word in playground.title().split(" ") {
+            if word.lowercased().startsWith(prefix) {
+                matching.append(playground)
+                break
+            }
+        }
+    }
+    return matching
+}

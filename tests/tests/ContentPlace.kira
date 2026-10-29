@@ -1,0 +1,80 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// The children of an `if` carry their arm's place, and a sibling after the
+// `if` none, so taking the arm's child away never moves the sibling into the
+// layer it left (ContentPlace.kira).
+
+function placedZStack(shown: Bool) -> CALayerDescription {
+    return describedLayer(
+        ZStack {
+            if shown {
+                Text(content: "Lock")
+            } else {
+                Text(content: "Home")
+            }
+            Text(content: "Bar")
+        }
+    )
+}
+
+// The arm that is shown and the arm that is not each carry a place of their
+// own, the two places differ, and the sibling after the `if` has none.
+@Test
+function ifArmsCarryTheirPlaces() {
+    let shown = placedZStack(true)
+    let hidden = placedZStack(false)
+    expect!((shown.sublayers.count) == (2))
+    expect!((shown.sublayers[0].place != 0) == (true))
+    expect!((hidden.sublayers[0].place != 0) == (true))
+    expect!((shown.sublayers[0].place != hidden.sublayers[0].place) == (true))
+    expect!((shown.sublayers[1].place) == (0))
+}
+
+// The sibling after an `if` keeps its layer when the arm's child is taken away:
+// it is still mounted and still fully opaque.
+@Test
+function siblingAfterAnIfKeepsItsLayer() {
+    var tree = layerTree()
+    let first = CALayerDescription {
+        key: 1,
+        sublayers: [
+            CALayerDescription { place: 3, opacity: 0.0 },
+            CALayerDescription { opacity: 1.0 }
+        ]
+    }
+    let root = tree.reconcile(first)
+    tree.beginReconcile()
+    tree.reuse(root)
+    let bar = tree.matchChild(root, 0)
+    tree.endReconcile()
+    tree.reconcile(CALayerDescription { key: 1, sublayers: [CALayerDescription { opacity: 1.0 }] })
+    tree.advance(0.0)
+    expect!((tree.isMounted(bar)) == (true))
+    expect!((tree.presentationOpacity(bar)) == (1.0))
+}
+
+function dragAfterIf(shown: Bool) -> CALayerDescription {
+    tapSeqReset()
+    return describedLayer(
+        ZStack {
+            if shown {
+                Text(content: "Lock").gesture(DragGesture(minimumDistance: 0))
+            }
+            Text(content: "Bar").gesture(DragGesture(minimumDistance: 0))
+        }
+    )
+}
+
+// A control after an `if` that adds no child keeps the same key as when the
+// `if` is shown, and the control inside the `if` has a key of its own.
+@Test
+function controlAfterAnIfKeepsItsKey() {
+    let hiddenLayer = dragAfterIf(false)
+    let shownLayer = dragAfterIf(true)
+    expect!((hiddenLayer.sublayers.count) == (1))
+    expect!((shownLayer.sublayers.count) == (2))
+    expect!((shownLayer.sublayers[1].hitKey) == (hiddenLayer.sublayers[0].hitKey))
+    expect!((shownLayer.sublayers[0].hitKey != shownLayer.sublayers[1].hitKey) == (true))
+}

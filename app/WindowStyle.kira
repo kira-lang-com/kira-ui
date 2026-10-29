@@ -1,0 +1,177 @@
+import Foundation
+import Ember
+import KiraLayout
+import KCoreAnimation
+
+// A window's title bar, as SwiftUI's `.windowStyle(_:)` sets a Mac's.
+//
+// A window with a toolbar has the toolbar's band, with the close, minimize and
+// zoom buttons leading it. A window without one has a Mac's slim title bar:
+// the buttons, its title beside them and a hairline under it. A window whose
+// title bar is hidden keeps only the buttons; its content is still held under
+// the bar's 32, as SwiftUI's safe area holds it, and only a background runs up
+// under them.
+public enum WindowStyle {
+    Automatic
+    TitleBar
+    HiddenTitleBar
+}
+
+// What a window's top is this frame, once its content has said what it holds.
+public enum WindowBar {
+    Toolbar
+    TitleBar
+    Hidden
+}
+
+// A Mac's title bar, measured off AppKit on macOS 27: 32 tall, the buttons 9
+// from the top and leading edges, and the title at 82, set in the headline
+// face, 16 tall and centered in the bar.
+public namespace TitleBarMetrics {
+    let height: Number = 32.0
+    let controlsLeading: Number = 9.0
+    let titleLeading: Number = 82.0
+    let titleSize: Number = 13.0
+}
+
+extend Widget {
+    // The window's title bar, as SwiftUI's `.windowStyle(_:)` has it.
+    function windowStyle(style: WindowStyle) -> Any Widget {
+        return WindowStyleLayer(style: style) {
+            self
+        }
+    }
+}
+
+public construct WindowStyleLayer(style: WindowStyle) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        windowStyleDeclare(style)
+        return content.describe(context, modifiers)
+    }
+}
+
+// Whether the toolkit draws the window's title bar. It does where it draws the
+// buttons too, on a computer's window with no menu row; elsewhere the window
+// keeps the toolbar's band as before.
+public function windowDrawsTitleBar() -> Bool {
+    if interfaceMode() != .AdaptiveDesktop || menuBarShown() || !windowHasControls() {
+        return false
+    }
+    return windowDecorated() || graphicsUsesWaylandClientWindowControls()
+}
+
+// Whether the content put anything on the bar this frame: a navigation stack
+// or split view, a toolbar item, tabs or a search field. A Mac's window with
+// any of them unifies its title bar with the toolbar.
+function windowHasToolbar(sink: borrow ToolbarSink) -> Bool {
+    if sink.hasNavigation || sink.hasNavigationColumn || sink.sidebarToggle { return true }
+    if sink.back.count > 0 || sink.navigation.count > 0 || sink.principal.count > 0 {
+        return true
+    }
+    if sink.primaryAction.count > 0 || sink.automatic.count > 0 || sink.tabs.count > 0 {
+        return true
+    }
+    return match sink.search {
+        Some(_) -> true
+        None -> false
+    }
+}
+
+// How far the bar holds the content down from the window's top.
+public function windowBarTop(width: Number) -> Number {
+    return match windowBar() {
+        Toolbar -> windowTopClearance() + windowChromeMetricsFor(width).bandHeight
+        TitleBar -> TitleBarMetrics.height
+        Hidden -> TitleBarMetrics.height
+    }
+}
+
+// Settles this frame's bar from what the content declared, after it lowered.
+public function windowBarSettle() {
+    toolbarSinkEnsure()
+    let sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+    var bar: WindowBar = .Toolbar
+    if windowDrawsTitleBar() && !windowHasToolbar(sink) {
+        bar = match windowStyleDeclared() {
+            HiddenTitleBar -> .Hidden
+            Automatic -> .TitleBar
+            TitleBar -> .TitleBar
+        }
+    }
+    windowBarSet(bar)
+    if bar != .Toolbar {
+        var drag = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+        drag.windowDragHeight = TitleBarMetrics.height
+    }
+}
+
+// The slim title bar, or only the buttons where the title bar is hidden.
+public function windowTitleBar(
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext
+) -> CALayerDescription {
+    var controls = WindowControls().describe(context, modifiers)
+    controls.layout.widthFill = false
+    controls.layout.heightFill = false
+    var parts: [CALayerDescription] = [controls]
+    let hidden = windowBar() == .Hidden
+    if !hidden {
+        let metrics = windowChromeMetrics()
+        let controlsWidth = metrics.controlDiameter * 3.0 + metrics.controlSpacing * 2.0
+        parts.append(
+            CALayerDescription {
+                layout: CALayoutIntent {
+                    widthFill: false,
+                    heightFill: false,
+                    fixedWidth: TitleBarMetrics.titleLeading - TitleBarMetrics.controlsLeading - controlsWidth
+                }
+            }
+        )
+        var title = Text(content: windowTitleShown())
+        .font(size: resolvedLength(TitleBarMetrics.titleSize), weight: .Bold)
+        .foregroundColor(windowActive() ? .Primary : .Tertiary)
+        .describe(context, modifiers)
+        title.layout.widthFill = false
+        title.layout.heightFill = false
+        parts.append(move title)
+    }
+    let row = CALayerDescription {
+        layout: CALayoutIntent {
+            axis: .Row,
+            widthFill: true,
+            heightFill: false,
+            fixedHeight: TitleBarMetrics.height,
+            paddingLeading: TitleBarMetrics.controlsLeading,
+            alignment: Point { x: 0.0, y: 0.5 }
+        },
+        sublayers: move parts
+    }
+    if hidden {
+        return row
+    }
+    // The hairline is the bar's last point, over the content's first.
+    var line = Divider().describe(context, modifiers)
+    line.layout.widthFill = true
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            widthFill: true,
+            heightFill: false,
+            fixedHeight: TitleBarMetrics.height,
+            alignment: Point { x: 0.0, y: 1.0 }
+        },
+        sublayers: [row, line]
+    }
+}
+
+// The title a Mac's bar shows: the content's own, else the application's.
+function windowTitleShown() -> String {
+    toolbarSinkEnsure()
+    let sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+    if sink.detailTitle.count > 0 { return copy sink.detailTitle }
+    return windowTitleName()
+}

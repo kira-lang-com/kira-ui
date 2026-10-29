@@ -1,0 +1,229 @@
+import Foundation
+import ArgumentParser
+import KiraUI
+import Ember
+
+// `ui` — the Kira UI command line, over both layers: it runs a tree of KiraUI
+// widgets, which lower onto the UI Foundation, and reads a frame back. Launch and
+// capture are the launch options every KiraUI application reads, not the
+// KIRA_GRAPHICS_CAPTURE_* / KIRA_UI_* environment variables a driven run used.
+
+// A small gallery of KiraUI widgets, enough to prove both layers draw: the
+// widgets are KiraUI, the column and text they lower to are the Foundation's.
+construct Gallery() extends Widget {
+    body {
+        AppSurface {
+            VStack(spacing: .Small) {
+                Text(content: "Kira UI")
+                Text(content: "UIFoundation + KiraUI")
+                Button(
+                    title: "Primary",
+                    action: { in
+                        return
+                    }
+                )
+                Button(
+                    title: "Danger",
+                    role: .Destructive,
+                    action: { in
+                        return
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Derive(Parsable)
+struct ShotArguments {
+    let out: String
+    let app: String?
+    let arg: String?
+    let frames: Number
+    let at: Number
+    let width: Number?
+    let height: Number?
+    let scale: Number?
+}
+
+// The gallery's window where the command line does not size it.
+namespace GalleryWindow {
+    let width: Number = 1200
+    let height: Number = 800
+}
+
+// Capture an application this command was never linked against.
+//
+// Every KiraUI application reads the same launch options (LaunchOptions.kira
+// in KiraUI), so the capture is asked for on its command line, as `ui test`
+// asks one for a run with no window, and the application needs nothing else
+// to allow it. The options live in KiraUI once rather than in each program,
+// so no two applications spell them differently.
+function shootForeignApp(parsed: borrow ShotArguments, app: borrow String) -> Number {
+    var arguments = captureArguments(parsed)
+    match parsed.arg {
+        Some(text) -> arguments.append(copy text)
+        // The application is handed nothing of its own.
+        None -> {}
+    }
+    let command = ProcessCommand { program: copy app, arguments: arguments }
+    let child = match command.start() {
+        Ok(child) -> child
+        Error(failure) -> {
+            printError("ui shot: \(app) could not be started: \(failure)")
+            return 1
+        }
+    }
+    let exit = match child.wait() {
+        Ok(exit) -> exit
+        Error(failure) -> {
+            printError("ui shot: \(app) could not be waited for: \(failure)")
+            return 1
+        }
+    }
+    match child.release() {
+        Ok -> {}
+        Error(failure) -> log warn("could not release the application's process", failure)
+    }
+    match exit {
+        Status(status) -> {
+            if status != 0 {
+                printError("ui shot: \(app) exited with \(status)")
+                return status
+            }
+        }
+        Signalled(signal) -> {
+            printError("ui shot: \(app) ended on signal \(signal)")
+            return 1
+        }
+    }
+    return reportShot(parsed)
+}
+
+// The capture, in the options every KiraUI application reads: the size only
+// where the command line gave one, so an application otherwise opens at its
+// own.
+function captureArguments(parsed: borrow ShotArguments) -> [String] {
+    var arguments = ["--capture", copy parsed.out, "--frames", String(parsed.frames)]
+    if parsed.at > 0 {
+        arguments.append("--at")
+        arguments.append(String(parsed.at))
+    }
+    let sizes = [("--width", parsed.width), ("--height", parsed.height), ("--scale", parsed.scale)]
+    for (name, value) in sizes {
+        match value {
+            Some(given) -> {
+                arguments.append(name)
+                arguments.append(String(given))
+            }
+            None -> {}
+        }
+    }
+    return arguments
+}
+
+// Whether the run wrote its frame, said either way. A frame left from an
+// earlier run was removed before this one began, so a file here is this run's.
+function reportShot(parsed: borrow ShotArguments) -> Number {
+    if !fileExists(parsed.out) {
+        printError("ui shot: no frame was written to " + parsed.out)
+        return 1
+    }
+    print("captured " + parsed.out)
+    return 0
+}
+
+// Removes the frame an earlier run left at the destination.
+function clearShot(parsed: borrow ShotArguments) -> Bool {
+    if !fileExists(parsed.out) {
+        return true
+    }
+    match removePath(parsed.out) {
+        Ok -> return true
+        Error(failure) -> {
+            printError("ui shot: \(parsed.out) could not be replaced: \(failure)")
+            return false
+        }
+    }
+}
+
+construct ShotCommand() extends ParsableCommand {
+    let configuration: CommandConfiguration {
+        return CommandConfiguration {
+            name: "shot",
+            abstract: "Run the widget gallery and capture a frame to a PPM"
+        }
+    }
+
+    let arguments: [ArgumentSpec] {
+        return [option(name: "out", help: "Destination .ppm for the captured frame").short(
+            "o"
+        ).required(), option(
+            name: "app",
+            help: "Executable to run and capture; omitted, the built-in gallery is drawn"
+        ).short("p"), option(name: "arg", help: "One argument to pass the application").short(
+            "g"
+        ), option(name: "frames", help: "Quit after this many frames").short(
+            "f"
+        ).whole().defaulting("120"), option(
+            name: "at",
+            help: "Capture at this frame (0 = the last one drawn)"
+        ).short("a").whole().defaulting("0"), option(
+            name: "width",
+            help: "The window's width, in points; the application's own when left out"
+        ).short("w").whole(), option(
+            name: "height",
+            help: "The window's height, in points; the application's own when left out"
+        ).short("t").whole(), option(
+            name: "scale",
+            help: "The pixels drawn for each point"
+        ).short("s").whole()]
+    }
+
+    function run(arguments: borrow ParsedArguments) -> Number {
+        let parsed = parse_ShotArguments(arguments)
+        if !clearShot(parsed) {
+            return 1
+        }
+        match parsed.app {
+            Some(app) -> return shootForeignApp(parsed, app)
+            // No application: the built-in gallery is drawn.
+            None -> {}
+        }
+        RunKiraWindowApp(
+            "Kira UI Gallery",
+            GalleryWindow.width,
+            GalleryWindow.height,
+            { in
+                return Gallery()
+            },
+            arguments: captureArguments(parsed)
+        )
+        return reportShot(parsed)
+    }
+}
+
+construct RootCommand() extends ParsableCommand {
+    let configuration: CommandConfiguration {
+        return CommandConfiguration {
+            name: "ui",
+            abstract: "Kira UI command line (UIFoundation + KiraUI)",
+            subcommands: ["shot", "test"]
+        }
+    }
+
+    let arguments: [ArgumentSpec] {
+        return []
+    }
+
+    function run(arguments: borrow ParsedArguments) -> Number {
+        return 0
+    }
+}
+
+@Main
+function main() -> Number {
+    let root = RootCommand()
+    let children: [Any ParsableCommand] = [ShotCommand(), TestCommand()]
+    return runCommandRouter(root, children, commandLineArguments())
+}

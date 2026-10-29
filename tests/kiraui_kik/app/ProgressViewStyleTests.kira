@@ -1,0 +1,37 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// SwiftUI's `ProgressViewStyle`: an application's style draws the progress
+// view from how far along it is, and the view still reads as one.
+
+construct KuiThinProgressViewStyle() extends ProgressViewStyle {
+    function makeBody(configuration: borrow ProgressViewStyleConfiguration) -> Any Widget {
+        let fraction = match configuration.fractionCompleted {
+            Some(completed) -> completed
+            None -> 0.0
+        }
+        return Rectangle().frame(width: 200.0 * fraction, height: 2.0)
+    }
+}
+
+// The style is handed `value` over `total`, and the view is one progress
+// indicator that reads it.
+construct KuiAStyleDrawsTheProgressItConfigures() extends Test {
+    test {
+        let view = ProgressView(value: 30.0, total: 120.0).progressViewStyle(
+            KuiThinProgressViewStyle {}
+        )
+        var described = kuiDescribe(move view)
+        layOutLayerTree(described, 400.0, 300.0)
+        let elements = kuiElements(
+            ProgressView(value: 30.0, total: 120.0).progressViewStyle(KuiThinProgressViewStyle {})
+        )
+        let bar = kuiLeaf(move described)
+        return "\(bar.size.width) \(elements.count) \(elements[0].role) \(elements[0].value)"
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok("50 1 AccessibilityRole.ProgressIndicator 25%")
+        return expected
+    }
+}

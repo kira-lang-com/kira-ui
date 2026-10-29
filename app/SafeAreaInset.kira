@@ -1,0 +1,84 @@
+import Foundation
+import KiraLayout
+import KCoreAnimation
+
+// SwiftUI's `.safeAreaInset(edge:content:)`: a bar along a view's top or
+// bottom, the view's safe area grown by the bar's height so nothing it lays
+// out inside the safe area goes under the bar.
+//
+//     Workspace(layout = layout) {
+//         ...
+//     }
+//     .safeAreaInset(edge = .Bottom) {
+//         StatusBar()
+//     }
+//
+// A container that lays itself out inside the safe area -- a workspace, a
+// split view -- keeps its box to the window's edge and stops its content at
+// the bar, and the bar stands over the room it left. Any other view is set
+// beside the bar, as a stack would set it.
+
+// SwiftUI's `VerticalEdge`: the top or the bottom of a view.
+public enum VerticalEdge {
+    Top
+    Bottom
+}
+
+public construct SafeAreaInsetLayer(edge: VerticalEdge, inset: Any Widget) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var bar = inset.describe(context, modifiers)
+        bar.layout.heightFill = false
+        let across = context.viewportWidth - context.safeArea.leading - context.safeArea.trailing
+        let height = bar.measure(across).height
+        var inner = copy context
+        if edge == .Top {
+            inner.safeArea.top = inner.safeArea.top + height
+        } else {
+            inner.safeArea.bottom = inner.safeArea.bottom + height
+        }
+        // Whether the content laid itself out inside the safe area is read off
+        // its own lowering alone, and what was already true around it is left
+        // true.
+        let around = chromeSafeAreaWasHandled()
+        chromeSafeAreaPending()
+        var body = content.describe(inner, modifiers)
+        let handled = chromeSafeAreaWasHandled()
+        if around || handled {
+            chromeSafeAreaHandled()
+        }
+        if handled {
+            let held = CALayerDescription {
+                layout: CALayoutIntent {
+                    heightFill: false,
+                    paddingLeading: context.safeArea.leading,
+                    paddingTop: edge == .Top ? context.safeArea.top : 0.0,
+                    paddingTrailing: context.safeArea.trailing,
+                    paddingBottom: edge == .Bottom ? context.safeArea.bottom : 0.0
+                },
+                sublayers: [bar]
+            }
+            return CALayerDescription {
+                layout: CALayoutIntent { alignment: Point { x: 0.0, y: edge == .Top ? 0.0 : 1.0 } },
+                sublayers: [body, held]
+            }
+        }
+        body.layout.flex = 1
+        return CALayerDescription {
+            layout: CALayoutIntent { axis: .Column },
+            sublayers: edge == .Top ? [bar, body] : [body, bar]
+        }
+    }
+}
+
+extend Widget {
+    function safeAreaInset(edge: VerticalEdge, inset: some Widget) -> Any Widget {
+        return SafeAreaInsetLayer(edge: edge, inset: inset) {
+            self
+        }
+    }
+}

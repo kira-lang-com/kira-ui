@@ -1,0 +1,50 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// SwiftUI's `.aspectRatio(_:contentMode:)` and `.fixedSize()`.
+
+// Given a height, a view kept to a shape takes the width the shape gives it.
+@Test
+function aspectRatioWidensFromItsHeight() {
+    var described = describedLayer(
+        Rectangle().aspectRatio(0.5, contentMode: .Fit).height(resolvedLength(40.0))
+    )
+    layOutLayerTree(described, 400.0, 300.0)
+    let box = innermostLayer(described)
+    expect!((box.size.width) == (20.0))
+    expect!((box.size.height) == (40.0))
+}
+
+// Fitting a wide box, the shape takes the box's height; filling it, its width.
+@Test
+function aspectRatioFitsOrFills() {
+    var fit = describedLayer(
+        Rectangle().aspectRatio(1.0, contentMode: .Fit).frame(width: 100.0, height: 40.0)
+    )
+    layOutLayerTree(fit, 400.0, 300.0)
+    var fill = describedLayer(
+        Rectangle().aspectRatio(1.0, contentMode: .Fill).frame(width: 100.0, height: 40.0)
+    )
+    layOutLayerTree(fill, 400.0, 300.0)
+    let fitted = fit.sublayers[0]
+    let filled = fill.sublayers[0]
+    expect!((fitted.size.width) == (40.0))
+    expect!((fitted.size.height) == (40.0))
+    expect!((filled.size.width) == (100.0))
+    expect!((filled.size.height) == (100.0))
+}
+
+// Fixed to its size, a run too wide for its box stays on one line, at the size
+// the run measures on its own.
+@Test
+function aFixedSizeTextKeepsItsLine() {
+    let line = describedLayer(Text(content: "Reduce Interruptions")).measure(400.0)
+    var described = describedLayer(
+        Text(content: "Reduce Interruptions").fixedSize().frame(width: 40.0, height: 100.0)
+    )
+    layOutLayerTree(described, 400.0, 300.0)
+    let text = described.sublayers[0]
+    expect!((text.size.height) == (line.height))
+    expect!((text.size.width) == (line.width))
+}

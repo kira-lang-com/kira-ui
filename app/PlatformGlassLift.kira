@@ -1,0 +1,209 @@
+import Foundation
+import KCoreAnimation
+
+// The glass a platform's surface draws: its menus, its popovers and the
+// controls on them. That surface is transparent over the windows and the
+// wallpaper, so glass drawn in it would refract only what the surface itself
+// holds. Each piece is lifted out of the laid-out frame for the compositor to
+// draw under the surface, where it refracts what is behind it, and a cut
+// takes its place, so nothing the surface drew earlier shows through it.
+// A hidden piece, or one turned, stays in the frame; a scaled one, as a
+// pressed control or a menu growing is, is lifted where the scale puts it.
+// Its contents stay in the frame either way. The compositor's glass has no
+// strength and no touch light, so a fading piece is lifted whole, its
+// contents fading over it, and a pressed one without its light.
+//
+// What the surface drew under a piece is behind it too. The plain fills that
+// cover the whole piece, as a dimmed screen's does, are laid back in the cut,
+// so the glass shows the scene they dim; anything smaller there is cut away
+// with the rest.
+public function platformLiftGlass(
+    described: borrow mut CALayerDescription
+) -> [WindowBackdropPiece] {
+    var lifted: [WindowBackdropPiece] = []
+    var fills: [PlatformFill] = []
+    platformLiftGlassIn(described, Point {}, (1.0, 1.0), Float(1.0), lifted, fills)
+    return lifted
+}
+
+// A plain fill the surface drew, where it stands on the surface and in what
+// color, at the strength its layers leave it.
+struct PlatformFill {
+    var x: Number = 0.0
+    var y: Number = 0.0
+    var width: Number = 0.0
+    var height: Number = 0.0
+    var color: CAColor = CAColor {}
+}
+
+namespace PlatformLiftedFill {
+    // The key the fill laid back in a cut is reconciled by, apart from the
+    // glass's own unkeyed contents.
+    let key: Number = -7001
+}
+
+function platformLiftGlassIn(
+    layer: borrow mut CALayerDescription,
+    origin: Point,
+    // In binary: a spring's scale times another's has more digits than a
+    // decimal holds.
+    scale: (Float, Float),
+    alpha: Float,
+    lifted: borrow mut [WindowBackdropPiece],
+    fills: borrow mut [PlatformFill]
+) {
+    if layer.rotation != 0.0 {
+        return
+    }
+    let strength = alpha * Float(layer.opacity)
+    // Where the layer stands on the surface: its place in its parent, which
+    // the parent's scale carries, then its own scale about its anchor.
+    let overlay = match layer.level {
+        Inline -> false
+        Overlay(z) -> true
+    }
+    let outer: (Float, Float) = overlay ? (1.0, 1.0) : scale
+    let ownX = Float(layer.scaleX)
+    let ownY = Float(layer.scaleY)
+    let inner: (Float, Float) = (outer.0 * ownX, outer.1 * ownY)
+    var corner = windowBackdropCorner(layer, origin)
+    var piece = WindowBackdropPiece {
+        x: corner.x,
+        y: corner.y,
+        width: layer.size.width,
+        height: layer.size.height,
+        corner: layer.cornerRadius
+    }
+    if inner.0 != 1.0 || inner.1 != 1.0 {
+        let width = Float(layer.size.width) * outer.0
+        let height = Float(layer.size.height) * outer.1
+        let placedX = Float(overlay ? 0.0 : origin.x) + Float(layer.position.x) * outer.0
+        let placedY = Float(overlay ? 0.0 : origin.y) + Float(layer.position.y) * outer.1
+        corner = Point {
+            x: Number(placedX + width * Float(layer.anchorPoint.x) * (1.0 - ownX)),
+            y: Number(placedY + height * Float(layer.anchorPoint.y) * (1.0 - ownY))
+        }
+        piece.x = corner.x
+        piece.y = corner.y
+        piece.width = Number(Float(layer.size.width) * inner.0)
+        piece.height = Number(Float(layer.size.height) * inner.1)
+        piece.corner = Number(Float(drawnCorner(layer)) * min(inner.0, inner.1))
+    }
+    var lifts = false
+    var shapeKind: Number = 0
+    match layer.content {
+        Glass(glass) -> {
+            lifts = strength > 0.0 && piece.width > 0.0 && piece.height > 0.0
+            // A capsule's radius is unbounded: past half its height.
+            let half = min(piece.width, piece.height) * 0.5
+            piece.capsule = piece.corner >= half - 0.01
+            if piece.capsule { piece.corner = half }
+            piece.continuous = glass.shapeKind == 1
+            shapeKind = glass.shapeKind
+            piece.recipe = platformLiftedRecipe(glass.style)
+        }
+        Solid(solid) -> {
+            if solid.blend == .Normal && solid.cornerRadius == 0.0 && Float(
+                solid.fill.a
+            ) * strength > 0.0 {
+                var color = copy solid.fill
+                color.a = Number(Float(color.a) * strength)
+                fills.append(
+                    PlatformFill {
+                        x: corner.x,
+                        y: corner.y,
+                        width: piece.width,
+                        height: piece.height,
+                        color: move color
+                    }
+                )
+            }
+        }
+        Empty, Text, Texture, Icon, Gradient -> {}
+    }
+    if lifts {
+        layer.content = .Solid(
+            CASolid {
+                fill: CAColor {},
+                cornerRadius: piece.corner,
+                shapeKind: shapeKind,
+                blend: .DestinationOut
+            }
+        )
+        let under = platformFillUnder(fills, piece)
+        if under.a > 0.0 {
+            var sublayers = [
+                CALayerDescription {
+                    key: PlatformLiftedFill.key,
+                    size: copy layer.size,
+                    content: .Solid(
+                        CASolid {
+                            fill: move under,
+                            cornerRadius: piece.corner,
+                            shapeKind: shapeKind
+                        }
+                    )
+                }
+            ]
+            for sublayer in layer.sublayers { sublayers.append(copy sublayer) }
+            layer.sublayers = move sublayers
+        }
+        lifted.append(move piece)
+    }
+    for i in 0..layer.sublayers.count {
+        platformLiftGlassIn(layer.sublayers[i], copy corner, copy inner, strength, lifted, fills)
+    }
+}
+
+// The corner `layer` draws: its radius, up to half its shorter side, past
+// which every radius draws the same capsule. A capsule asks for one no box
+// reaches (`ShapeLimits.maximumRadius`), which scaled by a press is past what
+// a Number holds.
+function drawnCorner(layer: borrow CALayerDescription) -> Number {
+    return min(layer.cornerRadius, min(layer.size.width, layer.size.height) / 2)
+}
+
+// The recipe a lifted piece is drawn in: a platform recipe as it is, and
+// plain glass as Clear, which lays no wash over the screen it shows.
+function platformLiftedRecipe(style: borrow CAGlassStyle?) -> CAGlassRecipe {
+    match style {
+        Some(asked) -> {
+            return match asked.recipe {
+                Regular -> .Clear
+                AbuttedSidebar, AppIcons, AVPlayer, Bubbles, Camera, CarPlayUltra, CartouchePopover, Clear,
+                    Control, ControlCenter, Dock, DockRegular, FaceTime, Identity, Inspector, Keyboard, Loupe,
+                    Menu, Monogram, NotificationCenter, Sidebar, Siri, SiriSnippet, Slider, Text,
+                    Widgets -> copy asked.recipe
+            }
+        }
+        None -> return .Clear
+    }
+}
+
+// The fills of `fills` that cover all of `piece`, laid one over the next.
+// In binary: a strength a spring faded is as long as a decimal holds, and
+// one times another has more digits than it can.
+function platformFillUnder(
+    fills: borrow [PlatformFill],
+    piece: borrow WindowBackdropPiece
+) -> CAColor {
+    var r: Float = 0.0
+    var g: Float = 0.0
+    var b: Float = 0.0
+    var a: Float = 0.0
+    for fill in fills {
+        let covers = fill.x <= piece.x && fill.y <= piece.y
+            && fill.x + fill.width >= piece.x + piece.width
+            && fill.y + fill.height >= piece.y + piece.height
+        if !covers { continue }
+        let over = Float(fill.color.a)
+        let laid = over + a * (1.0 - over)
+        if laid <= 0.0 { continue }
+        let kept = a * (1.0 - over)
+        r = (Float(fill.color.r) * over + r * kept) / laid
+        g = (Float(fill.color.g) * over + g * kept) / laid
+        b = (Float(fill.color.b) * over + b * kept) / laid
+        a = laid
+    }
+    return CAColor { r: Number(r), g: Number(g), b: Number(b), a: Number(a) }
+}

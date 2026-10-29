@@ -1,0 +1,638 @@
+import Foundation
+import KCoreAnimation
+
+// A tab bar's selection, held and let go, as UIKit's floating tab bar moves
+// its `_UIFloatingTabBarSelectionContainerView` -- read from UIKit:
+//
+// - `-[_UIFloatingTabBar _handleSelectionGesture:]`: a press on the bar
+//   highlights the tab under it and remembers how far along that tab it went
+//   down. The highlight follows the pointer from tab to tab, and the tab it is
+//   let go on is the one selected.
+// - `-[_UIFloatingTabBar _updateSelectionViewFrameAnimated:completion:]`:
+//   held, the selection is as wide as the tab under the pointer, held by the
+//   point it was taken by, and kept within the run of tabs (`trackedSpan`).
+// - `-[_UIFloatingTabBar _animateSelection:completion:]` and
+//   `_animateSelectionBounds:completion:`: its center springs at damping 0.85
+//   over 0.2s while held and 0.9 over 0.4s otherwise; its bounds at 0.85 over
+//   0.3s held and over 0.6s otherwise.
+// - `-[_UIFloatingTabBarSelectionContainerView _updateSelectionViewBounds]`:
+//   held, its liquid lens lifts, eight points past the tab on every side,
+//   and the gray capsule gives way to clear glass the labels show through
+//   in the selected ink. With reduced motion there is no lens: the capsule
+//   shrinks to the platform metrics' `selectionHighlightScale`, 0.95.
+// - `-[_UIFloatingTabBarPlatformMetrics init]`: the selection's shadow, black
+//   at 0.08, 16 points soft, 2 down.
+//
+// A phone's bar is `_UITabBarVisualProvider_Floating` instead, read from
+// iOS 27.0.1:
+//
+// - its lens update springs the lens's center at 0.85 over 0.2s while the
+//   finger moves and over 0.4s otherwise, its bounds over 0.3s and 0.6s, and
+//   both at 0.9 over 0.2s with reduced motion.
+// - `FloatingTabBarConfiguration`: lifted, the tabs under the lens are drawn
+//   at `liftedContentScale`, 1.16.
+//
+// Either way the lens is a `_UILiquidLensView` set up with `setStyle:1`, so
+// it reads the large variant's spec, and `setLiftedContentMode:1`:
+// `-setLifted:animated:` carries its `liftProgress` to 1 on the variant's
+// `liftSpring` and back to 0 on a spring of its own, and
+// `-updateProgressBasedAnimationsForPresentation:` shows the lens and its
+// lifted content at four times that progress. The glass itself is only there
+// while the lens is up: `ClearGlassView` is handed the slider material when
+// it lifts and none when it comes down.
+
+// How far a lifted lens reaches past its tab on every side.
+let tabBarLensOutset: Number = 8.0
+// `_UILiquidLensViewVariantSpec.lensHangTime`: the least time a lens stays
+// lifted, counted from when it lifted.
+let tabBarLensHang: Number = 0.22
+// How near its target a lens let go of has to be before it comes down:
+// `_UITabBarVisualProvider_Floating`'s lens update.
+let tabBarLensLanding: Number = 8.0
+// `FloatingTabBarConfiguration.liftedContentScale` on a phone.
+let tabBarLiftedContentScale: Number = 1.16
+// `_UILiquidLensViewVariantSpec.contentWrapperDisplacement`: how far, in
+// points, the lifted content's wrapper reads inward at the lens's rim.
+let tabBarContentWrapperDisplacement: Number = -17.5
+// `_UILiquidLensViewVariantSpec.innerShadowRadius`, `innerShadowOpacity` and
+// `innerShadowOffsetY`: the inverted shadow `ClearGlassView` lays over its
+// content while lifted.
+let tabBarLensInnerShadowRadius: Number = 3.0
+let tabBarLensInnerShadowOpacity: Number = 0.06
+let tabBarLensInnerShadowOffset: Number = 7.0
+
+// `_UILiquidLensViewLargeVariantSpec.liftSpring`: the lift's progress going
+// up, and the content under the lens growing.
+function tabBarLensLiftSpring() -> MotionSpring {
+    return MotionSpring { response: 0.25, damping: 1.0, target: 1.0 }
+}
+
+// `_UILiquidLensViewLargeVariantSpec.unLiftSpring`: what the lift's alongside
+// animations -- the content under the lens shrinking back -- come down on.
+function tabBarLensUnliftSpring() -> MotionSpring {
+    return MotionSpring { response: 0.25, damping: 1.0, target: 0.0 }
+}
+
+// The spring `-[_UILiquidLensView actuallySetLifted]` brings the lift's
+// progress down on, whatever the variant says.
+function tabBarLensDropSpring() -> MotionSpring {
+    return MotionSpring { response: 0.4, damping: 1.0, target: 0.0 }
+}
+
+public struct TabBarHold {
+    var press: Number = 0
+    var pressX: Number = 0.0
+    var held: Bool = false
+    var lifted: Bool = false
+    var liftedAt: Number = 0.0
+    // `_UILiquidLensView.liftProgress`: 1 lifted, 0 at rest, and when it was
+    // last advanced.
+    var progress: MotionSpringState = MotionSpringState {}
+    var progressTime: Number = -1.0
+    // How far the lens reaches past its tab, on the selection's bounds
+    // spring: `_updateSelectionViewBounds` outsets the lifted lens's bounds
+    // in the same animation that moves them.
+    var outset: MotionSpringState = MotionSpringState {}
+    // How far the content under the lens has grown toward
+    // `tabBarLiftedContentScale`: the lift's alongside animations, which run
+    // on the variant's lift and unlift springs rather than with the progress.
+    var growth: MotionSpringState = MotionSpringState {}
+    // The height of the bar's tabs, which its lens's flex is fitted to, and
+    // whether the bar is a phone's.
+    var tabHeight: Number = 0.0
+    var phone: Bool = false
+}
+
+public function tabBarHoldSlotKey(key: Number) -> ViewStateKey {
+    return slotKey("kiraui.tabhold.", key)
+}
+
+// A bar's selection this build: whether it is held, where the press went
+// down and where the pointer is now, in the bar's own coordinates, and
+// whether its lens is up or still coming down.
+public struct TabBarSelectionHold {
+    var key: Number = 0
+    var held: Bool = false
+    var pressX: Number = 0.0
+    var pointerX: Number = 0.0
+    var lifts: Bool = false
+    // The lift's progress, and how much of the lens and its punchout it shows.
+    var progress: Number = 0.0
+    var liftShown: Number = 0.0
+    // How far the lens reaches past its tab this frame.
+    var outset: Number = 0.0
+    // How far the content under it has grown, 0 to 1.
+    var growth: Number = 0.0
+    // The bar's tabs and the bar itself, and whether it is a phone's, whose
+    // selection capsule is inked over the glass rather than burned into it.
+    var tabHeight: Number = 0.0
+    var barHeight: Number = 0.0
+    var phone: Bool = false
+}
+
+// As `-[_UILiquidLensView setLifted:animated:]` and the floating tab bar's
+// lens update: a press lifts the lens; let go of, it comes down once it has
+// been up `tabBarLensHang` and is within `tabBarLensLanding` of where it is
+// going. Its progress follows on the lift's springs.
+public function tabBarSelectionHold(
+    key: Number,
+    context: borrow BuildContext,
+    tabHeight: Number,
+    barHeight: Number,
+    phone: Bool
+) -> TabBarSelectionHold {
+    let slot = tabBarHoldSlotKey(key)
+    if !ambientStateHasView(slot) {
+        ambientStatePutView(copy slot, nativeUserData(nativeState(TabBarHold {})))
+    }
+    var hold = nativeRecover<TabBarHold>(ambientStateGetView(slot))
+    let held = context.heldKey == key
+    let now = clockNow()
+    let calm = prefersReducedMotion()
+    if held && hold.press != context.heldPress {
+        hold.press = context.heldPress
+        hold.pressX = context.heldPoint.x
+        if !calm && !hold.lifted {
+            hold.lifted = true
+            hold.liftedAt = now
+        }
+    }
+    if hold.lifted && !held {
+        if now >= hold.liftedAt + tabBarLensHang && tabBarLensLanded(key) {
+            hold.lifted = false
+        } else {
+            clockStillMoving()
+        }
+    }
+    hold.held = held
+    hold.tabHeight = tabHeight
+    hold.phone = phone
+    // A spring set going starts from now: the time since the last frame
+    // advanced it -- however long the bar sat still -- is not time it ran.
+    var step = hold.progressTime < 0.0 ? 0.0 : clamp(now - hold.progressTime, 0.0, 1.0)
+    hold.progressTime = now
+    let goal = hold.lifted ? 1.0 : 0.0
+    if hold.progress.spring.target != goal {
+        let was = motionSpringSample(hold.progress, hold.progress.elapsed)
+        let spring = hold.lifted ? tabBarLensLiftSpring() : tabBarLensDropSpring()
+        hold.progress = motionSpringStart(move spring, was.value, was.velocity)
+        step = 0.0
+    }
+    // The lens's layout outsets it by whether it is lifted, and runs inside
+    // `actuallySetLifted`'s animation: its bounds grow and shrink on the
+    // lift's springs, with the content under it, never on the bounds spring.
+    let reach = hold.lifted ? tabBarLensOutset : 0.0
+    var outsetStep = step
+    if hold.outset.spring.target != reach {
+        let was = motionSpringSample(hold.outset, hold.outset.elapsed)
+        let lift = hold.lifted ? tabBarLensLiftSpring() : tabBarLensUnliftSpring()
+        let spring = MotionSpring { response: lift.response, damping: lift.damping, target: reach }
+        hold.outset = motionSpringStart(move spring, was.value, was.velocity)
+        outsetStep = 0.0
+    }
+    var growthStep = step
+    if hold.growth.spring.target != goal {
+        let was = motionSpringSample(hold.growth, hold.growth.elapsed)
+        let spring = hold.lifted ? tabBarLensLiftSpring() : tabBarLensUnliftSpring()
+        hold.growth = motionSpringStart(move spring, was.value, was.velocity)
+        growthStep = 0.0
+    }
+    let progress = motionSpringAdvance(hold.progress, step)
+    let growth = motionSpringAdvance(hold.growth, growthStep)
+    if !motionSpringSettled(hold.growth, growth, MotionSpringLimit.epsilon) {
+        clockStillMoving()
+    }
+    let outset = motionSpringAdvance(hold.outset, outsetStep)
+    if !motionSpringSettled(hold.outset, outset, MotionSpringLimit.epsilon) {
+        clockStillMoving()
+    }
+    let rising = !motionSpringSettled(hold.progress, progress, MotionSpringLimit.epsilon)
+    if rising {
+        clockStillMoving()
+    }
+    let shown = clamp(progress.value * 4.0, 0.0, 1.0)
+    return TabBarSelectionHold {
+        key: key,
+        held: held,
+        pressX: hold.pressX,
+        pointerX: context.heldPoint.x,
+        lifts: hold.lifted,
+        progress: progress.value,
+        liftShown: shown,
+        outset: outset.value,
+        growth: growth.value,
+        tabHeight: tabHeight,
+        barHeight: barHeight,
+        phone: phone
+    }
+}
+
+// The spring the selection's center moves on, held or not, on a phone's bar
+// or another's.
+function tabBarSelectionMoveSpring(held: Bool, phone: Bool) -> MotionSpring {
+    if phone && prefersReducedMotion() {
+        return MotionSpring { response: 0.2, damping: 0.9 }
+    }
+    if phone {
+        return MotionSpring { response: held ? 0.2 : 0.4, damping: 0.85 }
+    }
+    return MotionSpring { response: held ? 0.2 : 0.4, damping: held ? 0.85 : 0.9 }
+}
+
+// The spring its bounds move on.
+function tabBarSelectionBoundsSpring(held: Bool, phone: Bool) -> MotionSpring {
+    if phone && prefersReducedMotion() {
+        return MotionSpring { response: 0.2, damping: 0.9 }
+    }
+    return MotionSpring { response: held ? 0.3 : 0.6, damping: 0.85 }
+}
+
+// The selection's center, on the spring it moves on.
+function tabBarSelectionMove(hold: borrow TabBarSelectionHold) -> CALayerAnimation {
+    let spring = tabBarSelectionMoveSpring(hold.held, hold.phone)
+    return .Timed(CATiming { mode: .Spring, response: spring.response, damping: spring.damping })
+}
+
+// The selection's bounds, on theirs.
+function tabBarSelectionBounds(hold: borrow TabBarSelectionHold) -> CALayerAnimation {
+    let spring = tabBarSelectionBoundsSpring(hold.held, hold.phone)
+    return .Timed(CATiming { mode: .Spring, response: spring.response, damping: spring.damping })
+}
+
+// The layer a selection stands on: at the selected tab's middle, or under the
+// pointer while held, with what it shows either side of it.
+function tabBarSelectionAnchor(
+    hold: borrow TabBarSelectionHold,
+    outset: Number,
+    sublayers: [CALayerDescription]
+) -> CALayerDescription {
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedHeight: hold.tabHeight,
+            alignment: Point { x: 0.5, y: 0.5 },
+            spansGuide: guideTag(TabBarSelection()),
+            spansFromCenter: true,
+            spanOutset: outset,
+            spanTracks: hold.held,
+            spanPointerX: hold.pointerX,
+            spanPressX: hold.pressX,
+            spanTrackGuide: guideTag(TabBarTab()),
+            spanLiftedGuide: guideTag(TabBarRow())
+        },
+        animation: tabBarSelectionMove(hold),
+        sublayers: move sublayers
+    }
+}
+
+// The selection at rest: the gray capsule under the tabs, which gives way to
+// the lens as it lifts, as `_UILiquidLensView.restingBackground` fades with
+// the lift's progress. Nothing is drawn when no tab is selected.
+function tabBarSelectionCapsule(
+    hold: borrow TabBarSelectionHold,
+    modifiers: borrow ModifierContext
+) -> CALayerDescription {
+    // `restingBackground` is laid out at the lens's bounds, outset and all.
+    let height = hold.tabHeight + hold.outset * 2.0
+    let radius = height / 2.0
+    var fill = tabBarItemFill(true, radius, modifiers)
+    if hold.phone {
+        fill = phoneTabBarItemFill(true, radius, modifiers)
+    }
+    var capsule = CALayerDescription {
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedHeight: height,
+            spanFlexes: true
+        },
+        cornerRadius: radius,
+        content: .Solid(move fill),
+        animation: tabBarSelectionBounds(hold)
+    }
+    if hold.phone {
+        capsule.content = .Glass(tabBarSelectionBackdrop(modifiers))
+        capsule.capturesBackdrop = true
+    }
+    var anchor = tabBarSelectionAnchor(hold, hold.outset, [capsule])
+    anchor.key = 1
+    anchor.layout.spanFlexKey = hold.key
+    anchor.layout.spanFlexDrives = hold.liftShown > 0.0
+    anchor.opacity = clamp(1.0 - hold.progress, 0.0, 1.0)
+    if hold.held && !hold.lifts {
+        anchor.scaleX = 0.95
+        anchor.scaleY = 0.95
+    }
+    return anchor
+}
+
+// A phone's resting selection, `_UITabSelectionView`: no fill of its own but
+// a backdrop under a `gaussianBlur` of 2, captured at a quarter scale, through
+// `_ColorMatrix.YCC` -- black -0.07, white 0.8 and saturation 1.2 in the dark,
+// black -0.2, white 0.93 and saturation 1.2 in the light.
+function tabBarSelectionBackdrop(modifiers: borrow ModifierContext) -> CAGlass {
+    var glass = liquidGlassContent(.Capsule, modifiers, .Platform(.Identity))
+    let dark = modifierAppearance(modifiers) == .Dark
+    glass.matrixOpacity = 1.0
+    glass.matrixBlur = 2.0
+    glass.matrixScale = 0.25
+    glass.matrixBlack = dark ? -0.07 : -0.2
+    glass.matrixWhite = dark ? 0.8 : 0.93
+    glass.matrixSaturation = 1.2
+    return glass
+}
+
+// What the bar's selection layer holds: the capsule under the row, and,
+// while the lens is up, the row giving way to what stays of it, as UIKit
+// fades the lens's punchout in and out at four times the lift's progress.
+function tabBarSelectionLayers(
+    hold: borrow TabBarSelectionHold,
+    row: CALayerDescription,
+    modifiers: borrow ModifierContext
+) -> [CALayerDescription] {
+    // The row and what stays of it cross over with the lift's progress, frame
+    // by frame, so neither is left to an animation of its own.
+    var shown = move row
+    shown.disablesActions = true
+    if hold.liftShown <= 0.0 {
+        return [tabBarSelectionCapsule(hold, modifiers), move shown]
+    }
+    var punch = tabBarSelectionPunch(hold, shown, modifiers)
+    punch.opacity = hold.liftShown
+    punch.disablesActions = true
+    var hidden = move shown
+    hidden.opacity = 1.0 - hold.liftShown
+    // The capsule stays under them throughout: `restingBackground` fades on
+    // the same spring as the progress, so it is back long before the progress
+    // has crept the last of the way down.
+    return [tabBarSelectionCapsule(hold, modifiers), move hidden, move punch]
+}
+
+// The lifted lens: slider glass over the bar, past its edge, and nothing
+// else -- `_UILiquidLensView` draws its glass as SwiftUI's `_Glass.slider`,
+// whose recipe carries its own shadow. Coming down, the glass stays at the
+// lens's shrinking bounds until the last quarter of the lift's progress, as
+// `opacityPair.inputAmount` follows `clamp(4p)` either way, while
+// `ClearGlassView` drops only its lifted material.
+// The tabs it shows in the selected ink are under it, in the bar
+// (`tabBarSelectionPunch`), and its glass bends them, as `_UILiquidLensView`
+// portals the bar's content beneath its glass and warps it.
+function tabBarSelectionLens(
+    hold: borrow TabBarSelectionHold,
+    row: borrow CALayerDescription,
+    modifiers: borrow ModifierContext
+) -> CALayerDescription {
+    let height = hold.tabHeight + hold.outset * 2.0
+    var body = CALayerDescription {
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedHeight: height,
+            spanFlexes: true
+        },
+        cornerRadius: height / 2.0,
+        animation: tabBarSelectionBounds(hold)
+    }
+    // A backdrop of its own: UIKit's lens is above the bar, so its glass
+    // bends the bar's glass and everything under it. The punchout takes only
+    // the tabs out from under it, never the bar.
+    // Beneath its glass, the lifted lens warps what it shows outward: UIKit's
+    // `belowGlassWarpBackdrop`, a displacement map of `inputAmount` 9 from
+    // its `warpSDF`, a `CASDFGlassDisplacementEffect` 36 high whose element
+    // is ovalized by a half. Its amount rides the content's growth, as both
+    // go on the lift's spring and come down on `unLiftSpring` to the large
+    // variant's `unliftedDisplacement`, none.
+    if hold.liftShown > 0.0 {
+        var glass = liquidGlassContent(.Capsule, modifiers, .Platform(.Slider))
+        glass.warpAmount = 9.0 * hold.growth
+        glass.warpHeight = 36.0
+        glass.warpOvalization = 0.5
+        body.content = .Glass(move glass)
+        body.capturesBackdrop = true
+        // Coming down, `ClearGlassView` drops its material inside the unlift,
+        // so the glass goes with the content's growth as well as `clamp(4p)`.
+        body.opacity = hold.lifts ? hold.liftShown : min(hold.liftShown, hold.growth)
+    }
+    let glassShown = body.opacity
+    var parts: [CALayerDescription] = [move body]
+    if hold.liftShown > 0.0 {
+        var lifted = tabBarSelectionLifted(hold, row, modifiers, height)
+        lifted.opacity = hold.liftShown
+        lifted.layout.spanFlexes = true
+        parts.append(move lifted)
+        // Over the content, `ClearGlassView`'s `innerShadowView`: clipped to
+        // the lens, its shadow inverted and cast from its bounds, black. It is
+        // given the spec's shadow when the material goes on and none when it
+        // comes off, so it goes with the glass.
+        parts.append(
+            CALayerDescription {
+                layout: CALayoutIntent {
+                    widthFill: false,
+                    heightFill: false,
+                    fixedHeight: height,
+                    spanFlexes: true
+                },
+                cornerRadius: height / 2.0,
+                shadow: CAShadow {
+                    color: CAColor { r: 0.0, g: 0.0, b: 0.0, a: tabBarLensInnerShadowOpacity },
+                    radius: tabBarLensInnerShadowRadius,
+                    offset: Point { x: 0.0, y: tabBarLensInnerShadowOffset },
+                    inverts: true
+                },
+                opacity: glassShown,
+                animation: tabBarSelectionBounds(hold)
+            }
+        )
+    }
+    var anchor = tabBarSelectionAnchor(hold, hold.outset, move parts)
+    anchor.key = 3
+    anchor.layout.spanFlexKey = hold.key
+    anchor.layout.spanFlexDrives = hold.liftShown > 0.0
+    anchor.disablesActions = true
+    return anchor
+}
+
+// A lens's movement in flight: its center and width on the springs the
+// compositor would carry them on, in the row's coordinates, and the stretch
+// its center's movement gives it.
+public struct TabBarLensMotion {
+    var started: Bool = false
+    var held: Bool = false
+    var move: MotionSpringState = MotionSpringState {}
+    var width: MotionSpringState = MotionSpringState {}
+    var flex: MotionFlexMovementState = MotionFlexMovementState {}
+    var landed: Bool = true
+    var place: TabBarLensPlace = TabBarLensPlace {}
+}
+
+// Where a lens stands this frame: its center and its width, as its springs
+// have them, and the flex it is drawn through -- the transform
+// `_UIFlexInteraction` gives the lens view's layer: moved by `driftX`,
+// `driftY`, then scaled by `scaleX`, `scaleY` about its middle.
+public struct TabBarLensPlace {
+    var x: Number = 0.0
+    var width: Number = 0.0
+    var scaleX: Number = 1.0
+    var scaleY: Number = 1.0
+    var driftX: Number = 0.0
+    var driftY: Number = 0.0
+}
+
+extend TabBarLensPlace {
+    // The flex as a layer's deformation, which moves after it scales: the
+    // drift lands scaled, as `CATransform3DTranslate` of the scale has it.
+    function deformation() -> CADeformation {
+        return CADeformation {
+            x: self.driftX * self.scaleX,
+            y: self.driftY * self.scaleY,
+            scaleX: self.scaleX,
+            scaleY: self.scaleY
+        }
+    }
+}
+
+public struct TabBarLensFlex {
+    var time: Number = -1.0
+    var step: Number = 0.0
+    // The motion as the frame before this one left it, and as this one has
+    // it: both the lens and what stays of the row ask, and the same answer
+    // comes back.
+    var before: TabBarLensMotion = TabBarLensMotion {}
+    var now: TabBarLensMotion = TabBarLensMotion {}
+}
+
+public function tabBarLensFlexSlotKey(key: Number) -> ViewStateKey {
+    return slotKey("kiraui.tablens.", key)
+}
+
+// Whether the lens of the bar under `key` is within `tabBarLensLanding` of
+// where it is going, as its last layout left it.
+function tabBarLensLanded(key: Number) -> Bool {
+    if !ambientStateHasView(tabBarLensFlexSlotKey(key)) {
+        return true
+    }
+    let flex = nativeRecover<TabBarLensFlex>(ambientStateGetView(tabBarLensFlexSlotKey(key)))
+    return flex.now.landed
+}
+
+// Where the lens of the bar under `key` stands this frame, going to `x` in
+// the row's coordinates over a tab `width` across, `outset` past it, held or
+// not -- followed on the springs `tabBarSelectionMove` and
+// `tabBarSelectionBounds` name and flexed by `_UIFlexInteraction`'s
+// movement source, as the lens's flex is set up: the liquid-lens variant,
+// sampled at the center shown, active while the lens is lifted
+// (`actuallySetLifted` sets its activation mode to always). Followed every
+// frame the lens is laid out; while it `drives`, frames keep coming until it
+// rests.
+public function tabBarLensPlace(
+    key: Number,
+    x: Number,
+    width: Number,
+    outset: Number,
+    held: Bool,
+    drives: Bool
+) -> TabBarLensPlace {
+    let slot = tabBarLensFlexSlotKey(key)
+    if !ambientStateHasView(slot) {
+        ambientStatePutView(copy slot, nativeUserData(nativeState(TabBarLensFlex {})))
+    }
+    var flex = nativeRecover<TabBarLensFlex>(ambientStateGetView(slot))
+    let time = clockNow()
+    if time != flex.time {
+        flex.step = flex.time < 0.0 ? 0.0 : clamp(time - flex.time, 0.0, 1.0)
+        flex.before = copy flex.now
+        flex.time = time
+    }
+    var motion = copy flex.before
+    // The frame's width moves on the bounds spring; the lift's outset is laid
+    // on it afterwards, already on the lift's springs (`FUN_184a9811c`).
+    let across = width
+    var tabHeight = tabBarMetrics().tabHeight
+    var phone = false
+    var lifted = false
+    if ambientStateHasView(tabBarHoldSlotKey(key)) {
+        let hold = nativeRecover<TabBarHold>(ambientStateGetView(tabBarHoldSlotKey(key)))
+        tabHeight = hold.tabHeight
+        phone = hold.phone
+        lifted = hold.lifted
+    }
+    let height = tabHeight + outset * 2.0
+    let moving = tabBarSelectionMoveSpring(held, phone)
+    let sizing = tabBarSelectionBoundsSpring(held, phone)
+    let move = MotionSpring { response: moving.response, damping: moving.damping, target: x }
+    let size = MotionSpring { response: sizing.response, damping: sizing.damping, target: across }
+    if !motion.started {
+        motion = TabBarLensMotion { started: true }
+        motion.move = motionSpringStart(copy move, x, 0.0)
+        motion.width = motionSpringStart(copy size, across, 0.0)
+    } else {
+        if motion.move.spring.target != x || motion.held != held {
+            let was = motionSpringSample(motion.move, motion.move.elapsed)
+            motion.move = motionSpringStart(copy move, was.value, was.velocity)
+        }
+        if motion.width.spring.target != across || motion.held != held {
+            let was = motionSpringSample(motion.width, motion.width.elapsed)
+            motion.width = motionSpringStart(copy size, was.value, was.velocity)
+        }
+    }
+    motion.held = held
+    let at = motionSpringAdvance(motion.move, flex.step)
+    let wide = motionSpringAdvance(motion.width, flex.step)
+    let outsetWide = wide.value + outset * 2.0
+    motion.flex.parameters = motionFlexParameters(.LiquidLens, .Touch, outsetWide, height)
+    motion.flex.width = outsetWide
+    motion.flex.height = height
+    motion.flex.tracking = lifted
+    // The update link that samples runs only while the interaction is active.
+    if lifted {
+        motionFlexMovementSample(motion.flex, at.value, 0.0, time)
+    }
+    let frame = motionFlexMovementAdvance(motion.flex, flex.step)
+    motion.landed = abs(at.value - x) < tabBarLensLanding
+    motion.place = TabBarLensPlace {
+        x: at.value,
+        width: outsetWide,
+        scaleX: frame.scaleX,
+        scaleY: frame.scaleY,
+        driftX: frame.driftX,
+        driftY: frame.driftY
+    }
+    let resting = motionSpringSettled(motion.move, at, MotionSpringLimit.epsilon)
+        && motionSpringSettled(motion.width, wide, MotionSpringLimit.epsilon)
+    if drives && (frame.moving || !resting) {
+        clockStillMoving()
+    }
+    flex.now = copy motion
+    return copy motion.place
+}
+
+// The box of the selected tab, which the bar's selection covers.
+public construct TabBarSelection() extends AlignmentGuide {
+    let name = "tabBarSelection"
+    let axis: GuideAxis = .Horizontal
+
+    function defaultValue(dimensions: borrow ViewDimensions) -> Number {
+        return dimensions.subscript(.Leading)
+    }
+}
+
+// The box of a tab not selected, which a held selection can move over.
+public construct TabBarTab() extends AlignmentGuide {
+    let name = "tabBarTab"
+    let axis: GuideAxis = .Horizontal
+
+    function defaultValue(dimensions: borrow ViewDimensions) -> Number {
+        return dimensions.subscript(.Leading)
+    }
+}
+
+// The row of tabs, which the lens shows again under itself.
+public construct TabBarRow() extends AlignmentGuide {
+    let name = "tabBarRow"
+    let axis: GuideAxis = .Horizontal
+
+    function defaultValue(dimensions: borrow ViewDimensions) -> Number {
+        return dimensions.subscript(.Leading)
+    }
+}

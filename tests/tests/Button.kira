@@ -1,0 +1,196 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// How a button is drawn under `.buttonStyle(...)`, and where the lines of a
+// wrapped run sit under `.multilineTextAlignment(...)`.
+
+// The alignment of a run is set on the run itself, at its own leading edge,
+// centre or trailing edge.
+@Test
+function centeredTextSitsMidway() {
+    let centered = textRunOf(describedLayer(Text(content: "Sync").multilineTextAlignment(.Center)))
+    let trailing = textRunOf(describedLayer(Text(content: "Sync").multilineTextAlignment(.Trailing)))
+    let leading = textRunOf(describedLayer(Text(content: "Sync")))
+    expect!((centered.alignment) == (0.5))
+    expect!((trailing.alignment) == (1.0))
+    expect!((leading.alignment) == (0.0))
+}
+
+// The alignment reaches every run under it, not only the one it is set on.
+@Test
+function textAlignmentCascades() {
+    let described = describedLayer(
+        VStack {
+            Text(content: "One")
+            Text(content: "Two")
+        }.multilineTextAlignment(.Center)
+    )
+    expect!((described.sublayers.count) == (2))
+    expect!((textRunOf(described.sublayers[0]).alignment) == (0.5))
+    expect!((textRunOf(described.sublayers[1]).alignment) == (0.5))
+}
+
+// On its own on an iPad, an automatic button is its label in the accent, with
+// no fill.
+@Test
+function aStandaloneButtonIsBorderless() {
+    setInterfaceMode(.AdaptiveMobile)
+    let button = describedLayer(Button(title: "Open Settings", action: noAction))
+    let accent = textRunOf(describedLayer(Text(content: "Open Settings").foregroundColor(.Accent)))
+    let run = textRunOf(button)
+    expect!((run.content) == ("Open Settings"))
+    expect!((sameColor(run.color, accent.color)) == (true))
+    expect!((button.hittable) == (true))
+}
+
+// On a Mac an automatic button is the push button: a capsule the button's
+// control size tall, filled with the control bezel under the label's own ink.
+@Test
+function aMacButtonIsThePushButton() {
+    setInterfaceMode(.AdaptiveDesktop)
+    let button = describedLayer(Button(title: "Open Settings", action: noAction))
+    let size = buttonControlSizeMetrics(ModifierContext {})
+    let bare = textRunOf(describedLayer(Text(content: "Open Settings")))
+    let bezel = colorFromFoundation(modifierBackgroundStyle(.Control, ModifierContext {}))
+    setInterfaceMode(.AdaptiveMobile)
+    expect!((button.layout.minHeight) == (size.height))
+    expect!((button.cornerRadius) == (buttonBorderRadius(.Automatic, ModifierContext {})))
+    expect!((sameColor(solidFillOf(button), bezel)) == (true))
+    expect!((sameColor(textRunOf(button.sublayers[0]).color, bare.color)) == (true))
+}
+
+// A plain button keeps the label's own ink.
+@Test
+function aPlainButtonKeepsItsInk() {
+    let run = textRunOf(describedLayer(Button(title: "Done", action: noAction).buttonStyle(.Plain)))
+    let bare = textRunOf(describedLayer(Text(content: "Done")))
+    expect!((sameColor(run.color, bare.color)) == (true))
+    expect!((solidFillOf(describedLayer(Button(title: "Done", action: noAction).buttonStyle(.Plain))).a) == (0.0))
+}
+
+// On an iPad a bordered button is a capsule the button's control size tall,
+// its label held its inset off the ends, washed in the accent under the
+// accent's words.
+@Test
+function aBorderedButtonIsAWashedCapsule() {
+    setInterfaceMode(.AdaptiveMobile)
+    let button = describedLayer(
+        Button(title: "Open Settings", action: noAction).buttonStyle(.Bordered)
+    )
+    let size = buttonControlSizeMetrics(ModifierContext {})
+    let accent = textRunOf(describedLayer(Text(content: "Open Settings").foregroundColor(.Accent)))
+    let fill = solidFillOf(button)
+    expect!((button.sublayers.count) == (1))
+    expect!((button.layout.widthFill) == (false))
+    expect!((button.layout.heightFill) == (false))
+    expect!((button.layout.paddingLeading) == (size.labelInset))
+    expect!((button.layout.minHeight) == (size.height))
+    expect!((button.cornerRadius) == (buttonBorderRadius(.Automatic, ModifierContext {})))
+    expect!((fill.a > 0.0) == (true))
+    expect!((fill.a < accent.color.a) == (true))
+    expect!((sameColor(textRunOf(button.sublayers[0]).color, accent.color)) == (true))
+}
+
+// A prominent button is a rounded rectangle of the accent under white words.
+@Test
+function aProminentButtonIsFilledWithTheAccent() {
+    let button = describedLayer(
+        Button(title: "Open Settings", action: noAction).buttonStyle(.BorderedProminent)
+    )
+    let accent = textRunOf(describedLayer(Text(content: "Open Settings").foregroundColor(.Accent)))
+    let words = textRunOf(button.sublayers[0])
+    expect!((sameColor(solidFillOf(button), accent.color)) == (true))
+    expect!(
+        (sameColor(words.color, CAColor { r: 1.0, g: 1.0, b: 1.0, a: 1.0 })) == (true)
+    )
+}
+
+// The style reaches every button under it, and a destructive one takes the
+// danger ink.
+@Test
+function buttonStyleCascades() {
+    let described = describedLayer(
+        VStack {
+            Button(title: "Keep", action: noAction)
+            Button(title: "Delete", role: .Destructive, action: noAction)
+        }.buttonStyle(.BorderedProminent)
+    )
+    let danger = textRunOf(describedLayer(Text(content: "Delete").foregroundColor(.Danger)))
+    expect!((described.sublayers[0].sublayers.count) == (1))
+    expect!((sameColor(solidFillOf(described.sublayers[1]), danger.color)) == (true))
+}
+
+// `.buttonBorderShape(...)` names the outline: a capsule's ends are round, a
+// stated radius is that radius, and a circle stands as wide as it is tall.
+@Test
+function buttonBorderShapeNamesTheOutline() {
+    let capsule = describedLayer(
+        Button(title: "Sync", action: noAction).buttonStyle(.Bordered).buttonBorderShape(.Capsule)
+    )
+    let stated = describedLayer(
+        Button(title: "Sync", action: noAction).buttonStyle(.Bordered).buttonBorderShape(
+            .RoundedRectangleRadius(3.0)
+        )
+    )
+    let circle = describedLayer(
+        Button(action: noAction) {
+            Text(content: "+")
+        }.buttonStyle(.BorderedProminent).buttonBorderShape(.Circle)
+    )
+    expect!((capsule.cornerRadius > 1000.0) == (true))
+    expect!((stated.cornerRadius) == (3.0))
+    expect!((circle.layout.minWidth) == (circle.layout.minHeight))
+    expect!((circle.layout.minWidth > 0.0) == (true))
+    expect!((circle.layout.paddingLeading) == (circle.layout.paddingTop))
+}
+
+// On an iPad an automatic button is text only even where a border shape is set.
+@Test
+function aBorderShapeAloneDrawsNoBorder() {
+    setInterfaceMode(.AdaptiveMobile)
+    let button = describedLayer(Button(title: "Sync", action: noAction).buttonBorderShape(.Capsule))
+    expect!((textRunOf(button).content) == ("Sync"))
+    expect!((solidFillOf(button).a) == (0.0))
+}
+
+// A text button held down lightens its ink a step at once -- the label's own
+// colour, so it keeps its hue -- with no surface of glass to swell or lean.
+@Test
+function aHeldTextButtonLightensItsInk() {
+    setInterfaceMode(.AdaptiveMobile)
+    tapSeqReset()
+    let resting = describedLayer(Button(title: "Open Settings", action: noAction))
+    let key = resting.hitKey
+    tapSeqReset()
+    let context = buildContext(FoundationUiContext { pressedKey: key, hoveredKey: key })
+    let held = Button(title: "Open Settings", action: noAction).describe(
+        context,
+        ModifierContext {}
+    )
+    let ink = textRunOf(resting).color
+    let dimmed = textRunOf(held).color
+    expect!((key != 0) == (true))
+    expect!((held.hitKey) == (key))
+    expect!((held.opacity) == (1.0))
+    expect!((held.allowsGroupOpacity) == (false))
+    expect!((dimmed.b) == (ink.b))
+    expect!((dimmed.a > ink.a * 0.5) == (true))
+    expect!((dimmed.a < ink.a) == (true))
+    expect!((isTimedLayer(held)) == (true))
+    expect!((held.interactive) == (false))
+    expect!((resting.interactive) == (false))
+}
+
+// A touch on glass hands the glass both of the platform's lights as the flex
+// left them, and the appearance that picks the little glow's dodge.
+@Test
+function theTouchLightsReachTheGlass() {
+    var glass = CAGlass {}
+    let light = MotionLight { x: 10.0, y: 10.0, radius: 160.0, strength: 0.5, wash: 0.25 }
+    let modifiers = ModifierContext {}
+    interactiveGlassLit(glass, light, modifiers)
+    expect!((glass.glowStrength) == (0.5))
+    expect!((glass.glowWash) == (0.25))
+    expect!((glass.glowDark) == (modifierAppearance(modifiers) == .Dark))
+}

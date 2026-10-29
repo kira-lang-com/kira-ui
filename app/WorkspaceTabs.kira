@@ -1,0 +1,319 @@
+import Foundation
+import KiraLayout
+import KCoreAnimation
+
+// A workspace's cards: the panels at one edge on one raised surface, a strip
+// of their tabs across its top and the selected one's content under it.
+//
+// The strip is a tab view's bar: its tabs in one capsule of glass, the
+// selected one on the selection capsule in the primary ink, and the add menu in
+// glass of its own at the far end. A tab is its panel's label, so a
+// `.labelStyle(...)` on the workspace says whether its strips show titles,
+// symbols or both. A tab is pressed to select its panel, closed from the
+// cross that shows while it is selected or the pointer is on it, and dragged
+// to dock its panel at another edge. The add menu holds every panel that has
+// been closed, and brings one back here.
+
+// The inset the strip holds its glass in from the card's edges.
+public function workspaceStripInset() -> Number {
+    return workspaceMetrics().stripInset
+}
+
+// A card's corner, concentric with the strip it holds as SwiftUI's concentric
+// shapes are: the bar's own, out by the inset the card holds it in.
+public function workspacePanelRadius() -> Number {
+    return tabBarMetrics().height / 2.0 + workspaceStripInset()
+}
+
+// One edge's card: its strip over the selected panel's content, which takes
+// the rest of the card. The center has one too, naming what it shows, as
+// every card does.
+public function workspaceCard(
+    state: borrow WorkspaceArrangement,
+    edge: borrow PanelEdge,
+    shown: borrow [String],
+    panels: borrow [PanelDeclaration],
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let selected = state.edges[panelEdgeIndex(edge)].selected
+    let index = workspaceDeclarationIndex(panels, selected)
+    // The window toolbar owns editor document tabs. The center is only its
+    // clipped content: no local tab strip, add control, or overlap with docks.
+    if state.presentation == .Viewport && edge == .Center {
+        let radius = workspacePanelRadius()
+        var contentLayers: [CALayerDescription] = []
+        if index >= 0 { contentLayers.append(copy panels[index].content) }
+        return CALayerDescription {
+            cornerRadius: radius,
+            clipsChildren: true,
+            layout: CALayoutIntent { widthFill: true, heightFill: true },
+            content: .Solid(CASolid { fill: workspacePanelFill(modifiers), cornerRadius: radius }),
+            sublayers: move contentLayers
+        }
+    }
+    let strip = workspaceStrip(state, edge, shown, panels, selected, context, modifiers)
+    var layers: [CALayerDescription] = [strip]
+    if index >= 0 {
+        // The enclosing card already clips the content to its rounded shape.
+        // Clipping this inner row again would replace that rounded clip with
+        // a square one, leaving texture viewports with sharp bottom corners.
+        layers.append(
+            CALayerDescription {
+                key: index + 1,
+                layout: CALayoutIntent { flex: 1 },
+                sublayers: [copy panels[index].content]
+            }
+        )
+    }
+    let radius = workspacePanelRadius()
+    return CALayerDescription {
+        cornerRadius: radius,
+        clipsChildren: true,
+        content: .Solid(CASolid { fill: workspacePanelFill(modifiers), cornerRadius: radius }),
+        layout: CALayoutIntent { axis: .Column },
+        sublayers: move layers
+    }
+}
+
+// The strip across a card's top: the capsule of tabs at its leading end and
+// the add menu at the far one.
+public function workspaceStrip(
+    state: borrow WorkspaceArrangement,
+    edge: borrow PanelEdge,
+    shown: borrow [String],
+    panels: borrow [PanelDeclaration],
+    selected: borrow String,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let inset = workspaceStripInset()
+    var tabs: [CALayerDescription] = []
+    for panel in shown {
+        let index = workspaceDeclarationIndex(panels, panel)
+        if index >= 0 {
+            let placement = workspacePlacementIndex(state, panel)
+            let closable = placement >= 0 && !state.placements[placement].pinned
+            let lifted = state.drag.kind == .Tab && state.drag.moving && state.drag.panel == panel
+            tabs.append(
+                workspaceTab(
+                    panels[index],
+                    index,
+                    panel == selected,
+                    closable,
+                    lifted,
+                    context,
+                    modifiers
+                )
+            )
+        }
+    }
+    var parts: [CALayerDescription] = [tabBarCapsule(move tabs, context, modifiers)]
+    parts.append(Spacer().describe(context, modifiers))
+    let closed = workspaceClosedPanels(state, panels)
+    if closed.count > 0 && (edge != .Center || state.center == .AcceptsPanels) {
+        parts.append(workspaceAddMenu(closed, edge, context, modifiers))
+    }
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            axis: .Row,
+            heightFill: false,
+            fixedHeight: tabBarMetrics().height + inset,
+            paddingLeading: inset,
+            paddingTop: inset,
+            paddingTrailing: inset,
+            alignment: Point { x: 0.0, y: 0.5 }
+        },
+        sublayers: move parts
+    }
+}
+
+// A tab: its panel's label on the bar's tab, and the cross that closes it.
+// The pointer resting on it lights it. Its key is its panel's place among the
+// declarations, so the press and the drag on it are read back as that
+// panel's whatever the strip holds around it.
+public function workspaceTab(
+    declaration: borrow PanelDeclaration,
+    index: Number,
+    selected: Bool,
+    closable: Bool,
+    lifted: Bool,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let key = workspaceTabKey(index)
+    let close = workspaceCloseKey(index)
+    layerActionRegister(key, workspaceSelectAction(copy declaration.panel))
+    var tab = workspaceTabFace(declaration, selected, context, modifiers)
+    tab.key = index + 1
+    tab.opacity = lifted ? 0.4 : 1.0
+    tab.hittable = !modifiers.disabled
+    tab.hitKey = key
+    tab.hoverColor = hoverHighlight(modifiers)
+    let hovered = context.hoveredKey == key || context.hoveredKey == close
+    if closable && (selected || hovered) {
+        // The cross's box is wider than its ink. The tab is held off so the
+        // ink stands as far from the title as the symbol does on the other
+        // side, and as far in from the end as the symbol is from the start.
+        let slack = (workspaceCloseSide() - workspaceCloseInkWidth(context, modifiers)) / 2.0
+        tab.layout.spacing = max(tabBarLabelGap() - slack, 0.0)
+        tab.layout.paddingTrailing = max(tabBarMetrics().labelInset - slack, 0.0)
+        tab.sublayers.append(
+            workspaceCloseButton(copy declaration.panel, close, selected, context, modifiers)
+        )
+    }
+    return tab
+}
+
+// What a tab looks like, with nothing to press: the tab itself, and the one
+// under the pointer while it is dragged.
+public function workspaceTabFace(
+    declaration: borrow PanelDeclaration,
+    selected: Bool,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    return tabBarItemFace(
+        tabBarItemLabel(declaration.title, declaration.systemImage, selected, context, modifiers),
+        selected,
+        modifiers
+    )
+}
+
+// The cross that takes a panel out of the workspace, in its tab's ink.
+public function workspaceCloseButton(
+    panel: String,
+    key: Number,
+    selected: Bool,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    layerActionRegister(key, workspaceHideAction(move panel))
+    let side = workspaceCloseSide()
+    let icon = Icon(symbol: .Xmark).imageScale(.Small)
+    var glyph = icon.describe(context, tabBarItemInk(false, modifiers))
+    if selected {
+        var layers: [CALayerDescription] = []
+        for ink in tabBarSelectedInks(modifiers) {
+            layers.append(icon.describe(context, ink))
+        }
+        glyph = tabBarInked(move layers)
+    }
+    return CALayerDescription {
+        hittable: !modifiers.disabled,
+        hitKey: key,
+        hoverColor: hoverHighlight(modifiers),
+        cornerRadius: side / 2.0,
+        content: .Solid(CASolid { fill: CAColor { a: 0.0 }, cornerRadius: side / 2.0 }),
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedWidth: side,
+            fixedHeight: side,
+            alignment: Point { x: 0.5, y: 0.5 }
+        },
+        sublayers: [glyph]
+    }
+}
+
+// The square a tab's cross is pressed in.
+public function workspaceCloseSide() -> Number {
+    return tabBarMetrics().tabHeight - workspaceMetrics().tabSpacing * 4.0
+}
+
+// How wide the cross's ink is.
+public function workspaceCloseInkWidth(
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> Number {
+    let glyph = Icon(symbol: .Xmark).imageScale(.Small).describe(
+        context,
+        tabBarItemInk(false, modifiers)
+    )
+    return glyph.layout.intrinsicWidth
+}
+
+// The panels that have been closed, in the order they were declared.
+public function workspaceClosedPanels(
+    state: borrow WorkspaceArrangement,
+    panels: borrow [PanelDeclaration],
+) -> [PanelDeclaration] {
+    var closed: [PanelDeclaration] = []
+    for declaration in panels {
+        let placement = workspacePlacementIndex(state, declaration.panel)
+        if placement >= 0 && !state.placements[placement].shown {
+            closed.append(
+                PanelDeclaration {
+                    panel: copy declaration.panel,
+                    title: copy declaration.title,
+                    systemImage: declaration.systemImage
+                }
+            )
+        }
+    }
+    return closed
+}
+
+// The strip's add menu: every closed panel, each brought back to this edge.
+// It is a bar's menu in a circle of glass the strip's height.
+public function workspaceAddMenu(
+    closed: borrow [PanelDeclaration],
+    edge: borrow PanelEdge,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let menu = Menu(title: "Add Panel", systemImage: .Plus) {
+        For(declaration in closed) {
+            Button(action: workspaceDockAction(copy declaration.panel, edge)) {
+                Label(title: copy declaration.title, systemImage: declaration.systemImage)
+            }
+        }
+    }
+    let metrics = tabBarMetrics()
+    var button = menu.describe(context, modifierContextPresenting(modifiers, .Toolbar))
+    button.layout.fixedWidth = metrics.tabHeight
+    button.layout.fixedHeight = metrics.tabHeight
+    button.layout.minWidth = metrics.tabHeight
+    return interactiveGlassDescription(
+        context,
+        tapSeqKey(),
+        CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedWidth: metrics.height,
+            fixedHeight: metrics.height,
+            alignment: Point { x: 0.5, y: 0.5 }
+        },
+        metrics.height / 2.0,
+        .Circle,
+        modifiers,
+        [button]
+    )
+}
+
+public function workspaceSelectAction(panel: String) -> () -> Void {
+    let chosen = move panel
+    return { in
+        workspaceSelect(copy chosen)
+        return
+    }
+}
+
+public function workspaceHideAction(panel: String) -> () -> Void {
+    let closing = move panel
+    return { in
+        workspaceHide(copy closing)
+        return
+    }
+}
+
+public function workspaceDockAction(panel: String, edge: borrow PanelEdge) -> () -> Void {
+    let docking = move panel
+    let to = copy edge
+    return { in
+        workspaceDock(copy docking, to)
+        return
+    }
+}
+import Foundation
+import KCoreAnimation

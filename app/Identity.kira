@@ -1,0 +1,45 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's `.id(_:)`: a view given another identity is another view. What
+// it was is taken away and what it is now put in its place at once, laid out
+// where it stands, rather than the one view moving from the old content's
+// frames to the new's, as a detail column does when another item is chosen.
+//
+//     NoteDetail(note)
+//     .id(note.name)
+
+public construct IdentityLayer(identity: String) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let described = content.describe(context, modifiers)
+        return CALayerDescription {
+            layout: surfaceFootprint(described.layout),
+            key: identityTag(identity),
+            sublayers: [described]
+        }
+    }
+}
+
+// The layer key an identity names: the same name the same key from any
+// build, and never zero, which is an unkeyed layer's.
+function identityTag(identity: borrow String) -> Number {
+    var tag: Number = 11
+    for code in stringToCodepoints(identity) {
+        tag = (tag * 131 + Number(code)) % 1000000007
+    }
+    return tag + 1
+}
+
+extend Widget {
+    // SwiftUI's `.id(_:)`.
+    function id(identity: String) -> Any Widget {
+        return IdentityLayer(identity: identity) {
+            self
+        }
+    }
+}

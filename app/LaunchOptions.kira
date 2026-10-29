@@ -1,0 +1,120 @@
+// What every KiraUI application accepts on its command line, for nothing:
+// `--help`, the window's size, and a run with no window that writes one frame
+// to a file, so a session with no display can still see what the application
+// draws. The application's own operands follow them untouched.
+//
+//     harmony --capture /tmp/shot.ppm --width 390 --height 844 --scale 3
+//
+// This file takes part only where a platform has windows Ember opens (KLF
+// section 27.8), as WindowRun.kira does.
+
+import Ember on macos, ios, windows, linux, android, web, unknown
+import Foundation
+import ArgumentParser
+
+namespace LaunchDefault {
+    // The frames a capture runs for when the command line did not say: a
+    // second at 60 frames a second, time enough for the first layout to land
+    // and its entrance animations to settle.
+    let captureFrames: UNumber = 60
+}
+
+// The window the command line settled on, and the harness it asked Ember for:
+// none where it asked for nothing, so the environment's knobs still apply.
+struct LaunchOptions {
+    var width: Number
+    var height: Number
+    var harness: HarnessConfig? = .None
+}
+
+function launchCommand(title: borrow String) -> Command {
+    return Command {
+        configuration: CommandConfiguration {
+            name: title.count > 0 ? copy title : "app",
+            abstract: "A KiraUI application",
+            allowsRemainder: true
+        },
+        arguments: [
+            option(name: "width", help: "The window's width, in points").whole(),
+            option(name: "height", help: "The window's height, in points").whole(),
+            option(name: "scale", help: "The pixels drawn for each point").whole(),
+            flag(name: "headless", help: "Draw into an image instead of a window"),
+            option(
+                name: "capture",
+                help: "Draw with no window and write a frame to this PPM"
+            ).placeholder("PATH"),
+            option(
+                name: "at",
+                help: "The frame to capture; the last one drawn when left out"
+            ).whole(),
+            option(name: "frames", help: "Quit after this many frames").whole()
+        ]
+    }
+}
+
+// The options `tokens` asks for. A command line asking for help is answered,
+// and one that does not parse is explained, and either ends the process: the
+// application was not asked to run.
+function launchOptions(
+    title: borrow String,
+    width: Number,
+    height: Number,
+    tokens: borrow [String]
+) -> LaunchOptions {
+    let router = CommandRouter { root: launchCommand(title) }
+    let parsed = match router.parse(tokens) {
+        Ok(parsed) -> parsed
+        Error(error) -> {
+            router.explain(error, tokens)
+            processExit(error.isCleanExit() ? 0 : ExitStatus.usage)
+            return LaunchOptions { width: width, height: height }
+        }
+    }
+    return LaunchOptions {
+        width: optionOr(parsed.number("width"), width),
+        height: optionOr(parsed.number("height"), height),
+        harness: launchHarness(parsed)
+    }
+}
+
+function optionOr(value: Number?, fallback: Number) -> Number {
+    return match value {
+        Some(given) -> given
+        None -> fallback
+    }
+}
+
+// The harness the command line asks for, over the environment's knobs, or none
+// when it named no harness option.
+function launchHarness(parsed: borrow ParsedArguments) -> HarnessConfig? {
+    let named = ["scale", "headless", "capture", "at", "frames"]
+    var asked = false
+    for name in named {
+        if parsed.wasProvided(name) { asked = true }
+    }
+    if !asked { return .None }
+    let knobs = environmentHarnessKnobs()
+    var harness = HarnessConfig {
+        quitAfterFrames: optionOr(parsed.number("frames"), knobs.quitAfterFrames),
+        resizeSweep: knobs.resizeSweep,
+        logFps: knobs.logFps,
+        scale: optionOr(parsed.number("scale"), knobs.scale),
+        headless: knobs.headless || parsed.flag("headless"),
+        capture: knobs.capture,
+        video: knobs.video,
+        script: knobs.script
+    }
+    match parsed.text("capture") {
+        Some(path) -> {
+            harness.headless = true
+            harness.capture = .Some(FrameCapture { path: path, frame: parsed.number("at") })
+            if harness.quitAfterFrames == 0 {
+                harness.quitAfterFrames = LaunchDefault.captureFrames
+            }
+        }
+        // No file to write: the window, or the image a headless run draws
+        // into, is all there is.
+        None -> {}
+    }
+    return .Some(harness)
+}

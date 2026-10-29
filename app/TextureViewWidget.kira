@@ -1,0 +1,57 @@
+import KiraLayout
+import Foundation
+import KCoreAnimation
+
+// An external Ember texture, shown inside the widget tree.
+//
+// The texture is an offscreen render target somebody else drew into: an engine's
+// viewport, or -- the case this exists for now -- a surface another PROCESS
+// rendered and handed over. The view fills whatever box the layout gives it.
+//
+// `secondary` and `transition` are a crossfade done on the GPU, in the shader
+// that samples them, rather than by drawing one view over another at an opacity.
+// That is what makes swiping between two components' surfaces cheap: the window
+// holds both textures already, and moving between them costs one number.
+public construct TextureViewport(
+    texture: TextureHandle,
+    secondary: TextureHandle = TextureHandle(0),
+    transition: Number = 0.0,
+) extends Widget {
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        return CALayerDescription {
+            content: .Texture(
+                CATexture {
+                    handle: texture,
+                        secondaryHandle: secondary,
+                        transition: transition,
+                        opacity: modifiers.opacity
+                }
+            )
+        }
+    }
+}
+
+// An image file -- a PNG or a JPEG on disk -- filling whatever box the layout
+// gives it, as SwiftUI's `Image(uiImage:).resizable()` does. With `aspectFill`
+// it covers the box at its own proportions and is cropped to it, as
+// `.aspectRatio(contentMode: .fill)` crops; without, it is stretched.
+//
+// The compositor reads the file the first time the image is drawn and keeps
+// the texture after that, so the path is a file's, not a drawing's name.
+public construct ImageFile(path: String, aspectFill: Bool = true) extends Widget {
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        return CALayerDescription {
+            content: .Texture(
+                CATexture { path: copy path, aspectFill: aspectFill, opacity: modifiers.opacity }
+            )
+        }
+    }
+}

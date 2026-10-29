@@ -1,0 +1,278 @@
+import Foundation
+import Ember
+import KCoreAnimation
+
+// The press actions for a described frame, keyed by hit key.
+//
+// A `CALayerDescription` carries a `hitKey` but not the closure to run when that
+// key is pressed — a closure is not a value the compositor's model tree should
+// hold. So a widget's `describe()` registers its action here under the same key
+// it put on the layer, and the runner, having hit-tested the retained tree to a
+// key, looks the action up and runs it. Reset at the start of every rebuild, so
+// the table only ever holds this frame's actions.
+
+public function layerNoop() {}
+
+public struct LayerActionEntry {
+    var key: Number = 0
+    var action: () -> Void = layerNoop
+}
+
+public function layerNoopCode(code: Number) {}
+
+public function layerNoopKey(key: Key) {}
+
+public function layerNoopFlag(flag: Bool) {}
+
+public function layerNoopEdit(command: TextEditCommand) {}
+
+public function layerNever() -> Bool {
+    return false
+}
+
+// A layer that takes the keyboard while it is focused: what a typed character
+// does to it, and what a key that types nothing does. The key is Ember's
+// `Key` value, never its number: an enum crosses a framework boundary as its
+// case, so only the case says which key it is.
+public struct LayerTextInputEntry {
+    var key: Number = 0
+    var text: (Number) -> Void = layerNoopCode
+    var command: (Key) -> Void = layerNoopKey
+    // What Select All, Copy, Cut and Paste do to it.
+    var edit: (TextEditCommand) -> Void = layerNoopEdit
+}
+
+// A field whose `.focused(...)` bindings hear when it gains or loses the
+// keyboard.
+public struct LayerFocusEntry {
+    var key: Number = 0
+    var changed: (Bool) -> Void = layerNoopFlag
+}
+
+public struct LayerActionSink {
+    var entries: [LayerActionEntry] = []
+    // What a secondary click -- the right button, or Control-click on a Mac --
+    // does to a key: a context menu opening.
+    var secondaryEntries: [LayerActionEntry] = []
+    var textInputs: [LayerTextInputEntry] = []
+    // The keyboard shortcuts this frame's buttons answer to.
+    var shortcuts: [ShortcutEntry] = []
+    var focusEntries: [LayerFocusEntry] = []
+    // The field this frame's focus state moved the keyboard to, or zero.
+    var focusClaim: Number = 0
+    // The field this frame's focus state took the keyboard from, or zero.
+    var focusRelease: Number = 0
+}
+
+public function layerActionSinkEnsure() {
+    if !ambientStateHas(StateSlot.layerActions) {
+        ambientStatePut(StateSlot.layerActions, nativeUserData(nativeState(LayerActionSink {})))
+    }
+}
+
+// Start a fresh frame's action table.
+public function layerActionsReset() {
+    layerActionSinkEnsure()
+    var sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+    var empty: [LayerActionEntry] = []
+    sink.entries = move empty
+    var noSecondary: [LayerActionEntry] = []
+    sink.secondaryEntries = move noSecondary
+    var noInputs: [LayerTextInputEntry] = []
+    sink.textInputs = move noInputs
+    var noShortcuts: [ShortcutEntry] = []
+    sink.shortcuts = move noShortcuts
+    var noFocus: [LayerFocusEntry] = []
+    sink.focusEntries = move noFocus
+    sink.focusClaim = 0
+    sink.focusRelease = 0
+}
+
+public function layerActionCount() -> Number {
+    layerActionSinkEnsure()
+    let sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+    return sink.entries.count + sink.textInputs.count + sink.shortcuts.count + sink.focusEntries.count
+}
+
+// Ask that the field under `key` have the keyboard: what a focus state naming
+// it says. The last field to ask wins.
+public function layerFocusClaim(key: Number) {
+    if key == 0 {
+        return
+    }
+    layerActionSinkEnsure()
+    var sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+    sink.focusClaim = key
+}
+
+// The field this frame asked to have the keyboard, or zero.
+public function layerFocusClaimed() -> Number {
+    layerActionSinkEnsure()
+    let sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+    return sink.focusClaim
+}
+
+// Ask that the field under `key` give the keyboard up: what a focus state that
+// stopped naming it says.
+public function layerFocusRelease(key: Number) {
+    if key == 0 {
+        return
+    }
+    layerActionSinkEnsure()
+    var sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+    sink.focusRelease = key
+}
+
+// The field this frame asked to give the keyboard up, or zero.
+public function layerFocusReleased() -> Number {
+    layerActionSinkEnsure()
+    let sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+    return sink.focusRelease
+}
+
+// Have the field under `key` hear when it gains or loses the keyboard. Bound
+// per rebuild, like a press action.
+public function layerFocusRegister(key: Number, changed: (Bool) -> Void) {
+    if key == 0 {
+        return
+    }
+    layerActionSinkEnsure()
+    var sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+    sink.focusEntries.append(LayerFocusEntry { key: key, changed: changed })
+}
+
+// Tell the field under `key` it gained or lost the keyboard.
+public function layerFocusChanged(key: Number, gained: Bool) {
+    if key == 0 {
+        return
+    }
+    layerActionSinkEnsure()
+    let sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+    for entry in sink.focusEntries {
+        if entry.key == key { entry.changed(gained) }
+    }
+}
+
+// Bind a press action to the hit key a `describe()` put on its layer.
+public function layerActionRegister(key: Number, action: () -> Void) {
+    if key == 0 {
+        return
+    }
+    layerActionSinkEnsure()
+    var sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+    sink.entries.append(LayerActionEntry { key: key, action: action })
+}
+
+// Run the action bound to a key, if any. The runner calls this with the key a
+// press hit-tested to.
+public function layerActionInvoke(key: Number) {
+    if key == 0 {
+        return
+    }
+    layerActionSinkEnsure()
+    let sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+    for index in 0..sink.entries.count {
+        if sink.entries[index].key == key {
+            sink.entries[index].action()
+            return
+        }
+    }
+}
+
+// Bind a secondary click's action to a hit key, as a context menu binds its
+// presentation to the view it is on.
+public function layerSecondaryActionRegister(key: Number, action: () -> Void) {
+    if key == 0 {
+        return
+    }
+    layerActionSinkEnsure()
+    var sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+    sink.secondaryEntries.append(LayerActionEntry { key: key, action: action })
+}
+
+// Run the secondary click's action bound to a key, if any.
+public function layerSecondaryActionInvoke(key: Number) {
+    if key == 0 {
+        return
+    }
+    layerActionSinkEnsure()
+    let sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+    for index in 0..sink.secondaryEntries.count {
+        if sink.secondaryEntries[index].key == key {
+            sink.secondaryEntries[index].action()
+            return
+        }
+    }
+}
+
+// Bind the keyboard to a layer for while it is focused: `text` receives each
+// typed character's codepoint, `command` each key that is not one (Return,
+// Delete, the arrows), and `edit` Select All, Copy, Cut and Paste. Bound per
+// rebuild, like a press action.
+public function layerTextInputRegister(
+    key: Number,
+    text: (Number) -> Void,
+    command: (Key) -> Void,
+    edit: (TextEditCommand) -> Void = layerNoopEdit
+) {
+    if key == 0 {
+        return
+    }
+    layerActionSinkEnsure()
+    var sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+    sink.textInputs.append(
+        LayerTextInputEntry { key: key, text: text, command: command, edit: edit }
+    )
+}
+
+// Whether a press on this layer focuses it.
+public function layerTextInputAccepts(key: Number) -> Bool {
+    if key == 0 {
+        return false
+    }
+    layerActionSinkEnsure()
+    let sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+    for index in 0..sink.textInputs.count {
+        if sink.textInputs[index].key == key {
+            return true
+        }
+    }
+    return false
+}
+
+// The focused layer's keyboard binding, if it has one.
+function layerTextInputAt(key: Number) -> LayerTextInputEntry? {
+    if key == 0 {
+        return .None
+    }
+    layerActionSinkEnsure()
+    let sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+    for entry in sink.textInputs {
+        if entry.key == key { return .Some(copy entry) }
+    }
+    return .None
+}
+
+// Hand a typed character to the focused layer.
+public function layerTextInputType(key: Number, codepoint: Number) {
+    match layerTextInputAt(key) {
+        Some(entry) -> entry.text(codepoint)
+        None -> {}
+    }
+}
+
+// Hand a key that types nothing to the focused layer.
+public function layerTextInputCommand(key: Number, pressed: borrow Key) {
+    match layerTextInputAt(key) {
+        Some(entry) -> entry.command(copy pressed)
+        None -> {}
+    }
+}
+
+// Hand Select All, Copy, Cut or Paste to the focused layer.
+public function layerTextInputEdit(key: Number, command: TextEditCommand) {
+    match layerTextInputAt(key) {
+        Some(entry) -> entry.edit(command)
+        None -> {}
+    }
+}

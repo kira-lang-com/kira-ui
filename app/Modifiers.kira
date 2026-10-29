@@ -1,0 +1,645 @@
+import Ember
+import Foundation
+extend Widget {
+    function theme(value: Any Theme) -> Any Widget {
+        return ThemeLayer(theme: value) {
+            self
+        }
+    }
+
+    // The style a container paints itself with, resolved from the theme's own
+    // tokens: `.backgroundStyle(.Control)` fills a box with the control interior,
+    // the way SwiftUI sets the style `.background()` paints with.
+    function backgroundStyle(style: BackgroundStyle) -> Any Widget {
+        return BackgroundStyleLayer(style: style) {
+            self
+        }
+    }
+
+    function themeBorder(value: ThemeBorder) -> Any Widget {
+        return ThemeBorderLayer(border: value) {
+            self
+        }
+    }
+
+    function foregroundColor(value: PrimaryColor) -> Any Widget {
+        return ForegroundColorLayer(color: value) {
+            self
+        }
+    }
+
+    function backgroundColor(value: PrimaryColor) -> Any Widget {
+        return BackgroundColorLayer(color: value) {
+            self
+        }
+    }
+
+    function material(value: Material) -> Any Widget {
+        return MaterialLayer(value: value) {
+            self
+        }
+    }
+
+    function disabled(value: Bool) -> Any Widget {
+        return DisabledLayer(value: value) {
+            self
+        }
+    }
+
+    // SwiftUI's `.focused(_:)`: the field here has the keyboard while
+    // `condition` is true, and pressing it or leaving it writes `condition`.
+    function focused(condition: Binding<Bool>) -> Any Widget {
+        let read = copy condition
+        let written = copy condition
+        let binding = FocusBinding {
+            wanted: { in
+                return read.get()
+            },
+            changed: { gained in
+                written.set(gained)
+                return
+            }
+        }
+        return FocusLayer(binding: move binding) {
+            self
+        }
+    }
+
+    // SwiftUI's `.focused(_:equals:)`: the field here has the keyboard while
+    // `binding` holds `value`. Pressing it writes `value`; leaving it writes
+    // none, unless the binding names another field by then.
+    function focused<Value>(binding: Binding<Value?>, equals: Value) -> Any Widget {
+        let read = copy binding
+        let written = copy binding
+        let named = copy equals
+        let mine = copy equals
+        let focus = FocusBinding {
+            wanted: { in
+                return read.get() == .Some(copy named)
+            },
+            changed: { gained in
+                if gained {
+                    written.set(.Some(copy mine))
+                } else if written.get() == .Some(copy mine) {
+                    written.set(.None)
+                }
+                return
+            }
+        }
+        return FocusLayer(binding: move focus) {
+            self
+        }
+    }
+
+    // SwiftUI's `.padding(_ length:)`: the same length on all four edges. The
+    // token spelling below is the one to reach for — it keeps a control on the
+    // theme's scale — and this one is for the lengths a size class computes,
+    // which have no token to name them. Left out, the length is SwiftUI's
+    // `.padding()`: `EnvironmentValues.defaultPadding`, the compact margin.
+    function padding(
+        length: ScaledMetric = ScaledMetric { points: LayoutMargin.compact }
+    ) -> Any Widget {
+        return PaddingLayer(length: length.points) {
+            self
+        }
+    }
+
+    // SwiftUI's `.scenePadding()`: the column's own layout margin on every
+    // edge, with nothing painted behind. Content standing on a pane it does not
+    // own -- a sidebar's glass -- is held where the column holds everything.
+    function scenePadding() -> Any Widget {
+        return ScenePaddingLayer() {
+            self
+        }
+    }
+
+    function inset(horizontal: Spacing = .None, vertical: Spacing = .None,) -> Any Widget {
+        return Inset(horizontal: horizontal, vertical: vertical) {
+            self
+        }
+    }
+
+    // SwiftUI writes this both ways — `.background(someView)` and
+    // `.background { … }` — and so does this. A content parameter is an
+    // ordinary parameter that a trailing block may also fill, so the
+    // parenthesized form keeps working unchanged.
+    function background(fill: some Widget) -> Any Widget {
+        return BackgroundLayer(fill: fill) {
+            self
+        }
+    }
+
+    // SwiftUI's `.overlay(_:alignment:)`, written either way as `background` is.
+    function overlay(content: some Widget, alignment: StackAlignment = .Center) -> Any Widget {
+        return OverlayLayer(overlay: content, alignment: alignment) {
+            self
+        }
+    }
+
+    // The other half of the pair is not an overload of this one: a modifier is
+    // one obligation per name on the family, so `background` cannot also take a
+    // style and a shape. It does not need to. SwiftUI writes that case as a
+    // SHAPE that has been filled — `.background(RoundedRectangle(cornerRadius:
+    // 12).fill(.regularMaterial))` — and a filled shape is already a view, so it
+    // goes through the spelling above with nothing added.
+
+    // `.glassEffect(_:in:)`. Regular glass in a capsule by default, because
+    // SwiftUI's is — glass is applied to controls far more often than to
+    // panels, and a control is a capsule. Interactive, it answers a press
+    // anywhere on it, as `.regular.interactive()` does.
+    function glassEffect(
+        glass: Glass = .Regular,
+        shape: ContainerShape = .Capsule,
+        interactive: Bool = false,
+        tint: PrimaryColor? = .None
+    ) -> Any Widget {
+        return GlassEffectLayer(glass: glass, shape: shape, interactive: interactive, tint: tint) {
+            self
+        }
+    }
+
+    function cornerRadius(radius: ScaledMetric) -> Any Widget {
+        return CornerRadiusLayer(radius: radius.points) {
+            self
+        }
+    }
+
+    function font(size: ScaledMetric, weight: FontWeight = .Regular) -> Any Widget {
+        return FontLayer(size: size.points, weight: weight) {
+            self
+        }
+    }
+
+    // SwiftUI's `.fontDesign(_:)`: the face the text in this subtree is set in.
+    function fontDesign(design: FontDesign) -> Any Widget {
+        return FontDesignLayer(design: design) {
+            self
+        }
+    }
+
+    // SwiftUI's `.monospaced()`: the text in this subtree set in the
+    // monospaced face.
+    function monospaced() -> Any Widget {
+        return FontDesignLayer(design: .Monospaced) {
+            self
+        }
+    }
+
+    // SwiftUI's `.monospacedDigit()`: the text in this subtree set with every
+    // figure the same width, so a count or a clock holds still as it changes.
+    // Text in the monospaced face keeps it, whose figures already are.
+    function monospacedDigit() -> Any Widget {
+        return MonospacedDigitLayer {
+            self
+        }
+    }
+
+    // SwiftUI's `.lineLimit(_:)`: the text inside stands on `count` lines at
+    // most, the last cut short under an ellipsis; 0, as SwiftUI's `nil`, for
+    // as many as it takes.
+    function lineLimit(count: Number) -> Any Widget {
+        return LineLimitLayer(count: count) {
+            self
+        }
+    }
+
+    // SwiftUI's `.lineSpacing(_:)`: the room between the lines of the text
+    // inside, in points.
+    function lineSpacing(spacing: Number) -> Any Widget {
+        return LineSpacingLayer(spacing: spacing) {
+            self
+        }
+    }
+
+    // SwiftUI's `.multilineTextAlignment(_:)`: where the lines of wrapped text
+    // in this subtree sit.
+    function multilineTextAlignment(alignment: TextAlignment) -> Any Widget {
+        return TextAlignmentLayer(alignment: alignment) {
+            self
+        }
+    }
+
+    // SwiftUI's `.fontWeight(_:)`: the weight of whichever font is in effect,
+    // until a `.font(...)` inside names its own.
+    function fontWeight(weight: FontWeight) -> Any Widget {
+        return FontWeightLayer(weight: weight) {
+            self
+        }
+    }
+
+    // SwiftUI's `.buttonStyle(_:)`: how every button under it is drawn.
+    function buttonStyle(style: ButtonStyle) -> Any Widget {
+        return ButtonStyleLayer(style: style) {
+            self
+        }
+    }
+
+    // SwiftUI's `.toggleStyle(_:)`: how every toggle under it is drawn.
+    function toggleStyle(style: Any ToggleStyle) -> Any Widget {
+        return ToggleStyleLayer(style: style) {
+            self
+        }
+    }
+
+    // SwiftUI's `.menuStyle(_:)`: how every menu under it draws its label.
+    function menuStyle(style: MenuStyle) -> Any Widget {
+        return ModifierDeltaLayer(delta: modifierDeltaMenuStyle(style)) {
+            self
+        }
+    }
+
+    // SwiftUI's `.menuIndicator(_:)`: whether the menus under it show theirs.
+    function menuIndicator(visibility: Visibility) -> Any Widget {
+        return ModifierDeltaLayer(delta: modifierDeltaMenuIndicator(visibility)) {
+            self
+        }
+    }
+
+    // SwiftUI's `.pickerStyle(_:)`: how every picker under it is drawn.
+    function pickerStyle(style: PickerStyle) -> Any Widget {
+        return ModifierDeltaLayer(delta: modifierDeltaPickerStyle(style)) {
+            self
+        }
+    }
+
+    // SwiftUI's `.progressViewStyle(_:)`: how every progress view under it is drawn.
+    function progressViewStyle(style: Any ProgressViewStyle) -> Any Widget {
+        return ProgressViewStyleLayer(style: style) {
+            self
+        }
+    }
+
+    // SwiftUI's `.textFieldStyle(_:)`: how every text field under it is drawn.
+    function textFieldStyle(style: TextFieldStyle) -> Any Widget {
+        return TextFieldStyleLayer(style: style) {
+            self
+        }
+    }
+
+    // SwiftUI's `.onSubmit(_:)`: `action` runs when Return submits a field
+    // under it, after any nearer field's own.
+    function onSubmit(action: () -> Void) -> Any Widget {
+        return OnSubmitLayer(action: action) {
+            self
+        }
+    }
+
+    // SwiftUI's `.alert(_:isPresented:actions:message:)`: `title`, `message`
+    // and the buttons in `actions` on a card in front of the window while
+    // `isPresented` holds (Alert.kira).
+    function alert(
+        title: String,
+        isPresented: Bool,
+        message: String = "",
+        actions: [Any Widget]
+    ) -> Any Widget {
+        return AlertLayer(
+            title: title,
+            isPresented: isPresented,
+            message: message,
+            actions: actions
+        ) {
+            self
+        }
+    }
+
+    // SwiftUI's `.buttonBorderShape(_:)`: the outline of every bordered button
+    // under it.
+    function buttonBorderShape(shape: ButtonBorderShape) -> Any Widget {
+        return ButtonBorderShapeLayer(shape: shape) {
+            self
+        }
+    }
+
+    function typography(style: TypographyStyle) -> Any Widget {
+        return TypographyLayer(style: style) {
+            self
+        }
+    }
+
+    // The size class the controls in this subtree are drawn at.
+    function controlSize(value: ControlSize) -> Any Widget {
+        return ControlSizeLayer(value: value) {
+            self
+        }
+    }
+
+    // How large a glyph is drawn relative to that size class.
+    function imageScale(value: IconScale) -> Any Widget {
+        return ImageScaleLayer(value: value) {
+            self
+        }
+    }
+
+    // `.symbolVariant(_:)`: which drawing of each symbol in the subtree is
+    // used -- `.Fill` for the filled one wherever the set has it.
+    function symbolVariant(value: SymbolVariants) -> Any Widget {
+        return SymbolVariantLayer(value: value) {
+            self
+        }
+    }
+
+    // The color a control's active side takes: a switch's on-track, a slider's
+    // filled segment. Distinct from the foreground, which is ink.
+    function tint(value: PrimaryColor) -> Any Widget {
+        return TintLayer(value: value) {
+            self
+        }
+    }
+
+    // SwiftUI's `.containerShape(_:)`: the shape a concentric shape inside this
+    // view follows. A view drawn with `.background(_:in:)` or `.glassEffect`
+    // states its own; this states one for a view that draws none.
+    function containerShape(shape: ContainerShape) -> Any Widget {
+        return ContainerShapeLayer(shape: shape) {
+            self
+        }
+    }
+
+    // Answer an alignment guide for whatever encloses this widget.
+    //
+    //     .alignmentGuide(ListRowSeparatorLeading()) { dimensions in
+    //         dimensions[.Leading] + 20.0
+    //     }
+    function alignmentGuide(
+        guide: Any AlignmentGuide,
+        value: (ViewDimensions) -> Number,
+    ) -> Any Widget {
+        return AlignmentGuideLayer(guide: guide, value: value) {
+            self
+        }
+    }
+
+    // What this widget does when it is pressed.
+    function onClick(action: () -> Void) -> Any Widget {
+        return ClickLayer(action: action) {
+            self
+        }
+    }
+
+    // The same press, under a key the application chose: a row, a tile or a tab
+    // whose key is decoded elsewhere keeps it instead of being handed a minted
+    // one.
+    function onClickKeyed(
+        key: Number,
+        action: () -> Void,
+        radius: CornerRadius = .Small,
+    ) -> Any Widget {
+        return ClickRegion(key: key, onPress: action, radius: radius) {
+            self
+        }
+    }
+
+    // What this widget does while it is dragged across.
+    function onScrub(action: (Number, Number) -> Void) -> Any Widget {
+        return ScrubLayer(action: action) {
+            self
+        }
+    }
+
+    // `.matchedGeometryEffect(id:)`. An element that keeps its identity when it
+    // is declared somewhere else, and travels there rather than reappearing.
+    // See `Hero.kira`.
+    function matchedGeometryEffect(id: Number) -> Any Widget {
+        return MatchedGeometry(id: id) {
+            self
+        }
+    }
+
+    // `.rotationEffect(...)`, in radians. Drawing state: the view keeps the space
+    // layout gave it, so a turning glyph cannot move what is beside it.
+    function rotationEffect(radians: Number) -> Any Widget {
+        return RotationLayer(radians: radians) {
+            self
+        }
+    }
+
+    // `.scaleEffect(...)`. Drawing state, not geometry: the subtree keeps the
+    // space layout gave it, so scaling a row cannot reflow what encloses it.
+    function scaleEffect(value: Number, anchor: StackAlignment = .Center) -> Any Widget {
+        return ScaleLayer(value: value, anchor: anchor) {
+            self
+        }
+    }
+
+    function opacity(value: Number) -> Any Widget {
+        return OpacityLayer(value: value) {
+            self
+        }
+    }
+
+    // `.shadow(color:radius:x:y:)`: a shadow cast under the view's own shape,
+    // `radius` of blur, falling `x` across and `y` down. Drawing state, as in
+    // SwiftUI: the view keeps the space layout gave it.
+    function shadow(
+        color: RGBAColor,
+        radius: ScaledMetric,
+        x: ScaledMetric = resolvedLength(0.0),
+        y: ScaledMetric = resolvedLength(0.0)
+    ) -> Any Widget {
+        return ShadowLayer(color: color, radius: radius.points, x: x.points, y: y.points) {
+            self
+        }
+    }
+
+    function minWidth(value: ScaledMetric) -> Any Widget {
+        return MinWidthLayer(value: value.points) {
+            self
+        }
+    }
+
+    // SwiftUI's `.frame(maxWidth:)`: a CEILING over the width. A view that fills
+    // stops at it, and where it lands in the room left over is its parent's
+    // alignment.
+    function maxWidth(value: ScaledMetric) -> Any Widget {
+        return MaxWidthLayer(value: value.points) {
+            self
+        }
+    }
+
+    // SwiftUI's `.frame(minHeight:)`: a FLOOR under the height, never a cap.
+    //
+    // The distinction is the whole reason this exists. A minimum tap target
+    // written as `.height(44)` pins a two-line label at 44 points and lets its
+    // second line hang out of the bottom; written as a minimum, a label that
+    // needs more simply gets more. `minWidth` above already had this shape and
+    // height did not, which is how the fixed spelling got reached for.
+    function minHeight(value: ScaledMetric) -> Any Widget {
+        return MinHeightLayer(value: value.points) {
+            self
+        }
+    }
+
+    function width(value: ScaledMetric) -> Any Widget {
+        return WidthLayer(value: value.points) {
+            self
+        }
+    }
+
+    // How far this COLUMN holds its content off its own leading and trailing
+    // edges. Everything in the column obeys it: the bar across its top, its list
+    // rows, the header over them. A column whose content runs edge to edge — a
+    // canvas — says zero, and the bar above it starts where the canvas starts.
+    function contentMargin(value: ScaledMetric) -> Any Widget {
+        return ContentMarginLayer(value: value.points) {
+            self
+        }
+    }
+
+    // How the lists in this subtree are drawn. A split view already gives its
+    // sidebar column the sidebar style; this is for a list that wants another.
+    function listStyle(style: ListStyle) -> Any Widget {
+        return ListStyleLayer(style: style) {
+            self
+        }
+    }
+
+    // SwiftUI's `.labelStyle(_:)`: which halves of every label under it show.
+    function labelStyle(style: LabelStyle) -> Any Widget {
+        return LabelStyleLayer(style: style) {
+            self
+        }
+    }
+
+    // SwiftUI's `.labelsHidden()`: every toggle and picker under it is its
+    // control alone, its title kept from the screen.
+    function labelsHidden() -> Any Widget {
+        return LabelsHiddenLayer() {
+            self
+        }
+    }
+
+    function fillHeight() -> Any Widget {
+        return FillHeightLayer() {
+            self
+        }
+    }
+
+    // The other half of the pair. `fillHeight` existed and this did not, so a
+    // view that wanted the width it was given had to state a number instead --
+    // and a stated number is a second opinion about somebody else's box, which
+    // is how a column and the surface painted for it come to disagree.
+    function fillWidth() -> Any Widget {
+        return FillWidthLayer() {
+            self
+        }
+    }
+
+    function hugWidth() -> Any Widget {
+        return HugWidthLayer() {
+            self
+        }
+    }
+
+    function hugHeight() -> Any Widget {
+        return HugHeightLayer() {
+            self
+        }
+    }
+
+    function height(value: ScaledMetric) -> Any Widget {
+        return HeightLayer(value: value.points) {
+            self
+        }
+    }
+
+    // SwiftUI's `.zIndex(_:)`: where this view is painted among its siblings.
+    // A higher one is drawn over a lower one and takes the press where they
+    // overlap; where each is placed does not change.
+    function zIndex(value: Number) -> Any Widget {
+        return ZIndexLayer(value: value) {
+            self
+        }
+    }
+
+    // SwiftUI's `.frame(width:height:)`: a box of that size, in points, with
+    // this view centered in it. A view that fills, as `Color` does, fills the
+    // box; one that keeps its own size, as `Text` does, keeps it.
+    function frame(width: Number, height: Number) -> Any Widget {
+        return FrameLayer(width: width, height: height) {
+            self
+        }
+    }
+
+    function size(value: ScaledMetric) -> Any Widget {
+        return SizeLayer(value: value.points) {
+            self
+        }
+    }
+
+    function fill(color: RGBAColor) -> Any Widget {
+        return FillLayer(color: color) {
+            self
+        }
+    }
+
+    // SwiftUI's `.stroke(lineWidth:)` and `.stroke(style:)`: the shape's
+    // outline alone, in the ink it would be filled with, as wide as the style
+    // says when one is given.
+    function stroke(
+        lineWidth: ScaledMetric = resolvedLength(1.0),
+        style: StrokeStyle = StrokeStyle { lineWidth: -1.0 }
+    ) -> Any Widget {
+        return StrokeLayer(width: style.lineWidth >= 0.0 ? style.lineWidth : lineWidth.points) {
+            self
+        }
+    }
+
+    // SwiftUI's `.stroke(_:lineWidth:)`: the shape's outline alone, in
+    // `color`.
+    function stroke(color: RGBAColor, lineWidth: ScaledMetric = resolvedLength(1.0)) -> Any Widget {
+        return StrokeColorLayer(color: color, width: lineWidth.points) {
+            self
+        }
+    }
+
+    // SwiftUI's `.strokeBorder(lineWidth:)`: the outline drawn inside the
+    // shape's edge, so none of it falls outside the frame.
+    function strokeBorder(lineWidth: ScaledMetric = resolvedLength(1.0)) -> Any Widget {
+        return StrokeLayer(width: lineWidth.points) {
+            self
+        }
+    }
+
+    // SwiftUI's `.clipShape(_:)`: the view drawn only inside `shape`.
+    function clipShape(shape: ContainerShape) -> Any Widget {
+        return ClipShapeLayer(shape: shape) {
+            self
+        }
+    }
+
+    function textColor(color: RGBAColor) -> Any Widget {
+        return TextColorLayer(color: color) {
+            self
+        }
+    }
+
+    function surfacePadding(value: ScaledMetric) -> Any Widget {
+        return SurfacePaddingLayer(value: value.points) {
+            self
+        }
+    }
+
+    function contentMargins(value: ContentMargins) -> Any Widget {
+        return ContentMarginsLayer(value: value) {
+            self
+        }
+    }
+
+    function surfaceBorder(
+        color: RGBAColor,
+        width: ScaledMetric = resolvedLength(1.0)
+    ) -> Any Widget {
+        return SurfaceBorderLayer(color: color, width: width.points) {
+            self
+        }
+    }
+
+    // SwiftUI's `.border(_:width:)`: a line of `color` around the view's
+    // edge, in the color the theme gives it.
+    function border(color: PrimaryColor, width: ScaledMetric = resolvedLength(1.0)) -> Any Widget {
+        return BorderLayer(color: color, width: width.points) {
+            self
+        }
+    }
+}

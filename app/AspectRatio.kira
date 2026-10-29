@@ -1,0 +1,91 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's `.aspectRatio(_:contentMode:)` and `.fixedSize()`.
+
+// SwiftUI's `ContentMode`: whether a view kept to a shape fits the room it is
+// offered or fills it.
+public enum ContentMode {
+    Fit
+    Fill
+}
+
+extend CALayoutIntent {
+    // The box of the layer's shape for the room offered: the length it is
+    // fixed to on one axis and the other from it, or the largest box that
+    // fits, the smallest that covers when it fills.
+    function keptAspect(offeredWidth: Number, offeredHeight: Number) -> Size {
+        let ratio = self.aspectRatio
+        if self.fixedWidth >= 0.0 && self.fixedHeight >= 0.0 {
+            return Size { width: self.fixedWidth, height: self.fixedHeight }
+        }
+        if self.fixedHeight >= 0.0 {
+            return Size { width: self.fixedHeight * ratio, height: self.fixedHeight }
+        }
+        if self.fixedWidth >= 0.0 {
+            return Size { width: self.fixedWidth, height: self.fixedWidth / ratio }
+        }
+        let wider = offeredWidth > offeredHeight * ratio
+        if wider != self.aspectFills {
+            return Size { width: offeredHeight * ratio, height: offeredHeight }
+        }
+        return Size { width: offeredWidth, height: offeredWidth / ratio }
+    }
+}
+
+// The view kept to `ratio`, its width over its height, or to its own shape
+// when `ratio` is 0, as SwiftUI's `nil` keeps it.
+public construct AspectRatioLayer(ratio: Number, contentMode: ContentMode) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var described = content.describe(context, modifiers)
+        let own = described.measure(unboundedLength)
+        described.layout.aspectRatio = ratio > 0.0 ? ratio : own.width / max(own.height, 1.0)
+        described.layout.aspectFills = contentMode == .Fill
+        return described
+    }
+}
+
+// The view at the size it wants on each axis named, whatever it is offered,
+// as text set on one line however narrow its row.
+public construct FixedSizeLayer(horizontal: Bool, vertical: Bool) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var described = content.describe(context, modifiers)
+        let ideal = described.measure(unboundedLength)
+        if horizontal {
+            described.layout.fixedWidth = ideal.width
+            described.layout.widthFill = false
+            described.layout.flex = 0
+        }
+        if vertical {
+            described.layout.fixedHeight = ideal.height
+            described.layout.heightFill = false
+        }
+        return described
+    }
+}
+
+extend Widget {
+    // SwiftUI's `.aspectRatio(_:contentMode:)`.
+    function aspectRatio(ratio: Number = 0.0, contentMode: ContentMode) -> Any Widget {
+        return AspectRatioLayer(ratio: ratio, contentMode: contentMode) {
+            self
+        }
+    }
+
+    // SwiftUI's `.fixedSize(horizontal:vertical:)`.
+    function fixedSize(horizontal: Bool = true, vertical: Bool = true) -> Any Widget {
+        return FixedSizeLayer(horizontal: horizontal, vertical: vertical) {
+            self
+        }
+    }
+}

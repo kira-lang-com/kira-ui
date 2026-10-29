@@ -1,0 +1,553 @@
+import Foundation
+import Ember
+import KiraLayout
+import KCoreAnimation
+
+// Content taller than the room it has.
+//
+//     ScrollView {
+//         VStack {
+//             For(item in items) { Row(item = item) }
+//         }
+//     }
+//
+// The content is laid out at its full height and the view shows a window onto
+// it, so nothing inside has to know it is being scrolled: a row is measured,
+// drawn and clicked exactly as it would be in a column that fit.
+//
+// It moves as an iPad scroll view does, on UIKit's own curves: two fingers on
+// a trackpad or one on the glass drag it, resisted past either end; let go
+// fast enough it coasts and slows, and runs out past an end and is drawn back
+// to it; a wheel's notches ease it a step at a time. While it moves, a thin
+// bar along its trailing edge shows where in the content it is, swells under
+// a pointer that comes onto it, and scrubs through the content when held and
+// dragged; a second after it stops, the bar fades.
+//
+// Where it is scrolled to belongs to the view it is in, not to its place in
+// the whole build: a scroll view is known by the page of a navigation stack
+// it is on and which scroll view of that page it is, so a page pushed over it
+// and popped again finds it where it was, and so does the page under a swipe
+// back while the swipe is still deciding.
+//
+// The first scroll view on a stack's page is the page's own. It runs up under
+// the bar, its content resting below it and passing beneath it as it scrolls,
+// and once anything has gone under it lays the bar's hard edge effect down
+// behind the bar's items. It carries the page's large title at the top of its
+// content: the title goes up with the content, and as soon as it meets the
+// bar it fades out while the bar's own title fades in, rising into place --
+// and back again once it comes out.
+public construct ScrollView() extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let key = scrollIdentity()
+        let indicatorKey = tapSeqKey()
+        var page = scrollClaimPage()
+        // A presented search stands where the bar did, at the top of the
+        // screen, and the page runs on under it without its large title.
+        var presented = false
+        match page.search {
+            Some(search) -> {
+                if search.presented {
+                    presented = true
+                    page.title = ""
+                    page.barInset = context.systemSafeArea.top + searchFieldMetrics().height
+                }
+            }
+            None -> {}
+        }
+        let document = content.describe(context, modifierContextForChildren(modifiers))
+
+        // Recovered in place rather than through a helper: a recovered value
+        // handed back out of a function is a copy, and the motion would be lost.
+        let slot = scrollViewSlotKey(key)
+        if !ambientStateHasView(slot) {
+            ambientStatePutView(copy slot, nativeUserData(nativeState(ScrollViewState {})))
+        }
+        var scroll = nativeRecover<ScrollViewState>(ambientStateGetView(slot))
+        let bounds = MotionScrollBounds {
+            contentLength: scroll.contentLength,
+            viewportLength: scroll.viewportLength
+        }
+        let delta = clockDelta()
+        let metrics = scrollIndicatorMetrics()
+
+        // What the fingers and the wheel did to it since the last frame, in the
+        // order they did it.
+        let input = scrollTake(key)
+        if input.began {
+            motionScrollDragBegin(scroll.motion, 0.0, bounds, input.resistance, input.beganAt)
+        }
+        if input.moved {
+            for report in input.reports {
+                motionScrollDragMove(scroll.motion, report.travel, bounds, report.time)
+            }
+        }
+        if input.cancelled {
+            scroll.motion.velocity = 0.0
+        }
+        if input.ended || input.cancelled {
+            motionScrollDragEnd(scroll.motion, bounds, prefersReducedMotion())
+        }
+        if input.wheel != 0.0 {
+            motionScrollWheel(scroll.motion, input.wheel, bounds)
+        }
+
+        // Held, the bar scrubs: the content follows the pointer as far along
+        // its whole length as the pointer goes along the track the bar runs
+        // in, and let go it coasts on from however fast it was going.
+        let track = max(scroll.viewportLength - page.barInset, 0.0)
+        let length = scrollIndicatorLength(scroll.contentLength, track, metrics)
+        let scrubbing = context.heldControl == indicatorKey && indicatorKey != 0
+        if scrubbing && !scroll.scrubbing {
+            scroll.scrubFrom = scroll.motion.offset
+            scroll.scrubPointer = context.pointerY
+            motionScrollScrubBegin(scroll.motion)
+        }
+        if !scrubbing && scroll.scrubbing {
+            motionScrollScrubEnd(scroll.motion, bounds, prefersReducedMotion())
+        }
+        scroll.scrubbing = scrubbing
+        if scrubbing && track > length {
+            let reach = motionScrollMaxOffset(bounds) / (track - length)
+            motionScrollScrub(
+                scroll.motion,
+                scroll.scrubFrom + (context.pointerY - scroll.scrubPointer) * reach,
+                bounds
+            )
+        }
+
+        // Content that shrank under a surface at rest leaves it where the
+        // content still reaches.
+        if scroll.motion.phase == .Idle {
+            scroll.motion.offset = motionScrollClamp(scroll.motion.offset, bounds)
+        }
+        let moving = motionScrollAdvance(scroll.motion, delta, bounds)
+
+        // The bar shows while the surface moves or a pointer is on it, and a
+        // second after the last of either it fades.
+        let hovered = context.hoveredKey == indicatorKey && indicatorKey != 0
+        let scrollable = scroll.contentLength > scroll.viewportLength + 0.5
+        if moving || scrubbing || (hovered && scroll.opacity > 0.0) {
+            scroll.still = 0.0
+        } else {
+            scroll.still = scroll.still + delta
+        }
+        scroll.opacity = scrollable ? scrollIndicatorOpacity(scroll.still, metrics) : 0.0
+        let expanded = (hovered || scrubbing) && scroll.opacity > 0.0
+        let swelling = scrollIndicatorSwell(scroll, expanded, metrics, delta)
+        let offset = scroll.motion.offset
+        // The bar goes over to scrolled content all at once -- its edge effect
+        // in, and the large title out for the bar's own -- as soon as the
+        // content, or the large title leading it, meets the bar.
+        let reach = page.title.count > 0 ? largeTitleMetrics().topInset : 0.0
+        scroll.barFade = scrollFadeStep(scroll.barFade, page.barInset > 0.0 && offset > reach)
+        if moving || scroll.opacity > 0.0 || swelling || scrollFading(scroll.barFade) {
+            clockStillMoving()
+        }
+        let barShown = motionEase(.EaseInOut, scroll.barFade)
+
+        let overshoot = motionScrollOvershoot(offset, bounds)
+        let thickness = scroll.thickness
+        let opacity = scroll.opacity
+
+        var moved = move document
+        var bar: [CALayerDescription] = []
+        match page.search {
+            Some(search) -> {
+                if presented {
+                    bar.append(scrollSearchPresented(search, context, modifiers))
+                } else {
+                    moved = scrollSearchDrawn(move moved, search, context, modifiers)
+                }
+            }
+            None -> {}
+        }
+        if page.title.count > 0 {
+            moved = scrollLargeTitled(
+                move moved,
+                copy page.title,
+                barShown,
+                page.search != .None,
+                context,
+                modifiers
+            )
+        }
+        if page.barInset > 0.0 {
+            moved = CALayerDescription {
+                layout: CALayoutIntent {
+                    axis: .Column,
+                    heightFill: false,
+                    paddingTop: page.barInset
+                },
+                sublayers: [move moved]
+            }
+        }
+        moved.layout.offset = Point { x: moved.layout.offset.x, y: moved.layout.offset.y - offset }
+        // The surface moves its content itself, every frame.
+        moved.disablesActions = true
+
+        var indicator = scrollIndicator(
+            indicatorKey,
+            thickness,
+            scrollIndicatorShownLength(length, overshoot, metrics),
+            page.barInset + scrollIndicatorPosition(
+                offset,
+                bounds,
+                track,
+                length,
+                overshoot,
+                metrics
+            ),
+            opacity,
+            modifiers
+        )
+        var layers = [CALayerDescription {
+            hitKey: key,
+            scrollAxis: .Column,
+            clipsChildren: true,
+            sublayers: [move moved]
+        }]
+        if barShown > 0.0 {
+            layers.append(scrollEdgeEffect(page.barInset, barShown, modifiers))
+        }
+        layers.append(move indicator)
+        for field in bar {
+            layers.append(field)
+        }
+        return CALayerDescription {
+            layout: CALayoutIntent { flex: 1, alignment: Point { x: 1.0, y: 0.0 } },
+            sublayers: move layers
+        }
+    }
+}
+
+// The page's large title over `document`, going up with it, faded out as far
+// as the bar has gone over to its own title -- which `inline` is -- so it
+// never shows through the bar. A search field under it hangs closer than
+// content does.
+public function scrollLargeTitled(
+    document: CALayerDescription,
+    title: String,
+    inline: Number,
+    searched: Bool,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    var heading = navigationLargeTitle(move title, context, modifiers)
+    if searched {
+        heading.layout.paddingBottom = searchFieldMetrics().titleSpacing
+    }
+    toolbarCollapseLargeTitle(inline)
+    heading.opacity = 1.0 - inline
+    heading.disablesActions = true
+    return CALayerDescription {
+        layout: CALayoutIntent { axis: .Column, heightFill: false },
+        sublayers: [move heading, move document]
+    }
+}
+
+// The page's search field over `document`, across the column, going up with
+// it.
+public function scrollSearchDrawn(
+    document: CALayerDescription,
+    search: borrow WindowSearch,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let field = CALayerDescription {
+        layout: CALayoutIntent {
+            heightFill: false,
+            paddingLeading: resolvedContentMargin(modifiers),
+            paddingTrailing: resolvedContentMargin(modifiers)
+        },
+        sublayers: [pageSearchField(search, context, modifiers)]
+    }
+    return CALayerDescription {
+        layout: CALayoutIntent { axis: .Column, heightFill: false },
+        sublayers: [move field, move document]
+    }
+}
+
+// The page's search field presented, standing at the top of the screen
+// across the column, its cancel button after it.
+public function scrollSearchPresented(
+    search: borrow WindowSearch,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let height = searchFieldMetrics().height
+    var field = pageSearchField(search, context, modifiers)
+    field.layout.flex = 1
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            axis: .Row,
+            spacing: windowChromeMetrics().itemSpacing,
+            heightFill: false,
+            paddingTop: context.systemSafeArea.top,
+            paddingLeading: resolvedContentMargin(modifiers),
+            paddingTrailing: resolvedContentMargin(modifiers),
+            alignment: Point { x: 0.0, y: 0.5 }
+        },
+        sublayers: [move field, searchCancelButton(search, height, context, modifiers)]
+    }
+}
+
+// `fade` a frame further toward whole while `shown`, or toward nothing while
+// not, at the fixed pace the bar goes over at.
+public function scrollFadeStep(fade: Number, shown: Bool) -> Number {
+    if prefersReducedMotion() {
+        return shown ? 1.0 : 0.0
+    }
+    let step = clockDelta() / largeTitleMetrics().fadeDuration
+    return shown ? min(fade + step, 1.0) : max(fade - step, 0.0)
+}
+
+// Whether a fade is partway, and wants another frame.
+public function scrollFading(fade: Number) -> Bool {
+    return fade > 0.0 && fade < 1.0
+}
+
+// The kit's hard scroll edge effect, `height` deep, faded to `opacity`: what
+// passes beneath it blurred and washed over, and a hairline along its bottom
+// edge. Glass with no edge of its own: only its blur and its wash.
+public function scrollEdgeEffect(
+    height: Number,
+    opacity: Number,
+    modifiers: borrow ModifierContext
+) -> CALayerDescription {
+    let metrics = scrollEdgeMetrics()
+    let appearance = modifierAppearance(modifiers)
+    let wash = colorFromFoundation(
+        modifierColor(
+            foundationColor(themeAdaptiveColor(scrollEdgeFillColor, appearance)),
+            modifiers
+        )
+    )
+    let hairline = colorFromFoundation(
+        modifierColor(
+            foundationColor(themeAdaptiveColor(scrollEdgeBorderColor, appearance)),
+            modifiers
+        )
+    )
+    let radius = metrics.blurRadius
+    return CALayerDescription {
+        opacity: opacity,
+        disablesActions: true,
+        capturesBackdrop: true,
+        content: .Glass(
+            (
+                CAGlass {
+                    tint: wash,
+                    sizing: CAGlassSizing {
+                        blurRadius: CAGlassRamp { base: radius, minimum: radius, maximum: radius }
+                    }
+                }
+            ).edgeless()
+        ),
+        layout: CALayoutIntent {
+            heightFill: false,
+            fixedHeight: height,
+            alignment: Point { x: 0.0, y: 1.0 }
+        },
+        sublayers: [CALayerDescription {
+            disablesActions: true,
+            content: .Solid(CASolid { fill: hairline }),
+            layout: CALayoutIntent { heightFill: false, fixedHeight: metrics.borderWidth }
+        }]
+    }
+}
+
+// Where one scroll view is: its motion, the content and window lengths
+// layout last measured, its bar -- how long since anything moved it, how
+// opaque and how thick it is, and the press scrubbing it -- and how far the
+// window's bar over it has gone over to scrolled content: its edge effect in,
+// its large title out.
+public struct ScrollViewState {
+    var motion: MotionScrollState = MotionScrollState {}
+    var contentLength: Number = 0.0
+    var viewportLength: Number = 0.0
+    var still: Number = 1000000.0
+    var opacity: Number = 0.0
+    var thickness: Number = 0.0
+    var thicknessVelocity: Number = 0.0
+    var swell: MotionSpringState = MotionSpringState {}
+    var scrubbing: Bool = false
+    var scrubFrom: Number = 0.0
+    var scrubPointer: Number = 0.0
+    var barFade: Number = 0.0
+}
+
+public function scrollViewSlotKey(key: Number) -> ViewStateKey {
+    return slotKey("kiraui.scroll.", key)
+}
+
+// Layout's answer for the scroll view under `key`: how long its content came
+// out and how long the window onto it is. The motion reads it on the next
+// frame.
+public function scrollMeasured(key: Number, contentLength: Number, viewportLength: Number) {
+    if !ambientStateHasView(scrollViewSlotKey(key)) {
+        return
+    }
+    var scroll = nativeRecover<ScrollViewState>(ambientStateGetView(scrollViewSlotKey(key)))
+    scroll.contentLength = contentLength
+    scroll.viewportLength = viewportLength
+}
+
+// --- The scroll indicator ------------------------------------------------------
+//
+// UIKit's: as long against its track as the window is against the content,
+// never shorter than its minimum, and as far along the track as the surface is
+// through its range. Pulled past an end it stays at that end and is squeezed
+// by however far past it the surface is.
+
+public function scrollIndicatorLength(
+    contentLength: Number,
+    track: Number,
+    metrics: borrow ScrollIndicatorMetrics
+) -> Number {
+    if contentLength <= 0.0 {
+        return track
+    }
+    return min(max(round(track * track / contentLength), metrics.minimumLength), track)
+}
+
+public function scrollIndicatorShownLength(
+    length: Number,
+    overshoot: Number,
+    metrics: borrow ScrollIndicatorMetrics
+) -> Number {
+    return max(length - abs(overshoot), metrics.overscrolledLength)
+}
+
+public function scrollIndicatorPosition(
+    offset: Number,
+    bounds: borrow MotionScrollBounds,
+    track: Number,
+    length: Number,
+    overshoot: Number,
+    metrics: borrow ScrollIndicatorMetrics,
+) -> Number {
+    if overshoot > 0.0 {
+        return track - scrollIndicatorShownLength(length, overshoot, metrics)
+    }
+    let limit = motionScrollMaxOffset(bounds)
+    if overshoot < 0.0 || limit <= 0.0 {
+        return 0.0
+    }
+    return (track - length) * clamp(offset / limit, 0.0, 1.0)
+}
+
+// Opaque until its delay has passed since anything moved it, then fading, as
+// UIKit's default curve eases, to nothing.
+public function scrollIndicatorOpacity(
+    still: Number,
+    metrics: borrow ScrollIndicatorMetrics
+) -> Number {
+    if still < metrics.hideDelay {
+        return 1.0
+    }
+    return 1.0 - motionEase(.EaseInOut, (still - metrics.hideDelay) / metrics.fadeDuration)
+}
+
+// Swells the bar to its held thickness, or thins it back, on the critically
+// damped spring UIKit fits into each one's duration. Whether it is still
+// changing.
+public function scrollIndicatorSwell(
+    scroll: borrow mut ScrollViewState,
+    expanded: Bool,
+    metrics: borrow ScrollIndicatorMetrics,
+    delta: Number,
+) -> Bool {
+    let wanted = expanded ? metrics.expandedThickness : metrics.thickness
+    if scroll.thickness == 0.0 {
+        scroll.thickness = wanted
+        scroll.swell = motionSpringStart(MotionSpring { target: wanted }, wanted, 0.0)
+        return false
+    }
+    if scroll.swell.spring.target != wanted {
+        let duration = expanded ? metrics.expandDuration : metrics.collapseDuration
+        scroll.swell = motionSpringStart(
+            MotionSpring {
+                response: scrollIndicatorSpringResponse(duration),
+                damping: 1.0,
+                target: wanted
+            },
+            scroll.thickness,
+            scroll.thicknessVelocity
+        )
+    }
+    if scroll.thickness == wanted {
+        return false
+    }
+    let sample = motionSpringAdvance(scroll.swell, delta)
+    if motionSpringSettled(scroll.swell, sample, MotionSpringLimit.epsilon) {
+        scroll.thickness = wanted
+        scroll.thicknessVelocity = 0.0
+        return false
+    }
+    scroll.thickness = sample.value
+    scroll.thicknessVelocity = sample.velocity
+    return true
+}
+
+// The response of the critically damped spring UIKit fits into a duration:
+// one within a thousandth of home where ωt reaches 9.23.
+public function scrollIndicatorSpringResponse(duration: Number) -> Number {
+    return 6.283185307179586 * duration / 9.23
+}
+
+// The bar, `thickness` across and `length` along, `position` down its track,
+// in a box that takes a pointer a little way beyond it on every side. It sits
+// against the trailing edge, and swells inward from it.
+public function scrollIndicator(
+    key: Number,
+    thickness: Number,
+    length: Number,
+    position: Number,
+    opacity: Number,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let metrics = scrollIndicatorMetrics()
+    let across = metrics.hitOutsetAcross
+    let along = metrics.hitOutsetAlong
+    let ink = colorFromFoundation(
+        modifierColor(
+            foundationColor(
+                themeAdaptiveColor(scrollIndicatorColor, modifierAppearance(modifiers))
+            ),
+            modifiers
+        )
+    )
+    return CALayerDescription {
+        opacity: opacity,
+        hittable: opacity > 0.0,
+        hitKey: key,
+        disablesActions: true,
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedWidth: thickness + across * 2.0,
+            fixedHeight: length + along * 2.0,
+            paddingLeading: across,
+            paddingTop: along,
+            paddingTrailing: across,
+            paddingBottom: along,
+            offset: Point { x: across, y: position - along }
+        },
+        sublayers: [CALayerDescription {
+            disablesActions: true,
+            content: .Solid(CASolid { fill: ink, cornerRadius: thickness * 0.5 })
+        }]
+    }
+}
+
+// --- Identity --------------------------------------------------------------------
+//
+// A scroll view is known by the scope it is built in -- a stack's page, by the
+// path it belongs to and how deep on it the page is -- and by how many scroll
+// views the scope has built before it. Outside any page the whole window is
+// one scope. The numbers stand clear of every key the build mints.

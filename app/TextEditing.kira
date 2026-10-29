@@ -1,0 +1,416 @@
+import KiraLayout
+import Ember
+import Foundation
+import KCoreAnimation
+
+// The editing a text field does, kept apart from how it is drawn.
+//
+// The library owns the edit state (codepoint buffer + caret) in a per-key state
+// slot, seeded from the field's text (String is opaque, so it is decoded to
+// codepoints via foundationStringToCodepoints). Typing inserts at the caret;
+// Backspace / forward-Delete remove around it; Left/Right/Home/End move it; a
+// click focuses the field and sets the caret to the nearest character (prefix
+// measurement). Return runs the field's submit action; the text stays, and
+// `textFieldText(key)` reads it.
+
+public struct TextFieldState {
+    var codes: [Number] = []
+    var caret: Number = 0
+    // Selection anchor. anchor == caret means no selection; otherwise the
+    // selection spans [min(anchor,caret), max(anchor,caret)).
+    var anchor: Number = 0
+    var seeded: Bool = false
+}
+
+public function textFieldSelMin(anchor: Number, caret: Number) -> Number {
+    if anchor < caret {
+        return anchor
+    }
+    return caret
+}
+
+public function textFieldSelMax(anchor: Number, caret: Number) -> Number {
+    if anchor > caret {
+        return anchor
+    }
+    return caret
+}
+
+// Per-field slot key.
+public function textFieldSlotKey(key: Number) -> ViewStateKey {
+    return slotKey("kiraui.tf.", key)
+}
+
+public function textFieldEnsure(key: Number) {
+    let slot = textFieldSlotKey(key)
+    if !ambientStateHasView(slot) {
+        ambientStatePutView(copy slot, nativeUserData(nativeState(TextFieldState {})))
+    }
+}
+
+public function textFieldSeed(key: Number, initial: borrow String) {
+    textFieldEnsure(key)
+    var st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
+    if !st.seeded {
+        st.codes = foundationStringToCodepoints(initial)
+        st.caret = st.codes.count
+        st.anchor = st.caret
+        st.seeded = true
+    }
+}
+
+public function textFieldText(key: Number) -> String {
+    textFieldEnsure(key)
+    let st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
+    return foundationStringFromCodepoints(st.codes, 0, st.codes.count)
+}
+
+public function textFieldReset(key: Number) {
+    textFieldEnsure(key)
+    var st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
+    var empty: [Number] = []
+    st.codes = move empty
+    st.caret = 0
+    st.anchor = 0
+    st.seeded = false
+}
+
+// Delete the selected range (if any), collapsing the caret to its start.
+public function textFieldDeleteSelection(key: Number) {
+    textFieldEnsure(key)
+    var st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
+    if st.anchor == st.caret {
+        return
+    }
+    let a = textFieldSelMin(st.anchor, st.caret)
+    let b = textFieldSelMax(st.anchor, st.caret)
+    var next: [Number] = []
+    for i in 0..st.codes.count {
+        if i < a || i >= b {
+            next.append(st.codes[i])
+        }
+    }
+    st.codes = move next
+    st.caret = a
+    st.anchor = a
+}
+
+public function textFieldSelectAll(key: Number) {
+    textFieldEnsure(key)
+    var st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
+    st.anchor = 0
+    st.caret = st.codes.count
+}
+
+public function textFieldInsert(key: Number, cp: Number) {
+    if cp < 32 {
+        return
+    }
+    // Typing over a selection replaces it.
+    textFieldDeleteSelection(key)
+    textFieldEnsure(key)
+    var st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
+    var next: [Number] = []
+    for i in 0..st.caret {
+        next.append(st.codes[i])
+    }
+    next.append(cp)
+    for i in st.caret..st.codes.count {
+        next.append(st.codes[i])
+    }
+    st.codes = move next
+    st.caret++
+    st.anchor = st.caret
+}
+
+public function textFieldBackspace(key: Number) {
+    textFieldEnsure(key)
+    var st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
+    // A selection is deleted whole.
+    if st.anchor != st.caret {
+        textFieldDeleteSelection(key)
+        return
+    }
+    if st.caret <= 0 {
+        return
+    }
+    let removeAt = st.caret - 1
+    var next: [Number] = []
+    for i in 0..st.codes.count {
+        if i != removeAt {
+            next.append(st.codes[i])
+        }
+    }
+    st.codes = move next
+    st.caret--
+    st.anchor = st.caret
+}
+
+public function textFieldDeleteForward(key: Number) {
+    textFieldEnsure(key)
+    var st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
+    if st.anchor != st.caret {
+        textFieldDeleteSelection(key)
+        return
+    }
+    if st.caret >= st.codes.count {
+        return
+    }
+    let removeAt = st.caret
+    var next: [Number] = []
+    for i in 0..st.codes.count {
+        if i != removeAt {
+            next.append(st.codes[i])
+        }
+    }
+    st.codes = move next
+}
+
+// Moves the caret, or deletes ahead of it, for a key that types nothing.
+public function textFieldNav(key: Number, pressed: borrow Key) {
+    match pressed {
+        Delete -> {
+            textFieldDeleteForward(key)
+            return
+        }
+        else -> {}
+    }
+    textFieldEnsure(key)
+    var st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
+    let hasSel = st.anchor != st.caret
+    match pressed {
+        Left -> {
+            // Collapse a selection to its start, else step left.
+            if hasSel {
+                st.caret = textFieldSelMin(st.anchor, st.caret)
+            } else if st.caret > 0 {
+                st.caret--
+            }
+            st.anchor = st.caret
+        }
+        Right -> {
+            if hasSel {
+                st.caret = textFieldSelMax(st.anchor, st.caret)
+            } else if st.caret < st.codes.count {
+                st.caret++
+            }
+            st.anchor = st.caret
+        }
+        Home -> {
+            st.caret = 0
+            st.anchor = 0
+        }
+        End -> {
+            st.caret = st.codes.count
+            st.anchor = st.caret
+        }
+        else -> {}
+    }
+}
+
+// The characters `from` up to `to` as the field shows them: themselves, or
+// a dot apiece in a secure field.
+public function textFieldShown(
+    codes: borrow [Number],
+    from: Number,
+    to: Number,
+    secure: Bool
+) -> String {
+    if !secure {
+        return foundationStringFromCodepoints(codes, from, to)
+    }
+    var dots = ""
+    for index in from..to {
+        dots = dots + "•"
+    }
+    return dots
+}
+
+// Click-to-position: map the press x (relative to the field's text start) to the
+// nearest caret index by measuring codepoint prefixes.
+//
+// The text starts `leftPad` in from the field's leading edge, and a field whose
+// text is set trailing or centered starts it that share of the room the text
+// leaves between the two pads. A secure field measures the dots it shows.
+public function textFieldClickCaret(
+    key: Number,
+    size: Number,
+    weight: Number,
+    leftPad: Number,
+    rightPad: Number,
+    alignment: Number,
+    secure: Bool
+) {
+    textFieldEnsure(key)
+    var st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
+    let textWidth = foundationTextRunWidth(
+        textFieldShown(st.codes, 0, st.codes.count, secure),
+        size,
+        weight
+    )
+    let slack = max(pressBoundsW() - leftPad - rightPad - textWidth, 0.0)
+    let relX = pointerX() - pressBoundsX() - leftPad - slack * alignment
+    if relX <= 0.0 {
+        st.caret = 0
+        st.anchor = 0
+        return
+    }
+    let n = st.codes.count
+    var k = 0
+    var prevW: Number = 0.0
+    var placed = false
+    while k <= n && !placed {
+        let prefix = textFieldShown(st.codes, 0, k, secure)
+        let w = foundationTextRunWidth(prefix, size, weight)
+        if w >= relX {
+            if k > 0 && (relX - prevW) < (w - relX) {
+                st.caret = k - 1
+            } else {
+                st.caret = k
+            }
+            placed = true
+        }
+        prevW = w
+        k++
+    }
+    if !placed {
+        st.caret = n
+    }
+    // A click positions the caret and clears any selection.
+    st.anchor = st.caret
+}
+
+// --- Closure builders (capture locals, never widget fields). ---
+
+// The text a field is given, taken whenever it differs from what the field
+// holds: after an edit the two already agree, and anything else is the
+// application setting the text.
+public function textFieldFollow(key: Number, text: borrow String) {
+    textFieldSeed(key, text)
+    if textFieldText(key) != text {
+        textFieldReset(key)
+        textFieldSeed(key, text)
+    }
+}
+
+// An edit, and the text it left handed on when it changed anything.
+public function textFieldEdited(key: Number, before: borrow String, onChange: (String) -> Void) {
+    let after = textFieldText(key)
+    if after != before {
+        onChange(move after)
+    }
+}
+
+// A character typed into the field, and the text it leaves handed on.
+public function textFieldTypeFn(key: Number, onChange: (String) -> Void) -> (Number) -> Void {
+    let k = key
+    let change = onChange
+    let f: (Number) -> Void = { cp in
+        let before = textFieldText(k)
+        textFieldInsert(k, cp)
+        textFieldEdited(k, before, change)
+        return
+    }
+    return f
+}
+
+public function textFieldBackspaceFn(key: Number) -> () -> Void {
+    let k = key
+    let f: () -> Void = { in
+        textFieldBackspace(k)
+        return
+    }
+    return f
+}
+
+public function textFieldNavFn(key: Number) -> (Key) -> Void {
+    let k = key
+    let f: (Key) -> Void = { pressed in
+        textFieldNav(k, pressed)
+        return
+    }
+    return f
+}
+
+// The keys a focused field answers: Return submits, Delete removes behind the
+// caret, and the rest move it. What an edit leaves is handed on.
+public function textFieldCommandFn(
+    key: Number,
+    onChange: (String) -> Void,
+    onSubmit: () -> Void
+) -> (Key) -> Void {
+    let k = key
+    let change = onChange
+    let submit = onSubmit
+    let f: (Key) -> Void = { pressed in
+        let before = textFieldText(k)
+        match pressed {
+            Enter -> submit()
+            Backspace -> textFieldBackspace(k)
+            else -> textFieldNav(k, pressed)
+        }
+        textFieldEdited(k, before, change)
+        return
+    }
+    return f
+}
+
+// The selected characters of the field under `key`, none when nothing is
+// selected.
+public function textFieldSelectedText(key: Number) -> String {
+    textFieldEnsure(key)
+    let st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
+    let from = textFieldSelMin(st.anchor, st.caret)
+    let to = textFieldSelMax(st.anchor, st.caret)
+    return foundationStringFromCodepoints(st.codes, from, to)
+}
+
+// Puts `text` at the caret of the field under `key`, over its selection; a
+// line break or another control character is left out, since the field is
+// one line.
+public function textFieldInsertText(key: Number, text: borrow String) {
+    textFieldDeleteSelection(key)
+    for code in foundationStringToCodepoints(text) {
+        textFieldInsert(key, code)
+    }
+}
+
+// Select All, Copy, Cut and Paste on the field under `key`; a `secure` field
+// gives none of its text away. What an edit leaves is handed on.
+public function textFieldEditFn(key: Number, secure: Bool, onChange: (String) -> Void) -> (
+    TextEditCommand
+) -> Void {
+    let k = key
+    let change = onChange
+    let f: (TextEditCommand) -> Void = { command in
+        let before = textFieldText(k)
+        match command {
+            SelectAll -> textFieldSelectAll(k)
+            Copy -> if !secure { textFieldCopy(k) }
+            Cut -> if !secure {
+                textFieldCopy(k)
+                textFieldDeleteSelection(k)
+            }
+            Paste -> textFieldPaste(k)
+        }
+        textFieldEdited(k, before, change)
+        return
+    }
+    return f
+}
+
+// Copies the selection of the field under `key`, when it has one.
+function textFieldCopy(key: Number) {
+    let selected = textFieldSelectedText(key)
+    if selected.count == 0 { return }
+    pasteboardCopy(selected)
+}
+
+// Pastes the pasteboard's text into the field under `key`; an empty or
+// refused pasteboard changes nothing.
+function textFieldPaste(key: Number) {
+    match pasteboardText() {
+        Ok(text) -> textFieldInsertText(key, text)
+        Error(refusal) -> log info("nothing was pasted", refusal: traceText(refusal))
+    }
+}

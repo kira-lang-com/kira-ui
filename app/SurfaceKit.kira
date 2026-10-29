@@ -1,0 +1,152 @@
+import Ember
+import KiraLayout
+import Foundation
+import ArgumentParser
+import KCoreAnimation
+
+// Surfaces: subtrees the compositor renders to their own textures.
+//
+// A surface is a layer with `renderTarget: true`. The compositor renders its
+// subtree into a texture once and draws that texture as a quad, so moving a
+// surface — a page sliding in a pager, a column collapsing in a split — is
+// compositing a texture rather than re-rendering the content behind it, and each
+// surface animates independently of the ones beside it. This is what makes the
+// retained model's page transitions cheap.
+//
+// The container widgets here (`SplitSurface`, `Pager`, `TabSurface`) arrange a
+// handful of surfaces and route the chrome channels between them. The atomic
+// wrapper is `RenderSurface`; a `construct Surface` would collide with the
+// legacy `Surface(...)` view helper until step 7 deletes it, so the plan's
+// `Surface` name lands then.
+
+// A surface's chrome, published up to the container that composes it: what the
+// window's bar shows for the column this surface fills.
+public struct Channels {
+    var title: String = ""
+    var badge: Number = 0
+}
+
+// Wrap a described subtree as a surface: its own render target, arranged to fill
+// the box the container gives it.
+public function renderSurface(child: CALayerDescription) -> CALayerDescription {
+    return CALayerDescription { renderTarget: true, clipsChildren: true, sublayers: [child] }
+}
+
+// The atomic surface: content rendered to its own texture.
+public construct RenderSurface() extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        return renderSurface(content.describe(context, modifierContextForChildren(modifiers)))
+    }
+}
+
+// Run a window on the retained stack: build the root each rebuild and drive it
+// through the reconcile runner. The window's title is the runner's, because the
+// window is stood up before anything inside it is built.
+public function RunKiraWindowApp(
+    title: String,
+    width: Number,
+    height: Number,
+    rootBuilder: borrow () -> Any Widget,
+    // Host hook run first every frame, before the UI pass — where an app loads a
+    // texture, ticks a simulation, or renders an offscreen viewport for a
+    // TextureViewport to show this same frame. Default is a no-op.
+    engineFrame: borrow (borrow mut RenderFrame) -> Void = noopEngineFrame,
+    // Rebuild every frame rather than when something changed; see
+    // `RunKiraLayerApp`.
+    rebuildsEveryFrame: Bool = false,
+    // The identifier the app's Info.klist names it by, which its
+    // `@AppStorage` values are kept under; see AppStorage.kira.
+    bundleIdentifier: String = "",
+    // The command line, which every application reads the options in
+    // LaunchOptions.kira from. An application that parses its own passes what
+    // it left over, or none.
+    arguments: [String] = commandLineArguments(),
+) {
+    RunKiraLayerApp(
+        move title,
+        width,
+        height,
+        rootBuilder,
+        false,
+        engineFrame,
+        rebuildsEveryFrame,
+        move bundleIdentifier,
+        move arguments
+    )
+}
+
+// A sidebar column beside a detail column, each its own surface. Collapses to a
+// single column on a narrow viewport (the detail, or the sidebar when the path
+// is at its root) — the same rule the navigation split view follows.
+public construct SplitSurface() extends Widget {
+    let sidebar: some Widget
+    let detail: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        return CALayerDescription {
+            layout: CALayoutIntent { axis: .Row },
+            sublayers: [renderSurface(sidebar.describe(context, modifiers)), renderSurface(
+                detail.describe(context, modifiers)
+            )]
+        }
+    }
+}
+
+// A row of full-viewport surfaces, one on screen; `selection` picks it. Changing
+// the selection slides horizontally, because each page keeps its position and
+// the pager offsets them — and since each page is a texture, the slide composites
+// textures rather than re-rendering pages.
+public construct Pager(selection: Number = 0) extends Widget {
+    let children: [some Widget]
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var pages: [CALayerDescription] = []
+        let described = describedChildren(context, modifiers, children)
+        for index in 0..described.count {
+            var page = renderSurface(described[index])
+            page.layout.offset = Point {
+                x: Number(index - selection) * context.viewportWidth,
+                y: 0.0
+            }
+            pages.append(move page)
+        }
+        return CALayerDescription { sublayers: move pages }
+    }
+}
+
+// A set of surfaces one of which is shown, `selection` picking it, crossfading
+// rather than sliding between them.
+public construct TabSurface(selection: Number = 0) extends Widget {
+    let children: [some Widget]
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var pages: [CALayerDescription] = []
+        let described = describedChildren(context, modifiers, children)
+        for index in 0..described.count {
+            var page = renderSurface(described[index])
+            // Only the selected tab is opaque; the compositor animates the
+            // change to opacity as a crossfade.
+            if index == selection {
+                page.opacity = 1.0
+            } else {
+                page.opacity = 0.0
+            }
+            pages.append(page)
+        }
+        return CALayerDescription { sublayers: move pages }
+    }
+}

@@ -1,0 +1,201 @@
+import Foundation
+import Ember
+import KCoreAnimation
+
+// The application's commands, matching SwiftUI's `.commands { … }`.
+//
+//     EditorView()
+//         .commands {
+//             CommandGroup(placement: .Replacing(.NewItem)) {
+//                 Button("New File", action: newFile)
+//                     .keyboardShortcut("N")
+//             }
+//             CommandMenu(title: "Go") {
+//                 Button("Go to Line…", action: goToLine)
+//                     .keyboardShortcut("L")
+//             }
+//         }
+//
+// Commands are the window's menu bar. A view declares them beside the content
+// they act on, and they travel up to the one bar the window has, as toolbar
+// items do: the menu bar is drawn after the content lowers, from what it
+// declared. The bar already has the platform's menus -- the application's,
+// File, Edit, View, Window and Help, with the commands every window has -- and
+// a `CommandGroup` adds to them or replaces a group of theirs, where a
+// `CommandMenu` is a menu of its own, set after View.
+
+// A group of the standard menus' commands, as SwiftUI names them.
+public enum CommandGroupPlacement {
+    // The application menu's: about, settings, and quitting.
+    AppInfo
+    AppSettings
+    AppTermination
+    // File's: making a document, saving and closing it, exporting, printing.
+    NewItem
+    SaveItem
+    ImportExport
+    PrintItem
+    // Edit's: undoing, the pasteboard, and editing text.
+    UndoRedo
+    Pasteboard
+    TextEditing
+    // View's: the sidebar and the toolbar.
+    Sidebar
+    Toolbar
+    // Window's: its size and its arrangement among the others.
+    WindowSize
+    WindowArrangement
+    Help
+}
+
+// Where a `CommandGroup` goes: before a standard group, after it, or in its
+// place.
+public enum CommandPlacement {
+    Before: CommandGroupPlacement
+    After: CommandGroupPlacement
+    Replacing: CommandGroupPlacement
+}
+
+// --- The sink ----------------------------------------------------------------
+
+// What a `CommandGroup` declared: where it goes, and its items, to be lowered
+// in the menu it goes into.
+public struct DeclaredCommandGroup {
+    var placement: CommandPlacement = .After(.Help)
+    var items: Any Widget = EmptyView()
+}
+
+// What a `CommandMenu` declared.
+public struct DeclaredCommandMenu {
+    var title: String = ""
+    var items: Any Widget = EmptyView()
+}
+
+public struct CommandsSink {
+    var groups: [DeclaredCommandGroup] = []
+    var menus: [DeclaredCommandMenu] = []
+    // What the application is called, which its menu is titled with.
+    var applicationName: String = ""
+    // Whether a window is collecting commands at all. Commands declared with
+    // no window to take them are dropped.
+    var collecting: Bool = false
+}
+
+public function commandsSinkEnsure() {
+    if !ambientStateHas(StateSlot.commands) {
+        ambientStatePut(StateSlot.commands, nativeUserData(nativeState(CommandsSink {})))
+    }
+}
+
+// Open collection for the frame about to be built, in the application named
+// `applicationName`. The tree declares its commands again every frame, as it
+// does its toolbar.
+public function commandsCollect(applicationName: String) {
+    commandsSinkEnsure()
+    var sink = nativeRecover<CommandsSink>(ambientStateGet(StateSlot.commands))
+    var noGroups: [DeclaredCommandGroup] = []
+    sink.groups = move noGroups
+    var noMenus: [DeclaredCommandMenu] = []
+    sink.menus = move noMenus
+    sink.applicationName = applicationName
+    sink.collecting = true
+}
+
+public function commandsStopCollecting() {
+    commandsSinkEnsure()
+    var sink = nativeRecover<CommandsSink>(ambientStateGet(StateSlot.commands))
+    sink.collecting = false
+}
+
+// The commands this frame declared, to read.
+public function declaredCommands() -> CommandsSink {
+    commandsSinkEnsure()
+    return nativeRecover<CommandsSink>(ambientStateGet(StateSlot.commands))
+}
+
+// --- Declaring them ----------------------------------------------------------
+
+// A menu of the application's own on the bar, after View.
+public construct CommandMenu(title: String) extends Widget {
+    let children: [some Widget]
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        commandsSinkEnsure()
+        var sink = nativeRecover<CommandsSink>(ambientStateGet(StateSlot.commands))
+        if sink.collecting {
+            sink.menus.append(
+                DeclaredCommandMenu {
+                    title: copy title,
+                    items: VStack(spacing: .None, alignment: .Leading) {
+                        For(item in children) {
+                            item
+                        }
+
+                    }
+                }
+            )
+        }
+        return CALayerDescription {}
+    }
+}
+
+// Commands set in one of the standard menus, beside a group of its own or in
+// its place.
+public construct CommandGroup(placement: CommandPlacement) extends Widget {
+    let children: [some Widget]
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        commandsSinkEnsure()
+        var sink = nativeRecover<CommandsSink>(ambientStateGet(StateSlot.commands))
+        if sink.collecting {
+            sink.groups.append(
+                DeclaredCommandGroup {
+                    placement: copy placement,
+                    items: VStack(spacing: .None, alignment: .Leading) {
+                        For(item in children) {
+                            item
+                        }
+
+                    }
+                }
+            )
+        }
+        return CALayerDescription {}
+    }
+}
+
+public construct CommandsLayer(commands: Any Widget) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        // The commands put themselves on the bar as they lower; they lower to
+        // nothing here.
+        commands.describe(context, modifiers)
+        return content.describe(context, modifierContextForChildren(modifiers))
+    }
+}
+
+extend Widget {
+    // The commands this view puts on the window's menu bar, matching SwiftUI's
+    // `.commands { … }`.
+    function commands(items: [some Widget]) -> Any Widget {
+        return CommandsLayer(
+            commands: VStack(spacing: .None, alignment: .Leading) {
+                For(item in items) {
+                    item
+                }
+            }
+        ) {
+            self
+        }
+    }
+}

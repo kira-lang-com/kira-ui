@@ -1,0 +1,361 @@
+import Foundation
+import KCoreUI
+import KCoreAnimation
+
+// SwiftUI's `Glass`: what a piece of Liquid Glass is made of.
+//
+// `.Regular` is the glass of controls, bars and sidebars. `.Clear` only
+// refracts, for glass over media that should show through untouched. Either one
+// is a single recipe across every size, read from the catalog, so the case says
+// which glass and the surface's laid-out size says how it looks: the 36-point
+// capsule on a toolbar shows none of the blur a sidebar does.
+//
+// `.Platform` names one of the platform's own recipes -- the Dock's, a menu's,
+// Control Center's -- for the platform's components to draw with, as the
+// system's own apps ask the design library for theirs.
+public enum Glass {
+    Regular
+    Clear
+    Platform(CAGlassRecipe)
+}
+
+// The recipe variant `glass` is drawn to in `appearance`. SwiftUI's glass is
+// resolved at the design library's automatic size; the Dock asks for its
+// medium one, which is why its glass bends further in from the edge.
+public function glassStyle(glass: borrow Glass, appearance: Appearance) -> CAGlassStyle {
+    let dark = appearance == .Dark
+    return match glass {
+        Regular -> CAGlassStyle { recipe: .Regular, size: .Small, dark: dark }
+        Clear -> CAGlassStyle { recipe: .Clear, size: .Small, dark: dark }
+        Platform(recipe) -> CAGlassStyle {
+            recipe: recipe,
+            size: platformGlassSize(recipe),
+            dark: dark
+        }
+    }
+}
+
+// The size a platform component resolves `recipe` at.
+function platformGlassSize(recipe: CAGlassRecipe) -> CAGlassSize {
+    match recipe {
+        Dock, DockRegular -> return .Medium
+        else -> return .Small
+    }
+}
+
+// One input of a catalog recipe as the ramp the compositor applies, or a flat
+// zero when the recipe leaves it out.
+public function glassCompositorRamp(
+    recipe: borrow ResolvedGlass,
+    input: GlassInput
+) -> CAGlassRamp {
+    let wanted = input.value()
+    for ramp in recipe.ramps {
+        if ramp.input.value() == wanted {
+            return CAGlassRamp {
+                base: ramp.base,
+                slope: ramp.slope,
+                minimum: ramp.minimum,
+                maximum: ramp.maximum
+            }
+        }
+    }
+    return CAGlassRamp {}
+}
+
+// A recipe as what the compositor draws with it. Glass blurs everything
+// behind it, as far as the recipe's radius says at the surface's size -- a
+// little under a control, far under a menu or a panel -- and never shows the
+// backdrop sharp through the blur. The edge's grays and its light are the
+// recipe's own at every size. Liquid Glass casts no shadow, so a recipe's
+// shadow inputs are not drawn.
+public function glassCompositorSizing(recipe: borrow ResolvedGlass) -> CAGlassSizing {
+    return CAGlassSizing {
+        blurRadius: glassCompositorRamp(recipe, .BlurRadius),
+        ringTone: glassCompositorRamp(recipe, .EdgeRingTone),
+        sideTone: glassCompositorRamp(recipe, .EdgeSideTone),
+        lightDodge: glassCompositorRamp(recipe, .EdgeLightDodge),
+        lightBurn: glassCompositorRamp(recipe, .EdgeLightBurn)
+    }
+}
+
+// A glass in both appearances, resolved once.
+public struct GlassSizingPair {
+    var light: CAGlassSizing = CAGlassSizing {}
+    var dark: CAGlassSizing = CAGlassSizing {}
+}
+
+public function catalogGlassSizing(
+    stack: borrow CatalogStack,
+    name: borrow String
+) -> GlassSizingPair {
+    return GlassSizingPair {
+        light: glassCompositorSizing(
+            stack.resolveGlass(name, catalogEnvironment(.Light, hostInterfaceMode()))
+        ),
+        dark: glassCompositorSizing(
+            stack.resolveGlass(name, catalogEnvironment(.Dark, hostInterfaceMode()))
+        )
+    }
+}
+
+public let regularGlassSizing = catalogGlassSizing(catalogStack, GlassName.regular)
+public let clearGlassSizing = catalogGlassSizing(catalogStack, GlassName.clear)
+
+// What `glass` does with size in the appearance in effect.
+public function glassSizing(
+    glass: borrow Glass,
+    modifiers: borrow ModifierContext
+) -> CAGlassSizing {
+    let pair = match glass {
+        Clear -> clearGlassSizing
+        Regular -> regularGlassSizing
+        Platform(recipe) -> regularGlassSizing
+    }
+    match modifierAppearance(modifiers) {
+        Light -> return pair.light
+        Dark -> return pair.dark
+    }
+}
+
+// --- Vibrancy ----------------------------------------------------------------
+//
+// What content set into glass is inked with. Apple does not paint a symbol over
+// the glass in a gray; it burns the gray into it in the light appearance and
+// dodges it in the dark, so the glass — and whatever it refracts — shows through
+// the glyph. The catalog states each style as a material of one fill layer: the
+// gray and the blend together.
+
+public struct VibrantInk {
+    var color: CAColor = CAColor {}
+    var blend: CABlendMode = .Normal
+}
+
+public struct VibrantInkPair {
+    var light: VibrantInk = VibrantInk {}
+    var dark: VibrantInk = VibrantInk {}
+}
+
+// The blends the compositor can set ink in; every other one inks normally.
+public function vibrantBlend(blend: borrow BlendMode) -> CABlendMode {
+    match blend {
+        LinearBurn -> return .LinearBurn
+        LinearDodge -> return .LinearDodge
+        Normal -> return .Normal
+        ColorDodge -> return .Normal
+        HardLight -> return .Normal
+        Overlay -> return .Normal
+        Lighten -> return .Normal
+        Darken -> return .Normal
+        Multiply -> return .Normal
+        Luminosity -> return .Normal
+        Unknown(value) -> return .Normal
+    }
+}
+
+public function vibrantInkFrom(layer: borrow ResolvedMaterialLayer) -> VibrantInk {
+    return VibrantInk {
+        color: CAColor {
+            r: layer.color.r,
+            g: layer.color.g,
+            b: layer.color.b,
+            a: layer.color.a * layer.opacity
+        },
+        blend: vibrantBlend(layer.blend)
+    }
+}
+
+public function catalogVibrantInkAt(
+    stack: borrow CatalogStack,
+    name: borrow String,
+    appearance: borrow Appearance
+) -> VibrantInk {
+    let material = stack.resolveMaterial(name, catalogEnvironment(appearance, hostInterfaceMode()))
+    for layer in material.layers {
+        match layer.kind {
+            Fill -> return vibrantInkFrom(layer)
+            BackdropBlur -> {}
+            Saturation -> {}
+            Tint -> {}
+            Noise -> {}
+            Border -> {}
+        }
+    }
+    return VibrantInk {}
+}
+
+public function catalogVibrantInk(
+    stack: borrow CatalogStack,
+    name: borrow String
+) -> VibrantInkPair {
+    return VibrantInkPair {
+        light: catalogVibrantInkAt(stack, name, .Light),
+        dark: catalogVibrantInkAt(stack, name, .Dark)
+    }
+}
+
+public let vibrantLabelInk = catalogVibrantInk(catalogStack, MaterialName.vibrantLabel)
+
+// The primary vibrant ink in the appearance in effect.
+public function vibrantLabel(modifiers: borrow ModifierContext) -> VibrantInk {
+    match modifierAppearance(modifiers) {
+        Light -> return vibrantLabelInk.light
+        Dark -> return vibrantLabelInk.dark
+    }
+}
+
+// --- Interactive glass -------------------------------------------------------
+//
+// SwiftUI's `.glassEffect(.regular.interactive())`: a piece of glass that
+// answers a press anywhere on it, whichever control inside took it, as the
+// platform's flex does -- `MotionFlex`, a port of SwiftUICore's own. Pressed,
+// the piece lifts by a fixed number of points on its longer side; a light
+// comes up in it under the pointer and follows it; dragged, it stretches along
+// the drag, narrows across it and slides after the pointer; and let go, it
+// springs home while the light opens out and fades. Whatever it holds is part
+// of the piece: it moves and stretches with it.
+
+public struct InteractiveGlass {
+    var flex: MotionFlexState = MotionFlexState {}
+    var held: Bool = false
+    // Which press it is holding. A surface only sees a press end while it is
+    // built, and one that was not -- a submenu's card shut under the finger
+    // -- would take the next press on it for the old one still going.
+    var press: Number = 0
+    // The box the glass rests in, kept from the press so it settles back into
+    // it after the pointer has let go.
+    var size: Size = Size {}
+}
+
+public function interactiveGlassSlotKey(key: Number) -> ViewStateKey {
+    return slotKey("kiraui.glass.", key)
+}
+
+// The pointer kind the platform's flex answers: a cursor on the desktop, a
+// finger everywhere else.
+function interactiveFlexInput() -> MotionFlexInput {
+    if interfaceMode() == .AdaptiveDesktop {
+        return .Cursor
+    }
+    return .Touch
+}
+
+// Makes `layer` interactive under `key`: pressed anywhere, whichever control
+// inside took the press, it flexes as the platform's glass does, and let go it
+// springs home. A `panel` -- a menu's glass -- takes the platform's menu
+// parameters: it stretches and slides but never lifts, and lights only under a
+// press on the panel itself, since a row pressed lights its own highlight. The
+// flex's scale is the layer's own, so what it holds is drawn at the size it
+// grows to; its drift is the layer's deformation. Its box -- and everything
+// around it -- stays where layout put it. What comes back is the little glow,
+// in the layer's own coordinates, for a glass to draw.
+public function interactivePress(
+    layer: borrow mut CALayerDescription,
+    key: Number,
+    context: borrow BuildContext,
+    panel: Bool = false
+) -> MotionLight {
+    layer.interactive = true
+    layer.hitKey = key
+    // A press between its controls lands on the surface itself, not on
+    // whatever is behind it; on a panel it slides from control to control.
+    layer.hittable = true
+    layer.slidesPress = panel
+
+    // Recovered in place rather than through a helper: a recovered value
+    // handed back out of a function is a copy, and the press would be lost.
+    let slot = interactiveGlassSlotKey(key)
+    if !ambientStateHasView(slot) {
+        ambientStatePutView(copy slot, nativeUserData(nativeState(InteractiveGlass {})))
+    }
+    var glass = nativeRecover<InteractiveGlass>(ambientStateGetView(slot))
+    let held = context.heldKey == key
+    if held && glass.held && glass.press != context.heldPress {
+        motionFlexRelease(glass.flex)
+        glass.held = false
+    }
+    glass.press = context.heldPress
+    let point = context.heldPoint
+    if held && !glass.held {
+        glass.size = context.heldSize
+        let variant: MotionFlexVariant = panel ? .Menu : .Automatic
+        motionFlexFit(
+            glass.flex,
+            motionFlexParameters(
+                variant,
+                interactiveFlexInput(),
+                glass.size.width,
+                glass.size.height
+            ),
+            glass.size.width,
+            glass.size.height
+        )
+        glass.flex.glows = !prefersReducedMotion() && (!panel || !context.heldOnControl)
+        glass.flex.tracking = interactiveFlexInput() == .Touch
+        motionFlexPress(glass.flex, point.x, point.y)
+    } else if held {
+        motionFlexMove(glass.flex, point.x, point.y)
+    } else if glass.held {
+        motionFlexRelease(glass.flex)
+    }
+    glass.held = held
+    let frame = motionFlexAdvance(glass.flex, clockDelta())
+    if !frame.moving {
+        return MotionLight {}
+    }
+    clockStillMoving()
+
+    layer.scaleX = layer.scaleX * frame.scaleX
+    layer.scaleY = layer.scaleY * frame.scaleY
+    // The deformation is in the layer's own coordinates, inside its scale;
+    // the platform's drift is outside it, in the coordinates the layer sits in.
+    layer.deformation = CADeformation {
+        x: frame.driftX / frame.scaleX,
+        y: frame.driftY / frame.scaleY
+    }
+    layer.disablesActions = true
+    return motionFlexLight(frame)
+}
+
+// Draws `light` in a piece of glass: the platform's little glow, which
+// dodges harder in the dark, and its big glow over the whole piece.
+public function interactiveGlassLit(
+    glass: borrow mut CAGlass,
+    light: borrow MotionLight,
+    modifiers: borrow ModifierContext
+) {
+    glass.glowX = light.x
+    glass.glowY = light.y
+    glass.glowRadius = light.radius
+    glass.glowStrength = light.strength
+    glass.glowWash = light.wash
+    glass.glowDark = modifierAppearance(modifiers) == .Dark
+}
+
+// A piece of Liquid Glass, as `liquidGlassDescription` draws it, that is
+// interactive under `key`. Whatever it holds is part of the piece.
+function interactiveGlassDescription(
+    context: borrow BuildContext,
+    key: Number,
+    layout: CALayoutIntent,
+    radius: Number,
+    shape: borrow ContainerShape,
+    modifiers: borrow ModifierContext,
+    sublayers: [CALayerDescription],
+    variant: borrow Glass = .Regular,
+    panel: Bool = false,
+) -> CALayerDescription {
+    var layer = liquidGlassDescription(
+        move layout,
+        radius,
+        shape,
+        modifiers,
+        move sublayers,
+        variant
+    )
+    let light = interactivePress(layer, key, context, panel)
+    var content = liquidGlassContent(shape, modifiers, variant)
+    interactiveGlassLit(content, light, modifiers)
+    layer.content = .Glass(move content)
+    return layer
+}

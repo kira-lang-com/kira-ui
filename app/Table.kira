@@ -1,0 +1,613 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's `Table`: rows of identifiable values under titled columns.
+//
+//     @State var people: [Person] = []
+//     @State var selection: Set<Person.ID> = Set<Person.ID>()
+//     @State var sortOrder = [KeyPathComparator(\Person.givenName)]
+//
+//     Table(people, selection: $selection, sortOrder: $sortOrder) {
+//         TableColumn("Given Name", value: \.givenName)
+//         TableColumn("Family Name", value: \.familyName)
+//         TableColumn("Age", value: \.age) { person in Text(String(person.age)) }
+//             .width(60)
+//             .alignment(.Numeric)
+//     }
+//     .onChange(of: sortOrder) { old, new in people.sort(using: new) }
+//
+// A click selects a row; with a selection of a set, Command-click adds or
+// takes one away and Shift-click selects the run from the last one clicked.
+// A click on a sortable column's header sorts by it, first, and again turns
+// it around: the table only says what the order is, and the rows come in the
+// order they are given, as SwiftUI's do. On a phone a table shows its first
+// column alone, as SwiftUI's does in a compact width.
+
+// What a table's selection is bound to: nothing, at most one row's
+// identity, or a set of them.
+public enum TableSelection<ID> {
+    None
+    Single(Binding<ID?>)
+    Multiple(Binding<Set<ID>>)
+}
+
+// What a table keeps between builds: the row a Shift-click runs from, and the
+// rows its context menu is open for.
+struct TableInteraction<ID> {
+    var anchor: Number = -1
+    var menuRows: Set<ID>
+    var menuX: Number = 0.0
+    var menuY: Number = 0.0
+}
+
+public construct Table<Value: Identifiable>(
+    rows: [Value],
+    selecting: TableSelection<Value.ID> = .None,
+    sorting: Binding<[KeyPathComparator<Value>]>? = .None,
+    menu: ((Set<Value.ID>) -> Any Widget)? = .None,
+    primaryAction: ((Set<Value.ID>) -> Void)? = .None,
+) extends Widget {
+    let columns: [some TableColumnContent<Value>]
+
+    // SwiftUI's `Table(_:columns:)`: rows nobody selects.
+    init(data: [Value], columns: [some TableColumnContent<Value>]) {
+        return Table<Value>(rows: data) {
+            For(column in columns) { column }
+        }
+    }
+
+    // SwiftUI's `Table(_:selection:columns:)` of at most one row.
+    init(data: [Value], selection: Binding<Value.ID?>, columns: [some TableColumnContent<Value>]) {
+        return Table<Value>(rows: data, selecting: .Single(selection)) {
+            For(column in columns) { column }
+        }
+    }
+
+    // SwiftUI's `Table(_:selection:columns:)` of a set of rows.
+    init(data: [Value], selection: Binding<Set<Value.ID>>, columns: [some TableColumnContent<Value>]) {
+        return Table<Value>(rows: data, selecting: .Multiple(selection)) {
+            For(column in columns) { column }
+        }
+    }
+
+    // SwiftUI's `Table(_:sortOrder:columns:)`.
+    init(data: [Value], sortOrder: Binding<[KeyPathComparator<Value>]>, columns: [some TableColumnContent<Value>]) {
+        return Table<Value>(rows: data, sorting: .Some(sortOrder)) {
+            For(column in columns) { column }
+        }
+    }
+
+    // SwiftUI's `Table(_:selection:sortOrder:columns:)` of at most one row.
+    init(
+        data: [Value],
+        selection: Binding<Value.ID?>,
+        sortOrder: Binding<[KeyPathComparator<Value>]>,
+        columns: [some TableColumnContent<Value>]
+    ) {
+        return Table<Value>(rows: data, selecting: .Single(selection), sorting: .Some(sortOrder)) {
+            For(column in columns) { column }
+        }
+    }
+
+    // SwiftUI's `Table(_:selection:sortOrder:columns:)` of a set of rows.
+    init(
+        data: [Value],
+        selection: Binding<Set<Value.ID>>,
+        sortOrder: Binding<[KeyPathComparator<Value>]>,
+        columns: [some TableColumnContent<Value>]
+    ) {
+        return Table<Value>(rows: data, selecting: .Multiple(selection), sorting: .Some(sortOrder)) {
+            For(column in columns) { column }
+        }
+    }
+
+    // SwiftUI's `.contextMenu(forSelectionType:menu:primaryAction:)`: the menu
+    // a secondary click on a row opens, for the selection when the row is in
+    // it and for the row alone when it is not, and what a double-click does
+    // to the selection. Written on the table itself, before any modifier that
+    // makes it a plain view.
+    function contextMenu(
+        menu: (Set<Value.ID>) -> Any Widget,
+        primaryAction: ((Set<Value.ID>) -> Void)? = .None,
+    ) -> Table<Value> {
+        return Table<Value>(rows: rows, selecting: selecting, sorting: sorting, menu: .Some(menu), primaryAction: primaryAction) {
+            For(column in columns) { column }
+        }
+    }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let metrics = tableMetrics()
+        let palette = tablePalette(modifiers)
+        let bordered = modifiers.tableStyle == .Bordered
+        let banded = modifiers.alternatingRowBackgrounds != .Disabled
+        let headed = modifiers.tableColumnHeaders != .Hidden
+        let shown = shownColumns()
+        let slot = slotKey("kiraui.table.", tapSeqKey())
+        tableInteractionEnsure<Value.ID>(slot)
+        let menuKey = tapSeqKey()
+        let chosen = selectedIDs()
+        let margin = bordered ? 0.0 : metrics.insetMargin
+        // The columns are laid out once, across the room the table is given,
+        // and the header and every row take the same widths, as a table's
+        // columns line up whatever their cells hold.
+        let table = copy self
+        let drawing = TableDrawing<Value.ID> {
+            metrics: metrics, palette: palette, bordered: bordered, banded: banded, headed: headed,
+            shown: shown, chosen: chosen, slot: copy slot, menuKey: menuKey
+        }
+        var drawn: Any Widget = GeometryReader(content: { proxy in
+            let widths = columnWidths(drawing.shown, proxy.size.width - 2.0 * margin, drawing.bordered)
+            return table.lines(move widths, drawing)
+        })
+        if bordered {
+            drawn = drawn.border(.Quaternary)
+        }
+        let layer = drawn.describe(context, modifiers)
+        presentContextMenu(context, modifiers, slot, menuKey)
+        return layer
+    }
+
+    // The header over the rows, the header scrolling with them, all at
+    // `widths`.
+    function lines(widths: [Number], drawing: borrow TableDrawing<Value.ID>) -> Any Widget {
+        var header: [Any Widget] = []
+        if drawing.headed {
+            header.append(headerRow(drawing.shown, widths, drawing.metrics, drawing.palette, drawing.bordered))
+        }
+        let margin = drawing.bordered ? 0.0 : drawing.metrics.insetMargin
+        return ScrollView() {
+            VStack(spacing: .None, alignment: .Leading) {
+                For(line in header) { line }
+                For(index in indices(rows.count)) {
+                    rowView(
+                        index, drawing.shown, widths, drawing.metrics, drawing.palette, drawing.bordered,
+                        drawing.banded && index % 2 == 1, drawing.chosen.contains(rows[index].id), drawing.slot, drawing.menuKey
+                    )
+                }
+            }
+            .inset(horizontal: .Length(margin))
+        }
+    }
+
+    // The columns that show: all but those hidden by default, and on a phone
+    // the first alone.
+    function shownColumns() -> [TableColumnSpec] {
+        var shown: [TableColumnSpec] = []
+        for column in columns {
+            let spec = column.tableColumn()
+            if spec.defaultVisibility == .Hidden { continue }
+            shown.append(spec)
+            if interfaceMode() == .AdaptiveMobile { break }
+        }
+        return shown
+    }
+
+    // The cells of the columns that show, in the order the columns do.
+    function shownCells(row: borrow Value) -> [Any Widget] {
+        var cells: [Any Widget] = []
+        for column in columns {
+            if column.tableColumn().defaultVisibility == .Hidden { continue }
+            cells.append(column.tableCell(row))
+            if interfaceMode() == .AdaptiveMobile { break }
+        }
+        return cells
+    }
+
+    // The identities the selection holds.
+    function selectedIDs() -> Set<Value.ID> {
+        match selecting {
+            None -> return Set<Value.ID>()
+            Single(binding) -> {
+                var ids = Set<Value.ID>()
+                match binding.get() {
+                    Some(id) -> ids.insert(copy id)
+                    None -> {}
+                }
+                return ids
+            }
+            Multiple(binding) -> return binding.get()
+        }
+    }
+
+    // The order the table says its rows are in, first comparator first.
+    function currentOrder() -> [KeyPathComparator<Value>] {
+        match sorting {
+            Some(binding) -> return binding.get()
+            None -> return []
+        }
+    }
+
+    // The header: each column's title over its cells, the column the table
+    // sorts by first set heavier with a chevron saying which way. A sortable
+    // column's header sorts by it when clicked.
+    function headerRow(shown: borrow [TableColumnSpec], widths: borrow [Number], metrics: borrow TableMetrics, palette: borrow TablePalette, bordered: Bool) -> Any Widget {
+        let order = currentOrder()
+        var cells: [Any Widget] = []
+        for index in 0..shown.count {
+            let spec = shown[index]
+            var sorted = false
+            var reversed = false
+            match spec.comparator {
+                Some(boxed) -> {
+                    if order.count > 0 && boxed is KeyPathComparator<Value> {
+                        let comparator = boxed as KeyPathComparator<Value>
+                        sorted = order[0].keyPath == comparator.keyPath
+                        reversed = sorted && order[0].order == .Reverse
+                    }
+                }
+                None -> {}
+            }
+            var title: Any Widget = Text(content: spec.title)
+            .typography(.subheadline)
+            .fontWeight(sorted ? .SemiBold : .Regular)
+            .foregroundColor(.Secondary)
+            .lineLimit(1)
+            if sorted {
+                title = HStack(spacing: .ExtraSmall, alignment: .Center) {
+                    title
+                    Icon(symbol: reversed ? .ChevronDown : .ChevronUp)
+                    .font(size: resolvedLength(metrics.sortIndicatorSize), weight: .SemiBold)
+                    .foregroundColor(.Secondary)
+                }
+            }
+            var cell = aligned(move title, spec.alignment)
+            .width(resolvedLength(widths[index]))
+            .height(resolvedLength(metrics.headerHeight))
+            match spec.comparator {
+                Some(boxed) -> {
+                    if boxed is KeyPathComparator<Value> {
+                        cell = cell.onClick(sortFn(boxed as KeyPathComparator<Value>))
+                        .accessibilityLabel(copy spec.title)
+                    }
+                }
+                None -> {}
+            }
+            cells.append(cell)
+            if bordered && index + 1 < shown.count {
+                cells.append(Rectangle().width(resolvedLength(listMetrics().separatorThickness)).fill(palette.separator))
+            }
+        }
+        return VStack(spacing: .None, alignment: .Leading) {
+            HStack(spacing: .None, alignment: .Center) {
+                For(cell in cells) { cell }
+            }
+            Rectangle()
+            .height(resolvedLength(listMetrics().separatorThickness))
+            .fillWidth()
+            .fill(palette.separator)
+        }
+    }
+
+    // A header's press: the table sorted by `comparator` first, or the other
+    // way round when it already is, the comparators it sorted by before
+    // following.
+    function sortFn(comparator: KeyPathComparator<Value>) -> () -> Void {
+        let clicked = copy comparator
+        let target = copy sorting
+        let press: () -> Void = { in
+            match target {
+                Some(binding) -> {
+                    let order = binding.get()
+                    var first = copy clicked
+                    if order.count > 0 && order[0].keyPath == clicked.keyPath {
+                        first = KeyPathComparator<Value> {
+                            keyPath: clicked.keyPath,
+                            order: order[0].order.reversed(),
+                            ordering: clicked.ordering
+                        }
+                    }
+                    var next: [KeyPathComparator<Value>] = [first]
+                    for comparator in order {
+                        if comparator.keyPath != clicked.keyPath { next.append(comparator) }
+                    }
+                    binding.set(move next)
+                }
+                None -> {}
+            }
+            return
+        }
+        return press
+    }
+
+    // One row: its cells across the columns, on its band or its selection,
+    // pressed as a whole. A selected row's text is set in white over the
+    // selection, as AppKit's is.
+    function rowView(
+        index: Number,
+        shown: borrow [TableColumnSpec],
+        widths: borrow [Number],
+        metrics: borrow TableMetrics,
+        palette: borrow TablePalette,
+        bordered: Bool,
+        band: Bool,
+        selected: Bool,
+        slot: borrow ViewStateKey,
+        menuKey: Number
+    ) -> Any Widget {
+        let cells = shownCells(rows[index])
+        var laid: [Any Widget] = []
+        for column in 0..shown.count {
+            if column >= cells.count { break }
+            laid.append(aligned(cells[column], shown[column].alignment).width(resolvedLength(widths[column])).lineLimit(1))
+            if bordered && column + 1 < shown.count {
+                laid.append(Rectangle().width(resolvedLength(listMetrics().separatorThickness)).fill(palette.separator))
+            }
+        }
+        let radius = bordered ? 0.0 : metrics.selectionRadius
+        var line: Any Widget = HStack(spacing: .None, alignment: .Center) {
+            For(cell in laid) { cell }
+        }
+        .height(resolvedLength(metrics.rowHeight))
+        if selected {
+            line = line
+            .textColor(RGBAColor { r: 1.0, g: 1.0, b: 1.0, a: 1.0 })
+            .background(RoundedRectangle(cornerRadius: radius).fill(palette.selected))
+        } else if band {
+            line = line.background(RoundedRectangle(cornerRadius: radius).fill(palette.band))
+        }
+        return TableRowPress(
+            press: selectFn(index, slot),
+            secondary: menuFn(index, slot, menuKey),
+            selected: selected
+        ) {
+            line
+        }
+    }
+
+    // A row's press: the selection as a click, a Command-click or a
+    // Shift-click makes it, and on a double-click the table's primary action.
+    function selectFn(index: Number, slot: borrow ViewStateKey) -> () -> Void {
+        let key = copy slot
+        let id = rows[index].id
+        var ids: [Value.ID] = []
+        for row in rows { ids.append(row.id) }
+        let target = copy selecting
+        let action = copy primaryAction
+        let press: () -> Void = { in
+            tableInteractionEnsure<Value.ID>(key)
+            var interaction = nativeRecover<TableInteraction<Value.ID>>(ambientStateGetView(key))
+            match target {
+                None -> {}
+                Single(binding) -> {
+                    var already = false
+                    match binding.get() {
+                        Some(current) -> already = current == id
+                        None -> {}
+                    }
+                    if commandHeld() && already {
+                        binding.set(.None)
+                    } else {
+                        binding.set(.Some(id))
+                    }
+                }
+                Multiple(binding) -> {
+                    var chosen = binding.get()
+                    if commandHeld() {
+                        if !chosen.remove(id) { chosen.insert(id) }
+                    } else if shiftHeld() && interaction.anchor >= 0 && interaction.anchor < ids.count {
+                        chosen = Set<Value.ID>()
+                        let low = interaction.anchor < index ? interaction.anchor : index
+                        let high = interaction.anchor < index ? index : interaction.anchor
+                        for position in low..high + 1 { chosen.insert(ids[position]) }
+                    } else {
+                        chosen = Set<Value.ID>()
+                        chosen.insert(id)
+                    }
+                    binding.set(move chosen)
+                }
+            }
+            if !shiftHeld() { interaction.anchor = index }
+            if clickCount() == 2 {
+                match action {
+                    Some(primary) -> {
+                        var acted = Set<Value.ID>()
+                        acted.insert(id)
+                        match target {
+                            Multiple(binding) -> {
+                                let chosen = binding.get()
+                                if chosen.contains(id) { acted = chosen }
+                            }
+                            Single -> {}
+                            None -> {}
+                        }
+                        primary(move acted)
+                    }
+                    None -> {}
+                }
+            }
+            return
+        }
+        return press
+    }
+
+    // A row's secondary click: the context menu, for the selection when the
+    // row is in it and for the row alone when it is not, at the pointer.
+    function menuFn(index: Number, slot: borrow ViewStateKey, menuKey: Number) -> () -> Void {
+        let key = copy slot
+        let id = rows[index].id
+        let chosen = selectedIDs()
+        let offered = menu.isSome()
+        let press: () -> Void = { in
+            if !offered { return }
+            tableInteractionEnsure<Value.ID>(key)
+            var interaction = nativeRecover<TableInteraction<Value.ID>>(ambientStateGetView(key))
+            var rows = Set<Value.ID>()
+            if chosen.contains(id) {
+                rows = copy chosen
+            } else {
+                rows.insert(id)
+            }
+            interaction.menuRows = rows
+            interaction.menuX = pointerX()
+            interaction.menuY = pointerY()
+            menuToggle(menuKey)
+            return
+        }
+        return press
+    }
+
+    // The context menu while it is open: its items on a menu's card, hung
+    // from where the secondary click landed, put away by a press off it.
+    function presentContextMenu(context: borrow BuildContext, modifiers: borrow ModifierContext, slot: borrow ViewStateKey, menuKey: Number) {
+        if openMenuKey() != menuKey { return }
+        match menu {
+            Some(items) -> {
+                tableInteractionEnsure<Value.ID>(slot)
+                let interaction = nativeRecover<TableInteraction<Value.ID>>(ambientStateGetView(slot))
+                let band = tapSeqEnterOverlay()
+                let away = tapSeqKey()
+                let card = ContextMenu() {
+                    items(interaction.menuRows)
+                }
+                .describe(context, modifierContextForOverlay(modifiers))
+                layerActionRegister(away, toggleMenuFn(menuKey))
+                overlayPresent(Overlay {
+                    anchorX: interaction.menuX,
+                    anchorY: interaction.menuY,
+                    z: OverlayLevel.submenu,
+                    content: move card,
+                    dismissKey: away
+                })
+                tapSeqLeaveOverlay(band)
+            }
+            None -> {}
+        }
+    }
+}
+
+// A cell's content set where its column aligns it, held off the cell's sides.
+function aligned(content: Any Widget, alignment: TableColumnAlignment) -> Any Widget {
+    let inset = resolvedLength(tableMetrics().cellInset)
+    match alignment {
+        Center -> return HStack(spacing: .None) { Spacer() content Spacer() }.padding(copy inset)
+        Trailing -> return HStack(spacing: .None) { Spacer() content }.padding(copy inset)
+        Numeric -> return HStack(spacing: .None) { Spacer() content }.padding(copy inset)
+        Leading -> return HStack(spacing: .None) { content Spacer() }.padding(copy inset)
+        Automatic -> return HStack(spacing: .None) { content Spacer() }.padding(copy inset)
+    }
+}
+
+// The table's state under `slot`, made when a build or a press finds none:
+// a press handled after the build that bound it may find its slot let go.
+function tableInteractionEnsure<ID>(slot: borrow ViewStateKey) {
+    if !ambientStateHasView(slot) {
+        ambientStatePutView(copy slot, nativeUserData(nativeState(TableInteraction<ID> { menuRows: Set<ID>() })))
+    }
+}
+
+// What a table draws with, worked out once per build.
+struct TableDrawing<ID> {
+    let metrics: TableMetrics
+    let palette: TablePalette
+    let bordered: Bool
+    let banded: Bool
+    let headed: Bool
+    let shown: [TableColumnSpec]
+    let chosen: Set<ID>
+    let slot: ViewStateKey
+    let menuKey: Number
+}
+
+// Each column's width across `room`: a fixed one its own, the others an even
+// share of what is left, held within their ranges, what one held back going
+// to the rest, as a table's flexible columns share its width.
+function columnWidths(shown: borrow [TableColumnSpec], room: Number, bordered: Bool) -> [Number] {
+    var widths: [Number] = []
+    var settled: [Bool] = []
+    var left = room
+    if bordered && shown.count > 1 { left = left - listMetrics().separatorThickness * (shown.count - 1) }
+    for spec in shown {
+        match spec.width.fixed {
+            Some(fixed) -> {
+                widths.append(fixed)
+                settled.append(true)
+                left = left - fixed
+            }
+            None -> {
+                widths.append(0.0)
+                settled.append(false)
+            }
+        }
+    }
+    // Each pass shares what is left among the columns still open; one its
+    // range holds back settles there, and the next pass shares again.
+    for pass in 0..shown.count {
+        var open = 0
+        for index in 0..shown.count {
+            if !settled[index] { open += 1 }
+        }
+        if open == 0 { break }
+        let share = max(left, 0.0) / open
+        var held = false
+        for index in 0..shown.count {
+            if settled[index] { continue }
+            var taken = share
+            match shown[index].width.minimum {
+                Some(minimum) -> { if taken < minimum { taken = minimum } }
+                None -> {}
+            }
+            match shown[index].width.maximum {
+                Some(maximum) -> { if taken > maximum { taken = maximum } }
+                None -> {}
+            }
+            if taken != share {
+                widths[index] = taken
+                settled[index] = true
+                left = left - taken
+                held = true
+            }
+        }
+        if !held {
+            for index in 0..shown.count {
+                if !settled[index] { widths[index] = share }
+            }
+            break
+        }
+    }
+    return widths
+}
+
+// A table's colors in the appearance it is drawn in.
+struct TablePalette {
+    let selected: RGBAColor
+    let band: RGBAColor
+    let separator: RGBAColor
+}
+
+function tablePalette(modifiers: borrow ModifierContext) -> TablePalette {
+    let appearance = modifierAppearance(modifiers)
+    return TablePalette {
+        selected: themeAdaptiveColor(tableSelectedRow, appearance),
+        band: themeAdaptiveColor(tableAlternatingRow, appearance),
+        separator: themeAdaptiveColor(listSeparator, appearance)
+    }
+}
+
+// A row pressed as a whole, by its primary press and its secondary one, with
+// no wash under a resting pointer, as a Mac's table rows have none.
+public construct TableRowPress(press: () -> Void, secondary: () -> Void, selected: Bool) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let key = tapSeqKey()
+        layerActionRegister(key, press)
+        layerSecondaryActionRegister(key, secondary)
+        var described = content.describe(context, modifiers)
+        var node = accessibilityPressable(.Button, press, modifiers)
+        if selected {
+            node.traits = node.traits.union(AccessibilityTraits.isSelected)
+        }
+        described.accessibilityCombined(move node)
+        return CALayerDescription {
+            hittable: !modifiers.disabled,
+            hitKey: key,
+            sublayers: [move described]
+        }
+    }
+}

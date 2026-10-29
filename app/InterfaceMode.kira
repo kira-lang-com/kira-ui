@@ -1,0 +1,97 @@
+import Foundation
+import Ember
+
+// Which interface the toolkit draws: one interface, at two sizes.
+//
+// A phone and a tablet are touched, and the toolkit draws them at the iOS and
+// iPadOS kit's size: 44-point rows, 17-point text, nothing lighting under a
+// pointer that is not there. A computer is pointed at, and the toolkit draws
+// the same views at the Mac's size -- 28-point sidebar rows, 13-point text --
+// and lights a row the pointer rests on, as AppKit does. Nothing else differs:
+// the views, their structure and their motion are the same in both.
+//
+// The catalog carries both sizes, the mobile one as its floor and the desktop
+// one pinned to the desktop idiom, and the toolkit resolves every length and
+// text style once for each. Changing the mode changes which set the next build
+// reads, so an application can switch while it runs and the retained tree
+// carries its views from one size to the other.
+public enum InterfaceMode {
+    // macOS, Windows and Linux.
+    AdaptiveDesktop
+    // iOS, iPadOS and Android.
+    AdaptiveMobile
+}
+
+// The mode a program starts in: what `KIRA_UI_MODE=desktop|mobile` fixes for
+// the run, and otherwise the target's own: iOS is mobile, and every other
+// target is a desktop.
+public function hostInterfaceMode() -> InterfaceMode {
+    let requested = environmentValue("KIRA_UI_MODE")
+    match requested {
+        "desktop" -> return .AdaptiveDesktop
+        "mobile" -> return .AdaptiveMobile
+        else -> return targetPlatform!() == .Ios ? .AdaptiveMobile : .AdaptiveDesktop
+    }
+}
+
+// The mode in effect, kept in the process's ambient state.
+struct InterfaceModeInEffect {
+    var mode: InterfaceMode = hostInterfaceMode()
+    var scale: Number = 1.0
+}
+
+// The slot, made the first time it is asked for.
+function interfaceModeEnsure() {
+    if !ambientStateHas(StateSlot.interfaceMode) {
+        ambientStatePut(
+            StateSlot.interfaceMode,
+            nativeUserData(nativeState(InterfaceModeInEffect {}))
+        )
+    }
+}
+
+// The mode the toolkit is drawing in.
+public function interfaceMode() -> InterfaceMode {
+    let previous = enterProcessScope()
+    interfaceModeEnsure()
+    let inEffect = nativeRecover<InterfaceModeInEffect>(ambientStateGet(StateSlot.interfaceMode))
+    let mode = copy inEffect.mode
+    ambientScopeEnter(previous)
+    return mode
+}
+
+// Draw in `mode` from the next build on.
+public function setInterfaceMode(mode: InterfaceMode) {
+    let previous = enterProcessScope()
+    interfaceModeEnsure()
+    var inEffect = nativeRecover<InterfaceModeInEffect>(ambientStateGet(StateSlot.interfaceMode))
+    inEffect.mode = mode
+    ambientScopeEnter(previous)
+}
+
+// The factor the hosted window scales the whole interface by, independent of
+// the output's pixel scale. Standalone KiraUI windows stay at 1.
+public function interfaceScale() -> Number {
+    let previous = enterProcessScope()
+    interfaceModeEnsure()
+    let state = nativeRecover<InterfaceModeInEffect>(ambientStateGet(StateSlot.interfaceMode))
+    let scale = state.scale
+    ambientScopeEnter(previous)
+    return scale
+}
+
+// Sets the interface's window-fit scale for the next build.
+public function setInterfaceScale(scale: Number) {
+    if scale <= 0.0 { return }
+    let previous = enterProcessScope()
+    interfaceModeEnsure()
+    var state = nativeRecover<InterfaceModeInEffect>(ambientStateGet(StateSlot.interfaceMode))
+    state.scale = scale
+    ambientScopeEnter(previous)
+}
+
+// Whether what can be pressed lights while the pointer rests on it: on a
+// desktop, where there is a pointer to rest.
+public function interfaceHovers() -> Bool {
+    return interfaceMode() == .AdaptiveDesktop
+}

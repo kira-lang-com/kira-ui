@@ -1,0 +1,83 @@
+import Foundation
+import KCoreUI
+
+// How a `Table` is drawn, matching SwiftUI's table styles. `Automatic` is the
+// platform's: inset on a Mac, as SwiftUI's is since macOS 12.
+//
+// Inset rows stand in from the table's edges, a selected one rounded, with
+// no lines between columns. Bordered rows run edge to edge inside a hairline
+// border, a hairline between each two columns.
+public enum TableStyle {
+    Automatic
+    Inset
+    Bordered
+}
+
+// Whether a table's rows alternate a band, as SwiftUI's
+// `AlternatingRowBackgroundBehavior` says. `Automatic` alternates, as a Mac's
+// tables do.
+public enum AlternatingRowBackgroundBehavior {
+    Automatic
+    Enabled
+    Disabled
+}
+
+// What a table is measured with: a row's height and its header's, how far a
+// cell's content stands in from its sides, how far an inset table's rows
+// stand in from its edges, a selected inset row's corner, and the size of a
+// sorted column's chevron.
+public struct TableMetrics {
+    let rowHeight: Number
+    let headerHeight: Number
+    let cellInset: Number
+    let insetMargin: Number
+    let selectionRadius: Number
+    let sortIndicatorSize: Number
+}
+
+public function catalogTableMetrics(mode: InterfaceMode) -> TableMetrics {
+    return TableMetrics {
+        rowHeight: catalogMetric(catalogStack, MetricName.tableRowHeight, mode),
+        headerHeight: catalogMetric(catalogStack, MetricName.tableHeaderHeight, mode),
+        cellInset: catalogMetric(catalogStack, MetricName.tableCellInset, mode),
+        insetMargin: catalogMetric(catalogStack, MetricName.tableInsetMargin, mode),
+        selectionRadius: catalogMetric(catalogStack, MetricName.tableSelectionRadius, mode),
+        sortIndicatorSize: catalogMetric(catalogStack, MetricName.tableSortIndicatorSize, mode)
+    }
+}
+
+let desktopTableMetrics = catalogTableMetrics(.AdaptiveDesktop)
+let mobileTableMetrics = catalogTableMetrics(.AdaptiveMobile)
+
+public function tableMetrics() -> TableMetrics {
+    return interfaceMode() == .AdaptiveDesktop ? desktopTableMetrics : mobileTableMetrics
+}
+
+// The band every other row carries, and a selected row's fill.
+public let tableAlternatingRow = catalogAdaptive(catalogStack, ColorName.alternatingContentBackground)
+public let tableSelectedRow = catalogAdaptive(catalogStack, ColorName.selectedContentBackground)
+
+extend Widget {
+    // SwiftUI's `.tableStyle(_:)`: how every table under it is drawn.
+    function tableStyle(style: TableStyle) -> Any Widget {
+        return ModifierDeltaLayer(delta: modifierDeltaTableStyle(style)) {
+            self
+        }
+    }
+
+    // SwiftUI's `.alternatingRowBackgrounds(_:)`: whether the rows of every
+    // table under it alternate a band.
+    function alternatingRowBackgrounds(behavior: AlternatingRowBackgroundBehavior = .Enabled) -> Any Widget {
+        return ModifierDeltaLayer(delta: modifierDeltaAlternatingRowBackgrounds(behavior)) {
+            self
+        }
+    }
+
+    // SwiftUI's `.tableColumnHeaders(_:)`: whether the tables under it show
+    // their column headers.
+    function tableColumnHeaders(visibility: Visibility) -> Any Widget {
+        return ModifierDeltaLayer(delta: modifierDeltaTableColumnHeaders(visibility)) {
+            self
+        }
+    }
+}

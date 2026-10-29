@@ -1,0 +1,55 @@
+import Ember
+import Foundation
+import KCoreAnimation
+import KiraLayout
+
+// SwiftUI's `Edge.Set`: the edges a padding holds content off, combined
+// with `|`, `EdgeSet.top | EdgeSet.leading`.
+public distinct EdgeSet = UN32
+
+public namespace EdgeSet {
+    let top: EdgeSet = EdgeSet(1)
+    let leading: EdgeSet = EdgeSet(2)
+    let bottom: EdgeSet = EdgeSet(4)
+    let trailing: EdgeSet = EdgeSet(8)
+    // Written out, not combined, so the contract can carry them: leading
+    // and trailing, top and bottom, and all four.
+    let horizontal: EdgeSet = EdgeSet(10)
+    let vertical: EdgeSet = EdgeSet(5)
+    let all: EdgeSet = EdgeSet(15)
+}
+
+// `.padding(_:_:)`: the content held off the edges named by one length, and
+// nothing else changed about it.
+public construct EdgePaddingLayer(edges: EdgeSet, length: Number) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var described = insetDescription(
+            content.describe(context, modifierContextInset(modifiers, length)),
+            length
+        )
+        if !edges.has(EdgeSet.top) { described.layout.paddingTop = 0 }
+        if !edges.has(EdgeSet.bottom) { described.layout.paddingBottom = 0 }
+        if !edges.has(EdgeSet.leading) { described.layout.paddingLeading = 0 }
+        if !edges.has(EdgeSet.trailing) { described.layout.paddingTrailing = 0 }
+        return described
+    }
+}
+
+extend Widget {
+    // SwiftUI's `.padding(_ edges:, _ length:)`, `.padding([.top, .leading], 16)`:
+    // `length` on the edges named and none on the others, the compact margin
+    // when no length is given. Its own name, as `padding(_:)` takes one length.
+    function edgePadding(
+        edges: EdgeSet,
+        length: ScaledMetric = ScaledMetric { points: LayoutMargin.compact }
+    ) -> Any Widget {
+        return EdgePaddingLayer(edges: edges, length: length.points) {
+            self
+        }
+    }
+}

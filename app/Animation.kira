@@ -1,0 +1,164 @@
+import Foundation
+import Ember
+import KCoreAnimation
+
+// The clock a transition runs on.
+//
+// An interactive app only rebuilds when something happened: the runner compares
+// the event count against the last presented frame's and re-flushes the retained
+// batch when they match. That is the right default — a static interface should
+// cost nothing — but a spring settling over half a second happens while NOTHING
+// happens, so under that rule it is handed no frames at all and every transition
+// in the library is a jump cut.
+//
+// So a widget that is mid-transition says so, and the runner asks. `moving` is
+// cleared at the top of each build and set again by whatever advanced and has
+// not settled; `clockRunning` is what an app passes as `needsRebuild`.
+// When the last spring settles nothing sets the flag, the next frame is skipped,
+// and the app is back to costing nothing.
+//
+// This is a flag rather than a registry of live animations because a widget
+// already owns its own state — keyed by the same auto-minted key it hit-tests
+// with — and advances it while it lowers. Nothing needs a list of who is moving,
+// only whether ANYONE is.
+public struct Clock {
+    // How long the last presented frame took, in seconds. Read during a build;
+    // written from the frame hook, which is the only place a `RenderFrame` — and
+    // therefore the real elapsed time — is in scope.
+    var delta: Number = 0.0
+    // Whether anything advanced during the last build and has not settled.
+    var moving: Bool = false
+    // The frame's time, in seconds on the compositor's clock: what a motion
+    // handed to the compositor is measured from, so the two agree on where it
+    // stands.
+    var now: Number = 0.0
+    // When something the compositor is carrying ends and the interface has to
+    // be built again to drop what it showed only for the motion; zero when
+    // nothing waits. A motion on the compositor costs no build per frame, but
+    // its end is a change of what is described.
+    var wakeAt: Number = 0.0
+    // Whether something in the build is resizing the window's content the way
+    // the window resizing would, a sidebar sliding in or out: the content
+    // takes each frame's layout at once, as in a live resize.
+    var resizing: Bool = false
+    // How many times slower than real time every motion runs, as the
+    // Simulator's Slow Animations does: `KIRA_UI_SLOW_ANIMATIONS=10` gives a
+    // tenth of a second of motion to each second, so a transition can be read
+    // frame by frame against a slowed recording of the platform's. Zero until
+    // the first frame reads it.
+    var slowdown: Number = 0
+}
+
+// The clock's slot, made the first time it is asked for. A writer recovers the
+// clock in place after this: a recovered value handed back out of a function is
+// a copy, and what was written to it would be lost.
+public function clockEnsure() {
+    if !ambientStateHas(StateSlot.clock) {
+        ambientStatePut(StateSlot.clock, nativeUserData(nativeState(Clock {})))
+    }
+}
+
+// The clock as it stands, to read.
+public function clockState() -> Clock {
+    clockEnsure()
+    return nativeRecover<Clock>(ambientStateGet(StateSlot.clock))
+}
+
+// The shortest and longest frame a spring is advanced by.
+//
+// The first frame of a run has no previous frame to have taken any time, and a
+// frame straddling a window drag or a stalled GPU can be arbitrarily long. A
+// spring handed either integrates to somewhere it was never going to be — the
+// long one visibly, as a transition that teleports on the frame after a hitch.
+// Clamping is what makes the motion the same motion on a slow machine.
+public function clockFloor() -> Number {
+    return 1.0 / 240.0
+}
+
+public function clockCeiling() -> Number {
+    return 1.0 / 20.0
+}
+
+// Records how long the frame took. The frame hook runs before the UI pass, so
+// what a build reads is this frame's duration and not the previous one's.
+public function clockTick(frame: borrow Ember.RenderFrame) {
+    clockEnsure()
+    var clock = nativeRecover<Clock>(ambientStateGet(StateSlot.clock))
+    if clock.slowdown <= 0 {
+        let requested = environmentNumber("KIRA_UI_SLOW_ANIMATIONS", 1)
+        clock.slowdown = requested > 1 ? requested : 1
+    }
+    let delta = min(max(foundationFrameDuration(frame), clockFloor()), clockCeiling())
+    clock.delta = delta / Number(clock.slowdown)
+    clock.now = clockTime(frame)
+}
+
+// The frame's time on the compositor's clock, in seconds.
+public function clockTime(frame: borrow Ember.RenderFrame) -> Number {
+    return Number(frame.monotonicNanoseconds()) / 1000000000.0
+}
+
+// The frame's time as the last build read it.
+public function clockNow() -> Number {
+    return clockState().now
+}
+
+// Clears the moving flag. The interactive root calls this once at the top of
+// every build, beside the tap-sequence reset, so the flag describes the build
+// that is about to happen rather than accumulating across all of them.
+public function clockBeginFrame() {
+    clockEnsure()
+    var clock = nativeRecover<Clock>(ambientStateGet(StateSlot.clock))
+    clock.moving = false
+    clock.resizing = false
+    clock.wakeAt = 0.0
+}
+
+// "Build again at `time`": said by a widget while it lowers, for a motion the
+// compositor carries until then. The earliest asked for wins.
+public function clockWakeAt(time: Number) {
+    clockEnsure()
+    var clock = nativeRecover<Clock>(ambientStateGet(StateSlot.clock))
+    if clock.wakeAt <= 0.0 || time < clock.wakeAt {
+        clock.wakeAt = time
+    }
+}
+
+// Whether a build asked to happen by `now` is due.
+public function clockWakeDue(now: Number) -> Bool {
+    let wakeAt = clockState().wakeAt
+    return wakeAt > 0.0 && now >= wakeAt
+}
+
+// "I am resizing the content this frame." Said by a widget while it lowers;
+// see `resizing`.
+public function clockResizing() {
+    clockEnsure()
+    var clock = nativeRecover<Clock>(ambientStateGet(StateSlot.clock))
+    clock.resizing = true
+    clock.moving = true
+}
+
+// The frame delta a transition advances by.
+public function clockDelta() -> Number {
+    return clockState().delta
+}
+
+// "I advanced and I have not finished." Said by a widget while it lowers, which
+// is what keeps the frames coming until it has.
+public function clockStillMoving() {
+    clockEnsure()
+    var clock = nativeRecover<Clock>(ambientStateGet(StateSlot.clock))
+    clock.moving = true
+}
+
+// What an interactive app passes as `needsRebuild`.
+public function clockRunning() -> Bool {
+    return clockState().moving
+}
+
+// Whether transitions should be shortened to a cross-dissolve: the person
+// asked the platform to reduce motion.
+public function prefersReducedMotion() -> Bool {
+    return environmentValues().accessibilityReduceMotion
+}

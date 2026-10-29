@@ -1,0 +1,252 @@
+import KiraLayout
+import Ember
+import Foundation
+import KCoreAnimation
+
+// The plain widgets every view is built from: the app surface,
+// spacers, shapes, gradients, fills, insets and dividers.
+
+public construct AppSurface() extends Widget {
+    let content: some Widget
+
+    // The canvas reaches the column's edges; what stands on it is held inside
+    // the column's layout margin, the way a list or form adopts the margins of
+    // the column it fills. Outside any column there is no margin to adopt, so
+    // the window's own surface runs edge to edge.
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var described = content.describe(context, modifierContextForChildren(modifiers))
+        if modifiers.hasContentMargin {
+            described = insetDescription(move described, modifiers.contentMargin)
+        }
+        return CALayerDescription {
+            content: .Solid(CASolid { fill: colorFromFoundation(modifierCanvas(modifiers)) }),
+            sublayers: [described]
+        }
+    }
+}
+
+public construct Spacer(minLength: ScaledMetric = resolvedLength(0.0)) extends Widget {
+
+    // A flexing gap: no content, it takes the leftover main-axis space, and
+    // never less than `minLength` along the stack it stands in. It has no
+    // spacing of its own, so the gap it makes is its length alone.
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        if modifiers.stackAxis == .Horizontal {
+            return CALayerDescription {
+                layout: CALayoutIntent { flex: 1, minWidth: minLength.points, flush: true }
+            }
+        }
+        return CALayerDescription {
+            layout: CALayoutIntent { flex: 1, minHeight: minLength.points, flush: true }
+        }
+    }
+}
+
+public construct Circle() extends Widget {
+
+    // A capsule in a square box: the unbounded radius comes out at half the
+    // side.
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        return shapeDescription(context, modifiers, containerShapeUnbounded(), 0)
+    }
+}
+
+// Which way a gradient runs. The application names a direction rather than an
+// angle, because these are the ones a layout can answer without knowing how
+// large the surface came out — an angle over a box whose aspect changes is a
+// gradient that shears when the window is resized.
+public enum GradientDirection {
+    Down
+    Across
+    Diagonal
+}
+
+public function foundationGradient(direction: borrow GradientDirection) -> FoundationGradient {
+    match direction {
+        Down -> return .Down
+        Across -> return .Across
+        Diagonal -> return .Diagonal
+    }
+}
+
+// A fade from one color to another, across the space it is given.
+//
+//     LinearGradient(start: colorPurple(), end: colorBlue())
+//     LinearGradient(start: top, end: bottom, direction: .Across)
+//
+// ONE surface, blended per corner by the compositor. It used to be a column of
+// twelve strips, which is twelve quads, a visible band at every seam, and a
+// gradient that could only ever run downwards.
+public construct LinearGradient(
+    start: RGBAColor,
+    end: RGBAColor,
+    direction: GradientDirection = .Down,
+    radius: CornerRadius = .None,
+) extends Widget {
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        return CALayerDescription {
+            cornerRadius: cornerRadiusImplementation(radius, modifiers),
+            content: .Gradient(
+                CAGradient {
+                    start: colorFromFoundation(modifierColor(foundationColor(start), modifiers)),
+                    end: colorFromFoundation(modifierColor(foundationColor(end), modifiers)),
+                    axis: foundationLayerGradientAxis(foundationGradient(direction))
+                }
+            )
+        }
+    }
+}
+
+// A fill-sized wash in a background style — the band behind a list row, the pill
+// under a tab. The themed counterpart to SurfaceTint, which can only be handed a
+// color someone else already resolved.
+public construct BackgroundFill(
+    style: BackgroundStyle,
+    radius: CornerRadius = .None
+) extends Widget {
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let cr = cornerRadiusImplementation(radius, modifiers)
+        return CALayerDescription {
+            cornerRadius: cr,
+            content: .Solid(
+                CASolid {
+                    fill: colorFromFoundation(
+                        modifierColor(modifierBackgroundStyle(style, modifiers), modifiers)
+                    ),
+                    cornerRadius: cr
+                }
+            )
+        }
+    }
+}
+
+public construct SurfaceTint(color: RGBAColor) extends Widget {
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        return CALayerDescription {
+            content: .Solid(
+                CASolid {
+                    fill: colorFromFoundation(
+                        modifierSurfaceFill(foundationColor(color), modifiers)
+                    )
+                }
+            )
+        }
+    }
+}
+
+// A container's own inset, in spacing tokens, one axis at a time.
+//
+// This is not padding: padding is a length someone chose at a call site, and
+// every one of them drifts. An inset states which spacing STEP a container holds
+// its content off its edges by, and the theme decides what that step measures.
+public construct Inset(horizontal: Spacing = .None, vertical: Spacing = .None,) extends Widget {
+    let content: some Widget
+
+    // A wrapper that insets the child by one spacing step per axis.
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let side = spacingImplementation(horizontal, modifiers)
+        let ends = spacingImplementation(vertical, modifiers)
+        let described = content.describe(context, modifierContextForChildren(modifiers))
+        let fillsWidth = described.layout.widthFill
+        let fillsHeight = described.layout.heightFill
+        let flex = described.layout.flex
+        let expandsWidth = described.layout.expandsWidth
+        let expandsHeight = described.layout.expandsHeight
+        return CALayerDescription {
+            layout: CALayoutIntent {
+                widthFill: fillsWidth,
+                heightFill: fillsHeight,
+                flex: flex,
+                expandsWidth: expandsWidth,
+                expandsHeight: expandsHeight,
+                paddingLeading: side,
+                paddingTop: ends,
+                paddingTrailing: side,
+                paddingBottom: ends
+            },
+            sublayers: [described]
+        }
+    }
+}
+
+// A hairline between two things.
+//
+// Its color and its thickness are the theme's border tokens, and how far it is
+// held off the edges it runs between is the size class's — leading and trailing
+// separately, because a grouped list insets its separators to the label column
+// on one side and runs them to the edge on the other. `.themeBorder(...)` picks
+// which border it is drawn in.
+//
+// The inset lives on the divider rather than on whatever encloses it, so a
+// section, a sidebar and a toolbar all divide the same way without any of them
+// restating it.
+public construct Divider() extends Widget {
+
+    // A hairline across whatever holds it, in the border's color: the
+    // border's width tall under a column's rows, and as wide between a row's,
+    // as SwiftUI's runs across the stack it stands in.
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let border = modifierResolvedBorder(modifiers)
+        var layout = CALayoutIntent { heightFill: false, fixedHeight: border.width }
+        if modifiers.stackAxis == .Horizontal {
+            layout = CALayoutIntent { widthFill: false, fixedWidth: border.width }
+        }
+        let line = CALayerDescription {
+            layout: move layout,
+            content: .Solid(
+                CASolid {
+                    fill: colorFromFoundation(
+                        modifierSurfaceFill(foundationColor(border.color), modifiers)
+                    )
+                }
+            )
+        }
+        // In a menu a divider is a GROUP BOUNDARY, and that is more than a line.
+        // Measured off the platform's menu (Examples/liquid-glass-menu): rows
+        // inside a group sit on a 42pt pitch, rows either side of a separator on
+        // 64 — so the separator is a rule with air above and below it, inset
+        // from each edge rather than running edge to edge.
+        if modifiers.controlPresentation == .MenuRow {
+            menuExportSeparator()
+            let menu = menuMetrics(modifiers)
+            return CALayerDescription {
+                layout: CALayoutIntent {
+                    heightFill: false,
+                    paddingLeading: menu.dividerInset,
+                    paddingTop: menu.dividerVerticalInset,
+                    paddingTrailing: menu.dividerInset,
+                    paddingBottom: menu.dividerVerticalInset
+                },
+                sublayers: [line]
+            }
+        }
+        return line
+    }
+}

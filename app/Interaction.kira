@@ -1,0 +1,343 @@
+import Ember
+import Foundation
+import KiraLayout
+import KCoreAnimation
+
+// Interaction primitives: the clickable / surface / gesture-texture building
+// blocks that let dense chrome UIs (editor panels, inspectors, live viewports)
+// be expressed as pure body-DSL widgets instead of hand-lowering
+// FoundationView.HitArea / Surface by hand.
+//
+// A region that states the theme's hover fill is lit by the compositor while
+// the pointer rests on it, with nothing rebuilt; `.onClick` states none, as
+// SwiftUI's tap gesture lights nothing. Auto-key forms draw
+// a stable per-build key from a frame-reset sequence counter (mirrors the pattern
+// an app would otherwise reinvent); keyed forms take an explicit key so a control
+// that carries semantic meaning (a tree row, an asset tile — decoded elsewhere by
+// its key) keeps that exact key.
+
+// --- Auto-key sequence -------------------------------------------------------
+// The retained tree reconciles nodes BY KEY, so two hit areas sharing a key
+// corrupt the reconcile and sibling subtrees silently drop. Widgets lower in a
+// deterministic order every frame, so a sequence counter (reset at the top of
+// each build via tapSeqReset) yields stable, collision-free keys. Base
+// 600000 sits above app "sequence" ranges and the 100000-499999 band apps use
+// for semantic edTapKey-style keys, so auto keys never alias a decodable key.
+public struct TapSeq {
+    var next: Number = 0
+    // The counter for content being lowered into an OVERLAY, and whether we are
+    // currently in one.
+    //
+    // A hoisted view is built in the middle of the main build but does not
+    // belong to it, and its children would otherwise draw from the same
+    // sequence — so opening a submenu with three rows in it shifts the key of
+    // every row declared after it by three. The retained tree reconciles by key
+    // and hit regions are found by key, so what that produces is a menu where
+    // presses land on the row above or below the one under the finger, and only
+    // after something has been opened once.
+    //
+    // A separate band keeps the main sequence identical whether an overlay is
+    // open or not, which is the property that makes the keys stable.
+    var overlayNext: Number = 0
+    var inOverlay: Bool = false
+    // The same for the view a stack shows under the one moving over it: it is
+    // drawn beside the view on top only while the stack moves, and must not
+    // shift the keys of the view that stays.
+    var coveredNext: Number = 0
+    var inCovered: Bool = false
+    // The band the main sequence draws from: none at the root, and inside
+    // the arm of an `if` one of the arm's own (ContentPlace.kira), so an arm
+    // put in or taken away never shifts the keys of what is around it; and
+    // how many times this build each band was entered, which keeps apart two
+    // arms that come to the same band.
+    var band: Number = 0
+    var bandsEntered: Map<String, Number> = Map()
+}
+
+// Reset the auto-key counter. An interactive app root calls this once at the top
+// of every frame's build so each frame gets the same stable key assignment.
+public function tapSeqReset() {
+    if !ambientStateHas(StateSlot.tapSequence) {
+        ambientStatePut(StateSlot.tapSequence, nativeUserData(nativeState(TapSeq {})))
+    }
+    var seq = nativeRecover<TapSeq>(ambientStateGet(StateSlot.tapSequence))
+    seq.next = 0
+    seq.band = 0
+    seq.bandsEntered = Map()
+    seq.overlayNext = 0
+    seq.inOverlay = false
+    seq.coveredNext = 0
+    seq.inCovered = false
+    sizedContentReset()
+    menuGroundReset()
+}
+
+public function tapSeqBandCount() -> Number {
+    if !ambientStateHas(StateSlot.tapSequence) { return 0 }
+    let seq = nativeRecover<TapSeq>(ambientStateGet(StateSlot.tapSequence))
+    return seq.bandsEntered.count()
+}
+
+// Next auto key in the current build.
+public function tapSeqKey() -> Number {
+    if !ambientStateHas(StateSlot.tapSequence) {
+        ambientStatePut(StateSlot.tapSequence, nativeUserData(nativeState(TapSeq {})))
+    }
+    var seq = nativeRecover<TapSeq>(ambientStateGet(StateSlot.tapSequence))
+    if seq.inOverlay {
+        seq.overlayNext++
+        return 800000 + seq.overlayNext
+    }
+    if seq.inCovered {
+        seq.coveredNext++
+        return 900000 + seq.coveredNext
+    }
+    seq.next++
+    if seq.band == 0 { return 600000 + seq.next }
+    return TapBands.base + seq.band * TapBands.width + seq.next
+}
+
+// Draw keys from the overlay band while lowering a view presented over the
+// main build, so the main sequence carries on afterward exactly where it left
+// off. Answers whether the band was already in use, to be handed back to
+// `tapSeqLeaveOverlay`: a submenu presented from inside a menu that is
+// itself presented leaves the band only when the outer one does.
+public function tapSeqEnterOverlay() -> Bool {
+    if !ambientStateHas(StateSlot.tapSequence) {
+        ambientStatePut(StateSlot.tapSequence, nativeUserData(nativeState(TapSeq {})))
+    }
+    var seq = nativeRecover<TapSeq>(ambientStateGet(StateSlot.tapSequence))
+    let was = seq.inOverlay
+    seq.inOverlay = true
+    return was
+}
+
+public function tapSeqLeaveOverlay(was: Bool) {
+    if !ambientStateHas(StateSlot.tapSequence) {
+        return
+    }
+    var seq = nativeRecover<TapSeq>(ambientStateGet(StateSlot.tapSequence))
+    seq.inOverlay = was
+}
+
+// Draw keys from the covered band while a stack lowers the view under the one
+// moving over it.
+public function tapSeqEnterCovered() {
+    if !ambientStateHas(StateSlot.tapSequence) {
+        ambientStatePut(StateSlot.tapSequence, nativeUserData(nativeState(TapSeq {})))
+    }
+    var seq = nativeRecover<TapSeq>(ambientStateGet(StateSlot.tapSequence))
+    seq.inCovered = true
+}
+
+public function tapSeqLeaveCovered() {
+    if !ambientStateHas(StateSlot.tapSequence) {
+        return
+    }
+    var seq = nativeRecover<TapSeq>(ambientStateGet(StateSlot.tapSequence))
+    seq.inCovered = false
+}
+
+// The wash a pressable region lights with while the pointer rests on it: the
+// theme's hover fill on a desktop, and nothing on a phone or a tablet, where
+// no pointer rests. The region only states it; the compositor knows what the
+// pointer is over and lays it on that region alone.
+public function hoverHighlight(modifiers: borrow ModifierContext) -> CAColor {
+    if !interfaceHovers() {
+        return CAColor { a: 0.0 }
+    }
+    return colorFromFoundation(modifierColor(modifierBackgroundStyle(.Hover, modifiers), modifiers))
+}
+
+// --- Actions -----------------------------------------------------------------
+
+// What a widget DOES is a modifier on it, not a widget wrapped around it:
+//
+//     Icon(.sidebar).onClick(toggleSidebar)
+//     ValueField(text = "50", unit = "%").onScrub(scrubBlur)
+//
+// A button is not a kind of view — it is a view that can be pressed — and a
+// vocabulary with a separate widget per pressable thing grows one more every
+// time something new becomes pressable. The hit region takes the SIZE of what it
+// wraps, so the same modifier serves a glyph that hugs and a list row that fills.
+//
+// The key is minted from the build sequence, so nothing at the call site carries
+// one and two controls cannot collide over it.
+public construct ClickLayer(action: () -> Void) extends Widget {
+    let content: some Widget
+
+    // A hittable layer over the content. The key is registered against the
+    // press action by the input stage that walks `hitKey`; the description
+    // carries the key and the hover wash.
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let k = tapSeqKey()
+        layerActionRegister(k, action)
+        var described = content.describe(context, modifiers)
+        described.accessibilityActivates(action, modifiers)
+        // The press takes the shape of what it wraps, as SwiftUI's content
+        // shape is the view's own. It does not light under a resting pointer:
+        // SwiftUI's `onTapGesture` draws nothing of its own, and a control
+        // that does light, a menu's row, says so itself.
+        let radius = described.cornerRadius > 0
+        ? described.cornerRadius
+        : cornerRadiusImplementation(.Small, modifiers)
+        return CALayerDescription {
+            layout: surfaceFootprint(described.layout),
+            hittable: !modifiers.disabled,
+            hitKey: k,
+            cornerRadius: radius,
+            content: .Solid(CASolid { fill: CAColor { a: 0.0 }, cornerRadius: radius }),
+            sublayers: [described]
+        }
+    }
+}
+
+// A widget whose value is changed by dragging across it: the numeric field a
+// pro tool scrubs, the pad an aim is set on. The callback carries the CUMULATIVE
+// offset from the press point.
+public construct ScrubLayer(action: (Number, Number) -> Void) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let k = tapSeqKey()
+        return CALayerDescription {
+            hittable: !modifiers.disabled,
+            hitKey: k,
+            sublayers: [content.describe(context, modifiers)]
+        }
+    }
+}
+
+// The same press region under an application's OWN key.
+//
+// `.onClick(...)` mints the key from the build sequence, which is right for a
+// button that is only ever itself. A control whose identity means something to
+// the application — a tree row, an asset tile, a dock tab, all decoded elsewhere
+// FROM the key — needs to state that key, and a minted one takes the decode
+// away. `radius` is here for the same reason: the hover wash follows the shape
+// the control is drawn with, and a tile's corner is not a row's.
+public construct ClickRegion(
+    key: Number,
+    onPress: () -> Void,
+    radius: CornerRadius = .Small,
+) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let k = key
+        let cr = cornerRadiusImplementation(radius, modifiers)
+        layerActionRegister(k, onPress)
+        var described = content.describe(context, modifiers)
+        described.accessibilityActivates(onPress, modifiers)
+        return CALayerDescription {
+            hittable: !modifiers.disabled,
+            hitKey: k,
+            hoverColor: hoverHighlight(modifiers),
+            cornerRadius: cr,
+            content: .Solid(CASolid { fill: CAColor { a: 0.0 }, cornerRadius: cr }),
+            sublayers: [move described]
+        }
+    }
+}
+
+// --- DragRegion --------------------------------------------------------------
+
+// Dragging was previously reachable only through GestureTextureView — that is,
+// only if the thing being dragged happened to be an engine texture. Every other
+// draggable affordance an application needs (a splitter between two panes, a
+// panel tab being torn to a new dock, a slider thumb) has the same shape and no
+// texture, so it had nowhere to go.
+//
+// `key` must be nonzero and stable across frames. Drag callbacks carry
+// CUMULATIVE deltas from the press point, not per-move increments.
+public construct DragRegion(
+    key: Number,
+    onDragStart: (Number, Number) -> Void,
+    onDragMove: (Number, Number) -> Void,
+    onDragEnd: (Number, Number) -> Void,
+) extends Widget {
+    let children: [some Widget]
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        return CALayerDescription {
+            hittable: !modifiers.disabled,
+            hitKey: key,
+            sublayers: describedChildren(context, modifiers, children)
+        }
+    }
+}
+
+// --- DismissArea ------------------------------------------------------------
+
+// A window-filling hit region that paints nothing: the backdrop a floating
+// overlay (a context menu, a modal card) puts underneath itself so any click
+// outside dismisses it.
+//
+// `.onClick(...)` cannot serve here. It lights with the hover wash, and a
+// wash over a Fill/Fill region tints the
+// entire window for as long as the overlay is open. So this is its own leaf:
+// same HitArea node, no `backgroundFill`, and a transparent Fill/Fill Surface
+// child so the region has something to size against.
+public construct DismissArea(key: Number, onPress: () -> Void) extends Widget {
+
+    // A window-filling hit region that paints nothing; a press runs the dismiss
+    // action the key is bound to.
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        layerActionRegister(key, onPress)
+        return CALayerDescription { hittable: !modifiers.disabled, hitKey: key }
+    }
+}
+
+// Painted containers (Panel) live in Surfaces.kira.
+
+// --- GestureTextureView -----------------------------------------------------
+
+// An external Ember texture (an engine viewport render target) wrapped in
+// a gesture hit area: scroll drives `onScroll`, and a held drag past the
+// threshold drives `onDragStart` / `onDragMove` / `onDragEnd` (dx/dy deltas).
+// The texture fills whatever box the layout gives it; the whole region flexes
+// like a Fill leaf. `key` must be nonzero and stable across frames.
+public construct GestureTextureView(
+    key: Number,
+    texture: TextureHandle,
+    radius: CornerRadius = .None,
+    onScroll: (Number, Number) -> Void,
+    onDragStart: (Number, Number) -> Void,
+    onDragMove: (Number, Number) -> Void,
+    onDragEnd: (Number, Number) -> Void,
+) extends Widget {
+
+    // A hittable texture layer: the external handle as `.Texture` content, the
+    // key registered against the scroll/drag callbacks by the input stage.
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        return CALayerDescription {
+            hittable: !modifiers.disabled,
+            hitKey: key,
+            content: .Texture(
+                CATexture {
+                    handle: texture,
+                        opacity: modifiers.opacity,
+                        cornerRadius: cornerRadiusImplementation(radius, modifiers)
+                }
+            )
+        }
+    }
+}

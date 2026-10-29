@@ -1,0 +1,168 @@
+import Foundation
+import KCoreAnimation
+
+// Alignment guides.
+//
+// A guide is a question a container asks the things inside it: "where does your
+// content actually begin?" A grouped list asks it of every row to place the
+// hairline under it, and the honest answer is not the row's leading edge — it is
+// wherever the row's LABEL begins, which is a fact only the row's own contents
+// know.
+//
+// So the answer travels the other way from everything else in the modifier
+// system. Themes, sizes and inks cascade DOWN; a guide is published by a
+// descendant and read by an ancestor:
+//
+//     LabeledContent(label = "Blur", symbol = .Drop) {
+//         Toggle(isOn = blurOn, onChange = setBlur)
+//     }
+//     .alignmentGuide(ListRowSeparatorLeading()) { dimensions in
+//         dimensions[.Leading] + 20.0
+//     }
+//
+// The closure is handed the publisher's own dimensions and returns a position in
+// the publisher's own coordinates; what the container receives is that position
+// resolved into ITS coordinates. That resolution is the layout pass's, because
+// an offset does not exist until layout has run — which is why the guide is
+// carried on the lowered view rather than computed while building it.
+
+// Which axis a guide answers on. A horizontal guide positions something along
+// the x axis (a separator's leading edge); a vertical one along the y axis (a
+// baseline two labels share).
+public enum GuideAxis {
+    Horizontal
+    Vertical
+}
+
+// The edges and centers of a view, in the view's own coordinates.
+public enum AlignmentAnchor {
+    Leading
+    Trailing
+    Top
+    Bottom
+    HorizontalCenter
+    VerticalCenter
+}
+
+// What a guide closure is handed: the size of the view the guide is attached to,
+// and its anchors.
+//
+// Anchors are read by subscript — `dimensions[.Leading]` — because that is what
+// the operation IS: addressing a value by which anchor is wanted. `.Leading` is
+// 0 and `.Trailing` is the width, so a guide is written as an offset from an
+// edge and stays correct when the view resizes.
+public struct ViewDimensions {
+    let width: Number = 0.0
+    let height: Number = 0.0
+
+    function subscript(anchor: AlignmentAnchor) -> Number {
+        match anchor {
+            Leading -> return 0.0
+            Trailing -> return width
+            Top -> return 0.0
+            Bottom -> return height
+            HorizontalCenter -> return width / 2.0
+            VerticalCenter -> return height / 2.0
+        }
+    }
+}
+
+// A guide's identity, and what it answers when nothing overrides it.
+//
+// This is a construct family rather than an enum precisely so an application can
+// declare its own:
+//
+//     AlignmentGuide BadgeTrailing {
+//         let axis = .Horizontal
+//         function defaultValue(dimensions: borrow ViewDimensions) -> Float {
+//             return dimensions[.Trailing]
+//         }
+//     }
+//
+// A closed set of guides would mean the library had to anticipate every
+// alignment an application might want to share between two subtrees, which it
+// cannot, and the ones it did not anticipate would go back to being literals.
+public construct AlignmentGuide {
+    // What this guide IS, and the only thing that distinguishes it from another.
+    //
+    // Identity cannot be left to the value itself: two guides with the same
+    // fields — and most guides carry nothing but an axis — compare EQUAL, so a
+    // separator asking for its trailing edge was handed its leading one and drew
+    // itself zero points wide. A name is the one thing a guide always has that
+    // no other guide shares.
+    @Required let name: String
+    @Required let axis: GuideAxis
+
+    // Where the guide sits when no descendant publishes one. A container that
+    // finds no answer uses this against its own dimensions, so every guide has a
+    // sensible position without anything being written.
+    @Required function defaultValue(dimensions: borrow ViewDimensions) -> Number
+}
+
+// Where the hairline under a row begins.
+//
+// The default is the row's own edge, which is a full-bleed separator. A label
+// in a grouped list moves it to its title by publishing it from the title
+// itself.
+public construct ListRowSeparatorLeading() extends AlignmentGuide {
+    let name = "listRowSeparatorLeading"
+    let axis: GuideAxis = .Horizontal
+
+    function defaultValue(dimensions: borrow ViewDimensions) -> Number {
+        return dimensions.subscript(.Leading)
+    }
+}
+
+// --- Tags --------------------------------------------------------------------
+
+// The foundation matches a publisher to a reader by an integer, because it holds
+// views and geometry and knows nothing about this library's types. So a guide's
+// number is DERIVED from its name.
+//
+// Derived rather than handed out by a register, because a register has to
+// remember, and remembering across a frame means state the publisher and the
+// reader both have to see. A register that silently fails to accumulate hands
+// every guide the same number, and a separator asking for its trailing edge is
+// then given its leading one and draws itself zero points wide. A name always
+// hashes to the same number, from anywhere, with nothing to keep in sync.
+//
+// Zero is the foundation's "no guide", so the result is never zero.
+public function guideTag(guide: borrow Any AlignmentGuide) -> Number {
+    var hash = 7
+    for code in stringToCodepoints(guide.name) {
+        hash = (hash * 131 + code) % 1000000007
+    }
+    return hash + 1
+}
+
+// --- Publishing --------------------------------------------------------------
+
+// Answer `guide` for whatever encloses this view.
+//
+// The closure receives the view's own dimensions and returns a position in the
+// view's own coordinates; what an enclosing container reads is that position in
+// ITS coordinates, which the layout pass works out once the view has been placed.
+public construct AlignmentGuideLayer(
+    guide: Any AlignmentGuide,
+    value: (ViewDimensions) -> Number
+) extends Widget {
+    let content: some Widget
+
+    // The guide rides on the content's layer for layout to resolve once the
+    // layer has its width. A guide is an edge or a center and a length off it,
+    // and every anchor is a fraction of the width, so the closure asked at no
+    // width and at a unit width says both halves exactly.
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var described = content.describe(context, modifiers)
+        let answer: borrow (ViewDimensions) -> Number = value
+        let atZero = answer(ViewDimensions { width: 0.0, height: 0.0 })
+        let atUnit = answer(ViewDimensions { width: 1.0, height: 0.0 })
+        described.layout.guide = guideTag(guide)
+        described.layout.guideFraction = atUnit - atZero
+        described.layout.guidePosition = atZero
+        return described
+    }
+}

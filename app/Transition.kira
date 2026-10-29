@@ -1,0 +1,346 @@
+import Foundation
+import Ember
+import KiraLayout
+import KCoreAnimation
+
+// SwiftUI's motion vocabulary: `Animation`, `.animation(_:)`, `Transition`,
+// `.transition(_:)`, `.offset(x:y:)` and `.blur(radius:)`.
+//
+// Kira UI describes the interface again each frame and the compositor carries
+// every change there, so what SwiftUI says with `withAnimation { }` around a
+// state change is said here where the change lands: `.animation(.smooth)` on
+// the view whose look depends on the state. The compositor moves it to the
+// new description on that curve, and nothing is rebuilt along the way.
+//
+//     WallpaperView()
+//         .blur(radius = resolvedLength(locked ? 0 : 24))
+//         .animation(.smooth)
+//
+//     if !locked {
+//         HomeScreen()
+//             .transition(scaleTransition(1.2).combined(opacityTransition()))
+//     }
+
+// How a change is carried to the screen, as SwiftUI's `Animation`.
+public enum Animation {
+    // The compositor's implicit action: a quarter-second ease-out.
+    Default
+    // A curve over a duration, in seconds.
+    Linear(Number)
+    EaseIn(Number)
+    EaseOut(Number)
+    EaseInOut(Number)
+    // A spring by its response, in seconds, and damping fraction, as
+    // `.spring(response:dampingFraction:)`.
+    Spring(SpringAnimation)
+    // The platform's named springs.
+    Smooth
+    Snappy
+    Bouncy
+    // The change lands at once.
+    Immediate
+}
+
+public struct SpringAnimation {
+    var response: Number = 0.5
+    var dampingFraction: Number = 0.825
+}
+
+extend Animation {
+    // The compositor timing this animation runs as.
+    function timing(borrow self) -> CATiming {
+        let reduced = prefersReducedMotion()
+        return match self {
+            Default -> defaultTiming()
+            Linear(duration) -> easeTiming(duration, .Linear)
+            EaseIn(duration) -> easeTiming(duration, .EaseIn)
+            EaseOut(duration) -> easeTiming(duration, .EaseOut)
+            EaseInOut(duration) -> easeTiming(duration, .EaseInOut)
+            Spring(spring) -> measuredSpringTiming(
+                spring.response,
+                spring.dampingFraction,
+                0.0,
+                reduced
+            )
+            Smooth -> MotionCurveName.Smooth.springTiming(reduced)
+            Snappy -> MotionCurveName.Snappy.springTiming(reduced)
+            Bouncy -> MotionCurveName.Bouncy.springTiming(reduced)
+            Immediate -> immediateTiming()
+        }
+    }
+
+    // How long a removal on this animation takes to run, in seconds: a
+    // spring's response, a curve's duration.
+    function seconds(borrow self) -> Number {
+        return match self {
+            Default -> 0.25
+            Linear(duration) -> duration
+            EaseIn(duration) -> duration
+            EaseOut(duration) -> duration
+            EaseInOut(duration) -> duration
+            Spring(spring) -> spring.response
+            Smooth -> 0.5
+            Snappy -> 0.35
+            Bouncy -> 0.5
+            Immediate -> 0.0
+        }
+    }
+}
+
+// An edge of a view, as SwiftUI's `Edge`.
+public enum Edge {
+    Top
+    Bottom
+    Leading
+    Trailing
+}
+
+extend Edge {
+    // The edge as a fraction of the view's own size: where a view standing
+    // just past it sits.
+    function unitOffset(borrow self) -> Point {
+        return match self {
+            Top -> Point { x: 0.0, y: -1.0 }
+            Bottom -> Point { x: 0.0, y: 1.0 }
+            Leading -> Point { x: -1.0, y: 0.0 }
+            Trailing -> Point { x: 1.0, y: 0.0 }
+        }
+    }
+}
+
+// What a view looks like at one end of a transition: how opaque, how large,
+// and how far from where it stands, in points and in fractions of its size.
+public struct TransitionEffect {
+    var opacity: Number = 1.0
+    var scale: Number = 1.0
+    var offset: Point = Point {}
+    var offsetFraction: Point = Point {}
+}
+
+extend TransitionEffect {
+    // Both effects at once: opacities and scales multiply, offsets add.
+    function combined(borrow self, other: borrow TransitionEffect) -> TransitionEffect {
+        return TransitionEffect {
+            opacity: opacity * other.opacity,
+            scale: scale * other.scale,
+            offset: Point { x: offset.x + other.offset.x, y: offset.y + other.offset.y },
+            offsetFraction: Point {
+                x: offsetFraction.x + other.offsetFraction.x,
+                y: offsetFraction.y + other.offsetFraction.y,
+            },
+        }
+    }
+}
+
+// How a view arrives when it is first described and leaves when it no longer
+// is, as SwiftUI's `AnyTransition`: one effect it comes in from, one it goes
+// out to.
+public struct Transition {
+    var insertion: TransitionEffect = TransitionEffect {}
+    var removal: TransitionEffect = TransitionEffect {}
+}
+
+// The transitions SwiftUI names. Each is a function rather than a constant,
+// so a framework's contract carries it (KLF-RIDL section 27.7).
+
+// No change at all, as `.identity`.
+public function identityTransition() -> Transition {
+    return Transition {}
+}
+
+// In from transparent and out to it, as `.opacity`.
+public function opacityTransition() -> Transition {
+    return Transition {
+        insertion: TransitionEffect { opacity: 0.0 },
+        removal: TransitionEffect { opacity: 0.0 },
+    }
+}
+
+// In from the leading edge and out to the trailing one, as `.slide`.
+public function slideTransition() -> Transition {
+    return Transition {
+        insertion: TransitionEffect { offsetFraction: Point { x: -1.0, y: 0.0 } },
+        removal: TransitionEffect { offsetFraction: Point { x: 1.0, y: 0.0 } },
+    }
+}
+
+// In from `scale` of its size and out to it, about `anchor`, a point as
+// fractions of the view's size, as `.scale(scale:anchor:)`; about the view's
+// center by default, and from nothing, as `.scale`, at zero.
+public function scaleTransition(
+    scale: Number,
+    anchor: Point = Point { x: 0.5, y: 0.5 }
+) -> Transition {
+    let shift = anchoredScaleShift(scale, anchor)
+    return Transition {
+        insertion: TransitionEffect { scale: scale, offsetFraction: shift },
+        removal: TransitionEffect { scale: scale, offsetFraction: shift },
+    }
+}
+
+// How far a scale about `anchor` moves a view past the scale about its center,
+// as a fraction of its size: the anchor's distance from the center, shrunk by
+// what the scale leaves of the view.
+function anchoredScaleShift(scale: Number, anchor: borrow Point) -> Point {
+    return Point { x: (anchor.x - 0.5) * (1.0 - scale), y: (anchor.y - 0.5) * (1.0 - scale), }
+}
+
+// In from past `edge` and out past it again, as `.move(edge:)`.
+public function moveTransition(edge: Edge) -> Transition {
+    return Transition {
+        insertion: TransitionEffect { offsetFraction: edge.unitOffset() },
+        removal: TransitionEffect { offsetFraction: edge.unitOffset() },
+    }
+}
+
+// In from `x`, `y` points away and out to them, as `.offset(x:y:)`.
+public function offsetTransition(x: Number, y: Number) -> Transition {
+    return Transition {
+        insertion: TransitionEffect { offset: Point { x: x, y: y } },
+        removal: TransitionEffect { offset: Point { x: x, y: y } },
+    }
+}
+
+// In from past `edge`, out past the opposite one, fading as it goes, as
+// `.push(from:)`.
+public function pushTransition(from: Edge) -> Transition {
+    let entering = from.unitOffset()
+    return Transition {
+        insertion: TransitionEffect { offsetFraction: entering },
+        removal: TransitionEffect {
+            opacity: 0.0,
+            offsetFraction: Point { x: -entering.x * 0.3, y: -entering.y * 0.3 },
+        },
+    }
+}
+
+// One effect for arriving and another for leaving, as `.asymmetric`.
+public function asymmetricTransition(insertion: Transition, removal: Transition) -> Transition {
+    return Transition { insertion: insertion.insertion, removal: removal.removal }
+}
+
+extend Transition {
+    // Both transitions at once, as `.combined(with:)`.
+    function combined(borrow self, other: borrow Transition) -> Transition {
+        return Transition {
+            insertion: insertion.combined(other.insertion),
+            removal: removal.combined(other.removal),
+        }
+    }
+}
+
+extend Widget {
+    // `.animation(_:)`: every change to this view and what it holds reaches
+    // the screen on `animation`, rather than on the implicit action.
+    function animation(value: Animation) -> Any Widget {
+        return AnimationLayer(value: value) {
+            self
+        }
+    }
+
+    // `.transition(_:)`: how this view arrives and leaves, carried on
+    // `animation`, the implicit action unless it names another.
+    function transition(value: Transition, animation: Animation = .Default) -> Any Widget {
+        return TransitionLayer(value: value, animation: animation) {
+            self
+        }
+    }
+
+    // `.offset(x:y:)`: drawn moved by `x` across and `y` down from where
+    // layout put it. Drawing state, as in SwiftUI: what is around it stays.
+    function offset(
+        x: ScaledMetric = resolvedLength(0.0),
+        y: ScaledMetric = resolvedLength(0.0)
+    ) -> Any Widget {
+        return OffsetLayer(x: x.points, y: y.points) {
+            self
+        }
+    }
+
+    // `.blur(radius:opaque:)`: a gaussian blur over the view and everything
+    // in it. An opaque blur reads the view's own edge past it, so a picture
+    // that fills its frame stays solid to its edges rather than fading.
+    function blur(radius: ScaledMetric, opaque: Bool = false) -> Any Widget {
+        return BlurLayer(radius: radius.points, opaque: opaque) {
+            self
+        }
+    }
+}
+
+public construct AnimationLayer(value: Animation) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var described = content.describe(context, modifierContextForChildren(modifiers))
+        described.animation = .Timed(value.timing())
+        return described
+    }
+}
+
+public construct TransitionLayer(value: Transition, animation: Animation) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var described = content.describe(context, modifierContextForChildren(modifiers))
+        let insertion = value.insertion
+        let removal = value.removal
+        described.entrance = CAEntrance {
+            active: true,
+            offset: insertion.offset,
+            opacity: insertion.opacity,
+            scale: insertion.scale,
+            offsetFraction: insertion.offsetFraction,
+        }
+        described.removal = CARemoval {
+            scale: removal.scale,
+            opacity: removal.opacity,
+            duration: animation.seconds(),
+            offset: removal.offset,
+            offsetFraction: removal.offsetFraction,
+        }
+        match animation {
+            Default -> {}
+            Linear, EaseIn, EaseOut, EaseInOut, Spring, Smooth, Snappy, Bouncy, Immediate -> {
+                described.animation = .Timed(animation.timing())
+            }
+        }
+        return described
+    }
+}
+
+public construct OffsetLayer(x: Number, y: Number) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var described = content.describe(context, modifierContextForChildren(modifiers))
+        // Compose, so nested offsets add up as SwiftUI's do.
+        described.layout.offset = Point {
+            x: described.layout.offset.x + x,
+            y: described.layout.offset.y + y,
+        }
+        return described
+    }
+}
+
+public construct BlurLayer(radius: Number, opaque: Bool = false) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var described = content.describe(context, modifierContextForChildren(modifiers))
+        described.blur = described.blur + radius
+        described.blurOpaque = described.blurOpaque || opaque
+        return described
+    }
+}

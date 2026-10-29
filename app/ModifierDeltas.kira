@@ -1,0 +1,320 @@
+import Foundation
+import KCoreAnimation
+
+// One modifier call's delta: each states the one value its modifier sets, and
+// `modifierContextApply` lays it over the context the modifier is in.
+
+// One modifier call contributes a sparse delta. Presence flags distinguish an
+// omitted value from a value whose scalar representation happens to be a
+// default, without introducing a dynamic property map or a permanently
+// materialized resolved style on each widget.
+public struct ModifierDelta {
+    let hasTheme: Bool = false
+    let theme: Any Theme = copy defaultTheme
+    let hasForegroundColor: Bool = false
+    let foregroundColor: PrimaryColor = .Primary
+    let foregroundIsValue: Bool = false
+    let hasMaterial: Bool = false
+    let material: Material = .Flat
+    let hasFill: Bool = false
+    let fillColor: RGBAColor = RGBAColor {}
+    let hasStroke: Bool = false
+    let strokeWidth: Number = 1.0
+    let hasStrokeColor: Bool = false
+    let strokeColor: RGBAColor = RGBAColor {}
+    let hasBackgroundStyle: Bool = false
+    let backgroundStyle: BackgroundStyle = .Surface
+    let hasThemeBorder: Bool = false
+    let themeBorder: ThemeBorder = .Subtle
+    let hasTextColor: Bool = false
+    let textColor: RGBAColor = RGBAColor {}
+    let hasTextBlend: Bool = false
+    let textBlend: CABlendMode = .Normal
+    let hasTypography: Bool = false
+    let typography: TypographyStyle = .body
+    let hasControlSize: Bool = false
+    let controlSize: ControlSize = .Regular
+    let hasImageScale: Bool = false
+    let imageScale: IconScale = .Medium
+    let hasSymbolVariant: Bool = false
+    let symbolVariant: SymbolVariants = .None
+    let hasTint: Bool = false
+    let tint: PrimaryColor = .Accent
+    // The corner a concentric shape inside takes, as a container states it for
+    // its content (see `ContainerShape.Concentric`).
+    let containerCornerRadius: Number? = .None
+    // The glass that container is (see `ModifierContext.containerGlass`).
+    var containerGlass: Glass? = .None
+    // How far the COLUMN this view is in holds its content off its own leading
+    // and trailing edges. A column states it once and everything in it obeys the
+    // same one — the bar across its top, the rows in its list, the header over
+    // them — so a column whose canvas runs edge to edge can say so and have the
+    // bar above that canvas start where the canvas starts.
+    let hasContentMargin: Bool = false
+    let contentMargin: Number = 0.0
+    let hasFont: Bool = false
+    let fontSize: Number = 16.0
+    let fontWeight: FontWeight = .Regular
+    // `.fontWeight(...)`: a weight over whichever font is in effect, until a
+    // `.font(...)` inside it names a weight of its own.
+    let hasWeightOverride: Bool = false
+    let weightOverride: FontWeight = .Regular
+    // `.fontDesign(...)`: the face text is set in, the system's or its
+    // monospaced cut.
+    let hasFontDesign: Bool = false
+    let fontDesign: FontDesign = .Default
+    // `.multilineTextAlignment(...)`: where the lines of wrapped text sit.
+    let hasTextAlignment: Bool = false
+    let textAlignment: TextAlignment = .Leading
+    // `.lineLimit(...)` and `.lineSpacing(...)`: how many lines text stands
+    // on at most, 0 for as many as it takes, and the room between them.
+    let hasLineLimit: Bool = false
+    let lineLimit: Number = 0
+    let hasLineSpacing: Bool = false
+    let lineSpacing: Number = 0.0
+    // `.buttonStyle(...)`: how the buttons in this subtree are drawn.
+    let hasButtonStyle: Bool = false
+    let buttonStyle: ButtonStyle = .Automatic
+    // `.toggleStyle(...)`: how the toggles in this subtree are drawn.
+    let hasToggleStyle: Bool = false
+    let toggleStyle: Any ToggleStyle = DefaultToggleStyle {}
+    // `.progressViewStyle(...)`: how the progress views in this subtree are drawn.
+    let hasProgressViewStyle: Bool = false
+    let progressViewStyle: Any ProgressViewStyle = DefaultProgressViewStyle {}
+    // `.menuStyle(...)` and `.menuIndicator(...)`: how the menus in this
+    // subtree draw their labels, and whether with the indicator.
+    let hasMenuStyle: Bool = false
+    let menuStyle: MenuStyle = .Automatic
+    let hasMenuIndicator: Bool = false
+    let menuIndicator: Visibility = .Automatic
+    // `.pickerStyle(...)`: how the pickers in this subtree are drawn.
+    let hasPickerStyle: Bool = false
+    let pickerStyle: PickerStyle = .Automatic
+    // `.buttonBorderShape(...)`: the outline a bordered button is drawn in.
+    let hasButtonBorderShape: Bool = false
+    let buttonBorderShape: ButtonBorderShape = .Automatic
+    // Opacity is a per-modifier visual composition, not a theme token.
+    let hasOpacity: Bool = false
+    let opacity: Number = 1.0
+    let disabled: Bool = false
+    // `.focused(...)`: one more binding the field it is on keeps in step with
+    // the keyboard.
+    let hasFocus: Bool = false
+    let focus: FocusBinding = FocusBinding {}
+    let inMenu: Bool = false
+    let hasListStyle: Bool = false
+    let listStyle: ListStyle = .Automatic
+    // `.tableStyle(...)`, `.alternatingRowBackgrounds(...)` and
+    // `.tableColumnHeaders(...)`: how the tables in this subtree are drawn.
+    let hasTableStyle: Bool = false
+    let tableStyle: TableStyle = .Automatic
+    let hasAlternatingRowBackgrounds: Bool = false
+    let alternatingRowBackgrounds: AlternatingRowBackgroundBehavior = .Automatic
+    let hasTableColumnHeaders: Bool = false
+    let tableColumnHeaders: Visibility = .Automatic
+    // `.labelStyle(...)`: which halves of every label in this subtree show.
+    let hasLabelStyle: Bool = false
+    let labelStyle: LabelStyle = .Automatic
+    // `.labelsHidden()`: the controls in this subtree drop their titles.
+    let hasLabelsHidden: Bool = false
+    let labelsHidden: Bool = false
+    // The axis of the stack a view is laid out along.
+    let hasStackAxis: Bool = false
+    let stackAxis: GuideAxis = .Vertical
+    // `.textFieldStyle(...)`: how the text fields in this subtree are drawn.
+    let hasTextFieldStyle: Bool = false
+    let textFieldStyle: TextFieldStyle = .Automatic
+    // `.onSubmit { }`: what a field in this subtree does when Return
+    // submits it.
+    let hasSubmit: Bool = false
+    let submit: () -> Void = layerNoop
+}
+
+public function modifierDeltaTheme(theme: Any Theme) -> ModifierDelta {
+    return ModifierDelta { hasTheme: true, theme: move theme }
+}
+
+public function modifierDeltaForegroundColor(color: PrimaryColor) -> ModifierDelta {
+    return ModifierDelta { hasForegroundColor: true, foregroundColor: color }
+}
+
+// A labeled row's value ink: the secondary ink, which a button under it does
+// not take.
+public function modifierDeltaValueInk() -> ModifierDelta {
+    return ModifierDelta {
+        hasForegroundColor: true,
+        foregroundColor: .Secondary,
+        foregroundIsValue: true
+    }
+}
+
+public function modifierDeltaMaterial(material: Material) -> ModifierDelta {
+    return ModifierDelta { hasMaterial: true, material: material }
+}
+
+public function modifierDeltaFill(color: RGBAColor) -> ModifierDelta {
+    return ModifierDelta { hasFill: true, fillColor: move color }
+}
+
+public function modifierDeltaStroke(width: Number) -> ModifierDelta {
+    return ModifierDelta { hasStroke: true, strokeWidth: width }
+}
+
+public function modifierDeltaStrokeColor(color: RGBAColor, width: Number) -> ModifierDelta {
+    return ModifierDelta {
+        hasStroke: true,
+        strokeWidth: width,
+        hasStrokeColor: true,
+        strokeColor: move color
+    }
+}
+
+public function modifierDeltaBackgroundStyle(surface: BackgroundStyle) -> ModifierDelta {
+    return ModifierDelta { hasBackgroundStyle: true, backgroundStyle: surface }
+}
+
+public function modifierDeltaThemeBorder(border: ThemeBorder) -> ModifierDelta {
+    return ModifierDelta { hasThemeBorder: true, themeBorder: border }
+}
+
+public function modifierDeltaTextColor(color: RGBAColor) -> ModifierDelta {
+    return ModifierDelta { hasTextColor: true, textColor: move color }
+}
+
+// Text inked in `color` burned or dodged into what is under it.
+public function modifierDeltaTextInk(color: RGBAColor, blend: CABlendMode) -> ModifierDelta {
+    return ModifierDelta {
+        hasTextColor: true,
+        textColor: move color,
+        hasTextBlend: true,
+        textBlend: move blend
+    }
+}
+
+public function modifierDeltaTypography(style: TypographyStyle) -> ModifierDelta {
+    return ModifierDelta { hasTypography: true, typography: style }
+}
+
+public function modifierDeltaControlSize(size: ControlSize) -> ModifierDelta {
+    return ModifierDelta { hasControlSize: true, controlSize: size }
+}
+
+public function modifierDeltaImageScale(scale: IconScale) -> ModifierDelta {
+    return ModifierDelta { hasImageScale: true, imageScale: scale }
+}
+
+public function modifierDeltaSymbolVariant(variant: SymbolVariants) -> ModifierDelta {
+    return ModifierDelta { hasSymbolVariant: true, symbolVariant: variant }
+}
+
+public function modifierDeltaContentMargin(length: Number) -> ModifierDelta {
+    return ModifierDelta { hasContentMargin: true, contentMargin: length }
+}
+
+public function modifierDeltaListStyle(style: ListStyle) -> ModifierDelta {
+    return ModifierDelta { hasListStyle: true, listStyle: style }
+}
+
+public function modifierDeltaLabelStyle(style: LabelStyle) -> ModifierDelta {
+    return ModifierDelta { hasLabelStyle: true, labelStyle: style }
+}
+
+public function modifierDeltaLabelsHidden(hidden: Bool) -> ModifierDelta {
+    return ModifierDelta { hasLabelsHidden: true, labelsHidden: hidden }
+}
+
+public function modifierDeltaStackAxis(axis: GuideAxis) -> ModifierDelta {
+    return ModifierDelta { hasStackAxis: true, stackAxis: axis }
+}
+
+public function modifierDeltaContainerCornerRadius(radius: Number) -> ModifierDelta {
+    return ModifierDelta { containerCornerRadius: .Some(radius) }
+}
+
+public function modifierDeltaTint(color: PrimaryColor) -> ModifierDelta {
+    return ModifierDelta { hasTint: true, tint: color }
+}
+
+public function modifierDeltaFont(size: Number, weight: FontWeight) -> ModifierDelta {
+    return ModifierDelta { hasFont: true, fontSize: size, fontWeight: weight }
+}
+
+public function modifierDeltaFontWeight(weight: FontWeight) -> ModifierDelta {
+    return ModifierDelta { hasWeightOverride: true, weightOverride: weight }
+}
+
+public function modifierDeltaFontDesign(design: FontDesign) -> ModifierDelta {
+    return ModifierDelta { hasFontDesign: true, fontDesign: design }
+}
+
+public function modifierDeltaTextAlignment(alignment: TextAlignment) -> ModifierDelta {
+    return ModifierDelta { hasTextAlignment: true, textAlignment: alignment }
+}
+
+public function modifierDeltaLineLimit(count: Number) -> ModifierDelta {
+    return ModifierDelta { hasLineLimit: true, lineLimit: count }
+}
+
+public function modifierDeltaLineSpacing(spacing: Number) -> ModifierDelta {
+    return ModifierDelta { hasLineSpacing: true, lineSpacing: spacing }
+}
+
+public function modifierDeltaButtonStyle(style: ButtonStyle) -> ModifierDelta {
+    return ModifierDelta { hasButtonStyle: true, buttonStyle: style }
+}
+
+public function modifierDeltaToggleStyle(style: Any ToggleStyle) -> ModifierDelta {
+    return ModifierDelta { hasToggleStyle: true, toggleStyle: move style }
+}
+
+public function modifierDeltaProgressViewStyle(style: Any ProgressViewStyle) -> ModifierDelta {
+    return ModifierDelta { hasProgressViewStyle: true, progressViewStyle: move style }
+}
+
+public function modifierDeltaMenuStyle(style: MenuStyle) -> ModifierDelta {
+    return ModifierDelta { hasMenuStyle: true, menuStyle: style }
+}
+
+public function modifierDeltaMenuIndicator(visibility: Visibility) -> ModifierDelta {
+    return ModifierDelta { hasMenuIndicator: true, menuIndicator: visibility }
+}
+
+public function modifierDeltaPickerStyle(style: PickerStyle) -> ModifierDelta {
+    return ModifierDelta { hasPickerStyle: true, pickerStyle: style }
+}
+
+public function modifierDeltaButtonBorderShape(shape: ButtonBorderShape) -> ModifierDelta {
+    return ModifierDelta { hasButtonBorderShape: true, buttonBorderShape: shape }
+}
+
+public function modifierDeltaOpacity(value: Number) -> ModifierDelta {
+    return ModifierDelta { hasOpacity: true, opacity: value }
+}
+
+public function modifierDeltaDisabled(value: Bool) -> ModifierDelta {
+    return ModifierDelta { disabled: value }
+}
+
+public function modifierDeltaFocus(binding: FocusBinding) -> ModifierDelta {
+    return ModifierDelta { hasFocus: true, focus: move binding }
+}
+
+public function modifierDeltaTextFieldStyle(style: TextFieldStyle) -> ModifierDelta {
+    return ModifierDelta { hasTextFieldStyle: true, textFieldStyle: style }
+}
+
+public function modifierDeltaSubmit(action: () -> Void) -> ModifierDelta {
+    return ModifierDelta { hasSubmit: true, submit: action }
+}
+
+public function modifierDeltaTableStyle(style: TableStyle) -> ModifierDelta {
+    return ModifierDelta { hasTableStyle: true, tableStyle: style }
+}
+
+public function modifierDeltaAlternatingRowBackgrounds(behavior: AlternatingRowBackgroundBehavior) -> ModifierDelta {
+    return ModifierDelta { hasAlternatingRowBackgrounds: true, alternatingRowBackgrounds: behavior }
+}
+
+public function modifierDeltaTableColumnHeaders(visibility: Visibility) -> ModifierDelta {
+    return ModifierDelta { hasTableColumnHeaders: true, tableColumnHeaders: visibility }
+}

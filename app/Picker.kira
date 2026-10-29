@@ -1,0 +1,740 @@
+import Foundation
+import Ember
+import KiraLayout
+import KCoreAnimation
+
+// SwiftUI's `Label` and `Picker`.
+//
+//     Label(title: "Blend Mode", systemImage: .Circle)
+//
+//     Picker(title: "Blend Mode", selection: $mode) {
+//         Text("Normal").tag(BlendMode.normal)
+//         Text("Multiply").tag(BlendMode.multiply)
+//     }
+//
+// The caller owns the value and the picker writes it through the binding it
+// is handed. What the caller does NOT own is which picker is open: that is
+// presentation, it belongs to the control, and an application carrying it
+// ended up with an open-menu field in its own state beside every list of
+// options.
+//
+// The options expand under the row rather than floating over the window. Every
+// view the foundation draws is a view it placed, so a list drawn outside the
+// layout is a list a press cannot reliably land on. One picker is open at a
+// time, as on the platform.
+
+// A title with an optional leading glyph — the label of a control, a row, or a
+// menu entry.
+// A title and the glyph that names it, as ONE view.
+//
+// The glyph sits in a column of its own width, and a label with NO glyph
+// reserves that column anyway, so a title begins in the same place whether or
+// not it has one. That is what keeps the appearance variants under a property
+// ("Dark", "Mono") lined up with the property above them.
+//
+// Reserving it here rather than in whatever encloses the label is the whole
+// point: a title and its glyph are one thing, and a container that positions
+// them separately can only relate them by arithmetic — which is how a glyph ends
+// up against the row's edge instead of in its column.
+// SwiftUI spells the glyph half `systemImage:` — `Label("Copy", systemImage:
+// "doc.on.doc")` — and the name is worth keeping: it says the glyph comes from
+// the SYSTEM's set, not from artwork the application supplies, which is the
+// difference between a label that restyles itself with the platform and one
+// that does not.
+//
+// Where a string and a symbol will not say it, the title and the glyph are
+// views of their own, as SwiftUI's `Label { Text("Showcase") } icon: {
+// Image("widgets") }` writes them:
+//
+//     Label {
+//         Text("Showcase")
+//     } icon: {
+//         Image(name: "widgets")
+//     }
+public construct Label(title: String = "", systemImage: Symbol = .None) extends Widget {
+    let content: some Widget = EmptyView()
+    let icon: some Widget = EmptyView()
+
+    function menuTitle() -> String {
+        return copy title
+    }
+
+    // The title as a view: the one written for it, or its text.
+    function titleView() -> Any Widget {
+        return LabelPart(fallback: Text(content: title)) { content }
+    }
+
+    // The glyph as a view: the one written for it, or the symbol's.
+    function iconView() -> Any Widget {
+        return LabelPart(fallback: Icon(symbol: systemImage)) { icon }
+    }
+
+    function hasIcon(context: borrow BuildContext, modifiers: borrow ModifierContext) -> Bool {
+        return systemImage != .None || !describesNothing(icon.describe(context, modifiers))
+    }
+
+    // One element reading the title, its glyph a picture beside the words,
+    // as SwiftUI's label is.
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var described = self.styledDescription(context, modifiers)
+        described.accessibilityCombined(
+            AccessibilityNode { role: .StaticText, traits: AccessibilityTraits.isStaticText }
+        )
+        return described
+    }
+
+    function styledDescription(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        // A style that keeps one half is that half alone, wherever the label
+        // stands.
+        if modifiers.labelStyle == .TitleOnly {
+            return titleView().describe(context, modifiers)
+        }
+        if modifiers.labelStyle == .IconOnly {
+            return iconView().describe(context, modifiers)
+        }
+        // Across the top of a menu a label STACKS: the glyph over the title,
+        // centered, because the actions are columns rather than rows. Same
+        // declaration; the environment decides which way it reads. The
+        // platform sets these heavier than a row: the glyph filled, the title
+        // semibold.
+        let menu = menuMetrics(modifiers)
+        if modifiers.controlPresentation == .MenuAction {
+            let stacked = VStack(spacing: .Length(menu.actionSpacing), alignment: .Center) {
+                iconView()
+                .symbolVariant(.Fill)
+                .font(size: resolvedLength(menu.actionIconSize), weight: .SemiBold)
+
+                titleView()
+                .font(size: resolvedLength(menu.actionLabelSize), weight: .SemiBold)
+            }
+            .fillWidth()
+            return stacked.describe(context, modifiers)
+        }
+        // On a phone's tab bar a label stacks too: the kit's tab sets its glyph,
+        // filled, on a line of its own over its title. Both weigh what UIKit's
+        // tab bar item sets them at: the glyph medium at the large scale, the
+        // title the medium system font.
+        if modifiers.controlPresentation == .PhoneTabBar {
+            let bar = phoneTabBarMetrics
+            let stacked = VStack(spacing: .Length(bar.titleSpacing), alignment: .Center) {
+                iconView()
+                .symbolVariant(.Fill)
+                .imageScale(.Large)
+                .font(size: resolvedLength(bar.symbolSize), weight: .Medium)
+                .height(resolvedLength(bar.symbolLine))
+
+                titleView()
+                .font(size: resolvedLength(bar.titleSize), weight: .SemiBold)
+                .height(resolvedLength(bar.titleLine))
+            }
+            return stacked.describe(context, modifiers)
+        }
+        // The glyph is centered in a fixed column, not against its leading edge.
+        // Glyphs differ in width — a chevron is narrow, a folder is wide — so
+        // aligning them to an edge lines up their BOXES and leaves their ink
+        // ragged, and the titles beside them with it. Centering lines up what the
+        // eye actually reads, which is why every platform column of icons is
+        // centered.
+        //
+        // In a menu the glyph is the row's own ink, in a column of the menu's
+        // measure with air before the title; elsewhere it is a quieter mark in
+        // the shared gutter.
+        // A menu's glyph is drawn a cut heavier than its title, as the
+        // platform's are: its strokes read as the title's stems do.
+        //
+        // A label with no glyph is its title alone, flush with the rows a
+        // plain button titles.
+        if modifiers.controlPresentation == .MenuRow {
+            if !hasIcon(context, modifiers) {
+                return titleView().describe(context, modifiers)
+            }
+            let row = HStack(spacing: .Length(menu.iconGap), alignment: .Center) {
+                ZStack(alignment: .Center) {
+                    iconView()
+                    .font(size: resolvedLength(menu.labelSize), weight: .SemiBold)
+                }
+                .width(resolvedLength(menu.iconColumn))
+
+                titleView()
+            }
+            .hugWidth()
+            return row.describe(context, modifiers)
+        }
+        // In a sidebar the glyph is the accent, in the sidebar's own column.
+        if modifiers.controlPresentation == .Sidebar || modifiers.controlPresentation == .SidebarCell {
+            let row = HStack(spacing: .Length(sidebarMetrics().titleSpacing), alignment: .Center) {
+                ZStack(alignment: .Center) {
+                    if hasIcon(context, modifiers) {
+                        iconView()
+                        .font(size: resolvedLength(sidebarMetrics().symbolSize))
+                        .foregroundColor(.Accent)
+                    }
+                }
+                .width(resolvedLength(sidebarMetrics().iconColumn))
+
+                titleView()
+            }
+            .hugWidth()
+            return row.describe(context, modifiers)
+        }
+        // In a grouped list a label is its title alone, or its glyph in the
+        // accent before it, set the way the kit sets a symbol row in either
+        // of its lists. The row's separator starts at the title, as SwiftUI's
+        // does under a label.
+        if modifiers.controlPresentation == .InsetGrouped {
+            let row = HStack(spacing: .Length(sidebarMetrics().titleSpacing), alignment: .Center) {
+                if hasIcon(context, modifiers) {
+                    ZStack(alignment: .Center) {
+                        iconView()
+                        .font(size: resolvedLength(sidebarMetrics().symbolSize))
+                        .foregroundColor(.Accent)
+                    }
+                    .width(resolvedLength(sidebarMetrics().iconColumn))
+                }
+
+                titleView()
+                .alignmentGuide(ListRowSeparatorLeading()) { dimensions in
+                    return dimensions.subscript(.Leading)
+                }
+            }
+            .hugWidth()
+            return row.describe(context, modifiers)
+        }
+        // Anywhere else the glyph is in the title's own ink, centered in the
+        // symbol column with the platform's gap before the title, as SwiftUI
+        // sets a `Label` on its own.
+        let label = HStack(spacing: .Length(sidebarMetrics().titleSpacing), alignment: .Center) {
+            if hasIcon(context, modifiers) {
+                ZStack(alignment: .Center) {
+                    iconView()
+                    .font(size: resolvedLength(sidebarMetrics().symbolSize))
+                }
+                .width(resolvedLength(sidebarMetrics().iconColumn))
+            }
+
+            titleView()
+        }
+        .hugWidth()
+        return label.describe(context, modifiers)
+    }
+}
+
+// One half of a label: the view written for it, or, while none is, the one
+// its string or symbol makes.
+construct LabelPart(fallback: Any Widget) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let written = content.describe(context, modifiers)
+        if describesNothing(written) {
+            return fallback.describe(context, modifiers)
+        }
+        return written
+    }
+}
+
+// SwiftUI's label styles: which halves of a label show. `Automatic` is the
+// platform's answer for where the label stands, which is both almost
+// everywhere.
+public enum LabelStyle {
+    Automatic
+    TitleAndIcon
+    TitleOnly
+    IconOnly
+}
+
+public construct LabelStyleLayer(style: LabelStyle) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        return content.describe(
+            context,
+            modifierContextApply(modifiers, modifierDeltaLabelStyle(style))
+        )
+    }
+}
+
+public construct LabelsHiddenLayer() extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        return content.describe(
+            context,
+            modifierContextApply(modifiers, modifierDeltaLabelsHidden(true))
+        )
+    }
+}
+
+public struct PickerState {
+    var openKey: Number = 0
+    // The bounds of the button that opened the list, in canvas coordinates:
+    // what the list floats over.
+    var anchorX: Number = 0.0
+    var anchorY: Number = 0.0
+    var anchorW: Number = 0.0
+    var anchorH: Number = 0.0
+}
+
+// The slot, made the first time it is asked for. A writer recovers it in
+// place after this: a recovered value handed back out of a function is a
+// copy, and what was written to it would be lost.
+public function pickerEnsure() {
+    if !ambientStateHas(StateSlot.picker) {
+        ambientStatePut(StateSlot.picker, nativeUserData(nativeState(PickerState {})))
+    }
+}
+
+// The state as it stands, to read.
+public function pickerState() -> PickerState {
+    pickerEnsure()
+    return nativeRecover<PickerState>(ambientStateGet(StateSlot.picker))
+}
+
+public function openPickerKey() -> Number {
+    return pickerState().openKey
+}
+
+public function setOpenPickerKey(key: Number) {
+    pickerEnsure()
+    var state = nativeRecover<PickerState>(ambientStateGet(StateSlot.picker))
+    state.openKey = key
+    // Opened by a press, the list hangs from the region the press fired on.
+    if key != 0 {
+        state.anchorX = pressBoundsX()
+        state.anchorY = pressBoundsY()
+        state.anchorW = pressBoundsW()
+        state.anchorH = pressBoundsH()
+    }
+}
+
+public function pickerToggleFn(key: Number) -> () -> Void {
+    let target = key
+    let press: () -> Void = { in
+        if openPickerKey() == target {
+            setOpenPickerKey(0)
+        } else {
+            setOpenPickerKey(target)
+        }
+        return
+    }
+    return press
+}
+
+// The row of a picker's list `entry` is: its option, in the accent when it is
+// the selection, pressed to select it and close the list.
+public function pickerOption(
+    entry: TagEntry,
+    checks: Bool,
+    content: borrow Any Widget,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    // In a menu an option is one of its rows, the chosen one checked in the
+    // row's glyph column, and choosing one closes the menu. With nothing
+    // chosen there is no column, as a menu with no item on has none.
+    if modifiers.controlPresentation == .MenuRow {
+        if !checks {
+            let row = Button(action: entry.select) {
+                content
+            }
+            .accessibilityAddTraits(pickerOptionTraits(false))
+            return row.describe(context, modifiers)
+        }
+        let row = Button(action: entry.select) {
+            Label {
+                content
+            } icon: {
+                Icon(symbol: .Checkmark).opacity(entry.selected ? 1.0 : 0.0)
+            }
+        }
+        .accessibilityAddTraits(pickerOptionTraits(entry.selected))
+        return row.describe(context, modifiers)
+    }
+    // The list a picker opens is a menu, as a platform picker's is, so its
+    // rows take the menu's geometry.
+    let menu = menuMetrics(modifiers)
+    let select = entry.select
+    let row = HStack(spacing: .Small, alignment: .Center) {
+        content
+        .foregroundColor(entry.selected ? .Accent : .Primary)
+
+        Spacer()
+    }
+    .edgePadding(edges: EdgeSet.leading, length: resolvedLength(menu.leadingInset))
+    .edgePadding(edges: EdgeSet.trailing, length: resolvedLength(menu.trailingInset))
+    .height(resolvedLength(menu.rowHeight))
+    .onClick(
+        { in
+            select()
+            setOpenPickerKey(0)
+            return
+        }
+    )
+    .accessibilityAddTraits(pickerOptionTraits(entry.selected))
+    var described = row.describe(context, modifiers)
+    // The row under the pointer lights, as a menu's does on a Mac.
+    if described.hitKey != 0 && interfaceHovers() {
+        described.hoverColor = menuRowWash(modifiers)
+    }
+    return described
+}
+
+// One segment of a segmented picker: its option, as wide as it reads, on a
+// lighter capsule while it is the selection. Held, it lifts into a lens of
+// Liquid Glass, larger than the segment, as the platform's control does under
+// a finger; let go, it is chosen.
+public function pickerSegment(
+    entry: TagEntry,
+    content: borrow Any Widget,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let metrics = resolvedControlSizeMetrics(modifiers)
+    let key = tapSeqKey()
+    let held = context.heldKey == key
+    let label = HStack(spacing: .Small, alignment: .Center) {
+        content
+        .lineLimit(1)
+    }
+    .inset(horizontal: .Medium, vertical: .None)
+    .height(resolvedLength(metrics.height))
+    .hugWidth()
+    if held {
+        let lens = label
+        .glassEffect()
+        .scaleEffect(1.12)
+        .zIndex(1.0)
+        .onClickKeyed(key, entry.select, .Capsule)
+        .accessibilityElement(children: .Combine)
+        .accessibilityAddTraits(pickerOptionTraits(entry.selected))
+        return lens.describe(context, modifiers)
+    }
+    let segment = label
+    .background(Capsule())
+    .backgroundStyle(entry.selected ? .Raised : .Clear)
+    .onClickKeyed(key, entry.select, .Capsule)
+    .accessibilityElement(children: .Combine)
+    .accessibilityAddTraits(pickerOptionTraits(entry.selected))
+    return segment.describe(context, modifiers)
+}
+
+// An option in a picker's list is pressed as a button is, and is selected
+// while it is the selection.
+function pickerOptionTraits(selected: Bool) -> AccessibilityTraits {
+    if selected {
+        return AccessibilityTraits.isButton.union(AccessibilityTraits.isSelected)
+    }
+    return AccessibilityTraits.isButton
+}
+
+// A choice among values, as SwiftUI's `Picker` is: the row its title names,
+// holding the option chosen and a chevron that opens the list of them all
+// under it. Each option is a view tagged with its value (Tag.kira), and the
+// one whose tag is the selection is the one shown.
+//
+//     @State var flavor: Flavor = .chocolate
+//
+//     Picker(title: "Flavor", selection: $flavor) {
+//         Text("Chocolate").tag(Flavor.chocolate)
+//         Text("Vanilla").tag(Flavor.vanilla)
+//     }
+// SwiftUI's `PickerStyle`, of the ones drawn here: the platform's,
+// `.inline`, the options set in place as rows, and `.segmented`, the options
+// side by side on one control, the chosen one raised.
+public enum PickerStyle {
+    Automatic
+    Menu
+    Inline
+    Segmented
+}
+
+@Instance(Number)
+@Instance(String)
+public construct Picker<SelectionValue>(
+    title: String,
+    selection: Binding<SelectionValue>
+) extends Widget {
+    let children: [some Widget]
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        // Inline, and in a menu, the options are rows in place, as SwiftUI's
+        // `.inline` sets them.
+        if modifiers.pickerStyle == .Inline || modifiers.controlPresentation == .MenuRow {
+            tagSelectionSeen(false)
+            let asked = TagScope(selector: tagSelector(.PickerSelected, selection)) {
+                VStack(spacing: .None, alignment: .Leading) {
+                    For(option in children) {
+                        option
+                    }
+                }
+            }
+            asked.describe(context, modifiers)
+            var selector = tagSelector(.PickerOption, selection)
+            selector.checks = tagSelectionSeen(false)
+            let options = TagScope(selector: move selector) {
+                VStack(spacing: .None, alignment: .Leading) {
+                    For(option in children) {
+                        option
+                    }
+                }
+            }
+            return options.describe(context, modifiers)
+        }
+        // Segmented, the options share one filled capsule, the chosen one on a
+        // lighter capsule of its own, as SwiftUI's `.segmented`
+        // draws them. A segment pressed lifts into a lens of Liquid Glass until
+        // it is let go, and is chosen.
+        if modifiers.pickerStyle == .Segmented {
+            let segments = TagScope(selector: tagSelector(.PickerSegment, selection)) {
+                HStack(spacing: .None, alignment: .Center) {
+                    For(option in children) {
+                        option
+                    }
+                }
+            }
+            .padding(resolvedLength(2.0))
+            .background(Capsule())
+            .backgroundStyle(.Control)
+            .hugWidth()
+            .accessibilityElement(children: .Contain)
+            .accessibilityLabel(copy title)
+            if modifiers.labelsHidden || title.count == 0 {
+                return segments.describe(context, modifiers)
+            }
+            let labeled = HStack(spacing: .Small, alignment: .Center) {
+                Text(content: copy title)
+                .accessibilityHidden(true)
+                segments
+            }
+            return labeled.describe(context, modifiers)
+        }
+        let key = tapSeqKey()
+        let open = openPickerKey() == key
+        // Under `.labelsHidden()` the picker is its control alone.
+        var shownTitle = copy title
+        if modifiers.labelsHidden {
+            shownTitle = ""
+        }
+        // On a Mac a picker standing on its own is its title beside a pop-up
+        // button: the option chosen and a chevron on a button's bezel, as
+        // wide as they are.
+        if interfaceMode() == .AdaptiveDesktop && modifiers.controlPresentation == .Standalone {
+            let popUp = popUpMetrics(modifiers.controlSize)
+            // The title stands centered on the button, not on the list the
+            // button opens under itself. An empty one is no title, so the
+            // button stands where the picker does.
+            let labeled = HStack(alignment: .Top) {
+                // The title names the pop-up, which reads it.
+                if shownTitle.count > 0 {
+                    ZStack(alignment: .Leading) {
+                        Text(content: shownTitle)
+                    }
+                    .height(resolvedLength(popUp.height))
+                    .accessibilityHidden(true)
+                }
+
+                VStack(spacing: .ExtraSmall, alignment: .Leading) {
+                    HStack(spacing: .Length(popUp.chevronSpacing), alignment: .Center) {
+                        TagScope(selector: tagSelector(.PickerValue, selection)) {
+                            ZStack(alignment: .Leading) {
+                                For(option in children) {
+                                    option
+                                }
+                            }
+                            .hugWidth()
+                        }
+
+                        Icon(symbol: .ChevronUpChevronDown)
+                        .font(size: resolvedLength(popUp.chevronSize))
+                    }
+                    .height(resolvedLength(popUp.height))
+                    .edgePadding(edges: EdgeSet.leading, length: resolvedLength(popUp.leadingInset))
+                    .edgePadding(
+                        edges: EdgeSet.trailing,
+                        length: resolvedLength(popUp.trailingInset)
+                    )
+                    .background(
+                        RoundedRectangle(
+                            cornerRadius: resolvedControlSizeMetrics(modifiers).cornerRadius,
+                            style: .Continuous
+                        ).backgroundStyle(.Control)
+                    )
+                    .hugWidth()
+                    .onClick(pickerToggleFn(key))
+                    .pickerButton(title: shownTitle, press: pickerToggleFn(key))
+
+                }
+                .hugWidth()
+            }
+            .hugWidth()
+            let described = labeled.describe(context, modifiers)
+            if open {
+                self.presentList(context, modifiers, 0.0)
+            }
+            return described
+        }
+        let picker = LabeledContent(label: shownTitle) {
+            VStack(spacing: .ExtraSmall, alignment: .Leading) {
+                HStack(spacing: .ExtraSmall, alignment: .Center) {
+                    TagScope(selector: tagSelector(.PickerValue, selection)) {
+                        ZStack(alignment: .Leading) {
+                            For(option in children) {
+                                option
+                            }
+                        }
+                        .hugWidth()
+                    }
+
+                    Icon(symbol: .ChevronUpChevronDown)
+                    .imageScale(.Small)
+                    .foregroundColor(.Secondary)
+                }
+                .hugWidth()
+                .onClick(pickerToggleFn(key))
+                .pickerButton(title: shownTitle, press: pickerToggleFn(key))
+
+            }
+            .hugWidth()
+        }
+        let described = picker.describe(context, modifiers)
+        if open {
+            self.presentList(context, modifiers, 1.0)
+        }
+        return described
+    }
+
+    // The list, open: a menu floating over the button that opened it, as a
+    // Mac's pop-up button opens its menu over itself, so nothing under it
+    // moves. `alignment` is the edge it shares with the button, 0 the leading
+    // and 1 the trailing. A press anywhere off it closes it.
+    function presentList(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext,
+        alignment: Number
+    ) {
+        let band = tapSeqEnterOverlay()
+        let away = tapSeqKey()
+        layerActionRegister(
+            away,
+            { in
+                setOpenPickerKey(0)
+                return
+            }
+        )
+        var list = PickerList(selection: selection) {
+            For(option in children) {
+                option
+            }
+        }
+        .describe(context, modifierContextForOverlay(modifiers))
+        let state = pickerState()
+        let size = list.measure(context.viewportWidth)
+        let menuWidth = max(min(size.width, PickerListMetrics.widest), state.anchorW)
+        let menuHeight = min(size.height, context.viewportHeight * 0.7)
+        if size.height > menuHeight {
+            list = ScrollView {
+                PickerList(selection: selection) {
+                    For(option in children) { option }
+                }
+            }
+            .frame(width: menuWidth, height: menuHeight)
+            .describe(context, modifierContextForOverlay(modifiers))
+        }
+        list.layout.fixedWidth = menuWidth
+        list.layout.fixedHeight = menuHeight
+        tapSeqLeaveOverlay(band)
+        overlayPresent(
+            Overlay {
+                anchorX: state.anchorX,
+                anchorY: state.anchorY,
+                anchorW: state.anchorW,
+                anchorH: state.anchorH,
+                z: OverlayLevel.surface,
+                content: move list,
+                spacing: -state.anchorH,
+                alignment: alignment,
+                dismissKey: away
+            }
+        )
+    }
+}
+
+// How wide a picker's list stands at most, its options' own width up to it.
+namespace PickerListMetrics {
+    let widest: Number = 240.0
+}
+
+// The button a picker opens its list with, to assistive technology: a pop-up
+// named by the picker's title, reading the option chosen as its value.
+construct PickerButtonLayer(title: String, press: () -> Void) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var described = content.describe(context, modifiers)
+        var chosen = AccessibilityNode {}
+        for key in described.accessibilityElementsWithin() {
+            chosen.absorb(accessibilityNode(key))
+        }
+        var node = accessibilityPressable(.PopUpButton, press, modifiers)
+        node.label = copy title
+        node.value = move chosen.label
+        described.accessibilityClear()
+        described.accessibilityElementOf(move node)
+        return described
+    }
+}
+
+extend Widget {
+    function pickerButton(title: String, press: () -> Void) -> Any Widget {
+        return PickerButtonLayer(title: title, press: press) {
+            self
+        }
+    }
+}
+
+// The options a picker opens, as a menu's card under it: each a row of the
+// menu's geometry, the one chosen in the accent.
+construct PickerList<SelectionValue>(selection: Binding<SelectionValue>) extends Widget {
+    let children: [some Widget]
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let menu = menuMetrics(modifiers)
+        let list = TagScope(selector: tagSelector(.PickerOption, selection)) {
+            VStack(spacing: .None, alignment: .Leading) {
+                For(option in children) {
+                    option
+                }
+            }
+        }
+        .padding(length: resolvedLength(menu.cardPadding))
+        .background(RoundedRectangle(cornerRadius: menu.cardRadius, style: .Continuous))
+        .backgroundStyle(.Overlay)
+        .themeBorder(.Subtle)
+        .hugHeight()
+        return list.describe(context, modifiers)
+    }
+}

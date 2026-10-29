@@ -1,0 +1,210 @@
+import Foundation
+import KiraUI
+
+// What a view is to assistive technology: the elements it makes, what each
+// says, and what the accessibility modifiers change about them.
+
+function kuiElements(root: Any Widget) -> [AccessibilityElement] {
+    return accessibilityElementsForTest(move root, 400, 300)
+}
+
+// Each text is an element that reads its words, in the order written.
+construct KuiTextIsStaticText() extends Test {
+    test {
+        let elements = kuiElements( VStack { Text(content: "One") Text(content: "Two") } )
+        return "\(elements.count) \(elements[0].label) \(elements[1].label) \(elements[0].role == .StaticText)"
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok("2 One Two true")
+        return expected
+    }
+}
+
+// A button is one element, reading its label, that presses.
+construct KuiButtonCombinesItsLabel() extends Test {
+    test {
+        var pressed = 0
+        let elements = kuiElements( Button( action: { in pressed = pressed + 1 } ) { HStack { Text(content: "Send") Text(content: "Now") } } )
+        let activated = elements[0].activate()
+        return "\(elements.count) \(elements[0].label) \(elements[0].role == .Button) \(activated) \(pressed)"
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok("1 Send, Now true true 1")
+        return expected
+    }
+}
+
+// The label, value, hint and identifier modifiers say what is stated.
+construct KuiModifiersDescribeTheElement() extends Test {
+    test {
+        let elements = kuiElements( Text(content: "80").accessibilityLabel("Battery").accessibilityValue( "80%" ).accessibilityHint("Charging").accessibilityIdentifier("battery") )
+        let element = elements[0]
+        return "\(element.label)|\(element.value)|\(element.hint)|\(element.identifier)"
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok("Battery|80%|Charging|battery")
+        return expected
+    }
+}
+
+// Combining children reads them as one element.
+construct KuiCombineMergesChildren() extends Test {
+    test {
+        let elements = kuiElements( HStack { Text(content: "Battery") Text(content: "80%") }.accessibilityElement(children: .Combine) )
+        return "\(elements.count) \(elements[0].label)"
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok("1 Battery, 80%")
+        return expected
+    }
+}
+
+// Containing children keeps them, inside a group.
+construct KuiContainHoldsChildren() extends Test {
+    test {
+        let elements = kuiElements( VStack { Text(content: "One") Text(content: "Two") }.accessibilityElement(children: .Contain).accessibilityIdentifier("list") )
+        let group = elements[0]
+        return "\(elements.count) \(group.role == .Group) \(group.identifier) \(group.children.count)"
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok("1 true list 2")
+        return expected
+    }
+}
+
+// A hidden view shows nothing, whatever is said about it outside.
+construct KuiHiddenShowsNothing() extends Test {
+    test {
+        let elements = kuiElements( VStack { Text(content: "Shown") Text(content: "Gone").accessibilityHidden(true).accessibilityLabel("Still gone") } )
+        return "\(elements.count) \(elements[0].label)"
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok("1 Shown")
+        return expected
+    }
+}
+
+// A shape given a label becomes an element.
+construct KuiLabelMakesAShapeAnElement() extends Test {
+    test {
+        let elements = kuiElements(Circle().accessibilityLabel("Online"))
+        return "\(elements.count) \(elements[0].label) \(elements[0].role == .Other)"
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok("1 Online true")
+        return expected
+    }
+}
+
+// A higher sort priority is visited first.
+construct KuiSortPriorityOrders() extends Test {
+    test {
+        let elements = kuiElements( VStack { Text(content: "Second") Text(content: "First").accessibilitySortPriority(1) } )
+        return "\(elements[0].label) \(elements[1].label)"
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok("First Second")
+        return expected
+    }
+}
+
+// Each element stands where layout put it: the second text below the first.
+construct KuiFramesFollowLayout() extends Test {
+    test {
+        let elements = kuiElements( VStack { Text(content: "One") Text(content: "Two") } )
+        return elements[1].frame.y > elements[0].frame.y && elements[0].frame.height > 0
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok(true)
+        return expected
+    }
+}
+
+// A toggle reads its title and state, and flips.
+construct KuiToggleReadsAndFlips() extends Test {
+    test {
+        var flippedTo = false
+        let elements = kuiElements( Toggle( title: "Wi-Fi", isOn: false, onChange: { on in flippedTo = on } ) )
+        let toggle = elements[0]
+        let activated = toggle.activate()
+        return "\(elements.count) \(toggle.label) \(toggle.value) \(activated) \(flippedTo)"
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok("1 Wi-Fi 0 true true")
+        return expected
+    }
+}
+
+// A slider reads its share and steps when adjusted.
+construct KuiSliderAdjusts() extends Test {
+    test {
+        var moved: Number = 0
+        let elements = kuiElements( Slider( value: 0.5, onChange: { value in moved = value } ) )
+        let adjusted = elements[0].adjustValue(.Increment)
+        return "\(elements[0].value) \(adjusted) \(moved)"
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok("50% true 0.6")
+        return expected
+    }
+}
+
+// A named action is listed and runs.
+construct KuiNamedActionRuns() extends Test {
+    test {
+        var deleted = false
+        let elements = kuiElements( Text(content: "Mail").accessibilityAction( kind: .Named("Delete"), handler: { in deleted = true } ) )
+        let ran = elements[0].perform(.Named("Delete"))
+        return "\(ran) \(deleted)"
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok("true true")
+        return expected
+    }
+}
+
+// A text field reads its title, the text it holds, and its prompt.
+construct KuiTextFieldReadsItsText() extends Test {
+    test {
+        var name = "Ada"
+        let elements = kuiElements( TextField( title: "Name", text: Binding<String> { get: { in return name }, set: { value in name = value } }, prompt: "Your name" ) )
+        let field = elements[0]
+        return "\(elements.count) \(field.role == .TextField) \(field.label) \(field.value) \(field.placeholder)"
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok("1 true Name Ada Your name")
+        return expected
+    }
+}
+
+// A link is a link, not a button.
+construct KuiLinkIsALink() extends Test {
+    test {
+        let elements = kuiElements(Link(title: "Docs", destination: "https://example.com")) let link = elements[0] return "\(link.role == .Link) \(link.traits.has(AccessibilityTraits.isButton)) \(link.label)" } expect { let expected: Result<Any, TestFailure> = .Ok("true false Docs") return expected } }
+
+
+// A label reads its title once, its glyph a picture beside the words.
+construct KuiLabelReadsItsTitle() extends Test {
+    test {
+        let elements = kuiElements(Label(title: "Inbox", systemImage: .Tray))
+        return "\(elements.count) \(elements[0].label) \(elements[0].role == .StaticText)"
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok("1 Inbox true")
+        return expected
+    }
+}
+
+// A view represented by a toggle reads and flips as one.
+construct KuiRepresentationStandsIn() extends Test {
+    test {
+        var on = false
+        let elements = kuiElements( Circle().accessibilityRepresentation( representation: Toggle( title: "Power", isOn: false, onChange: { value in on = value } ) ) )
+        let activated = elements[0].activate()
+        return "\(elements.count) \(elements[0].label) \(activated) \(on)"
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok("1 Power true true")
+        return expected
+    }
+}

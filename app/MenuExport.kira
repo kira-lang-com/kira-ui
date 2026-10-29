@@ -1,0 +1,139 @@
+import Foundation
+import KCoreAnimation
+
+// The menu bar's menus as plain values, for a bar drawn by someone else.
+//
+// Where the system draws one menu bar across the screen for whichever
+// application is in front, the application does not draw its own: it hands
+// the system what its bar would hold, and the system hands back which command
+// was chosen. This is what it hands over. Each menu is lowered as the window's
+// bar lowers it, so every row is exactly the command the bar would show, and
+// its shortcut is bound as it would be; each row the lowering reaches is set
+// down as a title, a shortcut and whether it can be chosen, under a number
+// that runs its action.
+
+// One row of an exported menu, or the rule between two groups of rows.
+public struct ExportedMenuItem {
+    // What `menuBarPerform` runs it by. A rule has none.
+    var number: Number = 0
+    var title: String = ""
+    var shortcut: KeyboardShortcut = KeyboardShortcut {}
+    var enabled: Bool = true
+    var separator: Bool = false
+}
+
+// One menu of an exported bar.
+public struct ExportedMenu {
+    var title: String = ""
+    // The application's menu, whose title is set heavier.
+    var application: Bool = false
+    var items: [ExportedMenuItem] = []
+}
+
+// The rows set down while the menus lower, and the actions they run, in the
+// order they are numbered.
+public struct MenuExportSink {
+    var recording: Bool = false
+    var items: [ExportedMenuItem] = []
+    var actions: [() -> Void] = []
+}
+
+public function menuExportEnsure() {
+    if !ambientStateHas(StateSlot.menuExport) {
+        ambientStatePut(StateSlot.menuExport, nativeUserData(nativeState(MenuExportSink {})))
+    }
+}
+
+// Sets a menu row down, while the menus are being exported: the row titled
+// `title`, answering `shortcut`, which runs `action`.
+public function menuExportRow(
+    title: String,
+    shortcut: borrow KeyboardShortcut,
+    enabled: Bool,
+    action: () -> Void
+) {
+    menuExportEnsure()
+    var sink = nativeRecover<MenuExportSink>(ambientStateGet(StateSlot.menuExport))
+    if !sink.recording {
+        return
+    }
+    sink.items.append(
+        ExportedMenuItem {
+            number: sink.actions.count,
+            title: title,
+            shortcut: copy shortcut,
+            enabled: enabled
+        }
+    )
+    sink.actions.append(action)
+}
+
+public function menuExportCount() -> Number {
+    menuExportEnsure()
+    let sink = nativeRecover<MenuExportSink>(ambientStateGet(StateSlot.menuExport))
+    return sink.items.count + sink.actions.count
+}
+
+// Whether the menus are being exported: what a row lowers to then is never
+// drawn, so a row has only to be set down.
+public function menuExportRecording() -> Bool {
+    menuExportEnsure()
+    return nativeRecover<MenuExportSink>(ambientStateGet(StateSlot.menuExport)).recording
+}
+
+// Sets a rule down between two groups of rows, while the menus are being
+// exported.
+public function menuExportSeparator() {
+    menuExportEnsure()
+    var sink = nativeRecover<MenuExportSink>(ambientStateGet(StateSlot.menuExport))
+    if !sink.recording {
+        return
+    }
+    sink.items.append(ExportedMenuItem { separator: true })
+}
+
+// The window's menu bar as exported menus. Every menu lowers as the window's
+// bar would lower it, so its commands' shortcuts are bound, and the actions
+// numbered here run until the next export.
+public function menuBarExport(
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext
+) -> [ExportedMenu] {
+    menuExportEnsure()
+    var sink = nativeRecover<MenuExportSink>(ambientStateGet(StateSlot.menuExport))
+    var noActions: [() -> Void] = []
+    sink.actions = move noActions
+    var exported: [ExportedMenu] = []
+    for menu in menuBarMenus(declaredCommands()) {
+        var noItems: [ExportedMenuItem] = []
+        sink.items = move noItems
+        sink.recording = true
+        let band = tapSeqEnterOverlay()
+        let lowered = ContextMenu() {
+            menu.items
+        }
+        .describe(context, modifierContextForOverlay(modifiers))
+        tapSeqLeaveOverlay(band)
+        sink.recording = false
+        exported.append(
+            ExportedMenu {
+                title: copy menu.title,
+                application: menu.application,
+                items: copy sink.items
+            }
+        )
+    }
+    return exported
+}
+
+// Runs the action exported under `number`, as choosing its row would. False
+// when no row of the last export has that number.
+public function menuBarPerform(number: Number) -> Bool {
+    menuExportEnsure()
+    let sink = nativeRecover<MenuExportSink>(ambientStateGet(StateSlot.menuExport))
+    if number < 0 || number >= sink.actions.count {
+        return false
+    }
+    sink.actions[number]()
+    return true
+}

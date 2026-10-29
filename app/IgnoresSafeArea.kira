@@ -1,0 +1,68 @@
+import Foundation
+import KiraLayout
+import KCoreAnimation
+
+// SwiftUI's `.ignoresSafeArea(_:edges:)`: a view laid out inside the safe area
+// drawn on out past it, to the window's edge, on the edges named. Its box in
+// the layout stays where it was, so nothing beside it moves; only what it
+// draws, and what takes the press, reaches under the chrome.
+//
+//     Wallpaper()
+//     .ignoresSafeArea()
+
+// SwiftUI's `SafeAreaRegions`: what makes the safe area a view ignores. The
+// keyboard keeps none here, so ignoring it alone changes nothing.
+public enum SafeAreaRegions {
+    All
+    Container
+    Keyboard
+}
+
+public construct IgnoresSafeAreaLayer(regions: SafeAreaRegions, edges: EdgeSet) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        if regions == .Keyboard {
+            return content.describe(context, modifiers)
+        }
+        let insets = EdgeInsets {
+            top: edges.has(EdgeSet.top) ? context.safeArea.top : 0.0,
+            leading: edges.has(EdgeSet.leading) ? context.safeArea.leading : 0.0,
+            bottom: edges.has(EdgeSet.bottom) ? context.safeArea.bottom : 0.0,
+            trailing: edges.has(EdgeSet.trailing) ? context.safeArea.trailing : 0.0
+        }
+        var inner = copy context
+        inner.safeArea.top = inner.safeArea.top - insets.top
+        inner.safeArea.leading = inner.safeArea.leading - insets.leading
+        inner.safeArea.bottom = inner.safeArea.bottom - insets.bottom
+        inner.safeArea.trailing = inner.safeArea.trailing - insets.trailing
+        let described = content.describe(inner, modifiers)
+        return CALayerDescription {
+            layout: surfaceFootprint(described.layout),
+            sizedContentKey: sizedContentKey(
+                { size in
+                    var reaching = copy described
+                    reaching.layout.fixedWidth = size.width + insets.leading + insets.trailing
+                    reaching.layout.fixedHeight = size.height + insets.top + insets.bottom
+                    reaching.layout.offset = Point { x: -insets.leading, y: -insets.top }
+                    return reaching
+                }
+            )
+        }
+    }
+}
+
+extend Widget {
+    // SwiftUI's `.ignoresSafeArea(_:edges:)`.
+    function ignoresSafeArea(
+        regions: SafeAreaRegions = .All,
+        edges: EdgeSet = EdgeSet.all
+    ) -> Any Widget {
+        return IgnoresSafeAreaLayer(regions: regions, edges: edges) {
+            self
+        }
+    }
+}

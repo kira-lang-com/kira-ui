@@ -1,0 +1,91 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// The retained-tree spine: a widget's `describe()` produces the
+// `CALayerDescription` the compositor reconciles into its `CALayerTree`.
+//
+// These prove the shape of that output rather than any pixel: a container hands
+// down its children, a leaf carries content, a modifier sets a layer property,
+// and the whole thing reconciles into a real retained tree.
+
+// A stack hands each child down as a sublayer, in order.
+@Test
+function stackDescribesEachChildInOrder() {
+    let described = describedLayer(
+        VStack(spacing: .None) {
+            Text(content: "A")
+
+            Text(content: "B")
+
+            Text(content: "C")
+        }
+    )
+    expect!((described.sublayers.count) == (3))
+    expect!((textRunOf(described.sublayers[0]).content) == ("A"))
+    expect!((textRunOf(described.sublayers[1]).content) == ("B"))
+    expect!((textRunOf(described.sublayers[2]).content) == ("C"))
+}
+
+// A leaf run of text carries its text as its content and has no children.
+@Test
+function textDescribesAsTextContent() {
+    let described = describedLayer(Text(content: "Hello"))
+    expect!((textRunOf(described).content) == ("Hello"))
+    expect!((described.sublayers.count) == (0))
+}
+
+// `.opacity(...)` sets the layer's opacity on the layer it modifies rather than
+// wrapping it in a node of its own.
+@Test
+function opacityDescribesAsLayerOpacity() {
+    let described = describedLayer(Text(content: "X").opacity(0.5))
+    expect!((described.opacity) == (0.5))
+    expect!((textRunOf(described).content) == ("X"))
+    expect!((described.sublayers.count) == (0))
+}
+
+// Layout stacks a column's children top to bottom: the second sits below the
+// first, and both took a real height.
+@Test
+function layoutStacksAColumnTopToBottom() {
+    var root = describedLayer(
+        VStack(spacing: .None) {
+            Text(content: "First")
+
+            Text(content: "Second")
+        }
+    )
+    root.layoutTree(320.0, 480.0)
+    expect!((root.sublayers.count) == (2))
+    let top = root.sublayers[0]
+    let below = root.sublayers[1]
+    expect!((below.position.y > top.position.y) == (true))
+    expect!((top.size.height > 0.0) == (true))
+    expect!((below.size.height > 0.0) == (true))
+}
+
+// A fixed-size layer takes its fixed extent, not the offered one.
+@Test
+function layoutHonoursAFixedSize() {
+    var root = describedLayer(Rectangle().width(resolvedLength(40.0)).height(resolvedLength(24.0)))
+    root.layoutTree(320.0, 480.0)
+    expect!((root.size.width) == (40.0))
+    expect!((root.size.height) == (24.0))
+}
+
+// The whole description reconciles into a retained tree with a real root layer.
+@Test
+function descriptionReconcilesIntoATree() {
+    let described = describedLayer(
+        VStack(spacing: .None) {
+            Text(content: "A")
+
+            Text(content: "B")
+        }
+    )
+    var tree = layerTree()
+    let rootId = tree.reconcile(described)
+    expect!((rootId != Layers.none) == (true))
+    expect!((tree.isMounted(rootId)) == (true))
+}

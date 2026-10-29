@@ -1,0 +1,188 @@
+import Foundation
+import KCoreAnimation
+
+// A `Grid`: its `GridRow`s' cells stand in columns, each column as wide as its
+// widest cell and each row as tall as its tallest, as SwiftUI's `Grid` lays
+// them out. A cell that spans several columns (`.gridCellColumns(_:)`) and is
+// wider than they come to widens each of them by the same amount. A view
+// outside a `GridRow` is a row of its own, across every column. The width a
+// grid is offered past what its cells want goes to the columns holding a cell
+// that fills, shared evenly.
+
+// A grid's columns: how wide each is, and the gap between two.
+struct GridColumns {
+    var widths: [Number] = []
+    let gap: Number
+}
+
+extend GridColumns {
+    // How wide every column comes to with the gaps between them.
+    function span() -> Number {
+        return self.width(0, self.widths.count)
+    }
+
+    // How far in from the grid's leading edge `column` starts.
+    function leading(column: Number) -> Number {
+        var x: Number = 0.0
+        for i in 0..column { x = x + self.widths[i] + self.gap }
+        return x
+    }
+
+    // How wide the `count` columns from `column` come to with the gaps
+    // between them.
+    function width(column: Number, count: Number) -> Number {
+        var sum: Number = 0.0
+        for i in column..(column + count) { sum = sum + self.widths[i] }
+        return sum + self.gap * max(count - 1, 0)
+    }
+}
+
+extend CALayerDescription {
+    // How many columns the grid has: as many as its widest row's cells span.
+    function gridColumnCount() -> Number {
+        var count = 0
+        for row in self.sublayers {
+            if !row.layout.gridRow { continue }
+            var spanned = 0
+            for cell in row.sublayers { spanned = spanned + max(cell.layout.gridCellColumns, 1) }
+            count = max(count, spanned)
+        }
+        return count
+    }
+
+    // The columns as the cells want them, each measured at `width`: a column
+    // as wide as its widest cell of one column, and then the columns a wider
+    // spanning cell covers widened to hold it.
+    function gridColumns(borrow mut self, width: Number) -> GridColumns {
+        var columns = GridColumns { gap: self.layout.gridColumnSpacing }
+        let count = self.gridColumnCount()
+        for i in 0..count { columns.widths.append(0.0) }
+        for pass in 0..2 {
+            for r in 0..self.sublayers.count {
+                if !self.sublayers[r].layout.gridRow { continue }
+                var column = 0
+                for c in 0..self.sublayers[r].sublayers.count {
+                    let span = min(
+                        max(self.sublayers[r].sublayers[c].layout.gridCellColumns, 1),
+                        count - column
+                    )
+                    let wanted = self.sublayers[r].sublayers[c].measureLaid(width).width
+                    if pass == 0 && span == 1 {
+                        columns.widths[column] = max(columns.widths[column], wanted)
+                    }
+                    let short = wanted - columns.width(column, span)
+                    if pass == 1 && span > 1 && short > 0.0 {
+                        for i in column..(column + span) {
+                            columns.widths[i] = columns.widths[i] + short / span
+                        }
+                    }
+                    column = column + span
+                }
+            }
+        }
+        return columns
+    }
+
+    // The columns of a grid placed `width` wide: as the cells want them, and
+    // the columns holding a cell that fills sharing what is left over.
+    function gridColumnsOffered(borrow mut self, width: Number) -> GridColumns {
+        var columns = self.gridColumns(width)
+        let leftover = width - columns.span()
+        if leftover <= 0.0 { return columns }
+        var fills: [Bool] = []
+        for i in 0..columns.widths.count { fills.append(false) }
+        for row in self.sublayers {
+            if !row.layout.gridRow { continue }
+            var column = 0
+            for cell in row.sublayers {
+                let span = min(max(cell.layout.gridCellColumns, 1), columns.widths.count - column)
+                if cell.layout.widthFlexible() {
+                    for i in column..(column + span) { fills[i] = true }
+                }
+                column = column + span
+            }
+        }
+        var filling = 0
+        for fill in fills { if fill { filling = filling + 1 } }
+        if filling == 0 { return columns }
+        for i in 0..columns.widths.count {
+            if fills[i] { columns.widths[i] = columns.widths[i] + leftover / filling }
+        }
+        return columns
+    }
+
+    // How tall row `r` is: its tallest cell, each measured at the width of the
+    // columns it spans, or the view itself across every column.
+    function gridRowHeight(borrow mut self, r: Number, columns: borrow GridColumns) -> Number {
+        if !self.sublayers[r].layout.gridRow {
+            return self.sublayers[r].measureLaid(columns.span()).height
+        }
+        var tallest: Number = 0.0
+        var column = 0
+        for c in 0..self.sublayers[r].sublayers.count {
+            let span = min(
+                max(self.sublayers[r].sublayers[c].layout.gridCellColumns, 1),
+                columns.widths.count - column
+            )
+            let cell = self.sublayers[r].sublayers[c].measureLaid(columns.width(column, span))
+            tallest = max(tallest, cell.height)
+            column = column + span
+        }
+        return tallest
+    }
+
+    // What a grid's rows come to, `width` wide at most.
+    function gridRowsSize(borrow mut self, width: Number) -> Size {
+        let columns = self.gridColumns(width)
+        var height: Number = 0.0
+        for r in 0..self.sublayers.count { height = height + self.gridRowHeight(r, columns) }
+        return Size {
+            width: columns.span(),
+            height: height + self.layout.spacing * max(self.sublayers.count - 1, 0)
+        }
+    }
+
+    // Places the rows down the inner box from `originX`, `originY`: each cell
+    // in the columns it spans, where its row's alignment says or else the
+    // grid's, and the columns together across the box where the grid's says.
+    function placeGridRows(borrow mut self, originX: Number, originY: Number, innerWidth: Number) {
+        let intent = self.layout
+        let columns = self.gridColumnsOffered(innerWidth)
+        let span = columns.span()
+        let leading = originX + max(innerWidth - span, 0.0) * intent.alignment.x
+        var top = originY
+        for r in 0..self.sublayers.count {
+            let height = self.gridRowHeight(r, columns)
+            if !self.sublayers[r].layout.gridRow {
+                self.sublayers[r].place(span, height)
+                let child = self.sublayers[r].size
+                self.sublayers[r].position = pixelAligned(
+                    leading + (span - child.width) * intent.alignment.x,
+                    top + (height - child.height) * intent.alignment.y
+                )
+                top = top + height + intent.spacing
+                continue
+            }
+            self.sublayers[r].size = Size { width: span, height: height }
+            self.sublayers[r].position = pixelAligned(leading, top)
+            let rowAlignment = self.sublayers[r].layout.alignment.y
+            let alignY = rowAlignment < 0.0 ? intent.alignment.y : rowAlignment
+            var column = 0
+            for c in 0..self.sublayers[r].sublayers.count {
+                let cells = min(
+                    max(self.sublayers[r].sublayers[c].layout.gridCellColumns, 1),
+                    columns.widths.count - column
+                )
+                let width = columns.width(column, cells)
+                self.sublayers[r].sublayers[c].place(width, height)
+                let cell = self.sublayers[r].sublayers[c].size
+                self.sublayers[r].sublayers[c].position = pixelAligned(
+                    columns.leading(column) + (width - cell.width) * intent.alignment.x,
+                    (height - cell.height) * alignY
+                )
+                column = column + cells
+            }
+            top = top + height + intent.spacing
+        }
+    }
+}

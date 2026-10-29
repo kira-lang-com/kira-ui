@@ -1,0 +1,231 @@
+import Foundation
+import KiraUI
+
+// What `ui test` hands the UI tests it runs: the application they launch,
+// where their sessions go, and whether the application opens a window.
+public namespace UITestRun {
+    let target: String = "KIRAUI_UI_TEST_TARGET"
+    let sessions: String = "KIRAUI_UI_TEST_SESSIONS"
+    let windowed: String = "KIRAUI_UI_TEST_WINDOWED"
+}
+
+namespace UITestTiming {
+    // How long the application has to settle and answer one request: a
+    // launch includes its first build, and an answer waits for every
+    // animation the request started.
+    let answerSeconds: Number = 30
+    let nanosecondsPerSecond: Number = 1000000000
+}
+
+// The byte that ends a line of the application's output.
+namespace OutputLine {
+    let end: UN8 = 10
+}
+
+// Why the application could not be asked something.
+enum SessionFailure {
+    // The tests were not run by `ui test`, so there is no application.
+    NoTarget
+    NotRunning
+    Launch(ProcessFailure)
+    Request(FileFailure)
+    Output(ProcessFailure)
+    // The application ended before it answered.
+    Exited
+    // It did not answer within `UITestTiming.answerSeconds`.
+    Unanswered
+}
+
+// The application a test launched and the conversation with it. One session
+// lives for the whole `UITestApp`, so a relaunch keeps the data the
+// last launch stored, as an app relaunched on a device does.
+class ApplicationSession {
+    var directory: String = ""
+    var child: ChildProcess? = .None
+    // Output that has arrived without its line's end yet.
+    var pending: [UN8] = []
+
+    // Starts the application with `arguments` and `environment` over the
+    // session's own, and waits for it to settle on its first screen.
+    function launch(
+        arguments: borrow [String],
+        environment: borrow [EnvironmentEntry]
+    ) -> Result<UITestTree, SessionFailure> {
+        var session = self
+        if !environmentIsSet(UITestRun.target) || !environmentIsSet(UITestRun.sessions) {
+            return .Error(.NoTarget)
+        }
+        session.terminate()
+        if session.directory.count == 0 {
+            session.directory = environmentValue(UITestRun.sessions) + "/" + String(
+                monotonicNanoseconds()
+            )
+            match makeDirectory(session.directory) {
+                Ok -> {}
+                Error(failure) -> return .Error(.Request(failure))
+            }
+        }
+        var command = ProcessCommand {
+            program: environmentValue(UITestRun.target),
+            environment: [EnvironmentEntry {
+                name: UITestSession.variable,
+                value: copy session.directory
+            }],
+            output: .Pipe,
+            directory: applicationHome(environmentValue(UITestRun.target))
+        }
+        if !environmentIsSet(UITestRun.windowed) {
+            command.arguments.append("--headless")
+        }
+        for argument in arguments {
+            command.arguments.append(copy argument)
+        }
+        for entry in environment {
+            command.environment.append(copy entry)
+        }
+        match command.start() {
+            Ok(started) -> session.child = .Some(started)
+            Error(failure) -> return .Error(.Launch(failure))
+        }
+        return session.snapshot()
+    }
+
+    // Ends the application, if it runs.
+    function terminate() {
+        var session = self
+        let running = match session.child {
+            Some(child) -> child
+            None -> return
+        }
+        session.child = .None
+        session.pending = []
+        match running.signal(.Terminate) {
+            Ok -> {}
+            // It has already ended on its own.
+            Error(failure) -> absorb failure
+        }
+        match running.wait() {
+            Ok(exit) -> absorb exit
+            Error(failure) -> log warn("could not wait for the application to end", failure)
+        }
+        match running.release() {
+            Ok -> {}
+            Error(failure) -> log warn("could not release the application", failure)
+        }
+    }
+
+    // The elements on screen once the application has settled.
+    function snapshot() -> Result<UITestTree, SessionFailure> {
+        let answer = try self.ask(.Snapshot)
+        match answer {
+            Elements(tree) -> return .Ok(tree)
+            // Only a snapshot is answered with elements, and only elements
+            // answer one.
+            Done -> return .Ok(UITestTree { elements: [] })
+            NoKeyboardFocus -> return .Ok(UITestTree { elements: [] })
+        }
+    }
+
+    // Sends `request` and waits for the application to answer it.
+    function ask(request: UITestRequest) -> Result<UITestAnswer, SessionFailure> {
+        let child = match self.child {
+            Some(child) -> child
+            None -> return .Error(.NotRunning)
+        }
+        match request.send(self.directory) {
+            Ok -> {}
+            Error(failure) -> return .Error(.Request(failure))
+        }
+        let deadline = monotonicNanoseconds() + UITestTiming.answerSeconds * UITestTiming.nanosecondsPerSecond
+        while true {
+            match self.answerPending() {
+                Some(answer) -> return .Ok(answer)
+                // No answer among what has arrived: wait for more.
+                None -> {}
+            }
+            let remaining = (deadline - monotonicNanoseconds()) / UITestTiming.nanosecondsPerSecond
+            if remaining <= 0 {
+                return .Error(.Unanswered)
+            }
+            let read = match child.read(.Output, .Some(remaining)) {
+                Ok(read) -> read
+                Error(failure) -> return .Error(.Output(failure))
+            }
+            match read {
+                Bytes(chunk) -> self.receive(chunk)
+                // Nothing arrived in time: the deadline decides.
+                Pending -> {}
+                Ended -> return .Error(.Exited)
+            }
+        }
+    }
+
+    function receive(chunk: borrow [UN8]) {
+        var session = self
+        for byte in chunk {
+            session.pending.append(byte)
+        }
+    }
+
+    // The first answer among the whole lines received, with every line
+    // before it and the answer's own taken off what is pending. The
+    // application's own output passes through to the test's.
+    function answerPending() -> UITestAnswer? {
+        var session = self
+        while true {
+            let end = match firstLineEnd(session.pending) {
+                Some(end) -> end
+                None -> return .None
+            }
+            let line = byteRange(session.pending, 0, end)
+            session.pending = byteRange(session.pending, end + 1, session.pending.count - end - 1)
+            let text = match textFromBytes(line) {
+                Some(text) -> text
+                None -> continue
+            }
+            match answerOnLine(text) {
+                Some(answer) -> return .Some(answer)
+                None -> print(text)
+            }
+        }
+    }
+}
+
+// Where the first line in `bytes` ends, if one does.
+function firstLineEnd(bytes: borrow [UN8]) -> Number? {
+    for (index, byte) in bytes.enumerated() {
+        if byte == OutputLine.end {
+            return .Some(index)
+        }
+    }
+    return .None
+}
+
+extend SessionFailure {
+    // What a test reports when the application could not be asked.
+    function reason() -> String {
+        match self {
+            NoTarget -> return "no application to launch: run UI tests with `ui test`"
+            NotRunning -> return "the application is not running: call launch() first"
+            Launch(failure) -> return "the application could not be launched: \(failure)"
+            Request(
+                failure
+            ) -> return "the request could not be handed to the application: \(failure)"
+            Output(failure) -> return "the application's output could not be read: \(failure)"
+            Exited -> return "the application ended before it answered"
+            Unanswered -> return "the application did not settle within \(UITestTiming.answerSeconds) seconds"
+        }
+    }
+}
+
+// Where the application under test starts: the directory holding the
+// `.kira-build` its build staged its packages' assets in, which is where a
+// program finds them (see Foundation's `bundledReadPath`). The test runner's
+// own directory is somewhere else entirely, and an application started there
+// would draw without them.
+function applicationHome(target: borrow String) -> String {
+    match target.indexOf("/.kira-build/") {
+        Some(at) -> return target.substring(0, at)
+        None -> return ""
+    }
+}

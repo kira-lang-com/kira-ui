@@ -1,0 +1,78 @@
+import Foundation
+import KiraUI
+import KiraUITesting
+
+// The app opens on its About tab, as it was installed.
+@Test
+function opensOnAbout() {
+    let app = UITestApp()
+    app.launch()
+
+    expect!(app.tabs.count == 3)
+    expect!(app.tabs.matching(identifier: "About").element.isSelected)
+    expect!(!app.tabs.matching(identifier: "Showcase").element.isSelected)
+
+    app.terminate()
+}
+
+// The Showcase tab lists a row for each playground.
+@Test
+function listsThePlaygrounds() {
+    let app = UITestApp()
+    app.launch()
+
+    let showcase = app.tabs.matching(identifier: "Showcase").element
+    showcase.tap()
+
+    expect!(showcase.isSelected)
+    expect!(app.buttons.matching(identifier: "Toggle").element.waitForExistence(timeout: 5))
+    expect!(app.buttons.matching(identifier: "OnSubmit").element.exists)
+
+    app.terminate()
+}
+
+// Every toggle bound to the same state follows the one switched.
+@Test
+function togglesFollowOneAnother() {
+    let app = UITestApp()
+    app.launch()
+    openPlayground(app, "Toggle")
+
+    let toggle = app.switches.matching(identifier: "String init").element
+    expect!(toggle.waitForExistence(timeout: 5))
+    expect!(toggle.value == "0")
+
+    toggle.tap()
+
+    expect!(toggle.value == "1")
+    expect!(app.switches.matching(identifier: "Fixed width").element.value == "1")
+    expect!(!app.switches.matching(identifier: ".disabled(true)").element.isEnabled)
+
+    app.terminate()
+}
+
+// Return in a field runs the field's own submit action.
+@Test
+function submitsTheField() {
+    let app = UITestApp()
+    app.launch()
+    openPlayground(app, "OnSubmit")
+
+    let field = app.textFields.matching(identifier: "Text1").element
+    expect!(field.waitForExistence(timeout: 5))
+    field.tap()
+    expect!(field.hasFocus)
+
+    field.typeText("Ada\n")
+
+    expect!(field.value == "Ada")
+    expect!(app.staticTexts.matching(identifier: "Text1 ").element.exists)
+
+    app.terminate()
+}
+
+// Goes to the playground titled `title` from the Showcase tab.
+function openPlayground(app: borrow UITestApp, title: String) {
+    app.tabs.matching(identifier: "Showcase").element.tap()
+    app.buttons.matching(identifier: title).element.tap()
+}

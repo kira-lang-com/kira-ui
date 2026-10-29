@@ -1,0 +1,37 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// SwiftUI's `Path`: lines and curves in points in the view's own box.
+
+// A stroked path is drawn on the whole of the box it is placed in, as the
+// outline of what was built.
+@Test
+function aStrokedPathDrawsWhatItWasBuiltWith() {
+    var described = describedLayer(
+        Path { path in
+            path.move(to: Point { x: 0.0, y: 0.0 })
+            path.addLine(to: Point { x: 20.0, y: 10.0 })
+            return
+        }.stroke(style: StrokeStyle { lineWidth: 2.0, lineCap: .Round }).frame(
+            width: 20.0,
+            height: 10.0
+        )
+    )
+    layOutLayerTree(described, 400.0, 300.0)
+    let drawn = innermostLayer(described)
+    expect!((drawn.size.width) == (20.0))
+    expect!((drawn.size.height) == (10.0))
+    match drawn.content {
+        Icon(icon) -> {
+            expect!((icon.wholeCanvas) == (true))
+            expect!(
+                (icon.svg) == ("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 20 10\"><path d=\"M0 0L20 10\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"/></svg>")
+            )
+        }
+        else -> {
+            // A stroked path is drawn as an icon; any other content fails here.
+            expect!((false) == (true))
+        }
+    }
+}

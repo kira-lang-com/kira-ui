@@ -1,0 +1,77 @@
+import KiraUI
+import Ember
+import KCoreAnimation
+
+// A context menu on Liquid Glass, over a photograph — the whole menu is widgets
+// now (`ContextMenu`/`ControlGroup`/`Menu`/`Button`/`Label`), and the glass is
+// the toolkit's own: `ContextMenu` describes a `CAContent.Glass` card that
+// captures and refracts whatever is drawn behind it. Here that is a photo,
+// loaded once into a texture the backdrop shows.
+
+struct GlassMenuState {
+    var textureId: Number = 0
+    var textureTried: Bool = false
+}
+
+function glassMenuSlot() -> PersistentStateKey {
+    return PersistentStateKey { name: "liquidglassmenu.state" }
+}
+
+function glassMenuEnsure() {
+    if !ambientStateHas(glassMenuSlot()) {
+        ambientStatePut(glassMenuSlot(), nativeUserData(nativeState(GlassMenuState {})))
+    }
+}
+
+// The loaded backdrop texture, read by the screen. Zero until the first frame
+// has run its engine hook.
+function glassMenuTextureId() -> Number {
+    glassMenuEnsure()
+    let state = nativeRecover<GlassMenuState>(ambientStateGet(glassMenuSlot()))
+    return state.textureId
+}
+
+// Load the photograph once, on the first frame, when an Graphics handle exists.
+function glassMenuLoadTexture(frame: borrow mut RenderFrame) {
+    glassMenuEnsure()
+    var state = nativeRecover<GlassMenuState>(ambientStateGet(glassMenuSlot()))
+    if state.textureTried {
+        return
+    }
+    state.textureTried = true
+    state.textureId = glassMenuBackdropTexture(frame.graphics())
+}
+
+function glassMenuBackdropTexture(graphics: borrow Graphics) -> Number {
+    return match loadRgbaTexture(graphics, "assets/background-cubes-cool.rgba", 1600, 900) {
+        Ok(texture) -> texture
+        // No backdrop: the menu stands on the window's own background.
+        Error(failure) -> {
+            log warn("glass menu backdrop", traceText(failure))
+            return 0
+        }
+    }
+}
+
+@Main
+function main() {
+    GlassMenuApp()
+}
+
+function GlassMenuApp() {
+    RunKiraWindowApp(
+        // 1000x940 physical at a 3x render scale, matching the reference
+        // screenshots: a menu measured at 1x cannot say whether a hairline is a
+        // hairline.
+        title: "Liquid Glass — menu",
+        width: 1000,
+        height: 940,
+        rootBuilder: { in
+            return GlassMenuScreen()
+        },
+        engineFrame: { frame in
+            glassMenuLoadTexture(frame)
+            return
+        }
+    )
+}

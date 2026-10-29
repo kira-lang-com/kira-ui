@@ -1,0 +1,77 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// A sidebar's sections and a text field's runs, as the layers they describe.
+
+// A sidebar section without a header is its rows alone: no band is held for a
+// title that is not there.
+@Test
+function aHeaderlessSidebarSectionIsItsRows() {
+    let described = describedLayerInSidebar(
+        Section() {
+            Text(content: "Settings")
+        }
+    )
+    expect!((described.sublayers.count) == (1))
+}
+
+// A sidebar section with a header puts its title over its rows: the header and
+// the row are two layers.
+@Test
+function aSidebarSectionHeaderSitsOverItsRows() {
+    var described = describedLayerInSidebar(
+        Section() {
+            Text(content: "Ocean")
+        } header: {
+            Text(content: "Games")
+        }
+    )
+    layOutLayerTree(described, 320.0, 480.0)
+    expect!((described.sublayers.count) == (2))
+    expect!((described.sublayers[0].position.y < described.sublayers[1].position.y) == (true))
+}
+
+// A plain view in a sidebar section starts where a row's title does, as every
+// row of a SwiftUI sidebar list sits in the same cell.
+@Test
+function aPlainSidebarRowLinesUpWithARow() {
+    var described = describedLayerInSidebar(
+        Section() {
+            SidebarRow(selected: false, action: noAction) {
+                Text(content: "Settings")
+            }
+
+            Text(content: "No saves yet")
+        }
+    )
+    described.layoutTree(320.0, 480.0)
+    expect!((described.sublayers.count) == (2))
+    let row = sidebarRowTextX(described, 0)
+    let plain = sidebarRowTextX(described, 1)
+    expect!((row > 0.0) == (true))
+    expect!((row) == (plain))
+}
+
+// Focusing an empty field puts the caret beside the placeholder under keys of
+// their own, so the caret never takes over the placeholder's layer and grows
+// out of its width.
+@Test
+function aFocusedFieldKeysItsCaretApartFromItsPlaceholder() {
+    let field = TextField(title: "Client ID", text: unboundText(""))
+        .width(resolvedLength(200.0)).height(resolvedLength(32.0))
+    tapSeqReset()
+    let idle = field.describe(buildContext(FoundationUiContext {}), ModifierContext {})
+    tapSeqReset()
+    let focused = field.describe(
+        buildContext(FoundationUiContext { focusedKey: fieldLayerOf(idle).hitKey }),
+        ModifierContext {}
+    )
+    let idleRuns = fieldRunsOf(idle)
+    let focusedRuns = fieldRunsOf(focused)
+    expect!((idleRuns.count) == (1))
+    expect!((focusedRuns.count) == (2))
+    expect!((idleRuns[0].key) == (TextFieldPart.placeholder))
+    expect!((focusedRuns[0].key) == (TextFieldPart.caret))
+    expect!((focusedRuns[1].key) == (TextFieldPart.placeholder))
+}

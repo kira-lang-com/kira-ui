@@ -1,0 +1,54 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's `TimelineView`: a view built again on a schedule, from the time
+// it is built at, whether or not anything else has happened:
+//
+//     TimelineView(schedule: .Periodic(1.0)) { timeline in
+//         Text(content: "\(trunc(timeline.date))")
+//     }
+
+// SwiftUI's `TimelineSchedule`s: every `Periodic` interval of seconds, on the
+// whole interval since 1970, as the minutes of `EveryMinute` are; or every
+// frame the display draws, as `.animation` is.
+public enum TimelineSchedule {
+    Periodic(Number)
+    EveryMinute
+    Animation
+}
+
+// SwiftUI's `TimelineView.Context`: the time the view is built for, in
+// seconds since 1970.
+public struct TimelineViewContext {
+    let date: Number
+}
+
+extend TimelineSchedule {
+    // How long after `date` the view is next built.
+    function wait(date: Number) -> Number {
+        match self {
+            Periodic(interval) -> return timelineTick(date, max(interval, 0.001))
+            EveryMinute -> return timelineTick(date, 60.0)
+            Animation -> return 0.0
+        }
+    }
+}
+
+function timelineTick(date: Number, interval: Number) -> Number {
+    return (floor(date / interval) + 1.0) * interval - date
+}
+
+public construct TimelineView(
+    schedule: TimelineSchedule,
+    content: (TimelineViewContext) -> Any Widget
+) extends Widget {
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let date = unixMillis() / 1000.0
+        redrawAfter(schedule.wait(date))
+        return content(TimelineViewContext { date: date }).describe(context, modifiers)
+    }
+}

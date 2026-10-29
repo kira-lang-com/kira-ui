@@ -1,0 +1,104 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's `Path`: a shape made of lines and curves, in points in the box the
+// view is placed in, filled in the foreground ink or, under `.stroke(...)`,
+// drawn as its outline:
+//
+//     Path { path in
+//         path.move(to: Point { x: 0.0, y: 0.0 })
+//         path.addLine(to: Point { x: 40.0, y: 40.0 })
+//     }
+//     .stroke(style: StrokeStyle { lineWidth: 2.0, lineCap: .Round })
+//
+// Its strokes are drawn with round caps and joins, whatever the style names.
+
+// The outline a path is made of, written as SVG's path data. A reference,
+// as the `inout` path a SwiftUI builder is handed is: what the builder adds
+// is the path's.
+public class PathData {
+    var data: String = ""
+}
+
+extend PathData {
+    // SwiftUI's `move(to:)`: a new subpath from `to`.
+    function move (to: Point) {
+        var path = self
+        path.data = path.data + "M\(to.x) \(to.y)"
+    }
+
+    // SwiftUI's `addLine(to:)`.
+    function addLine(to: Point) {
+        var path = self
+        path.data = path.data + "L\(to.x) \(to.y)"
+    }
+
+    // SwiftUI's `addQuadCurve(to:control:)`.
+    function addQuadCurve(to: Point, control: Point) {
+        var path = self
+        path.data = path.data + "Q\(control.x) \(control.y) \(to.x) \(to.y)"
+    }
+
+    // SwiftUI's `addCurve(to:control1:control2:)`.
+    function addCurve(to: Point, control1: Point, control2: Point) {
+        var path = self
+        path.data = path.data + "C\(control1.x) \(control1.y) \(control2.x) \(control2.y) \(to.x) \(to.y)"
+    }
+
+    // SwiftUI's `closeSubpath()`.
+    function closeSubpath() {
+        var path = self
+        path.data = path.data + "Z"
+    }
+}
+
+// SwiftUI's `CGLineCap` and `CGLineJoin`.
+public enum LineCap {
+    Butt
+    Round
+    Square
+}
+
+public enum LineJoin {
+    Miter
+    Round
+    Bevel
+}
+
+// SwiftUI's `StrokeStyle`.
+public struct StrokeStyle {
+    let lineWidth: Number = 1.0
+    let lineCap: LineCap = .Butt
+    let lineJoin: LineJoin = .Miter
+}
+
+// SwiftUI's `Path(_:)`, made by the closure it is written with.
+public construct Path(build: (PathData) -> Void) extends Widget {
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var ink = shapeFill(.Flat, modifiers)
+        if modifiers.hasStroke && modifiers.hasStrokeColor {
+            ink = foundationColor(modifiers.strokeColor)
+        }
+        let tint = colorFromFoundation(ink)
+        let paint = modifiers.hasStroke
+        ? "fill=\"none\" stroke=\"currentColor\" stroke-width=\"\(modifiers.strokeWidth)\""
+        : "fill=\"currentColor\""
+        let outline = PathData {}
+        build(copy outline)
+        let data = copy outline.data
+        return CALayerDescription {
+            sizedContentKey: sizedContentKey(
+                { size in
+                    let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 \(size.width) \(size.height)\"><path d=\"\(data)\" \(paint)/></svg>"
+                    return CALayerDescription {
+                        content: .Icon(CAIcon { svg: svg, tint: tint, wholeCanvas: true })
+                    }
+                }
+            )
+        }
+    }
+}

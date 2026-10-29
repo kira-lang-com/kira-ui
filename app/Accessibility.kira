@@ -1,0 +1,294 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's accessibility: what a view is to VoiceOver, to switch control and
+// to a UI test.
+//
+// Every view a person can read or act on is an element: a `Text` is one that
+// reads its words, a `Button` one that reads its label and presses. Containers
+// are not elements; their elements stand in the window's list in the order
+// they were written. The accessibility modifiers change what an element says
+// and does, or how a subtree makes elements at all:
+//
+//     Image(name: "status")
+//         .accessibilityLabel("Online")
+//
+//     HStack {
+//         Text("Battery")
+//         Text("80%")
+//     }
+//     .accessibilityElement(children: .Combine)
+//
+// A layer carries only the key of the element it is (`accessibilityElement`),
+// as it carries only the key of its press; what the element says and the
+// closures it runs are registered here for the build that described them.
+// After layout the laid-out tree is read back into `AccessibilityElement`s,
+// each with its frame in the window (AccessibilityTree.kira).
+
+// SwiftUI's `AccessibilityTraits`: what kind of thing an element is and the
+// state it is in, combined with `|`:
+//
+//     .accessibilityAddTraits(AccessibilityTraits.isButton | AccessibilityTraits.isSelected)
+public distinct AccessibilityTraits = Number
+
+public namespace AccessibilityTraits {
+    let isButton: AccessibilityTraits = AccessibilityTraits(1)
+    let isHeader: AccessibilityTraits = AccessibilityTraits(2)
+    let isSelected: AccessibilityTraits = AccessibilityTraits(4)
+    let isLink: AccessibilityTraits = AccessibilityTraits(8)
+    let isSearchField: AccessibilityTraits = AccessibilityTraits(16)
+    let isImage: AccessibilityTraits = AccessibilityTraits(32)
+    let playsSound: AccessibilityTraits = AccessibilityTraits(64)
+    let isKeyboardKey: AccessibilityTraits = AccessibilityTraits(128)
+    let isStaticText: AccessibilityTraits = AccessibilityTraits(256)
+    let isSummaryElement: AccessibilityTraits = AccessibilityTraits(512)
+    let updatesFrequently: AccessibilityTraits = AccessibilityTraits(1024)
+    let startsMediaSession: AccessibilityTraits = AccessibilityTraits(2048)
+    let allowsDirectInteraction: AccessibilityTraits = AccessibilityTraits(4096)
+    let causesPageTurn: AccessibilityTraits = AccessibilityTraits(8192)
+    let isModal: AccessibilityTraits = AccessibilityTraits(16384)
+    let isToggle: AccessibilityTraits = AccessibilityTraits(32768)
+    let isTabBar: AccessibilityTraits = AccessibilityTraits(65536)
+}
+
+extend AccessibilityTraits {
+    // Every trait in either set.
+    function union(other: AccessibilityTraits) -> AccessibilityTraits {
+        return AccessibilityTraits(self.raw | other.raw)
+    }
+
+    // These traits less every one in `other`.
+    function without(other: AccessibilityTraits) -> AccessibilityTraits {
+        return AccessibilityTraits(self.raw - (self.raw & other.raw))
+    }
+
+    // Whether every trait in `member` is one of these, as an option set's
+    // `contains(_:)`.
+    function contains(member: AccessibilityTraits) -> Bool {
+        return (self.raw & member.raw) == member.raw
+    }
+}
+
+// SwiftUI's `AccessibilityChildBehavior`: what `.accessibilityElement(children:)`
+// does with the elements inside the view it makes into one.
+public enum AccessibilityChildBehavior {
+    // They are gone: the new element says only what is stated on it.
+    Ignore
+    // They stay, inside the new element, which groups them.
+    Contain
+    // They are merged into the new element: their labels read as one, their
+    // traits and actions are its.
+    Combine
+}
+
+// SwiftUI's `AccessibilityHeadingLevel`: where a header stands in the outline
+// of the screen, for the rotor to move by.
+public enum AccessibilityHeadingLevel {
+    Unspecified
+    H1
+    H2
+    H3
+    H4
+    H5
+    H6
+}
+
+// SwiftUI's `AccessibilityActionKind`: the action VoiceOver runs on a double
+// tap, on the two-finger scrub that dismisses, on the two-finger double tap,
+// on a request for the element's menu, or one the person picks by name from
+// the actions rotor.
+public enum AccessibilityActionKind {
+    Default
+    Escape
+    MagicTap
+    ShowMenu
+    Named(String)
+}
+
+// SwiftUI's `AccessibilityAdjustmentDirection`: a swipe up or down on an
+// adjustable element.
+public enum AccessibilityAdjustmentDirection {
+    Increment
+    Decrement
+}
+
+// What an element is to the platform: the role VoiceOver announces and a UI
+// test finds it by. Each control states its own; the traits an application
+// adds name a role of their own over it (see `accessibilityRole`).
+@Derive(Serializable)
+public enum AccessibilityRole {
+    // An element that is none of the others: a shape given a label.
+    Other
+    // An element that holds others: `.accessibilityElement(children: .Contain)`.
+    Group
+    StaticText
+    Image
+    Button
+    Link
+    TextField
+    SecureTextField
+    SearchField
+    Switch
+    CheckBox
+    Slider
+    ProgressIndicator
+    PopUpButton
+    MenuButton
+    Tab
+}
+
+// One action an element can be asked to run.
+public struct AccessibilityAction {
+    let kind: AccessibilityActionKind
+    let handler: () -> Void
+}
+
+public function accessibilityNoAdjustment(direction: AccessibilityAdjustmentDirection) {}
+
+// Everything one element says and does, as registered for the build that
+// described it.
+public struct AccessibilityNode {
+    var role: AccessibilityRole = .Other
+    var label: String = ""
+    var value: String = ""
+    var hint: String = ""
+    // What a field shows while it is empty.
+    var placeholder: String = ""
+    var identifier: String = ""
+    var traits: AccessibilityTraits = AccessibilityTraits(0)
+    var headingLevel: AccessibilityHeadingLevel = .Unspecified
+    var inputLabels: [String] = []
+    var sortPriority: Number = 0
+    var isEnabled: Bool = true
+    // Whether the element is the field the keyboard types into.
+    var hasKeyboardFocus: Bool = false
+    // `.accessibilityHidden(true)`: the element and everything in it are not
+    // shown to assistive technology.
+    var hidden: Bool = false
+    // Whether the element holds the elements below it rather than standing in
+    // for them.
+    var contains: Bool = false
+    var actions: [AccessibilityAction] = []
+    var adjustable: Bool = false
+    var adjust: (AccessibilityAdjustmentDirection) -> Void = accessibilityNoAdjustment
+}
+
+// The role an element's traits give it, over the one its control stated: a
+// `Text` given `.isButton` is a button.
+public function accessibilityRole(node: borrow AccessibilityNode) -> AccessibilityRole {
+    if node.traits.has(AccessibilityTraits.isSearchField) {
+        return .SearchField
+    }
+    if node.traits.has(AccessibilityTraits.isToggle) && node.role != .CheckBox {
+        return .Switch
+    }
+    if node.traits.has(AccessibilityTraits.isLink) {
+        return .Link
+    }
+    // A pop-up, a menu, a tab and a checkbox are pressed as buttons are, and
+    // stay what they are.
+    let pressedKind = node.role == .PopUpButton || node.role == .MenuButton || node.role == .Tab || node.role == .CheckBox
+    if node.traits.has(AccessibilityTraits.isButton) && !pressedKind {
+        return .Button
+    }
+    if node.traits.has(AccessibilityTraits.isImage) && node.role == .Other {
+        return .Image
+    }
+    return node.role
+}
+
+// The elements a build has described, by key, and the field an element's
+// action asked to give the keyboard to, which outlives the build it was
+// asked from.
+struct AccessibilityRegistry {
+    var nodes: [AccessibilityNode] = []
+    var focusRequest: Number? = .None
+}
+
+function accessibilityRegistryEnsure() {
+    if !ambientStateHas(StateSlot.accessibility) {
+        ambientStatePut(
+            StateSlot.accessibility,
+            nativeUserData(nativeState(AccessibilityRegistry {}))
+        )
+    }
+}
+
+// Start a fresh build's elements. The runner calls this beside
+// `layerActionsReset`.
+public function accessibilityReset() {
+    accessibilityRegistryEnsure()
+    var registry = nativeRecover<AccessibilityRegistry>(ambientStateGet(StateSlot.accessibility))
+    var empty: [AccessibilityNode] = []
+    registry.nodes = move empty
+}
+
+public function accessibilityNodeCount() -> Number {
+    if !ambientStateHas(StateSlot.accessibility) { return 0 }
+    let registry = nativeRecover<AccessibilityRegistry>(ambientStateGet(StateSlot.accessibility))
+    return registry.nodes.count
+}
+
+// Register an element for this build and answer the key its layer carries.
+public function accessibilityRegister(node: AccessibilityNode) -> Number {
+    accessibilityRegistryEnsure()
+    var registry = nativeRecover<AccessibilityRegistry>(ambientStateGet(StateSlot.accessibility))
+    let key = registry.nodes.count
+    registry.nodes.append(move node)
+    return key
+}
+
+// The element registered under `key` this build.
+public function accessibilityNode(key: Number) -> AccessibilityNode {
+    accessibilityRegistryEnsure()
+    let registry = nativeRecover<AccessibilityRegistry>(ambientStateGet(StateSlot.accessibility))
+    return copy registry.nodes[key]
+}
+
+// Put back the element registered under `key`, changed.
+public function accessibilityStore(key: Number, node: AccessibilityNode) {
+    accessibilityRegistryEnsure()
+    var registry = nativeRecover<AccessibilityRegistry>(ambientStateGet(StateSlot.accessibility))
+    registry.nodes[key] = move node
+}
+
+// The element a control a person presses is: `role`, with the trait of a
+// button, that runs `pressed` when VoiceOver activates it, and is dimmed and
+// does nothing while the control is disabled.
+public function accessibilityPressable(
+    role: AccessibilityRole,
+    pressed: () -> Void,
+    modifiers: borrow ModifierContext
+) -> AccessibilityNode {
+    if modifiers.disabled {
+        return AccessibilityNode {
+            role: role,
+            traits: AccessibilityTraits.isButton,
+            isEnabled: false
+        }
+    }
+    return AccessibilityNode {
+        role: role,
+        traits: AccessibilityTraits.isButton,
+        actions: [AccessibilityAction { kind: .Default, handler: pressed }]
+    }
+}
+
+// Ask that the field under `key` take the keyboard, as activating a text
+// field does in VoiceOver. The runner gives it the keyboard before the next
+// build.
+public function accessibilityRequestFocus(key: Number) {
+    accessibilityRegistryEnsure()
+    var registry = nativeRecover<AccessibilityRegistry>(ambientStateGet(StateSlot.accessibility))
+    registry.focusRequest = .Some(key)
+}
+
+// The field an element asked to give the keyboard to since the runner last
+// asked, if any. Asking answers it once.
+public function accessibilityTakeFocusRequest() -> Number? {
+    accessibilityRegistryEnsure()
+    var registry = nativeRecover<AccessibilityRegistry>(ambientStateGet(StateSlot.accessibility))
+    let requested = copy registry.focusRequest
+    registry.focusRequest = .None
+    return requested
+}

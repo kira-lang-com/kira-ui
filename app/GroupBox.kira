@@ -1,0 +1,65 @@
+import Ember
+import KiraLayout
+import KCoreAnimation
+
+// SwiftUI's `GroupBox`: content set apart on a box of its own, under an
+// optional label.
+//
+//     GroupBox {
+//         Text("Every device signed in to this account.")
+//     } label: {
+//         Label(title = "Devices", systemImage = .Desktopcomputer)
+//     }
+//
+// The box is the secondary background with a continuous corner, held in by
+// the same inset a grouped row is, and it has no border and no shadow; the
+// label is the headline face. The radius is the grouped card's, so a box and
+// a list on one page read as one family.
+public construct GroupBox() extends Widget {
+    let children: [some Widget]
+    let label: some Widget = EmptyView()
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let radius = listMetrics().cornerRadius
+        let inset = listMetrics().rowInset
+        // What the box holds is held in by the inset, so a concentric shape in it
+        // keeps the box's corner.
+        let inside = modifierContextInset(modifierContextContained(modifiers, radius), inset)
+        var parts: [CALayerDescription] = []
+        let title = label.typography(.headline).describe(context, inside)
+        if !describesNothing(title) {
+            parts.append(title)
+        }
+        for child in children {
+            parts.append(child.describe(context, inside))
+        }
+        return CALayerDescription {
+            layout: CALayoutIntent {
+                axis: .Column,
+                spacing: spacingImplementation(.Small, modifiers),
+                heightFill: false,
+                paddingLeading: inset,
+                paddingTop: inset,
+                paddingTrailing: inset,
+                paddingBottom: inset
+            },
+            cornerRadius: radius,
+            content: .Solid(
+                CASolid {
+                    fill: colorFromFoundation(
+                        modifierSurfaceFill(
+                            foundationColor(modifierTokens(modifiers).background.surface),
+                            modifiers
+                        )
+                    ),
+                    cornerRadius: radius,
+                    shapeKind: 1
+                }
+            ),
+            sublayers: move parts
+        }
+    }
+}

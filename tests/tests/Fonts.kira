@@ -1,0 +1,155 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// The type a run is set in, as the layer carries it to the compositor: of
+// `.font` and `.typography` the innermost names the font, and `.fontWeight`
+// sets the weight of whichever is in effect until a `.font` inside names its
+// own. The width a run is laid out at is measured at the weight it draws at.
+
+// The weight of the body style, and the size it sets, are the base every run
+// without a font of its own is measured from.
+@Test
+function fontWeightSetsTheBodyWeight() {
+    let run = textRunOf(describedLayer(Text(content: "Sync").fontWeight(.Bold)))
+    expect!((run.weight) == (700.0))
+    expect!((run.size) == (typographyImplementation(.body, ModifierContext {}).size))
+}
+
+// A weight set on a styled run keeps the size the style sets.
+@Test
+function fontWeightKeepsTheStyleSize() {
+    let run = textRunOf(
+        describedLayer(Text(content: "Sync").typography(.caption).fontWeight(.SemiBold))
+    )
+    let caption = typographyImplementation(.caption, ModifierContext {})
+    expect!((run.weight) == (600.0))
+    expect!((run.size) == (caption.size))
+}
+
+// A `.font` inside a `.fontWeight` names its own weight, which is the regular
+// weight it does not set, and its own size.
+@Test
+function innerFontNamesItsOwnWeight() {
+    let run = textRunOf(
+        describedLayer(Text(content: "Sync").font(size: resolvedLength(20.0)).fontWeight(.Bold))
+    )
+    expect!((run.weight) == (400.0))
+    expect!((run.size) == (20.0))
+}
+
+// A `.fontWeight` inside a `.font` sets that font's weight over the one the
+// font names.
+@Test
+function innerFontWeightOverridesTheFont() {
+    let run = textRunOf(
+        describedLayer(
+            Text(content: "Sync").fontWeight(.Medium).font(
+                size: resolvedLength(20.0),
+                weight: .Bold
+            )
+        )
+    )
+    expect!((run.weight) == (510.0))
+    expect!((run.size) == (20.0))
+}
+
+// The innermost of `.font` and `.typography` names the font, whichever way
+// round they are nested.
+@Test
+function innermostFontWins() {
+    let caption = typographyImplementation(.caption, ModifierContext {})
+    let styled = textRunOf(
+        describedLayer(
+            Text(content: "Sync").typography(.caption).font(
+                size: resolvedLength(30.0),
+                weight: .Bold
+            )
+        )
+    )
+    let sized = textRunOf(
+        describedLayer(
+            Text(content: "Sync").font(size: resolvedLength(30.0), weight: .Bold).typography(
+                .caption
+            )
+        )
+    )
+    expect!((styled.size) == (caption.size))
+    expect!((sized.size) == (30.0))
+    expect!((sized.weight) == (700.0))
+}
+
+// A run is laid out at the width of the weight it draws at: bold is wider than
+// regular for the same words.
+@Test
+function boldRunIsMeasuredWider() {
+    let regular = describedLayer(Text(content: "Animal Crossing"))
+    let bold = describedLayer(Text(content: "Animal Crossing").fontWeight(.Bold))
+    expect!((regular.layout.intrinsicWidth > 0.0) == (true))
+    expect!((bold.layout.intrinsicWidth > regular.layout.intrinsicWidth) == (true))
+}
+
+// A field draws its text at the weight in effect over it.
+@Test
+function fieldTakesTheWeightInEffect() {
+    let field = TextField(title: "Server", text: unboundText("")).width(
+        resolvedLength(200.0)
+    ).height(resolvedLength(32.0))
+    .fontWeight(.SemiBold)
+    let runs = fieldRunsOf(describedLayer(move field))
+    expect!((runs.count) == (1))
+    expect!((textRunOf(runs[0]).weight) == (600.0))
+}
+
+// An empty state is its symbol over its title and description, then its
+// actions, with the title set bold in the second title style.
+@Test
+function contentUnavailableStacksItsParts() {
+    let described = describedLayer(
+        ContentUnavailableView(title: "Not connected", systemImage: .WifiSlash) {
+            Text(content: "Ryubing has not been run on this Mac yet.")
+        } actions: {
+            Button(title: "Open Settings", action: noAction)
+        }
+    )
+    let title2 = typographyImplementation(.title2, ModifierContext {})
+    // One block between two spacers: the heading over the actions.
+    expect!((described.sublayers.count) == (3))
+    let block = described.sublayers[1]
+    expect!((block.sublayers.count) == (2))
+    let heading = block.sublayers[0]
+    expect!((heading.sublayers.count) == (2))
+    let words = heading.sublayers[1]
+    expect!((words.sublayers.count) == (2))
+    let title = textRunOf(words.sublayers[0])
+    expect!((title.content) == ("Not connected"))
+    expect!((title.weight) == (700.0))
+    expect!((title.size) == (title2.size))
+}
+
+// Without a symbol, description or actions, an empty state is its title alone.
+@Test
+function contentUnavailableStatesOnlyWhatItHas() {
+    let described = describedLayer(ContentUnavailableView(title: "No saves yet"))
+    let block = described.sublayers[1]
+    expect!((block.sublayers.count) == (1))
+    let heading = block.sublayers[0]
+    expect!((heading.sublayers.count) == (1))
+    expect!((heading.sublayers[0].sublayers.count) == (1))
+    expect!((textRunOf(heading.sublayers[0].sublayers[0]).content) == ("No saves yet"))
+}
+
+// A field's text is one line that lands where typing puts it: its run never
+// wraps, and a change to it is not eased.
+@Test
+function aFieldRunIsOneImmediateLine() {
+    let field = TextField(title: "Search", text: unboundText("Animal Crossing New Horizons")).width(
+        resolvedLength(60.0)
+    ).height(resolvedLength(32.0))
+    let runs = fieldRunsOf(describedLayer(move field))
+    expect!((runs.count) == (1))
+    let run = textRunOf(runs[0])
+    expect!((run.wraps) == (false))
+    expect!((runs[0].disablesActions) == (true))
+    expect!((run.content) == ("Animal Crossing New Horizons"))
+}

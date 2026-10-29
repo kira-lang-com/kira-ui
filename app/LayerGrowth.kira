@@ -1,0 +1,60 @@
+import Foundation
+import KCoreAnimation
+
+// What lets a layer grow when its stack has room to give, and where a placed
+// layer sits, as SwiftUI's layout decides both. LayerLayout places with them.
+
+// Where a sublayer sits, on whole points. SwiftUI rounds every frame it places
+// to the pixel grid, so a capsule centered in a row 47 tall starts on a pixel
+// rather than half way across one, and a label in it, whose baseline the
+// rasterizer sets on a whole pixel, stands where it does in SwiftUI rather
+// than half a point low. A whole point is a whole pixel at every scale.
+function pixelAligned(x: Number, y: Number) -> Point {
+    return Point { x: round(x), y: round(y) }
+}
+
+extend CALayerDescription {
+    // Whether the layer takes more height when its column has more to give.
+    // It expands down, or flexes down the column it is in, or it is a stack
+    // holding a layer that does: a SwiftUI stack is as flexible as the most
+    // flexible view in it, so a VStack around a List grows as the List does.
+    // A scroll surface takes all it is offered either way, as SwiftUI's
+    // ScrollView does, whatever its content measures.
+    function growsDown(inColumn: Bool) -> Bool {
+        let intent = self.layout
+        if intent.fixedHeight >= 0.0 {
+            return false
+        }
+        if intent.expandsHeight || (inColumn && intent.flex > 0) || self.scrollAxis != .None {
+            return true
+        }
+        let column = intent.axis == .Column
+        for child in self.sublayers {
+            if child.growsDown(column) {
+                return true
+            }
+        }
+        return false
+    }
+
+    // `growsDown` across: whether the layer takes more width when its row has
+    // more to give. It expands across, flexes along the row it is in, is a
+    // scroll surface, or is a stack holding a layer that does. A column's own
+    // fill does not count: a SwiftUI VStack of text is as wide as its text.
+    function growsAcross(inRow: Bool) -> Bool {
+        let intent = self.layout
+        if intent.fixedWidth >= 0.0 {
+            return false
+        }
+        if intent.expandsWidth || (inRow && intent.flex > 0) || self.scrollAxis != .None {
+            return true
+        }
+        let row = intent.axis == .Row
+        for child in self.sublayers {
+            if child.growsAcross(row) {
+                return true
+            }
+        }
+        return false
+    }
+}

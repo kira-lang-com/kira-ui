@@ -1,0 +1,566 @@
+import Foundation
+import Ember
+import KiraLayout
+import KCoreAnimation
+
+// The window's menu bar: a row of menu titles across the top of the window,
+// over its toolbar.
+//
+// It is the iPadOS 27 bar, in the window rather than across the screen: the
+// window's controls lead it, the application's menu follows them, its title
+// set heavier, and then File, Edit, View, the application's own menus, Window
+// and Help. The titles are words, not controls on glass -- the glass is the
+// menu, which comes down under its title as the card every menu is, its rows
+// and submenus and all. The title whose menu is out sits in a pill.
+//
+// While a menu is out the bar is live: resting on another title opens its
+// menu in place of this one, at once, so the pointer runs along the bar
+// reading the menus; pressing the open menu's title, the bar, or anywhere off
+// the card puts it away, as choosing a command or Escape does.
+//
+// What each menu holds is the commands -- the ones every window has, and the
+// ones the application declared with `.commands { … }`. Every menu is lowered
+// on every frame, out or not, so a command's keyboard shortcut works without
+// its menu, as on the platform.
+
+// --- Whether the window has one ----------------------------------------------
+
+// Whether windows draw the menu bar. Where the platform has a menu bar of its
+// own -- macOS and iPadOS across the top of the screen -- or none at all --
+// Android and Tessera -- the window draws none; elsewhere it does.
+// `KIRA_UI_MENU_BAR=hidden` or `=visible` decides it for a run, and an
+// application sets it with `setMenuBarVisibility`.
+public enum MenuBarVisibility {
+    Visible
+    Hidden
+}
+
+public function hostMenuBarVisibility() -> MenuBarVisibility {
+    match environmentValue("KIRA_UI_MENU_BAR") {
+        "hidden" -> return .Hidden
+        "visible" -> return .Visible
+        else -> return platformMenuBarVisibility()
+    }
+}
+
+function platformMenuBarVisibility() -> MenuBarVisibility {
+    match targetPlatform!() {
+        MacOS, Ios, Android, Tessera -> return .Hidden
+        Linux, Windows, Wasm, Unknown -> return .Visible
+    }
+}
+
+// Whether the menu bar is drawn, as the host or `setMenuBarVisibility` last
+// said, kept in the process's ambient state.
+struct MenuBarShowing {
+    var visibility: MenuBarVisibility = hostMenuBarVisibility()
+}
+
+// The slot, made the first time it is asked for, in the process's scope.
+function menuBarShowingEnsure() {
+    if !ambientStateHas(StateSlot.menuBarVisibility) {
+        ambientStatePut(StateSlot.menuBarVisibility, nativeUserData(nativeState(MenuBarShowing {})))
+    }
+}
+
+public function menuBarVisibility() -> MenuBarVisibility {
+    let previous = enterProcessScope()
+    menuBarShowingEnsure()
+    let showing = nativeRecover<MenuBarShowing>(ambientStateGet(StateSlot.menuBarVisibility))
+    let visibility = copy showing.visibility
+    ambientScopeEnter(previous)
+    return visibility
+}
+
+// Draw the menu bar, or not, from the next build on.
+public function setMenuBarVisibility(visibility: MenuBarVisibility) {
+    let previous = enterProcessScope()
+    menuBarShowingEnsure()
+    var showing = nativeRecover<MenuBarShowing>(ambientStateGet(StateSlot.menuBarVisibility))
+    showing.visibility = visibility
+    ambientScopeEnter(previous)
+}
+
+public function menuBarShown() -> Bool {
+    return menuBarVisibility() == .Visible
+}
+
+// How much of the top of the window the menu bar takes.
+public function menuBarHeight() -> Number {
+    return menuBarShown() ? menuBarMetrics().height : 0.0
+}
+
+// --- Which menu is out -------------------------------------------------------
+
+// The menu out, by its place on the bar, and the card's growth. The card drawn
+// is `shown`, which stays the last menu out while its card goes away.
+public struct MenuBarState {
+    var open: Number = -1
+    var shown: Number = -1
+    var reveal: MotionSpringState = MotionSpringState {}
+    var amount: Number = 0.0
+}
+
+public function menuBarEnsure() {
+    if !ambientStateHas(StateSlot.menuBar) {
+        ambientStatePut(StateSlot.menuBar, nativeUserData(nativeState(MenuBarState {})))
+    }
+}
+
+public function menuBarState() -> MenuBarState {
+    menuBarEnsure()
+    return nativeRecover<MenuBarState>(ambientStateGet(StateSlot.menuBar))
+}
+
+// Puts out the menu at `index` on the bar, or puts the bar's menu away with
+// -1. A menu going away takes any submenu open in it.
+public function menuBarSetOpen(index: Number) {
+    menuBarEnsure()
+    var bar = nativeRecover<MenuBarState>(ambientStateGet(StateSlot.menuBar))
+    if bar.open == index {
+        return
+    }
+    let closedBefore = bar.open < 0
+    bar.open = index
+    if index >= 0 {
+        bar.shown = index
+    }
+    if index < 0 || closedBefore {
+        menuRetarget(bar.reveal, index >= 0 ? 1.0 : 0.0, menuSubmenuSpring(index >= 0))
+    }
+    menuEnsure()
+    var menus = nativeRecover<MenuState>(ambientStateGet(StateSlot.menu))
+    if menus.openKey != 0 {
+        menuRevealPutAway(menus.openKey)
+        menus.openKey = 0
+        menus.recede = MotionSpringState {}
+        menus.receded = 0.0
+        menus.shrink = MotionSpringState {}
+        menus.shrunk = 0.0
+        menus.holdRemaining = 0.0
+        menus.pivoted = false
+    }
+}
+
+// The bar's menu gone at once, with no motion home.
+public function menuBarPutAway() {
+    menuBarEnsure()
+    var bar = nativeRecover<MenuBarState>(ambientStateGet(StateSlot.menuBar))
+    bar.open = -1
+    bar.shown = -1
+    bar.reveal = MotionSpringState {}
+    bar.amount = 0.0
+}
+
+// Pressing a title puts its menu out, or away if it is the one out.
+public function menuBarToggleFn(index: Number) -> () -> Void {
+    let target = index
+    let press: () -> Void = { in
+        menuBarSetOpen(menuBarState().open == target ? -1 : target)
+        return
+    }
+    return press
+}
+
+public function menuBarCloseFn() -> () -> Void {
+    let press: () -> Void = { in
+        menuBarSetOpen(-1)
+        return
+    }
+    return press
+}
+
+// Puts the bar's menu away, and says whether one was out: Escape's first use.
+public function menuBarDismiss() -> Bool {
+    if menuBarState().open < 0 {
+        return false
+    }
+    menuBarSetOpen(-1)
+    return true
+}
+
+// How far the card is out this frame, on the menus' own spring.
+public function menuBarRevealAdvance() -> Number {
+    menuBarEnsure()
+    var bar = nativeRecover<MenuBarState>(ambientStateGet(StateSlot.menuBar))
+    let sample = motionSpringAdvance(bar.reveal, clockDelta())
+    bar.amount = max(sample.value, 0.0)
+    if motionSpringSettled(bar.reveal, sample, MotionSpringLimit.epsilon) {
+        bar.amount = min(max(bar.reveal.spring.target, 0.0), 1.0)
+        if bar.amount <= 0.0 {
+            bar.shown = -1
+        }
+        return bar.amount
+    }
+    clockStillMoving()
+    return bar.amount
+}
+
+// --- What the menus hold -----------------------------------------------------
+
+// One menu on the bar: its title, and its items, unlowered.
+public struct MenuBarMenu {
+    var title: String = ""
+    var items: Any Widget = EmptyView()
+    // The application's menu, whose title is set heavier.
+    var application: Bool = false
+}
+
+// The bar's menus: the platform's, with the application's commands in them,
+// and the application's own menus after View. A standard menu left with
+// nothing in it is not on the bar.
+public function menuBarMenus(commands: borrow CommandsSink) -> [MenuBarMenu] {
+    let groups = commands.groups
+    let name = commands.applicationName
+    var menus: [MenuBarMenu] = []
+    menuBarAppend(
+        menus,
+        copy name,
+        true,
+        [commandSection(groups, .AppInfo, []), commandSection(
+            groups,
+            .AppSettings,
+            []
+        ), commandSection(
+            groups,
+            .AppTermination,
+            [Button(title: "Quit " + name, action: requestWindowClose).keyboardShortcut("Q")]
+        )]
+    )
+    menuBarAppend(
+        menus,
+        "File",
+        false,
+        [commandSection(groups, .NewItem, []), commandSection(
+            groups,
+            .SaveItem,
+            [Button(title: "Close Window", action: requestWindowClose).keyboardShortcut("W")]
+        ), commandSection(groups, .ImportExport, []), commandSection(groups, .PrintItem, [])]
+    )
+    // Nothing in the toolkit undoes yet, and a focused text field answers
+    // its own Cut, Copy and Paste keys before any menu (`TextEditCommand`):
+    // the commands are where the platform has them, and wait for the
+    // application's.
+    menuBarAppend(
+        menus,
+        "Edit",
+        false,
+        [commandSection(
+            groups,
+            .UndoRedo,
+            [Button(title: "Undo", action: layerNoop).keyboardShortcut("Z").disabled(true), Button(
+                title: "Redo",
+                action: layerNoop
+            ).keyboardShortcut("Z", modifiers: [.Shift, .Command]).disabled(true)]
+        ), commandSection(
+            groups,
+            .Pasteboard,
+            [Button(title: "Cut", action: layerNoop).keyboardShortcut("X").disabled(true), Button(
+                title: "Copy",
+                action: layerNoop
+            ).keyboardShortcut("C").disabled(true), Button(
+                title: "Paste",
+                action: layerNoop
+            ).keyboardShortcut("V").disabled(true)]
+        ), commandSection(groups, .TextEditing, [])]
+    )
+    menuBarAppend(
+        menus,
+        "View",
+        false,
+        [commandSection(groups, .Sidebar, menuBarSidebarCommands()), commandSection(
+            groups,
+            .Toolbar,
+            []
+        )]
+    )
+    for menu in commands.menus {
+        menus.append(MenuBarMenu { title: copy menu.title, items: copy menu.items })
+    }
+    menuBarAppend(
+        menus,
+        "Window",
+        false,
+        [commandSection(
+            groups,
+            .WindowSize,
+            [Button(title: "Minimize", action: requestWindowMinimize).keyboardShortcut("M"), Button(
+                title: "Zoom",
+                action: requestWindowToggleMaximize
+            )]
+        ), commandSection(groups, .WindowArrangement, [])]
+    )
+    menuBarAppend(menus, "Help", false, [commandSection(groups, .Help, [])])
+    return menus
+}
+
+// Showing and hiding the sidebar, in a window that has one.
+public function menuBarSidebarCommands() -> [Any Widget] {
+    toolbarSinkEnsure()
+    let toolbar = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+    if !toolbar.sidebarToggle {
+        return []
+    }
+    let title = toolbar.navigationShown > 0.5 ? "Hide Sidebar" : "Show Sidebar"
+    return [Button(title: title, action: navigationSidebarToggleAction()).keyboardShortcut(
+        "S",
+        modifiers: [.Control, .Command]
+    )]
+}
+
+// What a standard group comes to: the groups declared before it, it -- or the
+// group declared in its place -- and the groups declared after it, in the
+// order they were declared.
+public function commandSection(
+    groups: borrow [DeclaredCommandGroup],
+    placement: CommandGroupPlacement,
+    standard: [Any Widget]
+) -> [Any Widget] {
+    var before: [Any Widget] = []
+    var after: [Any Widget] = []
+    var replaced = false
+    var replacing: [Any Widget] = []
+    for group in groups {
+        match group.placement {
+            Before(target) -> {
+                if target == placement {
+                    before.append(copy group.items)
+                }
+            }
+            After(target) -> {
+                if target == placement {
+                    after.append(copy group.items)
+                }
+            }
+            Replacing(target) -> {
+                if target == placement {
+                    replaced = true
+                    replacing.append(copy group.items)
+                }
+            }
+        }
+    }
+    var section = move before
+    for item in replaced ? replacing : standard {
+        section.append(copy item)
+    }
+    for item in after {
+        section.append(copy item)
+    }
+    return section
+}
+
+// A menu made of its sections, a rule between each two that have anything in
+// them, put on the bar unless it has nothing at all.
+function menuBarAppend(
+    menus: borrow mut [MenuBarMenu],
+    title: String,
+    application: Bool,
+    sections: [[Any Widget]]
+) {
+    var items: [Any Widget] = []
+    for section in sections {
+        if section.count == 0 {
+            continue
+        }
+        if items.count > 0 {
+            items.append(Divider())
+        }
+        for item in section {
+            items.append(copy item)
+        }
+    }
+    if items.count == 0 {
+        return
+    }
+    menus.append(
+        MenuBarMenu {
+            title: title,
+            items: VStack(spacing: .None, alignment: .Leading) {
+                For(item in items) {
+                    item
+                }
+
+            },
+            application: application
+        }
+    )
+}
+
+// --- The bar -----------------------------------------------------------------
+
+public construct MenuBar() extends Widget {
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        return menuBarDescription(
+            menuBarMenus(declaredCommands()),
+            windowHasControls(),
+            context,
+            modifiers,
+            modifiers
+        )
+    }
+}
+
+// A bar of `menus`, the window's controls leading it when `controls` says so:
+// the window's menu bar, and the system's. The titles are described in
+// `titleModifiers`, and the menus they put out in `modifiers`.
+public function menuBarDescription(
+    menus: borrow [MenuBarMenu],
+    controls: Bool,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+    titleModifiers: borrow ModifierContext
+) -> CALayerDescription {
+    let metrics = menuBarMetrics()
+    // The bar's own press, and each title's, keyed before anything in the
+    // menus so a title keeps its key whichever menu is out.
+    let barKey = tapSeqKey()
+    var keys: [Number] = []
+    for index in 0..menus.count {
+        keys.append(tapSeqKey())
+    }
+    // Resting on another title while a menu is out puts its menu out.
+    let state = menuBarState()
+    if state.open >= 0 {
+        for index in 0..menus.count {
+            if context.hoveredKey == keys[index] && state.open != index {
+                menuBarSetOpen(index)
+            }
+        }
+    }
+    let open = menuBarState().open
+    let amount = menuBarRevealAdvance()
+    let shown = menuBarState().shown
+
+    let chrome = windowChromeMetrics()
+    var titles: [CALayerDescription] = []
+    var x = chrome.edgeInset
+    if controls {
+        titles.append(windowControlsArea(chrome, context, modifiers))
+        x = chrome.controlsEnd() - chrome.itemSpacing + metrics.titleSpacing
+    }
+    var anchors: [Number] = []
+    for index in 0..menus.count {
+        layerActionRegister(keys[index], menuBarToggleFn(index))
+        let lit = open == index || (interfaceHovers() && context.hoveredKey == keys[index])
+        let title = menuBarTitle(menus[index], keys[index], lit, context, titleModifiers)
+        anchors.append(x)
+        x = x + title.measure(context.viewportWidth).width + metrics.titleSpacing
+        titles.append(move title)
+    }
+
+    // Every menu lowers, out or not, so its commands' shortcuts are bound;
+    // only the one out is presented.
+    let top = context.systemSafeArea.top
+    for index in 0..menus.count {
+        let band = tapSeqEnterOverlay()
+        let away = tapSeqKey()
+        let card = ContextMenu() {
+            menus[index].items
+        }
+        .describe(context, modifierContextForOverlay(modifiers))
+        tapSeqLeaveOverlay(band)
+        if index != shown {
+            continue
+        }
+        var overlay = Overlay {
+            anchorX: anchors[index],
+            anchorY: top,
+            anchorH: (metrics.height + metrics.titleHeight) / 2.0,
+            spacing: metrics.cardGap,
+            content: menuBarCard(move card, amount),
+            // The bar stays live over the card's dismissal, so a title
+            // can be rested on and pressed while its neighbor is out.
+            dismissTop: top + metrics.height
+        }
+        if open >= 0 {
+            layerActionRegister(away, menuBarCloseFn())
+            overlay.dismissKey = away
+        } else {
+            overlay.content.makeInert()
+        }
+        overlayPresent(move overlay)
+    }
+
+    // A press on the bar between titles puts the menu out away.
+    if open >= 0 {
+        layerActionRegister(barKey, menuBarCloseFn())
+    }
+    return CALayerDescription {
+        hittable: open >= 0,
+        hitKey: barKey,
+        layout: CALayoutIntent {
+            axis: .Row,
+            spacing: metrics.titleSpacing,
+            heightFill: false,
+            fixedHeight: metrics.height,
+            paddingLeading: controls ? 0.0 : chrome.edgeInset,
+            paddingTrailing: chrome.edgeInset,
+            alignment: Point { x: 0.0, y: 0.5 }
+        },
+        sublayers: move titles
+    }
+}
+
+// A menu's title on the bar: its words in a pill that lights while its menu is
+// out, or while the pointer rests on it.
+public function menuBarTitle(
+    menu: borrow MenuBarMenu,
+    key: Number,
+    lit: Bool,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let metrics = menuBarMetrics()
+    let face = menuBarTitleFont(menu.application)
+    var words = Text(content: copy menu.title)
+    .font(size: resolvedLength(face.size), weight: face.weight)
+    .describe(context, modifiers)
+    words.layout.widthFill = false
+    words.layout.heightFill = false
+    let radius = metrics.titleHeight / 2.0
+    var wash = colorFromFoundation(transparentFoundationColor())
+    if lit {
+        wash = menuRowWash(modifiers)
+    }
+    return CALayerDescription {
+        hittable: true,
+        hitKey: key,
+        cornerRadius: radius,
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedHeight: metrics.titleHeight,
+            paddingLeading: metrics.titlePadding,
+            paddingTrailing: metrics.titlePadding,
+            alignment: Point { x: 0.5, y: 0.5 }
+        },
+        content: .Solid(CASolid { fill: wash, cornerRadius: radius, shapeKind: 1 }),
+        pressColor: menuRowWash(modifiers),
+        sublayers: [move words]
+    }
+}
+
+// A bar menu's card this far out: it comes down out of its title, fading in
+// as it grows from a little smaller than it is, and goes back the same way.
+public function menuBarCard(card: CALayerDescription, amount: Number) -> CALayerDescription {
+    let grown = min(max(amount, 0.0), 1.0)
+    let scale = menuBarCardFloor + (1.0 - menuBarCardFloor) * amount
+    var hung = CALayerDescription {
+        anchorPoint: Point { x: 0.0, y: 0.0 },
+        scaleX: scale,
+        scaleY: scale,
+        opacity: grown,
+        layout: CALayoutIntent { widthFill: false, heightFill: false },
+        sublayers: [move card]
+    }
+    hung.makeImmediate()
+    return hung
+}
+
+// How small a bar menu's card starts out, of its own size.
+let menuBarCardFloor: Number = 0.92

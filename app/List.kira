@@ -1,0 +1,522 @@
+import Foundation
+import Ember
+import KiraLayout
+import KCoreAnimation
+
+// SwiftUI's `List`: rows in one column, drawn the way the list's style says.
+//
+//     List {
+//         Section("Workspace") {
+//             NavigationLink(value = ProjectsRoute()) {
+//                 Label("Projects", systemImage = .Folder)
+//             }
+//         }
+//     }
+//
+// The list does not draw its rows; it says what they are in. Under the sidebar
+// style a `Section` is its title over its rows, a `NavigationLink` is a row
+// carrying the selection band and a `Label` sets its glyph in the accent. Under
+// the inset grouped style the same `Section` is a header over a card of rows
+// and the same link is a row that drills in.
+
+// How a list is drawn, matching SwiftUI's list styles. `Automatic` is the
+// platform's answer for where the list is: the sidebar style in a split view's
+// sidebar column, inset grouped everywhere else, as on iPad.
+public enum ListStyle {
+    Automatic
+    Plain
+    InsetGrouped
+    Sidebar
+}
+
+public construct List() extends Widget {
+    let children: [some Widget]
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        match modifiers.listStyle {
+            Sidebar -> {
+                let rows = ScrollView() {
+                    VStack(spacing: .None, alignment: .Leading) {
+                        For(child in children) {
+                            child
+                        }
+                    }
+                }
+                return rows.describe(context, modifierContextPresenting(modifiers, .Sidebar))
+            }
+            Plain -> {
+                let rows = ScrollView() {
+                    VStack(spacing: .None, alignment: .Leading) {
+                        For(child in children) {
+                            child
+                        }
+                    }
+                }
+                return rows.describe(context, modifiers)
+            }
+            InsetGrouped -> {}
+            Automatic -> {}
+        }
+        let grouped = ScrollView() {
+            InsetGroupedList() {
+                For(child in children) {
+                    child
+                }
+            }
+        }
+        return grouped.describe(context, modifiers)
+    }
+}
+
+// The inset grouped list: its sections down one readable column, centered in
+// the room it has and held off its edges by the column's margin, on the
+// grouped canvas. The canvas is also what it asks the column around it to be
+// painted with, so the band under the bar is the same gray.
+//
+// Two sections stand the section spacing apart, or further where one asks for
+// more room beside its header or its footer. The room is shared, not added:
+// a footer over the next section's header is as far from it as either asks,
+// which is how a grouped `Form` spaces its sections on a Mac.
+//
+// Rows standing outside any section are grouped as SwiftUI groups them: each
+// run of them is a section of its own, with no header and no footer.
+public construct InsetGroupedList() extends Widget {
+    let children: [some Widget]
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let canvas = themeAdaptiveColor(groupedBackground(), modifierAppearance(modifiers))
+        navigationSetBackground(copy canvas)
+        let sectionModifiers = modifierContextPresenting(modifiers, .InsetGrouped)
+        var grouped: [Any Widget] = []
+        var rows: [Any Widget] = []
+        for child in children {
+            if child.isSection() {
+                if rows.count > 0 {
+                    grouped.append(Section() { For(row in rows) { row } })
+                    rows = []
+                }
+                grouped.append(copy child)
+            } else {
+                rows.append(copy child)
+            }
+        }
+        if rows.count > 0 {
+            grouped.append(Section() { For(row in rows) { row } })
+        }
+        var sections: [CALayerDescription] = []
+        for child in grouped {
+            var section = child.describe(context, sectionModifiers)
+            if describesNothing(section) {
+                continue
+            }
+            if sections.count == 0 {
+                section.layout.paddingTop = 0.0
+            } else {
+                let previous = sections.count - 1
+                section.layout.paddingTop = max(
+                    listMetrics().sectionSpacing,
+                    max(sections[previous].layout.paddingBottom, section.layout.paddingTop)
+                )
+                sections[previous].layout.paddingBottom = 0.0
+            }
+            sections.append(move section)
+        }
+        if sections.count > 0 {
+            sections[sections.count - 1].layout.paddingBottom = 0.0
+        }
+        return CALayerDescription {
+            layout: CALayoutIntent {
+                axis: .Column,
+                paddingLeading: resolvedContentMargin(modifiers),
+                paddingTop: listMetrics().topInset,
+                paddingTrailing: resolvedContentMargin(modifiers),
+                paddingBottom: listMetrics().topInset,
+                alignment: Point { x: 0.5, y: 0.0 }
+            },
+            content: .Solid(
+                CASolid {
+                    fill: colorFromFoundation(
+                        modifierColor(foundationColor(move canvas), modifiers)
+                    )
+                }
+            ),
+            sublayers: [
+                CALayerDescription {
+                    layout: CALayoutIntent {
+                        axis: .Column,
+                        heightFill: false,
+                        maxWidth: listMetrics().readableWidth
+                    },
+                    sublayers: move sections
+                }
+            ]
+        }
+    }
+}
+
+// One section of an inset grouped list: its header, then its rows together on
+// one card, then its footer. A header or footer left at `EmptyView()` takes no
+// room at all.
+//
+// The header and the footer are set in the list's faces, the footer in the
+// secondary ink; both start where the rows' content does. Every row is at
+// least the list's row height with its content centered in it, and every row
+// after the first carries a hairline across its top, inset like its content.
+//
+// The room a section asks for beside the next one is its own padding: the
+// labeled section spacing on the side a header or footer stands, none on a
+// side the card ends. The list it stands in shares that room with the next
+// section's.
+public function insetGroupedSection(
+    rows: [CALayerDescription],
+    header: CALayerDescription,
+    footer: CALayerDescription,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let radius = listMetrics().cornerRadius
+    let headed = !describesNothing(header)
+    let footed = !describesNothing(footer)
+    var parts: [CALayerDescription] = []
+    if headed {
+        parts.append(
+            CALayerDescription {
+                layout: CALayoutIntent {
+                    heightFill: false,
+                    paddingLeading: listRowInset(modifiers),
+                    paddingTop: listMetrics().headerTopInset,
+                    paddingTrailing: listRowInset(modifiers),
+                    paddingBottom: listMetrics().headerBottomInset
+                },
+                sublayers: [move header]
+            }
+        )
+    }
+    parts.append(
+        CALayerDescription {
+            layout: CALayoutIntent { axis: .Column, heightFill: false },
+            cornerRadius: radius,
+            clipsChildren: true,
+            content: .Solid(
+                CASolid {
+                    fill: colorFromFoundation(
+                        modifierColor(
+                            foundationColor(
+                                themeAdaptiveColor(
+                                    groupedCardBackground(),
+                                    modifierAppearance(modifiers)
+                                )
+                            ),
+                            modifiers
+                        )
+                    ),
+                    cornerRadius: radius,
+                    shapeKind: 1
+                }
+            ),
+            sublayers: move rows
+        }
+    )
+    if footed {
+        parts.append(
+            CALayerDescription {
+                layout: CALayoutIntent {
+                    heightFill: false,
+                    paddingLeading: listRowInset(modifiers),
+                    paddingTop: listMetrics().footerTopInset,
+                    paddingTrailing: listRowInset(modifiers),
+                    paddingBottom: listMetrics().footerBottomInset
+                },
+                sublayers: [move footer]
+            }
+        )
+    }
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            axis: .Column,
+            heightFill: false,
+            paddingTop: headed ? listMetrics().labeledSectionSpacing : 0.0,
+            paddingBottom: footed ? listMetrics().labeledSectionSpacing : 0.0
+        },
+        sublayers: move parts
+    }
+}
+
+// How far a row's content stands in from its card's edge. On a phone or a
+// tablet that is the margin the column holds content off the screen with:
+// UIKit gives a cell the table's own margin (`_defaultMarginWidthForTableView:`),
+// 20 on a large-format phone and 16 on any other. A desktop's row keeps the
+// kit's.
+function listRowInset(modifiers: borrow ModifierContext) -> Number {
+    if interfaceMode() == .AdaptiveDesktop {
+        return listMetrics().rowInset
+    }
+    return resolvedContentMargin(modifiers)
+}
+
+// One row of a grouped card: its content across the row, held off the card's
+// edges and off the row's top and bottom, and centered down at least the row
+// height, over a hairline when a row comes after it. The hairline is the
+// row's last point, as a UIKit cell's separator is, and the content centers
+// in what is over it. A control taller than a line makes its row taller, as
+// it does in a grouped `Form`.
+//
+// A row whose content can be pressed is pressed as a whole: the hit region is
+// lifted off the content onto the row, and the row lights edge to edge while
+// it is held, clipped by the card's corners. On a desktop it also lights while
+// the pointer rests on it.
+public function insetGroupedRow(
+    content: CALayerDescription,
+    followed: Bool,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let separator = followed ? listMetrics().separatorThickness : 0.0
+    var inner = content
+    let key = inner.hitKey
+    let pressable = inner.hittable
+    // A row that carries a band, as a selected `ListRow` does, has it painted
+    // across the whole cell rather than around its content.
+    let band = inner.takeRowBand()
+    inner.hittable = false
+    var layers: [CALayerDescription] = []
+    layers.append(
+        CALayerDescription {
+            layout: CALayoutIntent {
+                heightFill: false,
+                minHeight: listMetrics().rowHeight - separator,
+                paddingTop: listMetrics().rowVerticalInset,
+                paddingBottom: listMetrics().rowVerticalInset,
+                alignment: Point { x: 0.0, y: 0.5 }
+            },
+            sublayers: [move inner]
+        }
+    )
+    // The hairline starts where the row says its separator does -- a label's
+    // title, past its glyph -- and at the row's edge when nothing says.
+    if followed {
+        layers.append(
+            CALayerDescription {
+                layout: CALayoutIntent {
+                    heightFill: false,
+                    fixedHeight: listMetrics().separatorThickness,
+                    followsGuide: guideTag(ListRowSeparatorLeading())
+                },
+                content: .Solid(
+                    CASolid {
+                        fill: colorFromFoundation(
+                            modifierColor(
+                                foundationColor(
+                                    themeAdaptiveColor(listSeparator, modifierAppearance(modifiers))
+                                ),
+                                modifiers
+                            )
+                        )
+                    }
+                )
+            }
+        )
+    }
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            axis: .Column,
+            heightFill: false,
+            paddingLeading: listRowInset(modifiers),
+            paddingTrailing: listRowInset(modifiers)
+        },
+        hittable: pressable,
+        hitKey: pressable ? key : 0,
+        content: .Solid(CASolid { fill: band }),
+        // No hover: the platform's list rows answer a press and a selection,
+        // never a pointer resting on them.
+        pressColor: insetGroupedRowWash(pressable, modifiers),
+        sublayers: move layers
+    }
+}
+
+// What lights a row: the list's highlight while it is held, which the tree
+// lays on the row pressed.
+public function insetGroupedRowWash(pressable: Bool, modifiers: borrow ModifierContext) -> CAColor {
+    if !pressable {
+        return CAColor { a: 0.0 }
+    }
+    return colorFromFoundation(
+        modifierColor(
+            foundationColor(themeAdaptiveColor(listRowHighlight, modifierAppearance(modifiers))),
+            modifiers
+        )
+    )
+}
+
+public construct ListStyleLayer(style: ListStyle) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        return content.describe(
+            context,
+            modifierContextApply(modifiers, modifierDeltaListStyle(style))
+        )
+    }
+}
+
+// A section's title in a sidebar: its own row, the title held off the column's
+// edge and low in the row, close to the rows it heads, in the body face and
+// the secondary ink. A header that is nothing takes no room, as a sidebar
+// section without a header has none in SwiftUI.
+public construct SidebarSectionHeader() extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let title = content
+        .typography(.body)
+        .foregroundColor(.Secondary)
+        .describe(context, modifiers)
+        if describesNothing(title) {
+            return title
+        }
+        return CALayerDescription {
+            layout: CALayoutIntent {
+                axis: .Row,
+                heightFill: false,
+                fixedHeight: sidebarMetrics().headerHeight,
+                paddingLeading: sidebarMetrics().headerInset,
+                paddingTop: sidebarMetrics().headerTopInset,
+                paddingTrailing: sidebarMetrics().headerInset
+            },
+            sublayers: [move title]
+        }
+    }
+}
+
+// One row of a sidebar. Under `.SidebarCell` the section around it draws the
+// cell, so the row is its title carrying its press and its selection band as
+// the layer's background; anywhere else it is its own cell.
+public construct SidebarRow(selected: Bool, action: () -> Void) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        sidebarSelectionRow(selected)
+        let key = tapSeqKey()
+        layerActionRegister(key, action)
+        let face = modifierTypography(modifiers, .body)
+        let cell = modifiers.controlPresentation == .SidebarCell
+        let title = content.font(
+            size: resolvedLength(face.size),
+            weight: sidebarRowWeight(selected)
+        )
+        var row = cell ? title.describe(
+            context,
+            modifierContextPresenting(modifiers, .Sidebar)
+        ) : title.describe(context, modifiers)
+        row.hittable = !modifiers.disabled
+        row.hitKey = key
+        row.backgroundColor = colorFromFoundation(
+            modifierColor(foundationColor(sidebarRowBand(selected, modifiers)), modifiers)
+        )
+        var node = accessibilityPressable(.Button, action, modifiers)
+        if selected {
+            node.traits = node.traits.union(AccessibilityTraits.isSelected)
+        }
+        row.accessibilityCombined(move node)
+        if cell {
+            return row
+        }
+        return sidebarRowCell(move row, modifiers)
+    }
+}
+
+// The cell every row of a sidebar sits in: the column's width, at least the
+// row height, its content further in than the band a selected row carries.
+// The content's press and background are lifted onto the band, so the whole
+// row is pressed and the band spans it with a continuous corner. Selection
+// lands at once, as a sidebar cell's does: the band does not fade between rows.
+//
+// On a phone or a tablet the press is the cell's, the column's whole width. On
+// a desktop a wash lights the layer pressed, so the press is the band's: the
+// one layer shaped like the row. Neither lights under a resting pointer, as
+// the platform's sidebar rows do not.
+public function sidebarRowCell(
+    content: CALayerDescription,
+    modifiers: borrow ModifierContext
+) -> CALayerDescription {
+    var inner = content
+    let key = inner.hitKey
+    let pressable = inner.hittable
+    let band = inner.takeRowBand()
+    let onBand = interfaceHovers()
+    inner.hittable = false
+    inner.hitKey = 0
+    let gutter = sidebarMetrics().rowInset - sidebarMetrics().selectionInset
+    let radius = sidebarMetrics().selectionRadius
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            heightFill: false,
+            minHeight: sidebarMetrics().rowHeight,
+            paddingLeading: sidebarMetrics().selectionInset,
+            paddingTrailing: sidebarMetrics().selectionInset
+        },
+        hittable: pressable && !onBand,
+        hitKey: pressable && !onBand ? key : 0,
+        sublayers: [CALayerDescription {
+            layout: CALayoutIntent {
+                axis: .Row,
+                paddingLeading: gutter,
+                paddingTrailing: gutter,
+                alignment: Point { x: 0.0, y: 0.5 }
+            },
+            hittable: pressable && onBand,
+            hitKey: pressable && onBand ? key : 0,
+            cornerRadius: radius,
+            disablesActions: true,
+            content: .Solid(CASolid { fill: band, cornerRadius: radius, shapeKind: 1 }),
+            sublayers: [move inner]
+        }]
+    }
+}
+
+extend CALayerDescription {
+    // The band a row carries for its cell to paint, taken off the row. A
+    // modifier such as `.onClick` wraps the row in a layer of its own, so the
+    // band is looked for down the row's single-sublayer wrappers.
+    function takeRowBand(borrow mut self) -> CAColor {
+        if self.backgroundColor.a > 0.0 {
+            let band = self.backgroundColor
+            self.backgroundColor = CAColor { a: 0.0 }
+            return band
+        }
+        if self.sublayers.count == 1 {
+            return self.sublayers[0].takeRowBand()
+        }
+        return CAColor { a: 0.0 }
+    }
+}
+
+public function sidebarRowWeight(selected: Bool) -> FontWeight {
+    if selected {
+        return .SemiBold
+    }
+    return .Regular
+}
+
+// The band behind a sidebar row: the sidebar's selection wash when the row is
+// selected, nothing otherwise.
+public function sidebarRowBand(selected: Bool, modifiers: borrow ModifierContext) -> RGBAColor {
+    if selected {
+        return themeAdaptiveColor(sidebarSelection, modifierAppearance(modifiers))
+    }
+    return RGBAColor { a: 0.0 }
+}

@@ -1,0 +1,168 @@
+# KiraUI Navigation
+
+KiraUI follows SwiftUI’s navigation model: the path is data, links append
+routes, and the stack shows the screen the route at the end of the path
+draws. Containers own presentation. A screen never asks whether it is running
+on a phone or a desktop.
+
+```kira
+construct SettingsRoute() extends NavigationRoute {
+    function routeKey() -> String {
+        return "settings"
+    }
+
+    function destination() -> Any Widget {
+        return SettingsPage()
+    }
+}
+
+@State var navigationPath: NavigationPath = NavigationPath {}
+
+NavigationStack(path = navigationPath) {
+    VStack {
+        NavigationLink(value = SettingsRoute()) {
+            Text("Settings")
+        }
+    }
+}
+```
+
+The SwiftUI shape it follows is:
+
+```swift
+NavigationStack(path: $path) {
+    NavigationLink("Settings", value: Route.settings)
+}
+.navigationDestination(for: Route.self) { route in
+    SettingsPage(route: route)
+}
+```
+
+Each route an app goes to is a construct of the `NavigationRoute` family. Its
+`routeKey()` plays the part SwiftUI's `Hashable` does: two routes with one key
+are the same place, which is how a sidebar row knows it is selected and how
+a change to the path is told from none. A route carries what its screen needs,
+`ProjectRoute(name: "Kira")`, and draws that screen itself in
+`destination()`. Where SwiftUI looks a value's type up in the destinations the
+stack registered, a KiraUI route draws its own, because a route an app makes
+and KiraUI holds crosses a module's edge, and nothing crossing one is asked its
+type (KLF-RIDL section 19).
+
+## Path and containers
+
+`NavigationPath` provides `append(value:)`, `removeLast()`, `removeAll()`,
+`values()`, `last()`, `startsWith(value:)` and `isEmpty()`.
+`NavigationLink(value:)` uses the nearest path automatically. The root view is
+never part of the path, so it cannot be popped.
+
+A link whose label is a title has a second way to be constructed, matching
+SwiftUI's `NavigationLink("Settings", value: route)`:
+
+```kira
+NavigationLink(title = "Settings", value = SettingsRoute())
+```
+
+Use `NavigationStack` for push navigation. Use `NavigationSplitView` when the
+app has a leading navigation column and a detail column:
+
+```kira
+NavigationSplitView(path = path) {
+    Sidebar()
+} detail: {
+    Detail(path = path)
+}
+```
+
+The columns are child slots. The bare trailing block is the sidebar, because
+the sidebar is the slot declared first; `content:` and `detail:` name theirs,
+the way SwiftUI's labels do. Writing a `content:` block is what makes the view
+three-column:
+
+```kira
+NavigationSplitView(path = path) {
+    Sidebar()
+} content: {
+    ProjectList(path = path)
+} detail: {
+    Detail(path = path)
+}
+```
+
+`NavigationSplitView` automatically collapses to one column below the compact
+width threshold. It keeps the leading column on Tablet, PC, and TV. The path is
+unchanged by resize, rotation, or collapse, so the same app can move between a
+phone stack and a desktop split view without losing navigation state.
+
+## Complex layered example
+
+The runnable app in
+[`Examples/navigation-app`](Examples/navigation-app) combines a split
+sidebar with a nested detail stack. Its route graph is:
+
+```text
+Projects
+└── Project overview
+    └── Project files
+        └── File detail
+
+Activity
+└── Activity detail
+
+Settings
+└── Account
+```
+
+Every level appends a route to the same path, and the detail stack shows
+whichever route the path ends at:
+
+```kira
+NavigationSplitView(path = navigationPath) {
+    WorkspaceSidebar()
+} detail: {
+    WorkspaceDetail(path = navigationPath)
+}
+
+NavigationStack(path = navigationPath) {
+    WorkspaceHome()
+}
+```
+
+For a deep link, the same path can be populated in order:
+
+```kira
+path.removeAll()
+path.append(value = ProjectsRoute())
+path.append(value = ProjectOverviewRoute())
+path.append(value = ProjectFilesRoute())
+```
+
+Everything one action does to the path lands as one change, as in SwiftUI,
+judged by how it leaves the path against how it found it: a path that now
+starts somewhere else is replaced outright, the way choosing a sidebar row
+replaces it, so the deep link above opens on the files page with Projects
+selected; a path that grew pushes; one that shrank goes back.
+
+On a wide window, the sidebar remains visible while the detail stack changes.
+On a compact window, `NavigationSplitView` presents that same detail stack as a
+phone-style push flow with Back navigation.
+
+## Device behavior
+
+The policy is automatic and driven by the live viewport:
+
+- Phone / compact width: one column, back navigation, 44-point targets.
+- Tablet: split at regular width, 48-point targets.
+- PC: split at regular width, 40-point targets.
+- TV: split with a 64-point target and toolbar size for 10-foot viewing.
+
+`KIRA_UI_DEVICE=phone|tablet|pc|tv` is available for host and snapshot tests;
+normal application code does not need to branch on it. TV links use the same
+focusable KiraUI hit regions as pointer and touch links. Spatial remote focus
+(Up/Down/Left/Right) belongs in the foundation input layer and should be added
+there, rather than leaking TV-specific navigation code into every screen.
+
+The design follows Apple’s current guidance: `NavigationStack` represents a
+stack of destinations, while `NavigationSplitView` represents two or three
+columns and collapses at narrow sizes. See Apple’s [NavigationStack
+documentation](https://developer.apple.com/documentation/swiftui/navigationstack)
+and [NavigationSplitView documentation](https://developer.apple.com/documentation/swiftui/navigationsplitview).

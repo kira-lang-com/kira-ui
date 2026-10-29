@@ -1,0 +1,275 @@
+import Foundation
+import KCoreUI
+
+// Where the default style's values come from.
+//
+// Every color and every text metric `DefaultStyle` ships is read out of a
+// KCoreUI catalog rather than written as a literal here. Nothing about the
+// `Theme` API changes: a widget still asks the theme for tokens, and a custom
+// style that fills its own tokens still overrides them. What changed is where
+// the numbers live.
+//
+// That is worth the indirection because a token literal is a value one theme
+// can replace and nothing else can. A catalog entry is a value that varies by
+// appearance, by contrast, by anything else in the environment, and that an
+// application can override with a partial blob without touching a line of the
+// toolkit.
+//
+// KiraUI ships the blob as its own package asset. The parsed stack below is a
+// module constant, and so is every token group read out of it: a theme is
+// built wherever a widget asks for one, many times a frame, and each build
+// reading its colors out of the catalog again was nearly all of a frame.
+
+// The catalog in effect, read from disk, once. When it does not load, the
+// program draws with the empty stack: every color and text size reads as zero,
+// so text is set at size 0 and lays out to nothing. The fault says why.
+public function loadKiraUICatalogStack() -> CatalogStack {
+    match loadDefaultCatalog() {
+        Ok(catalog) -> return catalog.asStack()
+        Error(failure) -> {
+            log fault(
+                "the default catalog did not load; every color and text size reads as zero",
+                path: CatalogFile.defaultPath,
+                failure
+            )
+            return CatalogStack()
+        }
+    }
+}
+
+public let catalogStack = loadKiraUICatalogStack()
+
+// The trait vector the toolkit resolves against.
+//
+// Appearance comes through `resolvedAppearance`, which is still the one place
+// the host override and the platform's own answer are reconciled. The idiom is
+// the interface mode's: the desktop's, or a tablet's, whose kit the catalog's
+// floor is read off. The rest is what this build can observe; a trait the
+// toolkit cannot yet read stays at its default rather than being guessed.
+public function catalogEnvironment(
+    appearance: borrow Appearance,
+    mode: borrow InterfaceMode
+) -> UIEnvironment {
+    var environment = UIEnvironment()
+    match appearance {
+        Light -> { environment.appearance = .Light }
+        Dark -> { environment.appearance = .Dark }
+    }
+    match mode {
+        AdaptiveDesktop -> { environment.idiom = .Desktop }
+        AdaptiveMobile -> { environment.idiom = .Pad }
+    }
+    return environment
+}
+
+// KiraUI declares its own `Color`, distinct from the one a catalog answers
+// with, so the channels are carried across by hand. Two identical declarations
+// are two types, and that is the seam between them.
+//
+// A mode sizes an interface and does not paint it, so a color is read once, in
+// the mode the program starts in.
+public function catalogColorAt(
+    stack: borrow CatalogStack,
+    name: borrow String,
+    appearance: borrow Appearance
+) -> RGBAColor {
+    let resolved = stack.resolveColor(name, catalogEnvironment(appearance, hostInterfaceMode()))
+    return RGBAColor { r: resolved.r, g: resolved.g, b: resolved.b, a: resolved.a }
+}
+
+// A catalog color as the adaptive pair the style vocabulary is written in.
+//
+// The pair is what `AdaptiveColor` is, so this is the other seam: above it the
+// toolkit's tokens are unchanged, below it the values are renditions selected
+// by an environment. A catalog resource with more variants than these two still
+// has them; this reads the two the theme vocabulary can hold.
+public function catalogAdaptive(stack: borrow CatalogStack, name: borrow String) -> AdaptiveColor {
+    return AdaptiveColor {
+        light: catalogColorAt(stack, name, .Light),
+        dark: catalogColorAt(stack, name, .Dark)
+    }
+}
+
+// A catalog text style as the toolkit's own font shape, at `mode`'s size.
+public function catalogFont(
+    stack: borrow CatalogStack,
+    name: borrow String,
+    mode: borrow InterfaceMode
+) -> FontImplementation {
+    let resolved = stack.resolveTypography(name, catalogEnvironment(.Light, mode))
+    return FontImplementation {
+        size: resolved.value.size,
+        weight: catalogFontWeight(resolved.value.weight),
+        lineHeight: resolved.value.lineHeight,
+        tracking: resolved.value.tracking
+    }
+}
+
+// The numeric weight axis, which is what every shaper and every platform font
+// API speaks, narrowed to the three weights the toolkit draws.
+public function catalogFontWeight(weight: Number) -> FontWeight {
+    if weight >= 700 {
+        return .Bold
+    }
+    if weight >= 600 {
+        return .SemiBold
+    }
+    return .Regular
+}
+
+// A border is a catalog color and a width the toolkit still owns. The width is
+// a hairline's geometry rather than its appearance, and nothing in the
+// environment changes it.
+public function catalogBorder(
+    stack: borrow CatalogStack,
+    name: borrow String,
+    width: Number
+) -> BorderImplementation {
+    return BorderImplementation { color: catalogAdaptive(stack, name), width: width }
+}
+
+// --- The default style's tokens --------------------------------------------
+
+public function catalogPaletteTokens() -> StylePaletteTokens {
+    return StylePaletteTokens {
+        red: catalogAdaptive(catalogStack, ColorName.systemRed),
+        orange: catalogAdaptive(catalogStack, ColorName.systemOrange),
+        yellow: catalogAdaptive(catalogStack, ColorName.systemYellow),
+        green: catalogAdaptive(catalogStack, ColorName.systemGreen),
+        mint: catalogAdaptive(catalogStack, ColorName.systemMint),
+        teal: catalogAdaptive(catalogStack, ColorName.systemTeal),
+        cyan: catalogAdaptive(catalogStack, ColorName.systemCyan),
+        blue: catalogAdaptive(catalogStack, ColorName.systemBlue),
+        indigo: catalogAdaptive(catalogStack, ColorName.systemIndigo),
+        purple: catalogAdaptive(catalogStack, ColorName.systemPurple),
+        pink: catalogAdaptive(catalogStack, ColorName.systemPink),
+        brown: catalogAdaptive(catalogStack, ColorName.systemBrown),
+        gray: catalogAdaptive(catalogStack, ColorName.systemGray)
+    }
+}
+
+public function catalogForegroundTokens() -> StyleForegroundTokens {
+    return StyleForegroundTokens {
+        primary: catalogAdaptive(catalogStack, ColorName.label),
+        secondary: catalogAdaptive(catalogStack, ColorName.secondaryLabel),
+        tertiary: catalogAdaptive(catalogStack, ColorName.tertiaryLabel),
+        quaternary: catalogAdaptive(catalogStack, ColorName.quaternaryLabel),
+        // Ink that stays readable on a filled control. Apple names no such
+        // color, so the catalog carries it under a name of the toolkit's own
+        // rather than the declared Apple surface growing an entry Apple has not
+        // got.
+        inverse: catalogAdaptive(catalogStack, "inverseLabel")
+    }
+}
+
+public function catalogBackgroundTokens() -> StyleBackgroundTokens {
+    return StyleBackgroundTokens {
+        canvas: catalogAdaptive(catalogStack, ColorName.systemBackground),
+        surface: catalogAdaptive(catalogStack, ColorName.secondarySystemBackground),
+        raised: catalogAdaptive(catalogStack, ColorName.tertiarySystemBackground),
+        overlay: catalogAdaptive(catalogStack, ColorName.windowBackground)
+    }
+}
+
+public function catalogFillTokens() -> StyleFillTokens {
+    return StyleFillTokens {
+        // A control's bezel is the system fill on a phone but lighter on a
+        // Mac, where AppKit draws it in layers no Apple color names, so the
+        // catalog carries it under a name of the toolkit's own.
+        control: catalogAdaptive(catalogStack, "controlBezel"),
+        hover: catalogAdaptive(catalogStack, ColorName.secondarySystemFill),
+        selection: catalogAdaptive(catalogStack, ColorName.selection)
+    }
+}
+
+public function catalogTintTokens() -> StyleTintTokens {
+    return StyleTintTokens {
+        accent: catalogAdaptive(catalogStack, ColorName.tint),
+        success: catalogAdaptive(catalogStack, "success"),
+        warning: catalogAdaptive(catalogStack, "warning"),
+        danger: catalogAdaptive(catalogStack, "danger")
+    }
+}
+
+public function catalogBorderTokens() -> StyleBorderTokens {
+    return StyleBorderTokens {
+        none: catalogBorder(catalogStack, ColorName.separator, 0.0),
+        subtle: catalogBorder(catalogStack, ColorName.separator, 1.0),
+        standard: catalogBorder(catalogStack, "standardBorder", 1.0),
+        strong: catalogBorder(catalogStack, "strongBorder", 1.5),
+        focus: catalogBorder(catalogStack, "focusRing", 2.0)
+    }
+}
+
+public function catalogTypographyTokens(mode: InterfaceMode) -> StyleTypographyTokens {
+    return StyleTypographyTokens {
+        caption: catalogFont(catalogStack, TextStyleName.caption, mode),
+        caption2: catalogFont(catalogStack, TextStyleName.caption2, mode),
+        callout: catalogFont(catalogStack, TextStyleName.callout, mode),
+        body: catalogFont(catalogStack, TextStyleName.body, mode),
+        control: catalogFont(catalogStack, "control", mode),
+        title: catalogFont(catalogStack, TextStyleName.title, mode),
+        bodyEmphasis: catalogFont(catalogStack, "bodyEmphasis", mode),
+        subheadline: catalogFont(catalogStack, TextStyleName.subheadline, mode),
+        footnote: catalogFont(catalogStack, TextStyleName.footnote, mode),
+        overline: catalogFont(catalogStack, "overline", mode),
+        label: catalogFont(catalogStack, "label", mode),
+        section: catalogFont(catalogStack, "section", mode),
+        headline: catalogFont(catalogStack, TextStyleName.headline, mode),
+        title1: catalogFont(catalogStack, "title1", mode),
+        title2: catalogFont(catalogStack, TextStyleName.title2, mode),
+        title3: catalogFont(catalogStack, TextStyleName.title3, mode),
+        largeTitle: catalogFont(catalogStack, TextStyleName.largeTitle, mode)
+    }
+}
+
+// The default style's token groups, each read out of the catalog once.
+public let catalogPalette = catalogPaletteTokens()
+public let catalogForegrounds = catalogForegroundTokens()
+public let catalogBackgrounds = catalogBackgroundTokens()
+public let catalogFills = catalogFillTokens()
+public let catalogTints = catalogTintTokens()
+public let catalogBorders = catalogBorderTokens()
+
+// The text styles at each size, each read out of the catalog once.
+let desktopTypography = catalogTypographyTokens(.AdaptiveDesktop)
+let mobileTypography = catalogTypographyTokens(.AdaptiveMobile)
+
+// The default style's text styles, at the size the interface is drawn at.
+public function catalogTypography() -> StyleTypographyTokens {
+    return interfaceMode() == .AdaptiveDesktop ? desktopTypography : mobileTypography
+}
+
+// One text style out of a set of them.
+extend StyleTypographyTokens {
+    function font(style: borrow TypographyStyle) -> FontImplementation {
+        match style {
+            caption -> return self.caption
+            body -> return self.body
+            control -> return self.control
+            subheadline -> return self.subheadline
+            callout -> return self.callout
+            caption2 -> return self.caption2
+            bodyEmphasis -> return self.bodyEmphasis
+            footnote -> return self.footnote
+            overline -> return self.overline
+            label -> return self.label
+            section -> return self.section
+            headline -> return self.headline
+            title -> return self.title
+            title1 -> return self.title1
+            title2 -> return self.title2
+            title3 -> return self.title3
+            largeTitle -> return self.largeTitle
+        }
+    }
+}
+
+// A length the catalog states, at `mode`'s size.
+public function catalogMetric(
+    stack: borrow CatalogStack,
+    name: borrow String,
+    mode: borrow InterfaceMode
+) -> Number {
+    return stack.resolveMetric(name, catalogEnvironment(.Light, mode)).points
+}

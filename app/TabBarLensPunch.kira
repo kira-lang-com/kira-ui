@@ -1,0 +1,213 @@
+import Foundation
+import KCoreAnimation
+
+// The tab bar's row while its lens is up, drawn apart: what stays of it
+// beside the lens, what the lens shows in its place, and the inks either
+// is drawn in. See `TabBarLens.kira` for the lens itself.
+
+// The row while the lens is up, drawn apart: whole in an unselected tab's
+// ink, then a capsule the lens's size taking itself out of it, as
+// `_UILiquidLensView.liftedContentPunchout` takes the tabs out from under
+// the lens with a `destOut` view matched to it -- and the row stays right up
+// to the lens's round ends. What the lens shows in their place is
+// `tabBarSelectionLifted`, above its glass. The row itself is hidden
+// meanwhile.
+function tabBarSelectionPunch(
+    hold: borrow TabBarSelectionHold,
+    row: borrow CALayerDescription,
+    modifiers: borrow ModifierContext
+) -> CALayerDescription {
+    let height = hold.tabHeight + hold.outset * 2.0
+    var whole = copy row
+    tabBarStandIn(whole)
+    // Beside the lens no tab is selected: the lens carries the selection, and
+    // the tab it left is set in the bar's ink like every other.
+    let rest = tabBarRestInk(hold, modifiers)
+    tabBarLiftedInk(whole, rest.color, rest.blend)
+    whole.accessibilityClear()
+    whole.animation = tabBarSelectionMove(hold)
+    var parts: [CALayerDescription] = [
+        tabBarPunchPart(hold, 1, height, false, move whole),
+        CALayerDescription {
+            key: 2,
+            layout: CALayoutIntent {
+                widthFill: false,
+                heightFill: false,
+                fixedHeight: height,
+                spanFlexes: true
+            },
+            content: .Solid(
+                CASolid { fill: CAColor {}, cornerRadius: height / 2.0, blend: .DestinationOut }
+            ),
+            cornerRadius: height / 2.0,
+            animation: tabBarSelectionBounds(hold)
+        }
+    ]
+    var anchor = tabBarSelectionAnchor(hold, hold.outset, move parts)
+    anchor.key = 4
+    anchor.layout.spanFlexKey = hold.key
+    anchor.layout.spanFlexDrives = true
+    // The tabs dodge into the bar's glass and the cut takes them back off it:
+    // a group that starts out as the bar, as the platter's is, so the cut
+    // leaves the bar for the lens to bend rather than a hole through it.
+    anchor.blendingGroup = true
+    return anchor
+}
+
+// What the lifted lens shows: the row again in the selected inks, clipped to
+// the lens's capsule and drawn over its glass, on a phone grown toward
+// `tabBarLiftedContentScale` with the lift. UIKit portals the tab content
+// into the lens and warps it there itself; the glass is told to leave it
+// alone (`excludeControlDisplacement`). The growth is the lift's own spring,
+// so the selection's move never drags it.
+function tabBarSelectionLifted(
+    hold: borrow TabBarSelectionHold,
+    row: borrow CALayerDescription,
+    modifiers: borrow ModifierContext,
+    height: Number
+) -> CALayerDescription {
+    var lifted = copy row
+    tabBarSelectedRow(lifted, tabBarSelectedPasses(modifiers))
+    tabBarStandIn(lifted)
+    lifted.accessibilityClear()
+    if hold.phone {
+        let grown = 1.0 + (tabBarLiftedContentScale - 1.0) * hold.growth
+        for i in 0..lifted.sublayers.count {
+            lifted.sublayers[i].scaleX = grown
+            lifted.sublayers[i].scaleY = grown
+            lifted.sublayers[i].disablesActions = true
+        }
+    }
+    lifted.animation = tabBarSelectionMove(hold)
+    var part = tabBarPunchPart(hold, 3, height, true, move lifted)
+    // UIKit's `liftedContentWarpWrapper`: a `displacementMap` read off its own
+    // `warpSDF`, a `CASDFGlassDisplacementEffect` 11.2 high of curvature one
+    // whose element is the lens, ovalized by a half, at the spec's
+    // `contentWrapperDisplacement` of -17.5 while lifted and none at rest.
+    // Reading inward, it draws the grown tabs out to the rim and smears them
+    // along it, which hides where they stop matching the row beside the lens.
+    // Its amount rides the content's growth, as the warp beneath the glass does.
+    part.displacement = CADisplacement {
+        amount: tabBarContentWrapperDisplacement * hold.growth,
+        height: 11.2,
+        curvature: 1.0,
+        ovalization: 0.5
+    }
+    return part
+}
+
+// A part of the punch the lens's size, holding `rest` back where the row
+// stands, cut to the lens's capsule when `clips`.
+function tabBarPunchPart(
+    hold: borrow TabBarSelectionHold,
+    key: Number,
+    height: Number,
+    clips: Bool,
+    rest: CALayerDescription
+) -> CALayerDescription {
+    return CALayerDescription {
+        key: key,
+        layout: CALayoutIntent { widthFill: false, heightFill: false, fixedHeight: height },
+        cornerRadius: height / 2.0,
+        clipsChildren: clips,
+        animation: tabBarSelectionBounds(hold),
+        sublayers: [
+            CALayerDescription {
+                layout: CALayoutIntent { widthFill: false, heightFill: false, spanUndoes: true },
+                animation: tabBarSelectionBounds(hold),
+                sublayers: [move rest]
+            }
+        ]
+    }
+}
+
+// Every tab in `layer` set as the selected one is, through `passes`: UIKit's
+// `selectedContentView` draws the whole row selected, so whichever tab the
+// lens passes over shows in the selected tab's mask -- black at half then the
+// accent dodged into the lens's glass in the dark, white at half then the
+// accent burned in the light -- not in the accent laid down plainly. Each
+// tab's label is drawn once per pass from its first, as a selected label is.
+function tabBarSelectedRow(layer: borrow mut CALayerDescription, passes: borrow [VibrantInk]) {
+    let tab = layer.layout.guide == guideTag(TabBarTab()) || layer.layout.guide == guideTag(
+        TabBarSelection()
+    )
+    if tab && layer.sublayers.count > 0 && layer.sublayers[0].sublayers.count > 0 {
+        let label = copy layer.sublayers[0].sublayers[0]
+        var inked: [CALayerDescription] = []
+        for pass in passes {
+            var drawn = copy label
+            tabBarLiftedInk(drawn, pass.color, pass.blend)
+            inked.append(move drawn)
+        }
+        layer.sublayers[0].sublayers = move inked
+        return
+    }
+    for i in 0..layer.sublayers.count {
+        tabBarSelectedRow(layer.sublayers[i], passes)
+    }
+}
+
+// `layer` standing in for the row while the lens is up: its tabs still take
+// the press let go on them -- the row they stand for is hidden, and an item
+// drawn all but transparent takes no touch -- but none of it is a surface
+// of its own, or publishes a guide the bar's selection would find.
+function tabBarStandIn(layer: borrow mut CALayerDescription) {
+    layer.interactive = false
+    layer.layout.guide = 0
+    for i in 0..layer.sublayers.count {
+        tabBarStandIn(layer.sublayers[i])
+    }
+}
+
+// Every label in `layer` set in `ink` through `blend`, and nothing in it
+// publishing a guide the bar's selection would find.
+function tabBarLiftedInk(
+    layer: borrow mut CALayerDescription,
+    ink: borrow CAColor,
+    blend: CABlendMode
+) {
+    layer.layout.guide = 0
+    match layer.content {
+        Text(t) -> {
+            var text = copy t
+            text.color = copy ink
+            text.blend = blend
+            layer.content = .Text(move text)
+        }
+        Icon(i) -> {
+            var icon = copy i
+            icon.tint = copy ink
+            icon.blend = blend
+            layer.content = .Icon(move icon)
+        }
+        Empty -> {}
+        Solid(s) -> {}
+        Texture(x) -> {}
+        Glass(g) -> {}
+        Gradient(r) -> {}
+    }
+    for i in 0..layer.sublayers.count {
+        tabBarLiftedInk(layer.sublayers[i], ink, blend)
+    }
+}
+
+// The ink every tab beside the lifted lens is set in: an unselected tab's on
+// the bar it stands in, burned into light glass or dodged into dark as it is
+// at rest, or the application's tint laid down plainly.
+function tabBarRestInk(
+    hold: borrow TabBarSelectionHold,
+    modifiers: borrow ModifierContext
+) -> VibrantInk {
+    if tabBarTinted(modifiers) {
+        return VibrantInk {
+            color: colorFromFoundation(
+                primaryColorAsColor(modifiers.tint, modifierTokens(modifiers))
+            ),
+            blend: .Normal
+        }
+    }
+    if hold.phone {
+        return phoneTabBarUnselectedInk(modifiers)
+    }
+    return tabBarUnselectedInk(modifiers)
+}

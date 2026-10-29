@@ -1,0 +1,66 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// SwiftUI's `Grid`: columns as wide as their widest cell, rows as tall as
+// their tallest, and a cell spanning columns widening the ones it covers.
+
+function kuiGridLaidOut(root: Any Widget) -> CALayerDescription {
+    var described = kuiDescribe(move root)
+    layOutLayerTree(described, 200.0, 200.0)
+    return described
+}
+
+function kuiBox(width: Number, height: Number) -> Any Widget {
+    return Rectangle().frame(width: width, height: height)
+}
+
+// Each column takes its widest cell, each row its tallest, and a cell sits
+// centered in the room its row and column give it.
+construct KuiGridSizesColumnsByTheirWidestCell() extends Test {
+    test {
+        let grid = kuiGridLaidOut(
+            Grid(horizontalSpacing = .None, verticalSpacing = .None) {
+                GridRow {
+                    kuiBox(20.0, 10.0)
+                    kuiBox(40.0, 10.0)
+                }
+                GridRow {
+                    kuiBox(30.0, 20.0)
+                    kuiBox(10.0, 10.0)
+                }
+            }
+        )
+        let row = grid.sublayers[1]
+        let cell = row.sublayers[1]
+        return "\(grid.size.width)x\(grid.size.height) row \(row.position.y) cell \(cell.position.x),\(cell.position.y)"
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok("70x30 row 10 cell 45,5")
+        return expected
+    }
+}
+
+// A cell spanning two columns that is wider than they are widens both by
+// the same amount, and the cell above sits centered in its wider column.
+construct KuiGridWidensTheColumnsASpanningCellCovers() extends Test {
+    test {
+        let grid = kuiGridLaidOut(
+            Grid(horizontalSpacing = .Length(10), verticalSpacing = .None) {
+                GridRow {
+                    kuiBox(20.0, 10.0)
+                    kuiBox(20.0, 10.0)
+                }
+                GridRow {
+                    kuiBox(70.0, 10.0).gridCellColumns(2)
+                }
+            }
+        )
+        let second = grid.sublayers[0].sublayers[1]
+        return "\(grid.size.width) second at \(second.position.x)"
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok("70 second at 45")
+        return expected
+    }
+}

@@ -1,0 +1,106 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's `.onLongPressGesture(minimumDuration:maximumDistance:perform:)`:
+// a press held on the view for `minimumDuration` seconds, without moving more
+// than `maximumDistance` points, runs `action` once, while the finger is
+// still down, as a held home screen icon does.
+//
+//     ApplicationIcon(name = name)
+//     .onLongPressGesture(minimumDuration = 0.5) { in editing = true }
+//
+// A view is described again when the press is held, not only when it moves,
+// so the press asks for the build that sees the time is up.
+
+public function ignoreLongPress() {}
+
+// What a long press saw of the press holding the view, between builds.
+struct LongPressTrack {
+    var press: Number = 0
+    // When the press began, in milliseconds since 1970, and where.
+    var began: Number = 0
+    var start: Point = Point {}
+    // Whether this press has run the action, or moved too far to.
+    var done: Bool = false
+}
+
+public construct LongPressGestureLayer(
+    minimumDuration: Number,
+    maximumDistance: Number,
+    action: () -> Void
+) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let k = tapSeqKey()
+        if !modifiers.disabled { self.follow(context, k) }
+        let described = content.describe(context, modifiers)
+        return CALayerDescription {
+            layout: surfaceFootprint(described.layout),
+            hittable: !modifiers.disabled,
+            interactive: !modifiers.disabled,
+            hitKey: k,
+            cornerRadius: described.cornerRadius,
+            content: .Solid(
+                CASolid { fill: CAColor { a: 0.0 }, cornerRadius: described.cornerRadius }
+            ),
+            sublayers: [described]
+        }
+    }
+
+    // Runs the action once the press on the view has been held long enough
+    // and near enough to where it began.
+    function follow(borrow self, context: borrow BuildContext, key: Number) {
+        let slot = slotKey("kiraui.longpress.", key)
+        if !ambientStateHasView(slot) {
+            ambientStatePutView(copy slot, nativeUserData(nativeState(LongPressTrack {})))
+        }
+        var track = nativeRecover<LongPressTrack>(ambientStateGetView(slot))
+        if context.heldKey != key {
+            track.press = 0
+            track.done = false
+            return
+        }
+        let now = unixMillis()
+        if track.press != context.heldPress {
+            track.press = context.heldPress
+            track.began = now
+            track.start = copy context.heldPoint
+            track.done = false
+        }
+        if track.done { return }
+        let dx = context.heldPoint.x - track.start.x
+        let dy = context.heldPoint.y - track.start.y
+        if sqrt(dx * dx + dy * dy) > maximumDistance {
+            track.done = true
+            return
+        }
+        let left = minimumDuration - (now - track.began) / 1000
+        if left > 0 {
+            redrawAfter(left)
+            return
+        }
+        track.done = true
+        action()
+    }
+}
+
+extend Widget {
+    // SwiftUI's `.onLongPressGesture(minimumDuration:maximumDistance:perform:)`.
+    function onLongPressGesture(
+        minimumDuration: Number = 0.5,
+        maximumDistance: Number = 10,
+        action: () -> Void = ignoreLongPress
+    ) -> Any Widget {
+        return LongPressGestureLayer(
+            minimumDuration: minimumDuration,
+            maximumDistance: maximumDistance,
+            action: action
+        ) {
+            self
+        }
+    }
+}

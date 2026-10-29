@@ -1,0 +1,35 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// SwiftUI's `ProgressViewStyle`: an application's style draws the progress
+// view from how far along it is, and the view still reads as one.
+
+construct ThinProgressViewStyle() extends ProgressViewStyle {
+    function makeBody(configuration: borrow ProgressViewStyleConfiguration) -> Any Widget {
+        let fraction = match configuration.fractionCompleted {
+            Some(completed) -> completed
+            None -> 0.0
+        }
+        return Rectangle().frame(width: 200.0 * fraction, height: 2.0)
+    }
+}
+
+// The style is handed `value` over `total`, the bar it draws is that share of
+// its width, and the view is one progress indicator that reads the share.
+@Test
+function aStyleDrawsTheProgressItConfigures() {
+    let view = ProgressView(value: 30.0, total: 120.0).progressViewStyle(
+        ThinProgressViewStyle {}
+    )
+    var described = describedLayer(move view)
+    layOutLayerTree(described, 400.0, 300.0)
+    let bar = innermostLayer(described)
+    expect!((bar.size.width) == (50.0))
+    let elements = accessibilityElementsOf(
+        ProgressView(value: 30.0, total: 120.0).progressViewStyle(ThinProgressViewStyle {})
+    )
+    expect!((elements.count) == (1))
+    expect!((elements[0].role) == (AccessibilityRole.ProgressIndicator))
+    expect!((elements[0].value) == ("25%"))
+}

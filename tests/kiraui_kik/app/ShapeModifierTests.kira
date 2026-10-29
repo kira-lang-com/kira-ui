@@ -1,0 +1,56 @@
+import Foundation
+import KiraUI
+import KiraLayout
+import KCoreAnimation
+
+// SwiftUI's `.clipShape(_:)`, `.strokeBorder(lineWidth:)` and
+// `.ignoresSafeArea(_:edges:)`.
+
+// Clipped to a rounded rectangle, the view is drawn inside its corners.
+construct KuiAClipShapeClipsToItsCorners() extends Test {
+    test {
+        let described = kuiDescribe(Rectangle().clipShape(.RoundedRect(12.0)))
+        return "\(described.clipsChildren) \(described.cornerRadius)"
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok("true 12")
+        return expected
+    }
+}
+
+// A stroked border is the shape's outline alone, as wide as it is asked.
+construct KuiAStrokeBorderIsTheOutlineAlone() extends Test {
+    test {
+        let described = kuiDescribe(
+            RoundedRectangle(cornerRadius: 3.0).strokeBorder(lineWidth: resolvedLength(1.5))
+        )
+        match described.content {
+            Solid(solid) -> return "\(solid.fill.a) \(solid.borderWidth)"
+            else -> return "not a solid"
+        }
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok("0 1.5")
+        return expected
+    }
+}
+
+// Ignoring the safe area, a view inside it draws out to the window's edges
+// on the edges named, and keeps its place in the layout.
+construct KuiAViewIgnoringTheSafeAreaReachesTheEdges() extends Test {
+    test {
+        var context = buildContext(FoundationUiContext {})
+        context.safeArea = EdgeInsets { top: 20.0, bottom: 30.0 }
+        var described = Rectangle().ignoresSafeArea(edges: EdgeSet.bottom).describe(
+            context,
+            ModifierContext {}
+        )
+        layOutLayerTree(described, 400.0, 300.0)
+        let reaching = described.sublayers[0]
+        return "\(described.size.height) \(reaching.size.height) \(reaching.layout.offset.y)"
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok("300 330 0")
+        return expected
+    }
+}

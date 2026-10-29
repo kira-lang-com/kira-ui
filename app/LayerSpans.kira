@@ -1,0 +1,238 @@
+import Foundation
+import KCoreAnimation
+
+// Spans, resolved with the other guides once everything is placed: a layer
+// laid over the box of the layer that publishes the guide it spans, as a tab
+// bar's selection capsule covers the selected tab.
+//
+// A span from the center is what UIKit's floating tab bar moves its selection
+// with: the layer stands at the box's middle with no width, and its sublayers
+// take the width either side of it, so its position and their bounds each
+// animate on a spring of their own. A tracking span follows a held pointer
+// instead of the box, as the selection follows a finger across the tabs.
+
+extend CALayerDescription {
+    // Lays the sublayer at `index` over the box of the sibling, or the layer
+    // inside one, that publishes the guide it spans: that box's leading edge
+    // and width, in this layer's coordinates -- or, spanning from the center,
+    // that box's middle, its sublayers taking the width. With no publisher it
+    // stays where it was placed.
+    function spanGuide(borrow mut self, index: Number) {
+        let tag = self.sublayers[index].layout.spansGuide
+        if tag == 0 { return }
+        for j in 0..self.sublayers.count {
+            if j != index {
+                let answer = self.sublayers[j].guideIn(tag)
+                if answer.found {
+                    var leading = self.sublayers[j].position.x + answer.x
+                    var width = answer.width
+                    if self.sublayers[index].layout.spanTracks {
+                        let tracked = self.trackedSpan(index, j)
+                        if tracked.found {
+                            leading = tracked.x
+                            width = tracked.width
+                        }
+                    }
+                    if self.sublayers[index].layout.spansFromCenter {
+                        self.spanFromCenter(index, j, leading, width)
+                        return
+                    }
+                    self.sublayers[index].position = Point {
+                        x: leading,
+                        y: self.sublayers[index].position.y
+                    }
+                    self.sublayers[index].size = Size {
+                        width: width,
+                        height: self.sublayers[index].size.height
+                    }
+                    return
+                }
+            }
+        }
+    }
+
+    // Stands the sublayer at `index` at the middle of the box `leading` and
+    // `width` say, with no width of its own; its sublayers take the width
+    // either side, reaching past it by the span's outset -- or, one that
+    // takes a side (`spanSide`), the run beyond that. A sublayer of
+    // theirs that undoes the span is put back where the span started, and
+    // what it holds is laid over the publisher of the span's lifted guide in
+    // sibling `from`, where that stands. A span its followed motion drives
+    // (`tabBarLensPlace`) is put where that has it, at once, and those of its
+    // sublayers that flex with it (`spanFlexes`) are drawn through its flex.
+    function spanFromCenter(
+        borrow mut self,
+        index: Number,
+        from: Number,
+        leading: Number,
+        width: Number
+    ) {
+        let intent = self.sublayers[index].layout
+        let outset = intent.spanOutset
+        var center = leading + width * 0.5
+        let top = self.sublayers[index].position.y
+        let lifted = self.sublayers[from].guideIn(intent.spanLiftedGuide)
+        let rowX = self.sublayers[from].position.x + (lifted.found ? lifted.x : 0.0)
+        var across = width + outset * 2.0
+        var flex = CADeformation {}
+        let drives = intent.spanFlexKey != 0 && intent.spanFlexDrives
+        if intent.spanFlexKey != 0 {
+            let place = tabBarLensPlace(
+                intent.spanFlexKey,
+                center - rowX,
+                width,
+                outset,
+                intent.spanTracks,
+                drives
+            )
+            if drives {
+                center = rowX + place.x
+                across = place.width
+                flex = place.deformation()
+            }
+        }
+        self.sublayers[index].position = Point { x: center, y: top }
+        self.sublayers[index].size = Size { width: 0.0, height: self.sublayers[index].size.height }
+        self.sublayers[index].disablesActions = drives
+        if drives {
+            self.spanPressedWith(index, from)
+        }
+        for k in 0..self.sublayers[index].sublayers.count {
+            let spanSide = self.sublayers[index].sublayers[k].layout.spanSide
+            let reach = self.sublayers[index].sublayers[k].layout.spanReach
+            var sideX = -across * 0.5
+            var sideWidth = across
+            let y = self.sublayers[index].sublayers[k].position.y
+            let height = self.sublayers[index].sublayers[k].size.height
+            if spanSide < 0 {
+                sideX = -across * 0.5 - reach
+                sideWidth = reach
+            } else if spanSide > 0 {
+                sideX = across * 0.5
+                sideWidth = reach
+            }
+            if spanSide == 0 && self.sublayers[index].sublayers[k].layout.spanFlexes {
+                self.sublayers[index].sublayers[k].deformation = copy flex
+            }
+            self.sublayers[index].sublayers[k].position = Point { x: sideX, y: y }
+            self.sublayers[index].sublayers[k].size = Size { width: sideWidth, height: height }
+            self.sublayers[index].sublayers[k].disablesActions = drives
+            let side = self.sublayers[index].sublayers[k].position
+            for m in 0..self.sublayers[index].sublayers[k].sublayers.count {
+                if self.sublayers[index].sublayers[k].sublayers[m].layout.spanUndoes {
+                    self.sublayers[index].sublayers[k].sublayers[m].position = Point {
+                        x: -side.x,
+                        y: -side.y
+                    }
+                    self.sublayers[index].sublayers[k].sublayers[m].disablesActions = drives
+                    if lifted.found {
+                        for n in 0..self.sublayers[index].sublayers[k].sublayers[m].sublayers.count {
+                            self.sublayers[index].sublayers[k].sublayers[m].sublayers[n].place(
+                                lifted.width,
+                                lifted.height
+                            )
+                            self.sublayers[index].sublayers[k].sublayers[m].sublayers[n].position = Point {
+                                x: rowX - center,
+                                y: self.sublayers[from].position.y + lifted.y - top
+                            }
+                            self.sublayers[index].sublayers[k].sublayers[m].sublayers[n].disablesActions = drives
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Gives the driven span at `index` the press of sibling `from`, which
+    // its sublayers show the content of: scaled as `from` is, about `from`'s
+    // middle, and moved by its drift -- as the lens, in the bar's platter,
+    // presses with the bar.
+    function spanPressedWith(borrow mut self, index: Number, from: Number) {
+        let by = self.sublayers[from]
+        let sx = by.scaleX
+        let sy = by.scaleY
+        if sx == 1.0 && sy == 1.0 && by.deformation.x == 0.0 && by.deformation.y == 0.0 {
+            return
+        }
+        let cx = by.position.x + by.size.width * 0.5
+        let cy = by.position.y + by.size.height * 0.5
+        let half = self.sublayers[index].size.height * 0.5
+        let x = self.sublayers[index].position.x
+        let y = self.sublayers[index].position.y + half
+        self.sublayers[index].scaleX = sx
+        self.sublayers[index].scaleY = sy
+        self.sublayers[index].position = Point {
+            x: cx + sx * (x - cx) + by.deformation.x * sx,
+            y: cy + sy * (y - cy) + by.deformation.y * sy - half
+        }
+    }
+
+    // Where the tracking span at `index` stands over the publishers in
+    // sibling `from`, as `-[_UIFloatingTabBar _updateSelectionViewFrameAnimated:completion:]`
+    // places a held selection: as wide as the box under the pointer, held by
+    // the point of the box the press went down on that it was taken by, and
+    // kept within the run of boxes.
+    function trackedSpan(borrow self, index: Number, from: Number) -> CAGuideAnswer {
+        let intent = self.sublayers[index].layout
+        var boxes: [CAGuideAnswer] = []
+        self.sublayers[from].guideBoxes(
+            intent.spansGuide,
+            intent.spanTrackGuide,
+            self.sublayers[from].position.x,
+            boxes
+        )
+        if boxes.count == 0 {
+            return CAGuideAnswer {}
+        }
+        var start = boxes[0].x
+        var end = boxes[0].x + boxes[0].width
+        for box in boxes {
+            start = min(start, box.x)
+            end = max(end, box.x + box.width)
+        }
+        let pressed = spanBoxAt(boxes, intent.spanPressX)
+        let under = spanBoxAt(boxes, clamp(intent.spanPointerX, start, end))
+        let anchor = clamp((intent.spanPressX - pressed.x) / max(pressed.width, 1.0), 0.0, 1.0)
+        let width = under.width
+        let x = clamp(intent.spanPointerX, start + anchor * width, end - (1.0 - anchor) * width)
+        return CAGuideAnswer { found: true, x: x - anchor * width, width: width }
+    }
+
+    // Every box in this layer that publishes `tag` or `other`, in its
+    // parent's coordinates when it stands `x` along them.
+    function guideBoxes(
+        borrow self,
+        tag: Number,
+        other: Number,
+        x: Number,
+        into: borrow mut [CAGuideAnswer]
+    ) {
+        if self.layout.guide != 0 && (self.layout.guide == tag || self.layout.guide == other) {
+            into.append(
+                CAGuideAnswer {
+                    found: true,
+                    x: x,
+                    width: self.size.width,
+                    height: self.size.height
+                }
+            )
+        }
+        for child in self.sublayers {
+            child.guideBoxes(tag, other, x + child.position.x, into)
+        }
+    }
+}
+
+// The box `x` falls in, or the nearest one to it.
+function spanBoxAt(boxes: borrow [CAGuideAnswer], x: Number) -> CAGuideAnswer {
+    var best = boxes[0]
+    var gap: Number = -1.0
+    for box in boxes {
+        let away = max(max(box.x - x, x - (box.x + box.width)), 0.0)
+        if gap < 0.0 || away < gap {
+            gap = away
+            best = box
+        }
+    }
+    return best
+}

@@ -1,0 +1,72 @@
+import KiraUI
+import Foundation
+
+// A real layered navigation app:
+//
+//   NavigationSplitView
+//       NavigationStack
+//           WorkspaceHome
+//             -> ProjectsPage
+//               -> ProjectOverviewPage
+//                 -> ProjectFilesPage
+//
+// The split view owns the responsive sidebar/detail presentation. The nested
+// stack owns the value-driven detail layers. On a narrow viewport the split
+// view collapses to the same stack without changing the path.
+
+@Main
+function main() {
+    NavigationApp()
+}
+
+function NavigationApp() {
+    // Every token comes from ONE style. Without a theme the app falls back to
+    // KiraUI's built-in default. The window paints its own canvas, so the root
+    // view is the app itself.
+    RunKiraWindowApp(
+        "KiraUI Layered Navigation",
+        1280,
+        820,
+        { in
+            return LayeredNavigationApp()
+        }
+    )
+}
+
+construct LayeredNavigationApp() extends Widget {
+    // This is the single source of truth for both the split presentation and
+    // the compact stack presentation. Links never receive a router object.
+    @State var navigationPath: NavigationPath = NavigationPath {}
+
+    body {
+        NavigationSplitView(path = navigationPath) {
+            WorkspaceSidebar()
+        } detail: {
+            WorkspaceDetail(path = navigationPath)
+        }
+    }
+}
+
+// Both bar actions return to the root, which is the one thing this demo can
+// honestly do from anywhere.
+function workspaceRefreshAction() -> () -> Void {
+    return { in
+        NavigationPath {}.removeAll()
+        return
+    }
+}
+
+// The plus opens the projects branch. A demo whose content is fixed has nothing
+// to create, so the button does the nearest real thing rather than nothing —
+// a control wired to an empty body teaches the reader that this is where a
+// no-op goes. It is the branch, not a page pushed on whatever is showing: the
+// path starts over at Projects, so the sidebar selects it, as choosing its row
+// would.
+function workspaceAddAction() -> () -> Void {
+    return { in
+        let path = NavigationPath {}
+        path.removeAll()
+        path.append(ProjectsRoute())
+        return
+    }
+}

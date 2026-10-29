@@ -1,0 +1,61 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// SwiftUI's `Grid`: columns as wide as their widest cell, rows as tall as
+// their tallest, and a cell spanning columns widening the ones it covers.
+
+function gridLaidOutTree(root: Any Widget) -> CALayerDescription {
+    var described = describedLayer(move root)
+    layOutLayerTree(described, 200.0, 200.0)
+    return described
+}
+
+function sizedBox(width: Number, height: Number) -> Any Widget {
+    return Rectangle().frame(width: width, height: height)
+}
+
+// Each column takes its widest cell, each row its tallest, and a cell sits
+// centred in the room its row and column give it.
+@Test
+function gridSizesColumnsByTheirWidestCell() {
+    let grid = gridLaidOutTree(
+        Grid(horizontalSpacing: .None, verticalSpacing: .None) {
+            GridRow {
+                sizedBox(20.0, 10.0)
+                sizedBox(40.0, 10.0)
+            }
+            GridRow {
+                sizedBox(30.0, 20.0)
+                sizedBox(10.0, 10.0)
+            }
+        }
+    )
+    let row = grid.sublayers[1]
+    let cell = row.sublayers[1]
+    expect!((grid.size.width) == (70.0))
+    expect!((grid.size.height) == (30.0))
+    expect!((row.position.y) == (10.0))
+    expect!((cell.position.x) == (45.0))
+    expect!((cell.position.y) == (5.0))
+}
+
+// A cell spanning two columns that is wider than they are widens them, and the
+// cell above sits in the second column where the spanning cell leaves it.
+@Test
+function gridWidensTheColumnsASpanningCellCovers() {
+    let grid = gridLaidOutTree(
+        Grid(horizontalSpacing: .Length(10), verticalSpacing: .None) {
+            GridRow {
+                sizedBox(20.0, 10.0)
+                sizedBox(20.0, 10.0)
+            }
+            GridRow {
+                sizedBox(70.0, 10.0).gridCellColumns(2)
+            }
+        }
+    )
+    let second = grid.sublayers[0].sublayers[1]
+    expect!((grid.size.width) == (70.0))
+    expect!((second.position.x) == (45.0))
+}

@@ -1,0 +1,225 @@
+import Foundation
+import KiraUI
+
+// An application or an element, whose descendants a test asks for by type.
+//
+//     app.buttons.matching(identifier: "Send").element.tap()
+//     app.groups.first.staticTexts.count
+public construct UITestQueryProvider {
+    @Required function descendants(matching: AccessibilityRole) -> UITestQuery
+
+    let groups: UITestQuery {
+        return descendants(matching: .Group)
+    }
+    let otherElements: UITestQuery {
+        return descendants(matching: .Other)
+    }
+    let staticTexts: UITestQuery {
+        return descendants(matching: .StaticText)
+    }
+    let images: UITestQuery {
+        return descendants(matching: .Image)
+    }
+    let buttons: UITestQuery {
+        return descendants(matching: .Button)
+    }
+    let links: UITestQuery {
+        return descendants(matching: .Link)
+    }
+    let textFields: UITestQuery {
+        return descendants(matching: .TextField)
+    }
+    let secureTextFields: UITestQuery {
+        return descendants(matching: .SecureTextField)
+    }
+    let searchFields: UITestQuery {
+        return descendants(matching: .SearchField)
+    }
+    let switches: UITestQuery {
+        return descendants(matching: .Switch)
+    }
+    let checkBoxes: UITestQuery {
+        return descendants(matching: .CheckBox)
+    }
+    let sliders: UITestQuery {
+        return descendants(matching: .Slider)
+    }
+    let progressIndicators: UITestQuery {
+        return descendants(matching: .ProgressIndicator)
+    }
+    let popUpButtons: UITestQuery {
+        return descendants(matching: .PopUpButton)
+    }
+    let menuButtons: UITestQuery {
+        return descendants(matching: .MenuButton)
+    }
+    let tabs: UITestQuery {
+        return descendants(matching: .Tab)
+    }
+}
+
+// How a step of a query settles on its elements: every match, the first, the
+// one at an index, or the single element it has to find.
+enum QueryPick {
+    All
+    First
+    Index(Number)
+    Only
+}
+
+// One step from the elements found so far to the next: those of `role` among
+// their descendants, identified by `identifier` when one is given.
+struct QueryStep {
+    let role: AccessibilityRole
+    let identifier: String?
+    let pick: QueryPick
+}
+
+// What the steps of a query found on screen.
+enum Resolution {
+    Found([UITestElement])
+    // A step had to find one element, and found none.
+    Missing
+    // A step had to find one element, and found this many.
+    Ambiguous(Number)
+}
+
+// The elements of a type below an application or an element, found afresh on
+// screen each time the query is read. Its own descendants are found below
+// every element it finds.
+public construct UITestQuery(
+    session: ApplicationSession,
+    scope: [QueryStep],
+    role: AccessibilityRole,
+    identifier: String? = .None
+) extends UITestQueryProvider {
+
+    function descendants(matching: AccessibilityRole) -> UITestQuery {
+        var steps = copy scope
+        steps.append(QueryStep { role: role, identifier: copy identifier, pick: .All })
+        return UITestQuery(session: session, scope: move steps, role: matching)
+    }
+
+    // The elements whose identifier or label is `identifier`.
+    function matching(identifier: String) -> UITestQuery {
+        return UITestQuery(
+            session: session,
+            scope: copy scope,
+            role: role,
+            identifier: .Some(identifier)
+        )
+    }
+
+    // The one element the query finds. Acting on it fails the test when it
+    // finds none, or more than one.
+    let element: UITestLocator {
+        return self.picking(.Only)
+    }
+
+    // The first element the query finds.
+    let first: UITestLocator {
+        return self.picking(.First)
+    }
+
+    // The element at `index` among those the query finds, in the order VoiceOver
+    // visits them.
+    function element(at: Number) -> UITestLocator {
+        return self.picking(.Index(at))
+    }
+
+    // How many elements the query finds on screen now.
+    let count: Number {
+        return match self.found() {
+            Found(elements) -> elements.count
+            Missing -> 0
+            Ambiguous(count) -> count
+        }
+    }
+
+    // Every element the query finds, each standing for its place in the
+    // order.
+    let allElements: [UITestLocator] {
+        var elements: [UITestLocator] = []
+        for index in 0..self.count {
+            elements.append(self.element(at: index))
+        }
+        return elements
+    }
+
+    function picking(pick: QueryPick) -> UITestLocator {
+        var steps = copy scope
+        steps.append(QueryStep { role: role, identifier: copy identifier, pick: pick })
+        return UITestLocator(session: session, steps: move steps)
+    }
+
+    function found() -> Resolution {
+        var steps = copy scope
+        steps.append(QueryStep { role: role, identifier: copy identifier, pick: .All })
+        return match session.snapshot() {
+            Ok(tree) -> resolve(steps, tree.elements)
+            Error(failure) -> {
+                recordTestIssue(failure.reason())
+                return .Found([])
+            }
+        }
+    }
+}
+
+// The elements `steps` find, starting from the elements on screen.
+function resolve(steps: borrow [QueryStep], screen: borrow [UITestElement]) -> Resolution {
+    var scopes: [[UITestElement]] = [copy screen]
+    var picked: [UITestElement] = []
+    for step in steps {
+        var matches: [UITestElement] = []
+        for scope in scopes {
+            for element in descendantsOf(scope) {
+                if step.matches(element) {
+                    matches.append(element)
+                }
+            }
+        }
+        picked = match step.pick {
+            All -> move matches
+            First -> matches.count > 0 ? [copy matches[0]] : []
+            Index(index) -> index < matches.count ? [copy matches[index]] : []
+            Only -> {
+                if matches.count == 0 {
+                    return .Missing
+                }
+                if matches.count > 1 {
+                    return .Ambiguous(matches.count)
+                }
+                [copy matches[0]]
+            }
+        }
+        scopes = []
+        for element in picked {
+            scopes.append(copy element.children)
+        }
+    }
+    return .Found(move picked)
+}
+
+// `elements` and everything inside them, each before what it holds.
+function descendantsOf(elements: borrow [UITestElement]) -> [UITestElement] {
+    var all: [UITestElement] = []
+    for element in elements {
+        all.append(copy element)
+        for inner in descendantsOf(element.children) {
+            all.append(inner)
+        }
+    }
+    return all
+}
+
+extend QueryStep {
+    function matches(element: borrow UITestElement) -> Bool {
+        if element.role != role {
+            return false
+        }
+        return match identifier {
+            Some(identifier) -> element.identifier == identifier || element.label == identifier
+            None -> true
+        }
+    }
+}

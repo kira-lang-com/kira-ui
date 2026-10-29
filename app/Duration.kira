@@ -1,0 +1,68 @@
+import Foundation
+
+// Swift's `Duration`, formatted as its `TimeFormatStyle` writes it:
+//
+//     Text(duration: Duration { seconds: 97.0 }, format: .Time(.MinuteSecond))  // 1:37
+//     Duration { seconds: 3725.0 }.formatted(.Time(.HourMinuteSecond))          // 1:02:05
+
+public struct Duration {
+    let seconds: Number
+}
+
+// The units `.time(pattern:)` writes: the first unpadded, the rest two digits.
+public enum DurationTimePattern {
+    HourMinute
+    HourMinuteSecond
+    MinuteSecond
+}
+
+public enum DurationFormat {
+    Time(DurationTimePattern)
+}
+
+extend Duration {
+    // The duration as `format` writes it, its last unit rounded to the
+    // nearest, a half to the even one, as Swift's default rounding is.
+    function formatted(format: DurationFormat) -> String {
+        match format {
+            Time(pattern) -> return durationTimeText(self.seconds, pattern)
+        }
+    }
+}
+
+function durationRounded(value: Number) -> Number {
+    let down = floor(value)
+    let rest = value - down
+    if rest > 0.5 || (rest == 0.5 && down - floor(down / 2.0) * 2.0 == 1.0) {
+        return down + 1.0
+    }
+    return down
+}
+
+function durationTwoDigits(value: Number) -> String {
+    return value < 10.0 ? "0\(value)" : "\(value)"
+}
+
+function durationTimeText(seconds: Number, pattern: DurationTimePattern) -> String {
+    let sign = seconds < 0.0 ? "-" : ""
+    let length = abs(seconds)
+    match pattern {
+        HourMinute -> {
+            let minutes = durationRounded(length / 60.0)
+            let hours = floor(minutes / 60.0)
+            return "\(sign)\(hours):\(durationTwoDigits(minutes - hours * 60.0))"
+        }
+        HourMinuteSecond -> {
+            let total = durationRounded(length)
+            let hours = floor(total / 3600.0)
+            let minutes = floor((total - hours * 3600.0) / 60.0)
+            let rest = total - hours * 3600.0 - minutes * 60.0
+            return "\(sign)\(hours):\(durationTwoDigits(minutes)):\(durationTwoDigits(rest))"
+        }
+        MinuteSecond -> {
+            let total = durationRounded(length)
+            let minutes = floor(total / 60.0)
+            return "\(sign)\(minutes):\(durationTwoDigits(total - minutes * 60.0))"
+        }
+    }
+}

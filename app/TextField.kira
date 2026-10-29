@@ -1,0 +1,487 @@
+import KiraLayout
+import Ember
+import Foundation
+import KCoreAnimation
+public namespace TextFieldPart {
+    // The field's runs are keyed by what they are, not where they fall: the caret
+    // comes and goes beside the text and the placeholder, and a run matched by
+    // position would hand one's layer to the other and animate between them.
+    let placeholder: Number = 1
+
+    let lead: Number = 2
+    let caret: Number = 3
+    let trail: Number = 4
+}
+
+// One run of a field's text, in the field's size and `ink`, keyed `key`.
+//
+// A field is one line: its runs never wrap, and they land where typing or the
+// caret puts them at once -- a run eased to its new width would break onto
+// further lines on the way there.
+public function textFieldRun(
+    content: String,
+    size: Number,
+    key: Number,
+    ink: PrimaryColor,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    return textFieldLine(
+        Text(content).font(
+            size: resolvedLength(size),
+            weight: .Axis(textFieldWeight(modifiers))
+        ).foregroundColor(move ink).describe(context, modifiers),
+        key
+    )
+}
+
+// A described run, made one of a field's lines.
+public function textFieldLine(described: CALayerDescription, key: Number) -> CALayerDescription {
+    var run = move described
+    run.key = key
+    run.disablesActions = true
+    match run.content {
+        Text(t) -> {
+            var line = copy t
+            line.wraps = false
+            run.content = .Text(move line)
+        }
+        Empty -> {}
+        Solid(s) -> {}
+        Texture(x) -> {}
+        Icon(i) -> {}
+        Glass(g) -> {}
+        Gradient(g) -> {}
+    }
+    return run
+}
+
+// The insertion point: the catalog's bar in the accent.
+public function textFieldCaret(modifiers: borrow ModifierContext) -> CALayerDescription {
+    let metrics = caretMetrics()
+    return CALayerDescription {
+        key: TextFieldPart.caret,
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedWidth: metrics.width,
+            fixedHeight: metrics.height
+        },
+        cornerRadius: metrics.width / 2.0,
+        disablesActions: true,
+        content: .Solid(
+            CASolid {
+                fill: colorFromFoundation(
+                    modifierColor(foundationColor(modifierTokens(modifiers).tint.accent), modifiers)
+                ),
+                cornerRadius: metrics.width / 2.0
+            }
+        )
+    }
+}
+
+public function textFieldPressFn(
+    key: Number,
+    size: Number,
+    weight: Number,
+    leftPad: Number,
+    rightPad: Number = 0.0,
+    alignment: Number = 0.0,
+    secure: Bool = false
+) -> () -> Void {
+    let k = key
+    let sz = size
+    let wt = weight
+    let lp = leftPad
+    let rp = rightPad
+    let unit = alignment
+    let masked = secure
+    let f: () -> Void = { in
+        textFieldClickCaret(k, sz, wt, lp, rp, unit, masked)
+        return
+    }
+    return f
+}
+
+public function textFieldColor(c: borrow FoundationColor) -> FoundationColor {
+    return foundationRgba(c.r, c.g, c.b, c.a)
+}
+
+public function textFieldColorWithOpacity(
+    c: borrow FoundationColor,
+    opacity: Number,
+) -> FoundationColor {
+    return foundationRgba(c.r, c.g, c.b, c.a * opacity)
+}
+
+// The weight editable text is set at: the weight of the type in effect.
+//
+// One value, resolved once, because the caret is placed by measuring PREFIXES of
+// the same string the field draws: a measurement at one weight and a draw at
+// another puts the caret beside the glyph it belongs to rather than against it.
+public function textFieldWeight(modifiers: borrow ModifierContext) -> Number {
+    return modifierTextWeight(modifiers)
+}
+
+public function textFieldPlaceholderColor(modifiers: borrow ModifierContext) -> FoundationColor {
+    return modifierColor(foundationColor(modifierTokens(modifiers).foreground.tertiary), modifiers)
+}
+
+// The selection band is the accent at reading strength — opaque accent would
+// bury the glyphs it is drawn behind.
+public function textFieldSelectionColor(modifiers: borrow ModifierContext) -> FoundationColor {
+    let accent = modifierTokens(modifiers).tint.accent
+    return modifierColor(foundationColor(colorWithAlpha(accent, 0.35)), modifiers)
+}
+
+// The hairline around a Mac field's bezel.
+let fieldBorderWidth: Number = 1.0
+
+// A field's bezel is rounded by its control size, as the platform's is.
+public function textFieldRadius(modifiers: borrow ModifierContext) -> Number {
+    return resolvedControlSizeMetrics(modifiers).fieldCornerRadius
+}
+
+// SwiftUI's `TextFieldStyle`: how a text field is drawn. `.Automatic` is
+// the platform's choice -- a bezel on a Mac, and on an iPad, or in a grouped
+// list's row, the text alone. `.RoundedBorder` is a bezel everywhere and
+// `.Plain` the text alone everywhere.
+public enum TextFieldStyle {
+    Automatic
+    Plain
+    RoundedBorder
+}
+
+public construct TextFieldStyleLayer(style: TextFieldStyle) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let resolved = modifierContextApply(modifiers, modifierDeltaTextFieldStyle(style))
+        return content.describe(context, resolved)
+    }
+}
+
+// Whether a field is drawn as a bezel, by the style in effect.
+public function textFieldBezeled(modifiers: borrow ModifierContext) -> Bool {
+    return match modifiers.textFieldStyle {
+        Automatic -> modifiers.controlPresentation != .InsetGrouped
+            && interfaceMode() == .AdaptiveDesktop
+        Plain -> false
+        RoundedBorder -> true
+    }
+}
+
+// `.onSubmit(action:)`: Return in a field under it runs the field's nearer
+// actions, then `action`.
+public construct OnSubmitLayer(action: () -> Void) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let outer = modifiers.submit
+        let own = action
+        let submit: () -> Void = { in
+            own()
+            outer()
+            return
+        }
+        let resolved = modifierContextApply(modifiers, modifierDeltaSubmit(move submit))
+        return content.describe(context, resolved)
+    }
+}
+
+// SwiftUI's `TextField`: a line of text a person edits, bound to the text it
+// shows.
+//
+//     @State var name: String = ""
+//
+//     TextField(title: "Name", text: $name)
+//     .onSubmit(action: { in
+//         save(name)
+//         return
+//     })
+//
+// The field shows `prompt` while it is empty, or its title when it has no
+// prompt. Every edit is set through the binding, and setting the bound text
+// to something else puts that in the field. Return runs the `.onSubmit`
+// actions around it.
+//
+// A field draws its presentation from the theme, as a button does:
+// `.textFieldStyle(...)` says whether it is a bezel, `.foregroundColor(...)`
+// inks its text, and `.typography(...)` / `.font(...)` size it.
+public construct TextField(
+    title: String,
+    text: Binding<String>,
+    prompt: String = ""
+) extends Widget {
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let key = tapSeqKey()
+        textFieldFollow(key, text.get())
+        let shown = prompt.isEmpty() ? copy title : copy prompt
+        var described = textFieldDescription(
+            key,
+            copy shown,
+            false,
+            copy text.set,
+            copy modifiers.submit,
+            context,
+            modifiers
+        )
+        let element = TextFieldElement {
+            role: .TextField,
+            key: key,
+            label: copy title,
+            value: copy text.get(),
+            placeholder: move shown
+        }
+        described.accessibilityClear()
+        described.accessibilityElementOf(element.node(context, modifiers))
+        return described
+    }
+}
+
+// SwiftUI's `SecureField`: a text field that shows a dot for each character
+// it holds, for a password.
+//
+//     @State var password: String = ""
+//
+//     SecureField(title: "Password", text: $password)
+public construct SecureField(
+    title: String,
+    text: Binding<String>,
+    prompt: String = ""
+) extends Widget {
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let key = tapSeqKey()
+        textFieldFollow(key, text.get())
+        let shown = prompt.isEmpty() ? copy title : copy prompt
+        var described = textFieldDescription(
+            key,
+            copy shown,
+            true,
+            copy text.set,
+            copy modifiers.submit,
+            context,
+            modifiers
+        )
+        let element = TextFieldElement {
+            role: .SecureTextField,
+            key: key,
+            label: copy title,
+            value: secureFieldDots(text.get()),
+            placeholder: move shown
+        }
+        described.accessibilityClear()
+        described.accessibilityElementOf(element.node(context, modifiers))
+        return described
+    }
+}
+
+// What a field is to assistive technology: its title, the text it holds and
+// what it shows while empty. Activated, it takes the keyboard, as a tap on it
+// does, and it says whether it has it.
+struct TextFieldElement {
+    let role: AccessibilityRole
+    let key: Number
+    let label: String
+    let value: String
+    let placeholder: String
+
+    function node(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> AccessibilityNode {
+        var node = AccessibilityNode {
+            role: role,
+            label: copy label,
+            value: copy value,
+            placeholder: copy placeholder,
+            isEnabled: !modifiers.disabled,
+            hasKeyboardFocus: context.focusedKey == key
+        }
+        if !modifiers.disabled {
+            let field = key
+            node.actions = [
+                AccessibilityAction {
+                    kind: .Default,
+                    handler: { in
+                        accessibilityRequestFocus(field)
+                    }
+                }
+            ]
+        }
+        return node
+    }
+}
+
+// What a secure field reads for the text it holds: a dot for each character,
+// as UIKit's does.
+function secureFieldDots(text: borrow String) -> String {
+    var dots = ""
+    for i in 0..text.count {
+        dots = dots + "•"
+    }
+    return dots
+}
+
+// The field kept under `key`: its text, or `placeholder` while it is empty,
+// dots in place of its characters when it is `secure`. Focused, it takes the
+// keyboard and splits its text at the caret with the insertion point drawn
+// between the halves, so no glyph has to be measured to place it. Each edit's
+// text goes to `onChange`, and Return runs `onSubmit`.
+//
+// It runs across the room it is given, its text set across it as
+// `.multilineTextAlignment(...)` says; `.width(...)` and `.height(...)` say
+// otherwise. A bezel is as tall as a text field of the control size in
+// effect, its text held off its ends by the field inset; a plain field is its
+// text alone, one line tall.
+public function textFieldDescription(
+    key: Number,
+    placeholder: String,
+    secure: Bool,
+    onChange: (String) -> Void,
+    onSubmit: () -> Void,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext
+) -> CALayerDescription {
+    let size = modifierTextSize(modifiers)
+    focusSync(key, context.focusedKey == key, modifiers.focus)
+    layerTextInputRegister(
+        key,
+        textFieldTypeFn(key, copy onChange),
+        textFieldCommandFn(key, copy onChange, move onSubmit),
+        textFieldEditFn(key, secure, move onChange)
+    )
+    let st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
+    // A field in a window behind keeps its place as the one that takes
+    // the keyboard, and draws no insertion point until the window is in
+    // front again, as a Mac's does.
+    let focused = context.focusedKey == key && windowActive()
+    // The text is in the ink around the field, dimmed while it is disabled.
+    var ink: PrimaryColor = modifiers.hasForegroundColor ? modifiers.foregroundColor : .Primary
+    if modifiers.disabled {
+        ink = .Tertiary
+    }
+    var runs: [CALayerDescription] = []
+    if st.codes.count == 0 {
+        if focused {
+            runs.append(textFieldCaret(modifiers))
+        }
+        runs.append(
+            textFieldRun(
+                move placeholder,
+                size,
+                TextFieldPart.placeholder,
+                .Tertiary,
+                context,
+                modifiers
+            )
+        )
+    } else if focused {
+        runs.append(
+            textFieldRun(
+                textFieldShown(st.codes, 0, st.caret, secure),
+                size,
+                TextFieldPart.lead,
+                ink,
+                context,
+                modifiers
+            )
+        )
+        runs.append(textFieldCaret(modifiers))
+        runs.append(
+            textFieldRun(
+                textFieldShown(st.codes, st.caret, st.codes.count, secure),
+                size,
+                TextFieldPart.trail,
+                ink,
+                context,
+                modifiers
+            )
+        )
+    } else {
+        runs.append(
+            textFieldRun(
+                textFieldShown(st.codes, 0, st.codes.count, secure),
+                size,
+                TextFieldPart.lead,
+                ink,
+                context,
+                modifiers
+            )
+        )
+    }
+    let bezeled = textFieldBezeled(modifiers)
+    let appearance = modifierAppearance(modifiers)
+    var fill = transparentFoundationColor()
+    var border = transparentFoundationColor()
+    if bezeled {
+        fill = modifierSurfaceFill(
+            foundationColor(themeAdaptiveColor(fieldBackground, appearance)),
+            modifiers
+        )
+        border = modifierColor(
+            foundationColor(themeAdaptiveColor(fieldBorder, appearance)),
+            modifiers
+        )
+    }
+    let radius = textFieldRadius(modifiers)
+    let field = resolvedControlSizeMetrics(modifiers)
+    let inset = bezeled ? field.fieldInset : 0.0
+    let alignment = textAlignmentUnit(modifiers.textAlignment)
+    layerActionRegister(
+        key,
+        textFieldPressFn(key, size, textFieldWeight(modifiers), inset, inset, alignment, secure)
+    )
+    // The runs stand in one row as wide as they are, set across the field
+    // where its alignment says.
+    let line = CALayerDescription {
+        layout: CALayoutIntent {
+            axis: .Row,
+            widthFill: false,
+            heightFill: false,
+            alignment: Point { x: 0.0, y: 0.5 }
+        },
+        sublayers: move runs
+    }
+    var layout = CALayoutIntent {
+        widthFill: true,
+        heightFill: false,
+        paddingLeading: inset,
+        paddingTrailing: inset,
+        expandsWidth: true,
+        alignment: Point { x: alignment, y: 0.5 }
+    }
+    if bezeled {
+        layout.fixedHeight = field.fieldHeight
+    }
+    return CALayerDescription {
+        layout: move layout,
+        hittable: !modifiers.disabled,
+        hitKey: key,
+        cornerRadius: radius,
+        clipsChildren: true,
+        content: .Solid(
+            CASolid {
+                fill: colorFromFoundation(textFieldColorWithOpacity(fill, modifiers.opacity)),
+                border: colorFromFoundation(textFieldColorWithOpacity(border, modifiers.opacity)),
+                borderWidth: bezeled ? fieldBorderWidth : 0.0,
+                cornerRadius: radius
+            }
+        ),
+        sublayers: [move line]
+    }
+}

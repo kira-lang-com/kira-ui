@@ -1,0 +1,46 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's `GeometryReader`: a view that takes all the room it is offered
+// and builds what it holds from the size that comes to, the content standing
+// at its top leading corner:
+//
+//     GeometryReader { proxy in
+//         Capsule()
+//         .fill(colorWhite())
+//         .width(resolvedLength(proxy.size.width * fraction))
+//     }
+//
+// The content is described when layout places the reader, since only then is
+// its size known, and is laid out in it at once.
+
+// SwiftUI's `GeometryProxy`: the size the reader was placed at, in points.
+public struct GeometryProxy {
+    let size: Size
+}
+
+public construct GeometryReader(content: (GeometryProxy) -> Any Widget) extends Widget {
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let build = copy context
+        let inherited = modifierContextForChildren(modifiers)
+        let make = content
+        return CALayerDescription {
+            layout: CALayoutIntent {
+                widthFill: true,
+                heightFill: true,
+                expandsWidth: true,
+                expandsHeight: true,
+                alignment: Point { x: 0.0, y: 0.0 }
+            },
+            sizedContentKey: sizedContentKey(
+                { size in
+                    return make(GeometryProxy { size: size }).describe(build, inherited)
+                }
+            )
+        }
+    }
+}

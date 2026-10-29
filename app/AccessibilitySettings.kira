@@ -1,0 +1,82 @@
+import Foundation
+
+// The person's accessibility settings, read from the platform beside its color
+// scheme (NativeLibs/Appearance) and kept in the environment, as SwiftUI's
+// are:
+//
+//     @Environment(\.accessibilityReduceMotion) let reduceMotion: Bool
+
+// SwiftUI's `ColorSchemeContrast`: whether the person asked for more contrast.
+@Derive(CustomStringConvertible)
+public enum ColorSchemeContrast {
+    Standard
+    Increased
+}
+
+// The settings the native library answers for, by the number it knows each by.
+enum AccessibilitySetting: UN32 {
+    ReduceMotion = 1
+    ReduceTransparency = 2
+    IncreaseContrast = 3
+    DifferentiateWithoutColor = 4
+    InvertColors = 5
+    ScreenReader = 6
+}
+
+// The native library answers 1 for a setting that is on.
+function nativeSettingOn(setting: AccessibilitySetting) -> Bool {
+    return Number(kira_ui_accessibility_setting(I32(code(setting)))) == 1
+}
+
+// Whether the platform has `setting` on. Linux publishes its settings over the
+// XDG settings portal, a D-Bus conversation rather than a value a process can
+// read, and the platforms the native library has no row for publish none.
+function platformAccessibilitySetting(setting: AccessibilitySetting) -> Bool {
+    match targetPlatform!() {
+        MacOS -> return nativeSettingOn(setting)
+        Ios -> return nativeSettingOn(setting)
+        Windows -> return nativeSettingOn(setting)
+        Wasm -> return nativeSettingOn(setting)
+        else -> return false
+    }
+}
+
+// The person's accessibility settings at one moment, as the platform reports
+// them.
+@Derive(Equatable)
+public struct AccessibilitySettings {
+    var reduceMotion: Bool = false
+    var reduceTransparency: Bool = false
+    var differentiateWithoutColor: Bool = false
+    var invertColors: Bool = false
+    var voiceOverEnabled: Bool = false
+    var increaseContrast: Bool = false
+}
+
+// The settings the platform reports now. The runner asks every frame, as it
+// asks for the color scheme, so a setting the person changes while the app
+// runs rebuilds the interface at once.
+public function platformAccessibilitySettings() -> AccessibilitySettings {
+    return AccessibilitySettings {
+        reduceMotion: platformAccessibilitySetting(.ReduceMotion),
+        reduceTransparency: platformAccessibilitySetting(.ReduceTransparency),
+        differentiateWithoutColor: platformAccessibilitySetting(.DifferentiateWithoutColor),
+        invertColors: platformAccessibilitySetting(.InvertColors),
+        voiceOverEnabled: platformAccessibilitySetting(.ScreenReader),
+        increaseContrast: platformAccessibilitySetting(.IncreaseContrast)
+    }
+}
+
+// Puts `settings` in the environment the next build reads.
+public function environmentNoteAccessibility(settings: borrow AccessibilitySettings) {
+    let previous = enterProcessScope()
+    environmentEnsure()
+    var values = nativeRecover<EnvironmentValues>(ambientStateGet(StateSlot.environment))
+    values.accessibilityReduceMotion = settings.reduceMotion
+    values.accessibilityReduceTransparency = settings.reduceTransparency
+    values.accessibilityDifferentiateWithoutColor = settings.differentiateWithoutColor
+    values.accessibilityInvertColors = settings.invertColors
+    values.accessibilityVoiceOverEnabled = settings.voiceOverEnabled
+    values.colorSchemeContrast = settings.increaseContrast ? .Increased : .Standard
+    ambientScopeEnter(previous)
+}

@@ -1,0 +1,223 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's `LazyVGrid` and `GridItem`: cells filled leading to trailing and
+// then down, in columns the items size. One adaptive item makes as many
+// columns as fit at its minimum, as a home screen's icons or a photo library
+// lay out; a fixed or flexible item per column makes exactly that many.
+//
+//     LazyVGrid(columns = [GridItem(size = .Adaptive(GridItemRange {
+//         minimum: scaledMetric(80),
+//         maximum: .None
+//     }))]) {
+//         for photo in photos { Thumbnail(photo) }
+//     }
+//
+// Every cell of a row is as tall as the row's tallest, and each sits in its
+// cell where `alignment` says, centered by default as SwiftUI centers it.
+
+// How wide a column may be: no narrower than `minimum`, and no wider than
+// `maximum` when there is one.
+public struct GridItemRange {
+    var minimum: ScaledMetric = resolvedLength(10.0)
+    var maximum: ScaledMetric? = .None
+}
+
+// How a `GridItem` sizes its column, as SwiftUI's `GridItem.Size` does.
+public enum GridItemSize {
+    // A column of exactly this width.
+    Fixed(ScaledMetric)
+    // One column, sharing the width with the grid's other columns.
+    Flexible(GridItemRange)
+    // As many columns as fit, sharing the width between them.
+    Adaptive(GridItemRange)
+}
+
+// A column of a grid, or with `.Adaptive` as many as fit: how it is sized,
+// and the gap after it, the theme's when it names none.
+public struct GridItem {
+    var size: GridItemSize = .Flexible(GridItemRange {})
+    var spacing: ScaledMetric? = .None
+}
+
+// A grid of cells in the columns `columns` describes; `spacing` is the gap
+// between rows, the theme's step when it names none.
+public construct LazyVGrid(
+    columns: [GridItem],
+    alignment: StackAlignment = .Center,
+    spacing: ScaledMetric? = .None,
+) extends Widget {
+    let children: [some Widget]
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let step = spacingImplementation(.Medium, modifiers)
+        var intent = CALayoutIntent {
+            axis: .Grid,
+            spacing: gridGap(spacing, step),
+            heightFill: false,
+            alignment: stackAlignmentUnitPoint(alignment)
+        }
+        gridColumnsInto(intent, columns, step)
+        return CALayerDescription {
+            layout: intent,
+            sublayers: describedChildren(context, modifiers, children)
+        }
+    }
+}
+
+// A gap that was asked for, or the theme's step.
+function gridGap(asked: borrow ScaledMetric?, step: Number) -> Number {
+    return match asked {
+        Some(length) -> length.points
+        None -> step
+    }
+}
+
+// Writes the columns `items` describe into `intent`: the first adaptive item
+// makes as many columns as fit; otherwise there is one column per item, as
+// narrow as the widest of their floors and no wider than the narrowest
+// ceiling.
+function gridColumnsInto(
+    intent: borrow mut CALayoutIntent,
+    items: borrow [GridItem],
+    step: Number
+) {
+    if items.count == 0 { return }
+    intent.gridColumnSpacing = gridGap(items[0].spacing, step)
+    var minimum: Number = 0.0
+    var maximum: Number = -1.0
+    for item in items {
+        match item.size {
+            Fixed(length) -> {
+                minimum = max(minimum, length.points)
+                maximum = maximum < 0.0 ? length.points : min(maximum, length.points)
+            }
+            Flexible(range) -> {
+                minimum = max(minimum, range.minimum.points)
+                match range.maximum {
+                    Some(ceiling) -> maximum = maximum < 0.0
+                    ? ceiling.points
+                    : min(maximum, ceiling.points)
+                    None -> {}
+                }
+            }
+            Adaptive(range) -> {
+                intent.gridColumns = 0
+                intent.gridColumnMinimum = range.minimum.points
+                intent.gridColumnMaximum = match range.maximum {
+                    Some(ceiling) -> ceiling.points
+                    None -> -1.0
+                }
+                return
+            }
+        }
+    }
+    intent.gridColumns = items.count
+    intent.gridColumnMinimum = minimum
+    intent.gridColumnMaximum = maximum
+}
+
+// SwiftUI's `Grid`: rows of cells in columns, each column as wide as its
+// widest cell and each row as tall as its tallest, every cell where
+// `alignment` says in the room its row and columns give it. Each `GridRow` is
+// a row; a view outside one is a row of its own across every column, as a
+// `Divider` between rows is.
+//
+//     Grid(horizontalSpacing = .Length(14), verticalSpacing = .Length(14)) {
+//         GridRow {
+//             Text("Wi-Fi")
+//             Toggle(isOn = wifi) {}
+//         }
+//         Divider()
+//         GridRow {
+//             Text("Focus").gridCellColumns(2)
+//         }
+//     }
+public construct Grid(
+    alignment: StackAlignment = .Center,
+    horizontalSpacing: Spacing = .Default,
+    verticalSpacing: Spacing = .Default,
+) extends Widget {
+    let children: [some Widget]
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let rows = describedChildren(context, modifiers, children)
+        // A grid fills the width it is offered when a cell in it fills, as a
+        // stack does around a child that fills.
+        var flexible = false
+        for row in rows {
+            flexible = flexible || row.layout.widthFlexible()
+            for cell in row.sublayers {
+                flexible = flexible || (row.layout.gridRow && cell.layout.widthFlexible())
+            }
+        }
+        return CALayerDescription {
+            layout: CALayoutIntent {
+                axis: .GridRows,
+                spacing: spacingImplementation(verticalSpacing, modifiers),
+                gridColumnSpacing: spacingImplementation(horizontalSpacing, modifiers),
+                widthFill: flexible,
+                heightFill: false,
+                alignment: stackAlignmentUnitPoint(alignment)
+            },
+            sublayers: rows
+        }
+    }
+}
+
+// SwiftUI's `GridRow`: one row of a `Grid`, each view in it the next cell.
+// Its cells sit in the row where `alignment` says, or where the grid's
+// alignment does when it names none.
+public construct GridRow(alignment: VerticalAlignment? = .None) extends Widget {
+    let children: [some Widget]
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        // A row that names no alignment keeps a negative one, which the grid
+        // reads as its own.
+        let unit = match alignment {
+            Some(value) -> verticalAlignmentUnit(value)
+            None -> -1.0
+        }
+        return CALayerDescription {
+            layout: CALayoutIntent {
+                gridRow: true,
+                widthFill: false,
+                heightFill: false,
+                alignment: Point { x: 0.0, y: unit }
+            },
+            sublayers: describedChildren(context, modifiers, children)
+        }
+    }
+}
+
+// `.gridCellColumns(_:)`: the cell spans `count` of its grid's columns.
+public construct GridCellColumnsLayer(count: Number) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var described = content.describe(context, modifiers)
+        described.layout.gridCellColumns = max(count, 1)
+        return described
+    }
+}
+
+extend Widget {
+    // SwiftUI's `.gridCellColumns(_:)`.
+    function gridCellColumns(count: Number) -> Any Widget {
+        return GridCellColumnsLayer(count: count) {
+            self
+        }
+    }
+}

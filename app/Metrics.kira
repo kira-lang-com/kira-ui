@@ -1,0 +1,148 @@
+import Foundation
+import KCoreAnimation
+
+// The sizes a control IS.
+//
+// A control's geometry at each size is the platform's, measured from it and
+// kept in the catalog (`controlSizeMetrics`): how tall a button and a text
+// field stand, how far their labels sit off their ends, the size the label is
+// set at. An application picks the size for a region and states nothing else:
+//
+//     Form { ... }
+//         .controlSize(.Small)
+//
+// and every button, field and menu inside follows.
+//
+// GAPS are not here. The distance between two things is a spacing token, and the
+// theme's spacing scale already names those steps; a second scale for the same
+// decision is how a row's label gap ends up disagreeing with the panel's.
+
+// The size class a region's controls are drawn at, the way macOS sizes a control
+// mini through large. It cascades: naming it on a panel names it for everything
+// the panel contains.
+public enum ControlSize {
+    Mini
+    Small
+    Regular
+    Large
+}
+
+// How large a glyph is drawn RELATIVE to the controls around it, the way
+// SwiftUI's image scale is relative. The absolute point size is the size class's
+// business, so the same `.Medium` glyph is smaller inside a `.Mini` region than
+// inside a `.Regular` one without anything at the call site changing.
+public enum IconScale {
+    Small
+    Medium
+    Large
+    ExtraLarge
+}
+
+// The margin the COLUMN in effect holds its content off its edges by: what the
+// column said with `.contentMargin(...)`, and outside any column the window's
+// own: the compact layout margin on a phone or tablet, the regular one on a
+// Mac, where a window holds a grouped `Form` and `.scenePadding()` 20 off its
+// edges.
+// Everything that stands against a column's edge asks this — the bar's sections,
+// a list row, a list's header — so one answer moves all of them together.
+public function resolvedContentMargin(modifiers: borrow ModifierContext) -> Number {
+    if modifiers.hasContentMargin {
+        return modifiers.contentMargin
+    }
+    return interfaceMode() == .AdaptiveDesktop ? LayoutMargin.regular : LayoutMargin.compact
+}
+
+// How large a glyph is drawn here: on the EM of the type it stands in, the way
+// a symbol is on the platform.
+//
+// A symbol is a character in the run beside it, and like a character it is
+// drawn on the font's em box rather than fitted to a band. Each glyph's ink is
+// as tall as its artwork draws it on that em — `play.rectangle` squat,
+// `photo.on.rectangle` tall; the platform's menu renders the two 69 and 83
+// device pixels high at one size. Fitting every glyph's INK to the cap band made
+// them one height, and all of them small: the platform's row glyph is 17.3pt of
+// ink beside 12.3pt capitals.
+public function iconScaleSize(scale: IconScale, modifiers: borrow ModifierContext) -> Number {
+    return iconScaleFactor(scale) * iconTypeSize(modifiers)
+}
+
+// The cap band of the type in effect, measured from the face: `H` reaches the
+// cap line and sits on the baseline, so the top of its ink IS the band.
+public function iconCapBand(modifiers: borrow ModifierContext) -> Number {
+    return foundationTextRunInkTop("H", iconTypeSize(modifiers), iconTypeWeight(modifiers))
+}
+
+// The type a glyph is standing in, resolved through exactly the order a run of
+// text resolves its own size — so a glyph in a `.headline` is headline-sized, a
+// glyph in a `.font(...)` is that font's, and a glyph in neither is body-sized
+// like the words it stands with.
+public function iconTypeSize(modifiers: borrow ModifierContext) -> Number {
+    if modifiers.hasFont {
+        return modifiers.fontSize
+    }
+    if modifiers.hasTypography {
+        return typographyImplementation(modifiers.typography, modifiers).size
+    }
+    return modifierTokens(modifiers).bodySize
+}
+
+// The scale steps, against the cap band: a medium glyph IS the capitals beside
+// it, and the steps either side are the ones the platform's symbol scales take.
+public function iconScaleFactor(scale: borrow IconScale) -> Number {
+    match scale {
+        Small -> return 0.85
+        Medium -> return 1.0
+        Large -> return 1.2
+        ExtraLarge -> return 1.5
+    }
+}
+
+public construct ControlSizeLayer(value: ControlSize) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let resolved = modifierContextApply(modifiers, modifierDeltaControlSize(value))
+        return content.describe(context, resolved)
+    }
+}
+
+public construct ImageScaleLayer(value: IconScale) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let resolved = modifierContextApply(modifiers, modifierDeltaImageScale(value))
+        return content.describe(context, resolved)
+    }
+}
+
+public construct SymbolVariantLayer(value: SymbolVariants) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        return content.describe(
+            context,
+            modifierContextApply(modifiers, modifierDeltaSymbolVariant(value))
+        )
+    }
+}
+
+public construct TintLayer(value: PrimaryColor) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let resolved = modifierContextApply(modifiers, modifierDeltaTint(value))
+        return content.describe(context, resolved)
+    }
+}

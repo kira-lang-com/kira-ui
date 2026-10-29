@@ -1,0 +1,520 @@
+import Foundation
+import Ember
+import KiraLayout
+import KCoreAnimation
+
+// Assembling the window's one bar from what the columns declared.
+//
+// `Toolbar.kira` is the DECLARING half — the placements, the sink, and the
+// widgets a view writes. This file is the reading half: it takes the entries
+// out of the sink once every column has been lowered and turns them into the
+// sections, the shared glass groups, and the bar itself. The split is along
+// that seam because the two halves run at different times and share only the
+// sink between them.
+
+public namespace ToolbarPieceKey {
+    // The keys the pieces of a document's section are known by. See
+    // `documentSection`.
+    let back: Number = 1
+    let title: Number = 2
+    let space: Number = 3
+    let search: Number = 4
+}
+
+// --- The bar -----------------------------------------------------------------
+
+// The window's chrome: the band across the top that its title, its toolbar
+// items and its window controls sit in, drawn over the content.
+//
+// The band is split along the columns beneath it, as SwiftUI splits it. Over a
+// sidebar, the window controls hold the leading end and the sidebar's items --
+// its toggle last -- sit at its trailing edge. Over the document, what the
+// column is showing sits at the leading end, its principal item at the
+// section's center, and what it can be asked to do at the trailing end. With
+// the sidebar collapsed, its items and its toggle move up beside the window
+// controls and the document's section takes the rest of the band -- the
+// sidebar's section narrowing to them as the sidebar slides away, so the
+// bar keeps one shape all the way and nothing in it is taken for another.
+//
+// Every length comes from the catalog (`windowChromeMetrics()`), and the band
+// paints nothing of its own: the glass under each group of items is the only
+// surface it has, which is the Liquid Glass bar.
+// What floats over a phone's content at the foot of the screen: its tab bar,
+// which the toolbar's row holds on a larger screen, or with no tabs the
+// search field, as iOS 26 sets `.searchable` where nothing else holds the
+// foot.
+public construct WindowBottomBar() extends Widget {
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        toolbarSinkEnsure()
+        let sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+        var bars = chromeTabBars(sink, context, modifierContextPresenting(modifiers, .Toolbar))
+        if bars.count == 0 {
+            match sink.search {
+                Some(search) -> bars.append(bottomSearchField(search, context, modifiers))
+                None -> {}
+            }
+        }
+        return CALayerDescription { sublayers: move bars }
+    }
+}
+
+// A `TabView`'s tabs: their capsule of glass, centered on the window in the
+// band's row, or at its foot on a phone.
+function chromeTabBar(
+    entries: borrow [ToolbarEntry],
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    var tabs: [CALayerDescription] = []
+    for entry in entries {
+        tabs.append(copy entry.content)
+    }
+    if tabBarAtFoot(context) {
+        return phoneTabBar(move tabs, context, modifiers)
+    }
+    return tabBarCapsule(move tabs, context, modifiers)
+}
+
+// The tab bars the chrome shows: the shown view's, and while a view moves,
+// the one it covers fading in as it leaves. A view's tabs are its own: they
+// leave with it and come with the view uncovered.
+function chromeTabBars(
+    sink: borrow ToolbarSink,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+) -> [CALayerDescription] {
+    var layers: [CALayerDescription] = []
+    if !sink.moving {
+        if sink.tabs.count > 0 {
+            layers.append(chromeTabBar(sink.tabs, context, modifiers))
+        }
+        return layers
+    }
+    // The shown bar fades at once, but only the bar: its selection still
+    // springs to a tab chosen while a page moves.
+    if sink.tabs.count > 0 {
+        var shown = chromeTabBar(sink.tabs, context, modifiers)
+        shown.opacity = 1.0 - sink.coveredShown
+        shown.disablesActions = true
+        layers.append(move shown)
+    }
+    let coveredTabs = toolbarCoveredEntries(sink.covered.tabs, sink.tabs, sink.pageEnd.tabs)
+    if coveredTabs.count > 0 {
+        var under = chromeTabBar(coveredTabs, context, modifiers)
+        under.makeInert()
+        layers.append(toolbarFaded(move under, sink.coveredShown))
+    }
+    return layers
+}
+
+public construct WindowChrome() extends Widget {
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        toolbarSinkEnsure()
+        var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+        let metrics = windowChromeMetricsFor(context.viewportWidth)
+        sink.windowDragHeight = windowTopClearance() + metrics.toolbarHeight
+        let barModifiers = modifierContextPresenting(modifiers, .Toolbar)
+        // A presented page search has the band to itself.
+        if sink.searchPresented {
+            return CALayerDescription {
+                layout: CALayoutIntent { heightFill: false, fixedHeight: metrics.toolbarHeight }
+            }
+        }
+
+        var sections: [CALayerDescription] = []
+        var leading: [CALayerDescription] = []
+        if sink.hasNavigationColumn {
+            sections.append(sidebarSection(sink, metrics, context, barModifiers))
+        } else {
+            if windowControlsInToolbar() {
+                leading.append(windowControlsArea(metrics, context, barModifiers))
+            }
+            for group in toolbarGroups(sink.navigation, metrics, context, barModifiers) {
+                leading.append(group)
+            }
+            if sink.sidebarToggle {
+                leading.append(sidebarToggle(metrics, context, barModifiers))
+            }
+        }
+        sections.append(documentSection(sink, move leading, metrics, context, barModifiers))
+        let band = CALayerDescription {
+            layout: CALayoutIntent {
+                axis: .Row,
+                heightFill: false,
+                fixedHeight: metrics.toolbarHeight
+            },
+            sublayers: move sections
+        }
+        // A phone's tabs float at the foot of the window instead (`WindowBottomBar`).
+        if tabBarAtFoot(context) || sink.tabs.count == 0 && sink.covered.tabs.count == 0 {
+            return band
+        }
+        var layers: [CALayerDescription] = [band]
+        for bar in chromeTabBars(sink, context, barModifiers) {
+            layers.append(bar)
+        }
+        // The tabs stand in the items' row, at the band's top, with the gap
+        // under both.
+        return CALayerDescription {
+            layout: CALayoutIntent {
+                heightFill: false,
+                fixedHeight: metrics.toolbarHeight,
+                alignment: Point { x: 0.5, y: 0.0 }
+            },
+            sublayers: move layers
+        }
+    }
+
+    // Over the sidebar: the window controls, then the sidebar's own items and
+    // its toggle held at its trailing edge. As the sidebar slides away the
+    // section narrows with it, down to what it holds, and its trailing edge
+    // closes from a column's inset to the gap between two pieces of glass.
+    function sidebarSection(
+        sink: borrow ToolbarSink,
+        metrics: borrow WindowChromeMetrics,
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext,
+    ) -> CALayerDescription {
+        var parts: [CALayerDescription] = []
+        if windowControlsInToolbar() {
+            parts.append(windowControlsArea(metrics, context, modifiers))
+        }
+        // The sidebar's items and its toggle stand at its trailing edge, on a
+        // computer as on a tablet, the window's buttons alone at its leading
+        // one -- while the sidebar is out wider than what the section holds.
+        // Narrower, sliding away, they follow the buttons, and the section
+        // grows to them.
+        let room = sink.navigationWidth * sink.navigationShown
+        let held = metrics.controlsEnd() + metrics.itemWidth + metrics.groupInset * 2.0
+            + metrics.itemSpacing * 2.0 + metrics.edgeInset
+        let trails = room > held
+        if trails {
+            parts.append(toolbarFlexibleSpace())
+        }
+        for group in toolbarGroups(sink.navigation, metrics, context, modifiers) {
+            parts.append(group)
+        }
+        if sink.sidebarToggle {
+            parts.append(sidebarToggle(metrics, context, modifiers))
+        }
+        let shown = sink.navigationShown
+        // The buttons stand off the window's side by their own inset; with none
+        // before it, the toggle stands off it by the bar's.
+        let leadingInset = windowControlsInToolbar() ? 0.0 : metrics.edgeInset
+        var section = toolbarSection(
+            move parts,
+            metrics,
+            sink.navigationWidth * shown,
+            leadingInset
+        )
+        section.layout.paddingTrailing = metrics.edgeInset * shown + metrics.itemSpacing * (
+            1.0 - shown
+        )
+        if trails {
+            section.layout.fixedWidth = room
+        }
+        section.key = 1
+        return section
+    }
+
+    // Over the document: whatever leads it, a back button, then the items at
+    // the trailing end -- and the title, or the principal item standing in
+    // for it, centered over all of it, the way the platform centers it on the
+    // section rather than between whatever happens to be either side.
+    function documentSection(
+        sink: borrow ToolbarSink,
+        leading: [CALayerDescription],
+        metrics: borrow WindowChromeMetrics,
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext,
+    ) -> CALayerDescription {
+        // A section that starts at a column's edge, or at the edge of a window
+        // with no controls in its bar, holds its first piece of glass off it,
+        // in line with the columns under it; one that starts with the window
+        // controls starts at the window's.
+        var leadingInset = metrics.edgeInset
+        if leading.count > 0 && windowControlsInToolbar() {
+            leadingInset = 0.0
+        } else if sink.hasNavigationColumn {
+            leadingInset = metrics.edgeInset * sink.navigationShown
+        }
+        // Each piece is known by what it is -- the back button, the title, the
+        // space, each trailing group by its place among them, the search
+        // field -- never by where it stands in the row: a back button going
+        // away would otherwise have the tree hand its layers, the press it
+        // holds included, to whatever moved up into its place.
+        var parts: [CALayerDescription] = []
+        let covered = sink.covered
+        let shown = sink.coveredShown
+        let end = sink.pageEnd
+        let backGroups = toolbarMorphGroups(
+            sink.back,
+            toolbarCoveredEntries(covered.back, sink.back, end.back),
+            shown,
+            sink.moving,
+            metrics,
+            context,
+            modifiers,
+            navigationGoingBack()
+        )
+        let followsBack = backGroups.count > 0
+        if followsBack {
+            var back = toolbarBackArea(move backGroups, metrics)
+            back.key = ToolbarPieceKey.back
+            parts.append(move back)
+        }
+        // On a Mac the title leads the section, centered on the items' row,
+        // as the macOS kit's toolbar sets it: 18 into the column, or after
+        // whatever leads it.
+        let titleLeads = interfaceMode() == .AdaptiveDesktop
+        if titleLeads && toolbarTitleWanted(sink) {
+            var title = toolbarTitle(sink, context, modifiers)
+            title.key = ToolbarPieceKey.title
+            title.layout.staysWithinGuide = 0
+            title.layout.fixedHeight = metrics.itemHeight
+            title.layout.alignment = Point { x: 0.0, y: 0.5 }
+            if !followsBack && leading.count == 0 {
+                title.layout.paddingLeading = max(metrics.titleLeading - leadingInset, 0.0)
+            }
+            parts.append(move title)
+        }
+        // The space between the leading pieces and the trailing ones is the
+        // room the title has elsewhere: it is centered on the section, and
+        // slides off center rather than under an item, as a navigation bar's
+        // does.
+        var space = toolbarFlexibleSpace()
+        space.key = ToolbarPieceKey.space
+        space.layout.guide = guideTag(ToolbarTitleRoom())
+        parts.append(move space)
+        var trailing = copy sink.automatic
+        for entry in sink.primaryAction {
+            trailing.append(copy entry)
+        }
+        var coveredTrailing = toolbarCoveredEntries(
+            covered.automatic,
+            sink.automatic,
+            end.automatic
+        )
+        for entry in toolbarCoveredEntries(
+            covered.primaryAction,
+            sink.primaryAction,
+            end.primaryAction
+        ) {
+            coveredTrailing.append(copy entry)
+        }
+        var place = 0
+        for group in toolbarMorphGroups(
+            trailing,
+            coveredTrailing,
+            shown,
+            sink.moving,
+            metrics,
+            context,
+            modifiers
+        ) {
+            var piece = copy group
+            piece.key = toolbarPieceTrailing(place)
+            parts.append(move piece)
+            place++
+        }
+        // A phone's bar holds no search field: it floats at the foot.
+        match sink.search {
+            Some(search) -> {
+                if !tabBarAtFoot(context) {
+                    var field = toolbarSearchField(search, metrics, context, modifiers)
+                    field.key = ToolbarPieceKey.search
+                    parts.append(move field)
+                }
+            }
+            None -> {}
+        }
+        // The window's own pieces lead the section and stay what they are;
+        // the page's follow, known by the path's generation, so a path that
+        // starts somewhere new brings its own items rather than reshaping the
+        // last page's into them.
+        //
+        // The page's items take their values at once. The bar's one motion is
+        // the morph a push draws by its progress, and that changes which
+        // pieces stand where -- a back button comes in at the front, a piece
+        // folds away -- so a piece matched by its place to whatever stood
+        // there before would slide across the bar to where it now is.
+        var items = CALayerDescription {
+            key: currentNavigationGeneration() + 1,
+            layout: CALayoutIntent {
+                axis: .Row,
+                spacing: metrics.itemSpacing,
+                heightFill: false,
+                fixedHeight: metrics.toolbarHeight,
+                flex: 1,
+                alignment: Point { x: 0.0, y: 0.0 }
+            },
+            sublayers: move parts
+        }
+        items.makeImmediate()
+        var sectionParts = move leading
+        sectionParts.append(move items)
+        // The bar stands in the section whether anything is centered over it
+        // or not, so a view that brings a title does not move the bar a level
+        // down and have the tree take every piece in it for another.
+        var layers = [toolbarSection(move sectionParts, metrics, -1.0, leadingInset)]
+        if sink.principal.count > 0 || sink.covered.principal.count > 0 {
+            layers.append(principalRow(sink, metrics, context, modifiers))
+        } else if !titleLeads && toolbarTitleWanted(sink) {
+            layers.append(toolbarTitle(sink, context, modifiers))
+        }
+        return CALayerDescription {
+            key: 2,
+            layout: CALayoutIntent {
+                heightFill: false,
+                fixedHeight: metrics.toolbarHeight,
+                flex: 1,
+                alignment: Point { x: 0.5, y: 0.5 }
+            },
+            sublayers: move layers
+        }
+    }
+
+    // The principal item, centered across the section.
+    function principalRow(
+        sink: borrow ToolbarSink,
+        metrics: borrow WindowChromeMetrics,
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext,
+    ) -> CALayerDescription {
+        var row = CALayerDescription {
+            // The page's, like the items beside it, and like them it takes its
+            // values at once.
+            key: currentNavigationGeneration() + 1,
+            layout: CALayoutIntent {
+                axis: .Row,
+                spacing: metrics.itemSpacing,
+                widthFill: false,
+                heightFill: false,
+                fixedHeight: metrics.toolbarHeight,
+                alignment: Point { x: 0.0, y: 0.5 }
+            },
+            sublayers: toolbarMorphGroups(
+                sink.principal,
+                toolbarCoveredEntries(
+                    sink.covered.principal,
+                    sink.principal,
+                    sink.pageEnd.principal
+                ),
+                sink.coveredShown,
+                sink.moving,
+                metrics,
+                context,
+                modifiers
+            )
+        }
+        row.makeImmediate()
+        return row
+    }
+
+    // The button that shows and hides the sidebar: a piece of glass of its own,
+    // which the platform adds to every split view without being asked.
+    function sidebarToggle(
+        metrics: borrow WindowChromeMetrics,
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let button = Button(action: navigationSidebarToggleAction()) {
+            Icon(symbol: .SidebarLeft)
+        }
+        return toolbarGlassGroup([button.describe(context, modifiers)], metrics, context, modifiers)
+    }
+}
+
+// Whether the bar shows a title: the page's while it is inline, and either
+// page's while one moves over the other.
+function toolbarTitleWanted(sink: borrow ToolbarSink) -> Bool {
+    return sink.moving || (
+        sink.detailTitle.count > 0 && toolbarInlineTitleShown(
+            sink.largeTitle,
+            sink.titleCollapse
+        ) > 0.0
+    )
+}
+
+public function toolbarPieceTrailing(place: Number) -> Number {
+    return 100 + place
+}
+
+// One section of the band: its parts in a row, centered across the band's
+// height, a piece of glass's gap apart, and the last one held off the
+// section's trailing edge. A section is at least the width it is given and
+// grows to what it holds; one given none takes what the sections before it
+// left.
+public function toolbarSection(
+    parts: [CALayerDescription],
+    metrics: borrow WindowChromeMetrics,
+    width: Number,
+    leadingInset: Number
+) -> CALayerDescription {
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            axis: .Row,
+            spacing: metrics.itemSpacing,
+            widthFill: width < 0.0,
+            heightFill: false,
+            minWidth: max(width, 0.0),
+            fixedHeight: metrics.toolbarHeight,
+            paddingLeading: leadingInset,
+            paddingTrailing: metrics.edgeInset,
+            alignment: Point { x: 0.0, y: 0.0 }
+        },
+        sublayers: move parts
+    }
+}
+
+// The room the close, minimize and zoom buttons take. The platform draws them
+// where it has them; where the toolkit draws its own, they sit here.
+public function windowControlsArea(
+    metrics: borrow WindowChromeMetrics,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext
+) -> CALayerDescription {
+    var controls = WindowControls().describe(context, modifiers)
+    controls.layout.widthFill = false
+    controls.layout.heightFill = false
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedWidth: metrics.controlsEnd() - metrics.itemSpacing,
+            // As tall as the items' row, so the buttons are centered on the
+            // items beside them: 19 from the window's top as from its side.
+            fixedHeight: metrics.itemHeight,
+            paddingLeading: metrics.controlsLeading,
+            alignment: Point { x: 0.0, y: 0.5 }
+        },
+        sublayers: [controls]
+    }
+}
+
+// A column's title, in the bar's title style.
+public function windowTitle(
+    title: borrow String,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext
+) -> CALayerDescription {
+    let face = windowTitleFontFor(context.viewportWidth)
+    var text = Text(content: copy title)
+    .font(size: resolvedLength(face.size), weight: face.weight)
+    .describe(context, modifiers)
+    text.layout.widthFill = false
+    text.layout.heightFill = false
+    return text
+}
+
+public function toolbarFlexibleSpace() -> CALayerDescription {
+    return CALayerDescription { layout: CALayoutIntent { heightFill: false, flex: 1 } }
+}

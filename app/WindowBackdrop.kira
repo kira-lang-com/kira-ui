@@ -1,0 +1,328 @@
+import Foundation
+import Ember
+import KiraLayout
+import KCoreAnimation
+
+// What is behind the window, shown through it: a Mac's sidebar.
+//
+// A Mac's sidebar is not the window's own pixels blurred. It is the desktop
+// and the windows under this one, blurred and tinted by the window server,
+// so a sidebar over a blue wallpaper reads blue. A window can do that only
+// where its host composites it over what is behind it and draws that behind
+// it on its say-so; the host says so with `windowBackdropAvailableSet`.
+//
+// Where it can, the split view hands its sidebar to the window rather than
+// drawing it in place. The window draws its canvas and its content, cuts the
+// sidebar's strip out of everything drawn so far, and draws the sidebar's
+// content over the hole; the host asks for the backdrop under the hole.
+
+struct WindowBackdrop {
+    // Whether the host draws what is behind the window under its holes.
+    var available: Bool = false
+    // This frame's sidebar, handed over by the split view, and how wide and
+    // tall the strip it stands in is, in the window's points.
+    var sidebar: [CALayerDescription] = []
+    var width: Number = 0.0
+    var height: Number = 0.0
+    // Whether the sidebar is drawn dark, which the backdrop is tinted for.
+    var dark: Bool = false
+    // The glass this frame's chrome lays over the strip, taken out of the
+    // frame for the host to draw.
+    var glass: [WindowBackdropPiece] = []
+}
+
+// A piece of glass over the sidebar's strip that the host draws over the
+// backdrop, as a Mac's window server does, rather than the window drawing it
+// over a guess at what is there. Its box is in points from the strip's top
+// leading corner.
+public struct WindowBackdropPiece {
+    var x: Number = 0.0
+    var y: Number = 0.0
+    var width: Number = 0.0
+    var height: Number = 0.0
+    var corner: Number = 0.0
+    var capsule: Bool = false
+    var continuous: Bool = false
+    // The glass it is made of, where the compositor draws it.
+    var recipe: CAGlassRecipe = .Clear
+}
+
+function windowBackdropEnsure() {
+    if !ambientStateHas(StateSlot.windowBackdrop) {
+        ambientStatePut(StateSlot.windowBackdrop, nativeUserData(nativeState(WindowBackdrop {})))
+    }
+}
+
+// The host says whether it draws what is behind the window under its holes.
+public function windowBackdropAvailableSet(available: Bool) {
+    windowBackdropEnsure()
+    var state = nativeRecover<WindowBackdrop>(ambientStateGet(StateSlot.windowBackdrop))
+    state.available = available
+}
+
+// Whether a sidebar shows what is behind the window this frame: on a
+// computer, in a window that draws its own frame, on a host that draws the
+// backdrop.
+public function windowBackdropShown() -> Bool {
+    windowBackdropEnsure()
+    let state = nativeRecover<WindowBackdrop>(ambientStateGet(StateSlot.windowBackdrop))
+    return state.available && interfaceMode() == .AdaptiveDesktop && windowDecorated()
+}
+
+// Forgets the last frame's sidebar, before the content lowers.
+function windowBackdropCollect() {
+    windowBackdropEnsure()
+    var state = nativeRecover<WindowBackdrop>(ambientStateGet(StateSlot.windowBackdrop))
+    var none: [CALayerDescription] = []
+    state.sidebar = move none
+    state.width = 0.0
+    state.height = 0.0
+}
+
+// The split view hands the window its sidebar: `sidebar` drawn from the
+// window's top leading corner, over a strip `width` wide and `height` tall,
+// in the scheme `scheme`.
+public function windowBackdropSidebar(
+    sidebar: CALayerDescription,
+    width: Number,
+    height: Number,
+    scheme: FoundationScheme
+) {
+    windowBackdropEnsure()
+    var state = nativeRecover<WindowBackdrop>(ambientStateGet(StateSlot.windowBackdrop))
+    var held: [CALayerDescription] = [sidebar]
+    state.sidebar = move held
+    state.width = width
+    state.height = height
+    state.dark = scheme == .Dark
+}
+
+// The strip the backdrop shows through this frame, in the window's points:
+// its width, zero when there is none, and its height.
+public function windowBackdropStrip() -> Size {
+    windowBackdropEnsure()
+    let state = nativeRecover<WindowBackdrop>(ambientStateGet(StateSlot.windowBackdrop))
+    return Size { width: state.width, height: state.height }
+}
+
+// Whether this frame's sidebar is drawn dark.
+public function windowBackdropDark() -> Bool {
+    windowBackdropEnsure()
+    let state = nativeRecover<WindowBackdrop>(ambientStateGet(StateSlot.windowBackdrop))
+    return state.dark
+}
+
+// The cut and the sidebar over it, for the window to draw over its content.
+function windowBackdropLayers() -> [CALayerDescription] {
+    windowBackdropEnsure()
+    let state = nativeRecover<WindowBackdrop>(ambientStateGet(StateSlot.windowBackdrop))
+    var layers: [CALayerDescription] = []
+    if state.width <= 0.0 { return layers }
+    layers.append(
+        CALayerDescription {
+            disablesActions: true,
+            layout: CALayoutIntent {
+                widthFill: false,
+                heightFill: false,
+                fixedWidth: state.width,
+                fixedHeight: state.height
+            },
+            // The cut's color is the sidebar material the host lays in it,
+            // which the toolbar's glass over the hole takes for what is
+            // behind it.
+            content: .Solid(
+                CASolid { fill: windowBackdropTone(state.dark), blend: .DestinationOut }
+            )
+        }
+    )
+    for layer in state.sidebar {
+        layers.append(copy layer)
+    }
+    return layers
+}
+
+// The tone the sidebar material reads as, opaque, as near as the window can
+// know it without seeing what is behind it: the material lays its tint's
+// luminance at the tint's opacity and drains most of the color, so a gray at
+// that share of the luminance. The rest is the desktop behind the window,
+// taken as dark, as the default picture is: over it the light sidebar
+// measures 0.81, where the tint's luminance alone is 0.895, and glass laid
+// over the hole at the brighter tone draws its rim lighter than the sidebar
+// around it.
+function windowBackdropTone(dark: Bool) -> CAColor {
+    let scheme: FoundationScheme = dark ? .Dark : .Light
+    let activity: FoundationWindowActivity = windowActive() ? .Active : .Inactive
+    let lower = foundationSidebarTint(scheme, activity).lower
+    let tone = lower.color
+    let gray = (tone.r * 0.2126 + tone.g * 0.7152 + tone.b * 0.0722) * lower.alpha
+    return CAColor { r: gray, g: gray, b: gray, a: 1.0 }
+}
+
+// A Mac's sidebar material, for the scheme and whether its window is in
+// front: what is behind it blurred, set at the sidebar tone's luminance and
+// drained of most of its color, so it reads as a darker tone of the window.
+// No lens and no rim, since it meets the window's edges and the detail with
+// none. The window server draws it under a window's hole with this glass.
+public function windowBackdropGlass(scheme: FoundationScheme, active: Bool) -> CAGlass {
+    let activity: FoundationWindowActivity = active ? .Active : .Inactive
+    let stack = foundationSidebarTint(scheme, activity)
+    let tone = stack.lower
+    return CAGlass {
+        blur: 1.0,
+        edgeRefraction: 0.0,
+        tint: CAColor { r: tone.color.r, g: tone.color.g, b: tone.color.b, a: tone.alpha },
+        material: foundationGlassMaterialWithTint(
+            CAGlassMaterial {
+                lensMaxBend: 0.0,
+                borderSpread: 0.0,
+                borderSideOffset: 0.0,
+                borderSideSpread: 0.0,
+                borderGray: 1.0,
+                borderSideGray: 1.0,
+                innerRimStrength: 0.0
+            },
+            stack
+        ),
+        shapeKind: surfaceLayerGlassShapeKind(.Rect)
+    }
+}
+
+// Takes the glass the window's chrome lays over the sidebar's strip out of
+// the laid-out frame `described`, for the host to draw over the backdrop.
+// Glass the window drew there would refract and tint the tone it took the
+// backdrop for, and its rim would read lighter or darker than the sidebar
+// around it. A piece lit by a press or the pointer, faded, or moved by a
+// transform stays in the frame, which alone draws those; its contents stay
+// in the frame either way.
+public function windowBackdropLiftGlass(
+    described: borrow mut CALayerDescription,
+    scale: Number = 1.0
+) {
+    let shown = windowBackdropShown()
+    windowBackdropEnsure()
+    var state = nativeRecover<WindowBackdrop>(ambientStateGet(StateSlot.windowBackdrop))
+    var lifted: [WindowBackdropPiece] = []
+    if shown && state.width > 0.0 {
+        windowBackdropLiftIn(described, Point {}, state.sidebar.count, lifted)
+    }
+    state.glass = move lifted
+    if scale != 1.0 {
+        state.width *= scale
+        state.height *= scale
+        for index in 0..state.glass.count {
+            state.glass[index].x *= scale
+            state.glass[index].y *= scale
+            state.glass[index].width *= scale
+            state.glass[index].height *= scale
+            state.glass[index].corner *= scale
+        }
+    }
+}
+
+public function windowBackdropCount() -> Number {
+    windowBackdropEnsure()
+    let state = nativeRecover<WindowBackdrop>(ambientStateGet(StateSlot.windowBackdrop))
+    return state.glass.count + state.sidebar.count
+}
+
+// The glass lifted out of this frame, bottom first.
+public function windowBackdropPieces() -> [WindowBackdropPiece] {
+    windowBackdropEnsure()
+    let state = nativeRecover<WindowBackdrop>(ambientStateGet(StateSlot.windowBackdrop))
+    return copy state.glass
+}
+
+// Finds the cut in `layer`, whose parent's top leading corner stands at
+// `origin`, and lifts the glass from the chrome drawn after the cut and the
+// `sidebar` layers over it (`windowLayers`). Whether it found the cut.
+function windowBackdropLiftIn(
+    layer: borrow mut CALayerDescription,
+    origin: Point,
+    sidebar: Number,
+    lifted: borrow mut [WindowBackdropPiece]
+) -> Bool {
+    let corner = windowBackdropCorner(layer, origin)
+    for i in 0..layer.sublayers.count {
+        if windowBackdropIsCut(layer.sublayers[i]) {
+            let chrome = i + 1 + sidebar
+            if chrome < layer.sublayers.count {
+                let cut = layer.sublayers[i]
+                let strip = Rect {
+                    x: corner.x + cut.position.x,
+                    y: corner.y + cut.position.y,
+                    width: cut.size.width,
+                    height: cut.size.height
+                }
+                windowBackdropLiftChrome(layer.sublayers[chrome], copy corner, strip, lifted)
+            }
+            return true
+        }
+        if windowBackdropLiftIn(layer.sublayers[i], copy corner, sidebar, lifted) {
+            return true
+        }
+    }
+    return false
+}
+
+// Lifts the plain glass in `layer` that lies inside `strip`.
+function windowBackdropLiftChrome(
+    layer: borrow mut CALayerDescription,
+    origin: Point,
+    strip: borrow Rect,
+    lifted: borrow mut [WindowBackdropPiece]
+) {
+    if layer.opacity != 1.0 || layer.scaleX != 1.0 || layer.scaleY != 1.0 || layer.rotation != 0.0 {
+        return
+    }
+    let corner = windowBackdropCorner(layer, origin)
+    var piece = WindowBackdropPiece {
+        x: corner.x - strip.x,
+        y: corner.y - strip.y,
+        width: layer.size.width,
+        height: layer.size.height,
+        corner: layer.cornerRadius
+    }
+    let inside = piece.x >= -0.5 && piece.y >= -0.5 && piece.width > 0.0 && piece.height > 0.0
+        && piece.x + piece.width <= strip.width + 0.5
+        && piece.y + piece.height <= strip.height + 0.5
+    var lifts = false
+    match layer.content {
+        Glass(glass) -> {
+            let unlit = glass.glowStrength == 0.0 && glass.glowWash == 0.0
+            match glass.style {
+                Some(style) -> { lifts = inside && unlit && style.recipe == .Regular }
+                None -> {}
+            }
+            // A capsule's radius is unbounded: past half its height.
+            let half = min(piece.width, piece.height) * 0.5
+            piece.capsule = layer.cornerRadius >= half - 0.01
+            if piece.capsule { piece.corner = half }
+            piece.continuous = glass.shapeKind == 1
+        }
+        Empty, Solid, Text, Texture, Icon, Gradient -> {}
+    }
+    if lifts {
+        layer.content = .Empty
+        lifted.append(move piece)
+    }
+    for i in 0..layer.sublayers.count {
+        windowBackdropLiftChrome(layer.sublayers[i], copy corner, strip, lifted)
+    }
+}
+
+// Where `layer`'s top leading corner stands, its parent's at `origin`: a
+// layer lifted over everything else is placed from the window itself.
+function windowBackdropCorner(layer: borrow CALayerDescription, origin: borrow Point) -> Point {
+    let parent = match layer.level {
+        Inline -> copy origin
+        Overlay(z) -> Point {}
+    }
+    return Point { x: parent.x + layer.position.x, y: parent.y + layer.position.y }
+}
+
+function windowBackdropIsCut(layer: borrow CALayerDescription) -> Bool {
+    return match layer.content {
+        Solid(s) -> s.blend == .DestinationOut
+        Empty, Text, Texture, Icon, Glass, Gradient -> false
+    }
+}

@@ -1,0 +1,180 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// A home screen as a platform's desktop draws one, from the top: a picture,
+// and over it a view of its own with state, whose pages of tiles stand side by
+// side under a page's dots, framed as a desktop surface is. Its rows of tiles
+// spread across the page and stand one under the next.
+
+namespace KuiHome {
+    let columns: Number = 6
+    let column: Number = 96
+    let side: Number = 148
+    let rowGap: Number = 30
+    let width: Number = 1120
+    let height: Number = 630
+}
+
+construct KuiHomeIcon(name: String) extends Widget {
+    body {
+        ZStack(alignment = .Center) {
+            RoundedRectangle(cornerRadius = 15, style = .Continuous)
+            .fill(RGBAColor { r: 0.5, g: 0.2, b: 0.8, a: 1.0 })
+            Text("W")
+        }
+        .width(resolvedLength(68))
+        .height(resolvedLength(68))
+    }
+}
+
+function kuiHomeTile(name: String) -> Any Widget {
+    return Button(action = { in return }) {
+        VStack(spacing = .Length(8.5), alignment = .Center) {
+            KuiHomeIcon(name = copy name)
+            Text(copy name)
+            .font(size: resolvedLength(12), weight: .Medium)
+        }
+        .hugWidth()
+    }
+    .buttonStyle(.Plain)
+}
+
+function kuiHomeRows(count: Number) -> Any Widget {
+    var tiles: [Any Widget] = []
+    for index in 0..count { tiles.append(kuiHomeTile("App" + "\(index)").opacity(1)) }
+    var rows: [Any Widget] = []
+    var start: Number = 0
+    while start < tiles.count {
+        var row: [Any Widget] = []
+        for column in 0..KuiHome.columns {
+            if column > 0 { row.append(Spacer()) }
+            let at = start + column
+            if at < tiles.count {
+                row.append(tiles[at].width(resolvedLength(KuiHome.column)))
+            } else {
+                row.append(FixedGap(width = KuiHome.column, height = 0))
+            }
+        }
+        rows.append(
+            HStack(spacing = .None, alignment = .Top, children = row).fillWidth().edgePadding(
+                EdgeSet.horizontal,
+                resolvedLength(KuiHome.side)
+            )
+        )
+        start = start + KuiHome.columns
+    }
+    return VStack(spacing = .Length(KuiHome.rowGap), alignment = .Center, children = rows)
+    .fillWidth()
+}
+
+construct KuiHomeScreen(count: Number, pageWidth: Number = KuiHome.width) extends Widget {
+    @State var page: Number = 0
+    @State var swipe: Number = 0
+
+    body {
+        var strip: [Any Widget] = []
+        for at in 0..2 {
+            strip.append(
+                VStack(spacing = .None, alignment = .Center) {
+                    FixedGap(width = 0, height = 84)
+                    kuiHomeRows(count)
+                    Spacer()
+                }.width(resolvedLength(pageWidth)).fillHeight()
+            )
+        }
+        ZStack(alignment = .TopLeading) {
+            HStack(spacing = .None, alignment = .Top, children = strip)
+            .offset(x = resolvedLength(-page * KuiHome.width + swipe), y = resolvedLength(0))
+            .animation(.Smooth)
+            VStack(spacing = .None, alignment = .Center) {
+                Spacer()
+                Text("dots")
+            }
+            .fillWidth()
+            .fillHeight()
+            .edgePadding(EdgeSet.bottom, resolvedLength(120))
+        }
+        .fillWidth()
+        .fillHeight()
+        .statusBarHidden(false)
+        .alert(title = "Remove?", isPresented = false, message = "", actions = [])
+        .gesture(DragGesture(minimumDistance: 0))
+    }
+}
+
+function kuiHomeLaidOut(count: Number, pageWidth: Number = KuiHome.width) -> CALayerDescription {
+    let root = ZStack(alignment = .Top) {
+        Rectangle().fill(RGBAColor { r: 0.1, g: 0.1, b: 0.1, a: 1.0 })
+        KuiHomeScreen(count = count, pageWidth = pageWidth)
+        .opacity(1)
+    }
+    .fillWidth()
+    .fillHeight()
+    let context = buildContext(FoundationUiContext {})
+    var described = desktopFrame(
+        move root,
+        "Desktop",
+        move context,
+        Size { width: KuiHome.width, height: KuiHome.height }
+    )
+    layOutLayerTree(described, KuiHome.width, KuiHome.height)
+    return described
+}
+
+// Every row of eleven children in `layer`, outermost first: its width, the
+// gap past its last child, and where it stands on the surface.
+struct KuiHomeRow {
+    var width: Number = 0
+    var gap: Number = 0
+    var x: Number = 0
+    var y: Number = 0
+}
+
+function kuiHomeRowsIn(
+    layer: borrow CALayerDescription,
+    x: Number,
+    y: Number,
+    found: borrow mut [KuiHomeRow]
+) {
+    let left = x + layer.position.x
+    let top = y + layer.position.y
+    if layer.sublayers.count == 11 && layer.sublayers[0].position.y == layer.sublayers[10].position.y {
+        let last = layer.sublayers[10]
+        found.append(
+            KuiHomeRow {
+                width: layer.size.width,
+                gap: layer.size.width - last.position.x - last.size.width,
+                x: left,
+                y: top
+            }
+        )
+    }
+    for sub in layer.sublayers { kuiHomeRowsIn(sub, left, top, found) }
+}
+
+@Test
+function homeRowsSpreadAndStack() {
+    var rows: [KuiHomeRow] = []
+    kuiHomeRowsIn(kuiHomeLaidOut(7), 0, 0, rows)
+    expect!(rows.count == 4)
+    expect!(rows[0].x == KuiHome.side)
+    expect!(rows[0].width == KuiHome.width - 2 * KuiHome.side)
+    expect!(rows[0].gap == 0)
+    expect!(rows[1].y > rows[0].y)
+}
+
+// A home screen sizes its pages to the viewport, which a host writes before
+// it builds: written, the rows spread across a page as they do at a fixed
+// width; unwritten, the pages had no width and the tiles packed together.
+@Test
+function homeRowsSpreadInTheViewport() {
+    foundationWriteViewportSnapshot(KuiHome.width, KuiHome.height)
+    expect!(viewportWidth() == KuiHome.width)
+    var rows: [KuiHomeRow] = []
+    kuiHomeRowsIn(kuiHomeLaidOut(7, viewportWidth()), 0, 0, rows)
+    expect!(rows.count == 4)
+    expect!(rows[0].x == KuiHome.side)
+    expect!(rows[0].width == KuiHome.width - 2 * KuiHome.side)
+    expect!(rows[0].gap == 0)
+}

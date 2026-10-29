@@ -1,0 +1,189 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's `DragGesture` and `.gesture(_:)`: a press held on a view and
+// moved, reported as it moves and when it lets go.
+//
+//     Capsule()
+//         .gesture(
+//             DragGesture(minimumDistance: 0)
+//                 .onChanged { value in level = value.location.y / height }
+//                 .onEnded { value in settle() }
+//         )
+//
+// The view the gesture is on is an interactive surface: while it is held the
+// runner hands it the pointer in its own points, as it does a slider, and the
+// gesture keeps what it saw under the key its place in the build draws.
+
+// SwiftUI's `DragGesture.Value`: where the drag is and where it began, in the
+// view's own points, how far it has come, when, in seconds since 1970, how
+// fast it moves, in points a second, and where it would come to rest were it
+// let go now and left to slow down as a scroll view does.
+public struct DragGestureValue {
+    var time: Number = 0
+    var location: Point = Point {}
+    var startLocation: Point = Point {}
+    var translation: Size = Size {}
+    var velocity: Size = Size {}
+    var predictedEndLocation: Point = Point {}
+    var predictedEndTranslation: Size = Size {}
+}
+
+// How a let-go drag is carried on: UIKit's normal deceleration, the share of
+// its speed a moving scroll view keeps each millisecond, and how long a pause
+// before letting go leaves no speed at all, in milliseconds.
+namespace DragMotion {
+    let deceleration: Number = 0.998
+    let stale: Number = 100
+}
+
+// How far a drag moving at `speed` points a second goes on before it stops.
+function dragCarry(speed: Number) -> Number {
+    return speed / 1000 * DragMotion.deceleration / (1 - DragMotion.deceleration)
+}
+
+public function ignoreDragGesture(value: DragGestureValue) {}
+
+// SwiftUI's `Gesture`: what a view can be given with `.gesture(_:)`.
+public construct Gesture {}
+
+public construct DragGesture(
+    minimumDistance: Number = 10,
+    changed: (DragGestureValue) -> Void = ignoreDragGesture,
+    ended: (DragGestureValue) -> Void = ignoreDragGesture,
+) extends Gesture {
+    // What the gesture does each time the drag moves, past `minimumDistance`.
+    function onChanged(action: (DragGestureValue) -> Void) -> DragGesture {
+        return DragGesture(minimumDistance: minimumDistance, changed: action, ended: copy ended)
+    }
+
+    // What the gesture does when the drag lets go.
+    function onEnded(action: (DragGestureValue) -> Void) -> DragGesture {
+        return DragGesture(minimumDistance: minimumDistance, changed: copy changed, ended: action)
+    }
+}
+
+// What a drag gesture saw of the press holding it, between builds.
+struct DragGestureTrack {
+    var press: Number = 0
+    var began: Bool = false
+    var last: DragGestureValue = DragGestureValue {}
+    // When the drag last moved, in milliseconds since 1970.
+    var moved: Number = 0
+}
+
+public construct DragGestureLayer(gesture: DragGesture) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let k = tapSeqKey()
+        if !modifiers.disabled { self.follow(context, k) }
+        let described = content.describe(context, modifiers)
+        return CALayerDescription {
+            layout: surfaceFootprint(described.layout),
+            hittable: !modifiers.disabled,
+            interactive: !modifiers.disabled,
+            hitKey: k,
+            cornerRadius: described.cornerRadius,
+            content: .Solid(
+                CASolid { fill: CAColor { a: 0.0 }, cornerRadius: described.cornerRadius }
+            ),
+            sublayers: [described]
+        }
+    }
+
+    // Reports the press holding the view: each move once it has come
+    // `minimumDistance` from where it began, and the end when it lets go.
+    function follow(borrow self, context: borrow BuildContext, key: Number) {
+        let slot = slotKey("kiraui.drag.", key)
+        if !ambientStateHasView(slot) {
+            ambientStatePutView(copy slot, nativeUserData(nativeState(DragGestureTrack {})))
+        }
+        var track = nativeRecover<DragGestureTrack>(ambientStateGetView(slot))
+        let held = context.heldKey == key
+        if !held {
+            if track.began {
+                // A drag held still before it was let go has no speed left.
+                var ended = copy track.last
+                if unixMillis() - track.moved > DragMotion.stale {
+                    ended.velocity = Size {}
+                    ended.predictedEndLocation = copy ended.location
+                    ended.predictedEndTranslation = copy ended.translation
+                }
+                let end = gesture.ended
+                end(move ended)
+                // The view this gesture holds was built before its action ran,
+                // from the state as it was, so what the action changed shows
+                // in the next description, and nothing else is sure to ask
+                // for one: a drag let go has no more input to come.
+                redrawAfter(0)
+            }
+            track.press = 0
+            track.began = false
+            return
+        }
+        let location = copy context.heldPoint
+        let now = unixMillis()
+        if track.press != context.heldPress {
+            track.press = context.heldPress
+            track.began = false
+            track.moved = now
+            track.last = DragGestureValue {
+                time: now / 1000,
+                location: copy location,
+                startLocation: copy location,
+                predictedEndLocation: copy location
+            }
+        }
+        let start = copy track.last.startLocation
+        let moved = location.x != track.last.location.x || location.y != track.last.location.y
+        // The speed of the last move, or the one before while it has not moved.
+        let elapsed = (now - track.moved) / 1000
+        let velocity = moved && elapsed > 0
+        ? Size {
+            width : (location.x - track.last.location.x) / elapsed,
+            height: (location.y - track.last.location.y) / elapsed
+        }
+        : copy track.last.velocity
+        let carryX = dragCarry(velocity.width)
+        let carryY = dragCarry(velocity.height)
+        let value = DragGestureValue {
+            time: now / 1000,
+            location: copy location,
+            startLocation: copy start,
+            translation: Size { width: location.x - start.x, height: location.y - start.y },
+            velocity: copy velocity,
+            predictedEndLocation: Point { x: location.x + carryX, y: location.y + carryY },
+            predictedEndTranslation: Size {
+                width: location.x - start.x + carryX,
+                height: location.y - start.y + carryY
+            }
+        }
+        if moved { track.moved = now }
+        let distance = sqrt(
+            value.translation.width * value.translation.width + value.translation.height * value.translation.height
+        )
+        if !track.began && distance < gesture.minimumDistance { return }
+        let first = !track.began
+        track.began = true
+        track.last = copy value
+        if first || moved {
+            let change = gesture.changed
+            change(move value)
+            // As for the end: the move shows in the next description.
+            redrawAfter(0)
+        }
+    }
+}
+
+extend Widget {
+    // SwiftUI's `.gesture(_:)`, for a drag.
+    function gesture(gesture: DragGesture) -> Any Widget {
+        return DragGestureLayer(gesture: gesture) {
+            self
+        }
+    }
+}

@@ -1,0 +1,170 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's determinate `ProgressView`: how far along `value` is of `total`,
+// drawn by the progress view style in effect (`.progressViewStyle(_:)`).
+//
+//     ProgressView(value: 0.4)
+//     ProgressView(value: elapsed, total: duration)
+//
+// Whatever a style draws, the progress view is one element that reads how far
+// along it is.
+public construct ProgressView(value: Number, total: Number = 1.0) extends Widget {
+    let label: some Widget = EmptyView()
+
+    // How much of the work is done, from 0 to 1.
+    function fraction() -> Number {
+        if total <= 0.0 {
+            return 0.0
+        }
+        return controlClamp01(value / total)
+    }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let configuration = ProgressViewStyleConfiguration {
+            fractionCompleted: .Some(self.fraction()),
+            label: label
+        }
+        var described = modifiers.progressViewStyle.makeBody(configuration).describe(
+            context,
+            modifiers
+        )
+        described.accessibilityCombined(
+            AccessibilityNode {
+                role: .ProgressIndicator,
+                value: percentText(self.fraction()),
+                traits: AccessibilityTraits.updatesFrequently
+            }
+        )
+        return described
+    }
+}
+
+// SwiftUI's `ProgressViewStyle`: how a progress view is drawn. A style makes
+// the view's body from its configuration, as SwiftUI's
+// `makeBody(configuration:)` does:
+//
+//     construct ThinProgressViewStyle() extends ProgressViewStyle {
+//         function makeBody(configuration: borrow ProgressViewStyleConfiguration) -> Any Widget {
+//             let fraction = match configuration.fractionCompleted {
+//                 Some(completed) -> completed
+//                 None -> 0.0
+//             }
+//             return Capsule().fill(.Accent).frame(width: 200.0 * fraction, height: 2.0)
+//         }
+//     }
+//
+// A style that makes no body of its own is the platform's, SwiftUI's
+// `.automatic`: a bar across the room it is offered.
+public construct ProgressViewStyle {
+    function makeBody(configuration: borrow ProgressViewStyleConfiguration) -> Any Widget {
+        return LinearProgressBar(configuration: copy configuration)
+    }
+}
+
+// SwiftUI's `ProgressViewStyleConfiguration`: what a style draws a progress
+// view from.
+public struct ProgressViewStyleConfiguration {
+    // How much of the work is done, from 0 to 1, or `.None` when it is not
+    // known how much.
+    let fractionCompleted: Number? = .None
+    let label: Any Widget
+}
+
+// SwiftUI's `.automatic`.
+public construct DefaultProgressViewStyle() extends ProgressViewStyle {}
+
+// SwiftUI's `.linear`.
+public construct LinearProgressViewStyle() extends ProgressViewStyle {}
+
+public construct ProgressViewStyleLayer(style: Any ProgressViewStyle) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let resolved = modifierContextApply(modifiers, modifierDeltaProgressViewStyle(copy style))
+        return content.describe(context, resolved)
+    }
+}
+
+// The platform's bar: a track across the room it is offered, filled up to the
+// fraction. The fill takes the cascading `.tint(...)` when one is set and the
+// accent otherwise, like a slider's.
+construct LinearProgressBar(configuration: ProgressViewStyleConfiguration) extends Widget {
+
+    // The track stands centered in the bar's height, the fill and what it
+    // leaves two shares of one row, so the fill is a fraction of whatever
+    // width the track ends up.
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let metrics = progressMetrics()
+        let appearance = modifierAppearance(modifiers)
+        let radius = metrics.trackHeight / 2.0
+        let fraction = match configuration.fractionCompleted {
+            Some(completed) -> completed
+            None -> 0.0
+        }
+        let filledShare = trunc(controlClamp01(fraction) * 1000.0 + 0.5)
+        let filled = CALayerDescription {
+            layout: CALayoutIntent { flex: filledShare },
+            cornerRadius: radius,
+            content: .Solid(
+                CASolid {
+                    fill: colorFromFoundation(
+                        modifierColor(controlActiveColor(modifiers), modifiers)
+                    ),
+                    cornerRadius: radius,
+                    shapeKind: 1
+                }
+            )
+        }
+        let track = CALayerDescription {
+            layout: CALayoutIntent {
+                axis: .Row,
+                heightFill: false,
+                fixedHeight: metrics.trackHeight,
+                flex: 1
+            },
+            cornerRadius: radius,
+            clipsChildren: true,
+            content: .Solid(
+                CASolid {
+                    fill: colorFromFoundation(
+                        modifierColor(
+                            foundationColor(themeAdaptiveColor(progressTrack, appearance)),
+                            modifiers
+                        )
+                    ),
+                    border: colorFromFoundation(
+                        modifierColor(
+                            foundationColor(themeAdaptiveColor(progressTrackBorder, appearance)),
+                            modifiers
+                        )
+                    ),
+                    borderWidth: metrics.trackBorderWidth,
+                    cornerRadius: radius,
+                    shapeKind: 1
+                }
+            ),
+            sublayers: [filled, CALayerDescription {
+                layout: CALayoutIntent { flex: 1000 - filledShare }
+            }]
+        }
+        return CALayerDescription {
+            layout: CALayoutIntent {
+                heightFill: false,
+                fixedHeight: metrics.height,
+                flex: 1,
+                alignment: Point { x: 0.0, y: 0.5 }
+            },
+            sublayers: [track]
+        }
+    }
+}

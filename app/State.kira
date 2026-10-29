@@ -1,0 +1,180 @@
+import Foundation
+import KCoreAnimation
+
+// `@State` — persistent per-declaration UI state, as SwiftUI's `State` is.
+//
+// `@State var count: Number = 0` inside a Widget form reads and writes through
+// a `State<Number>` the compiler stores as `_count` (a generic struct named by a
+// field annotation is that field's property wrapper, KLF-RIDL section 30), so a
+// program linking KiraUI's contract writes it as KiraUI does. The value lives
+// behind an ambient native slot keyed "<Form>.<field>", which the compiler
+// fills in as `key`: one shared value per declaration, allocated once with
+// `nativeState` and recovered by reference afterwards, so state survives the
+// per-frame widget rebuilds of the interactive app loop.
+
+// The ambient slots KiraUI keeps its own state in, one per kind of state.
+public namespace StateSlot {
+    let clock: PersistentStateKey = PersistentStateKey { name: "kiraui.clock" }
+    let inspectorSink: PersistentStateKey = PersistentStateKey { name: "kiraui.inspector.sink" }
+    let tapSequence: PersistentStateKey = PersistentStateKey { name: "kiraui.tapseq" }
+    let sizedContent: PersistentStateKey = PersistentStateKey { name: "kiraui.sized.content" }
+    let layerActions: PersistentStateKey = PersistentStateKey { name: "kiraui.layer.actions" }
+    let navigationTransition: PersistentStateKey = PersistentStateKey {
+        name: "kiraui.navigation.transition"
+    }
+    let overlaySink: PersistentStateKey = PersistentStateKey { name: "kiraui.overlay.sink" }
+    let surfaceSink: PersistentStateKey = PersistentStateKey { name: "kiraui.surface.sink" }
+    let symbolAssets: PersistentStateKey = PersistentStateKey { name: "kiraui.symbol.assets" }
+    let tagEnvironment: PersistentStateKey = PersistentStateKey { name: "kiraui.tag.environment" }
+    let toolbarSink: PersistentStateKey = PersistentStateKey { name: "kiraui.toolbar.sink" }
+    let menu: PersistentStateKey = PersistentStateKey { name: "kiraui.menu" }
+    let menuBarVisibility: PersistentStateKey = PersistentStateKey {
+        name: "kiraui.menubar.visibility"
+    }
+    let redraw: PersistentStateKey = PersistentStateKey { name: "kiraui.redraw" }
+    let interfaceMode: PersistentStateKey = PersistentStateKey { name: "kiraui.interface.mode" }
+    let sidebar: PersistentStateKey = PersistentStateKey { name: "kiraui.navigation.sidebar" }
+    let navigationPath: PersistentStateKey = PersistentStateKey { name: "kiraui.navigation.path" }
+    let navigationEnvironment: PersistentStateKey = PersistentStateKey {
+        name: "kiraui.navigation.environment"
+    }
+    let sidebarSelection: PersistentStateKey = PersistentStateKey {
+        name: "kiraui.navigation.sidebar-selection"
+    }
+    let picker: PersistentStateKey = PersistentStateKey { name: "kiraui.picker" }
+    let scrollScope: PersistentStateKey = PersistentStateKey { name: "kiraui.scroll.scope" }
+    let scrollInput: PersistentStateKey = PersistentStateKey { name: "kiraui.scroll.input" }
+    let tokens: PersistentStateKey = PersistentStateKey { name: "kiraui.tokens" }
+    let workspaceSink: PersistentStateKey = PersistentStateKey { name: "kiraui.workspace.sink" }
+    let commands: PersistentStateKey = PersistentStateKey { name: "kiraui.commands" }
+    let menuBar: PersistentStateKey = PersistentStateKey { name: "kiraui.menubar" }
+    let menuExport: PersistentStateKey = PersistentStateKey { name: "kiraui.menubar.export" }
+    let statusBar: PersistentStateKey = PersistentStateKey { name: "kiraui.statusbar" }
+    let windowCommand: PersistentStateKey = PersistentStateKey { name: "kiraui.window.command" }
+    let workspaceArrangement: PersistentStateKey = PersistentStateKey { name: "kiraui.workspace" }
+    let windowCanvas: PersistentStateKey = PersistentStateKey { name: "kiraui.window.canvas" }
+    let windowDecoration: PersistentStateKey = PersistentStateKey {
+        name: "kiraui.window.decoration"
+    }
+    let windowBackdrop: PersistentStateKey = PersistentStateKey { name: "kiraui.window.backdrop" }
+    let pendingShortcut: PersistentStateKey = PersistentStateKey { name: "kiraui.shortcut.pending" }
+    let environment: PersistentStateKey = PersistentStateKey { name: "kiraui.environment" }
+    let commandKey: PersistentStateKey = PersistentStateKey { name: "kiraui.command.key" }
+    let appStorage: PersistentStateKey = PersistentStateKey { name: "kiraui.app-storage" }
+    let preferredColorScheme: PersistentStateKey = PersistentStateKey {
+        name: "kiraui.preferred-color-scheme"
+    }
+    let publishedScheme: PersistentStateKey = PersistentStateKey { name: "kiraui.published-scheme" }
+    let imageDrawings: PersistentStateKey = PersistentStateKey { name: "kiraui.image.drawings" }
+    let accessibility: PersistentStateKey = PersistentStateKey { name: "kiraui.accessibility" }
+    let accessibilitySnapshot: PersistentStateKey = PersistentStateKey {
+        name: "kiraui.accessibility.snapshot"
+    }
+    let searchPresentation: PersistentStateKey = PersistentStateKey {
+        name: "kiraui.search.presentation"
+    }
+    let menuGround: PersistentStateKey = PersistentStateKey { name: "kiraui.menu.ground" }
+    let statePresence: PersistentStateKey = PersistentStateKey { name: "kiraui.state.presence" }
+}
+
+@Instance(Bool)
+@Instance(Number)
+@Instance(String)
+public struct State<Value> {
+    var wrappedValue: Value
+    var key: String = ""
+
+    function get() -> Value {
+        let slot = ViewStateKey { name: copy self.key }
+        if !ambientStateHasView(slot) {
+            ambientStatePutView(
+                copy slot,
+                nativeUserData(
+                    nativeState(
+                        State<Value> { wrappedValue: self.wrappedValue, key: copy self.key }
+                    )
+                )
+            )
+        }
+        let store = nativeRecover<State<Value>>(ambientStateGetView(slot))
+        return copy store.wrappedValue
+    }
+
+    function set(value: Value) {
+        let slot = ViewStateKey { name: copy self.key }
+        if !ambientStateHasView(slot) {
+            ambientStatePutView(
+                copy slot,
+                nativeUserData(
+                    nativeState(
+                        State<Value> { wrappedValue: self.wrappedValue, key: copy self.key }
+                    )
+                )
+            )
+        }
+        var store = nativeRecover<State<Value>>(ambientStateGetView(slot))
+        store.wrappedValue = move value
+    }
+
+    // `$name`: a binding to the value this state keeps, which a control
+    // reads and writes through.
+    function projectedValue() -> Binding<Value> {
+        let state = copy self
+        let written = copy self
+        return Binding<Value> {
+            get: { in
+                return state.get()
+            },
+            set: { value in
+                written.set(move value)
+            }
+        }
+    }
+}
+
+// The slot a KEYED widget's state lives in: a prefix and the widget's key, as
+// decimal digits.
+//
+// Auto-minted keys are build-sequence numbers, so one widget's state has to be
+// reachable from its key alone — there is nowhere else to put it. Every keyed
+// widget asks for its slot on every build, so the digits are prepended as
+// literals rather than gathered into a codepoint array and converted.
+//
+// The result is a view key: it belongs to the build that touched it, so a
+// widget's state leaves with the widget instead of living for the whole window.
+public function slotKey(prefix: String, key: Number) -> ViewStateKey {
+    var remaining = abs(key)
+    var digits = decimalDigit(remaining % 10)
+    remaining = trunc(remaining / 10)
+    while remaining > 0 {
+        digits = decimalDigit(remaining % 10) + digits
+        remaining = trunc(remaining / 10)
+    }
+    return ViewStateKey { name: prefix + digits }
+}
+
+function decimalDigit(digit: Number) -> String {
+    match digit {
+        0 -> return "0"
+        1 -> return "1"
+        2 -> return "2"
+        3 -> return "3"
+        4 -> return "4"
+        5 -> return "5"
+        6 -> return "6"
+        7 -> return "7"
+        8 -> return "8"
+        else -> return "9"
+    }
+}
+
+// Makes the process's own ambient scope current, the one it starts in and no
+// runner enters for its loop, and answers the scope that was. Settings that
+// hold for the whole process -- the interface mode, whether the menu bar is
+// drawn, when the interface is next described -- are kept there, so one made
+// before a runner started holds inside it. The caller enters the answer again.
+function enterProcessScope() -> AmbientScope {
+    let previous = ambientScopeCurrent()
+    ambientScopeEnter(AmbientScope(0))
+    return previous
+}

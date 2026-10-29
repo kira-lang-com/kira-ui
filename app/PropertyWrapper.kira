@@ -1,0 +1,238 @@
+import Foundation
+// The property-wrapper protocol for Kira UI, written entirely in Kira on the compiler's generic
+// `kind { wrapper }` macro machinery (see kira-zig docs/macros.md).
+//
+// Declaring `@PropertyWrapper struct Wrapper { var wrappedValue: Wrapped ... }` registers
+// `Wrapper` as a wrapper TEMPLATE. Annotating a form field `@Wrapper var count: Number = 0` then
+// summons this macro over the whole form, which:
+//
+//   1. monomorphizes the template per wrapped field — `Wrapper` is renamed to `__pw_<Form>_<field>`
+//      (including internal self-references such as `nativeRecover<Wrapper>`), and the `Wrapped`
+//      placeholder type becomes the field's declared type, so ANY field type works;
+//   2. replaces the wrapped field with a computed property of the same name and type whose
+//      `get` and `set(value)` build the monomorphized wrapper — seeded with the field's
+//      initializer, the stable identity key "<Form>.<field>" and what the annotation is
+//      written with — and call its `get()` / `set(value)`. Reading the property calls the
+//      getter and assigning it calls the setter, wherever the form names it, closures
+//      included: the compiler resolves the name, so a local of the same name shadows it as it
+//      would any member. A field written `private` stays private.
+//
+// What the annotation is written with sets the wrapper's fields, as a Swift wrapper's
+// initializer arguments do: `@Wrapper(field: value)` sets the field of that name, and an
+// argument with no label sets the template's next field after `wrappedValue` and `key`, in the
+// order the template declares them, as a construct's arguments fill its parameters.
+//
+// Storage policy lives entirely in the wrapper struct's own `get`/`set`. The wrapper
+// protocol a template must satisfy:
+//
+//   * a `wrappedValue` field (use the `Wrapped` placeholder type to be generic over field types)
+//   * a `key: String` field — the wrapper's stable identity, filled by the generated property
+//   * `function get() -> Wrapped` and `function set(value: Wrapped)`
+//
+// A template with no `wrappedValue` is READ-ONLY: it keeps no value of its own, so it needs no
+// `key` and no `set`, and the field it wraps has no initial value. The field becomes a computed
+// `let` reading the wrapper's `get()` each time it is read, so a view reads what holds while it
+// is built. Such a field may leave its type out: the wrapper is then generic over `Wrapped`,
+// which what the annotation is written with decides, and the property has the type `get()`
+// returns. A template is the module's own; `Environment`, which views in other modules read
+// through, is a generic struct instead.
+//
+// A template declaring `function projectedValue()` projects a value, as a Swift wrapper's
+// `projectedValue` does: the form gains `$name`, reading what the wrapper's `projectedValue()`
+// returns.
+//
+// A generic struct needs no `@PropertyWrapper`: a field annotation naming one makes it that
+// field's wrapper in the compiler (KLF-RIDL section 30), as `State<Value>` and `Binding<Value>`
+// are, so it crosses RIDL as any generic struct does.
+//
+// Identity note: the key is "<Form>.<field>", so all instances of one form SHARE each wrapped
+// property (a singleton per declaration, like a Swift `static` default). Per-instance identity
+// needs the retained-tree element story and is deliberately out of scope here.
+
+comptime macro PropertyWrapper {
+    kind { wrapper }
+    appliesTo { form }
+
+    expand(target: Declaration, wrapper: Declaration) -> Syntax {
+        if target.name.asString() == wrapper.name.asString() {
+            var hasWrapped: Bool = false
+            var hasKey: Bool = false
+            for field in target.fields {
+                if field.name.asString() == "wrappedValue" {
+                    hasWrapped = true
+                }
+                if field.name.asString() == "key" {
+                    hasKey = true
+                }
+            }
+            if target.typeParameters.count > 0 {
+                Diagnostics.error(
+                    "a generic struct is a property wrapper without @PropertyWrapper: a field annotation naming it makes it one",
+                    at: target.syntax
+                )
+                return quote {}
+            }
+            if hasWrapped && !hasKey {
+                Diagnostics.error(
+                    "a @PropertyWrapper struct with a `wrappedValue` requires a `key: String` field (its stable identity, filled by the generated property)",
+                    at: target.syntax
+                )
+                return quote {}
+            }
+            return quote {
+                function is_#{target.name}_propertyWrapper() -> Bool {
+                    return true
+                }
+            }
+        }
+        var stored: Bool = false
+        var keyed: Bool = false
+        var settable: [String] = []
+        for field in wrapper.fields {
+            let name = field.name.asString()
+            if name == "wrappedValue" {
+                stored = true
+            } else if name == "key" {
+                keyed = true
+            } else {
+                settable.append(name)
+            }
+        }
+        var projects: Bool = false
+        for identifier in wrapper.syntax.identifiers() {
+            if identifier.asString() == "projectedValue" {
+                projects = true
+            }
+        }
+        var monos: [Syntax] = []
+        var rewritten: Declaration = target
+        for field in target.fields {
+            if field.hasAnnotation(wrapper.name.asString()) {
+                let written = "@" + wrapper.name.asString() + " var " + field.name.asString()
+                let access: Syntax = field.isPrivate ? Syntax { text : "private " }: Syntax {
+                    text: ""
+                }
+                let projection = Syntax { text: "$" + field.name.asString() }
+                if stored && field.initializer.asString() == "" {
+                    Diagnostics.error(
+                        "a wrapped property needs an initial value: " + written + ": T = <initial value>",
+                        at: target.syntax
+                    )
+                    return quote {}
+                }
+                if stored && field.type == "" {
+                    Diagnostics.error(
+                        "a wrapped property needs a type: " + written + ": T = <initial value>",
+                        at: target.syntax
+                    )
+                    return quote {}
+                }
+                if !stored && field.initializer.asString() != "" {
+                    Diagnostics.error(
+                        "@" + wrapper.name.asString() + " keeps no value, so " + field.name.asString() + " takes no initial value",
+                        at: target.syntax
+                    )
+                    return quote {}
+                }
+                var settings: [Syntax] = []
+                if stored {
+                    settings.append(
+                        Syntax { text: "wrappedValue: " + field.initializer.asString() }
+                    )
+                }
+                if keyed {
+                    settings.append(
+                        Syntax {
+                            text: "key: \"" + target.name.asString() + "." + field.name.asString() + "\""
+                        }
+                    )
+                }
+                match field.annotation(wrapper.name.asString()) {
+                    Some(annotation) -> {
+                        var position = 0
+                        for argument in annotation.arguments {
+                            var label = argument.label
+                            if label == "" {
+                                if position >= settable.count {
+                                    Diagnostics.error(
+                                        "@" + wrapper.name.asString() + " has no field left for an argument with no label",
+                                        at: target.syntax
+                                    )
+                                    return quote {}
+                                }
+                                label = settable[position]
+                                position = position + 1
+                            }
+                            settings.append(
+                                Syntax { text: label + ": " + argument.value.asString() }
+                            )
+                        }
+                    }
+                    None -> {}
+                }
+                let fields = Syntax.join(settings, ", ")
+                let monoName = "__pw_" + target.name.asString() + "_" + field.name.asString()
+                let projected: Syntax = projects
+                ? quote {
+                    #{access}let #{projection} {
+                        let backing = __pw_#{target.name}_#{field.name} { #{fields} }
+                        backing.projectedValue()
+                    }
+                }
+                : Syntax { text: "" }
+                var mono: Syntax = wrapper.syntax
+                if field.type == "" {
+                    mono = mono.replaceIdentifier(wrapper.name.asString(), monoName + "<Wrapped>")
+                    monos.append(mono)
+                    rewritten = rewritten.replaceField(
+                        field.name,
+                        quote {
+                            #{access}let #{field.name} {
+                                let backing = __pw_#{target.name}_#{field.name} { #{fields} }
+                                backing.get()
+                            }
+                            #{projected}
+                        }
+                    )
+                    continue
+                }
+                mono = mono.replaceIdentifier(wrapper.name.asString(), monoName)
+                mono = mono.replaceIdentifier("Wrapped", field.type.asSyntax())
+                monos.append(mono)
+                if !stored {
+                    rewritten = rewritten.replaceField(
+                        field.name,
+                        quote {
+                            #{access}let #{field.name}: #{field.type.asSyntax()} {
+                                let backing = __pw_#{target.name}_#{field.name} { #{fields} }
+                                backing.get()
+                            }
+                            #{projected}
+                        }
+                    )
+                    continue
+                }
+                rewritten = rewritten.replaceField(
+                    field.name,
+                    quote {
+                        #{access}var #{field.name}: #{field.type.asSyntax()} {
+                            get {
+                                let backing = __pw_#{target.name}_#{field.name} { #{fields} }
+                                return backing.get()
+                            }
+                            set(value) {
+                                let backing = __pw_#{target.name}_#{field.name} { #{fields} }
+                                backing.set(move value)
+                            }
+                        }
+                        #{projected}
+                    }
+                )
+            }
+        }
+        return quote {
+            #{monos}
+            #{rewritten.syntax}
+        }
+    }
+}

@@ -1,0 +1,696 @@
+import Foundation
+import Ember
+import KiraLayout
+import KCoreAnimation
+
+// The window's toolbar, and the items a view puts on it.
+//
+// A toolbar belongs to the WINDOW, not to a column. That is the whole point of
+// the type: a split view's columns each have something to say across the top —
+// the sidebar names what it is listing, the detail names where it is — and if
+// each column builds its own bar, the three bars are three heights and nothing
+// in the window lines up. SwiftUI settles it by making the bar a property of the
+// scene: a view declares `.toolbar(...)` and the ITEMS travel up to the one bar,
+// which is why a sidebar item and a detail item share a baseline without either
+// view knowing the other exists.
+//
+//     HierarchyView()
+//         .toolbar(ToolbarItem(placement = .Navigation) {
+//             Icon(symbol = .FolderOpen)
+//         })
+//
+// An item is not drawn where it is written. It is lowered where it stands — so
+// it reads the modifiers and the theme of the view that declared it — and the
+// resulting view is handed to the nearest `NavigationSplitView`, which is the
+// thing that owns the bar.
+
+public namespace ToolbarColumn {
+    // The columns, in the order a split view lowers them.
+    let sidebar: Number = 0
+
+    let content: Number = 1
+    let detail: Number = 2
+}
+
+// Where on the bar an item sits, named for the ROLE rather than for a side, the
+// way SwiftUI names them: the same placement is leading on one platform and
+// trailing on another, and a view that said "trailing" could not follow.
+public enum ToolbarItemPlacement {
+    // Wherever the platform puts an unspecified item: the trailing end of the
+    // section over the view that declared it.
+    Automatic
+    // The navigation section: over the sidebar, where a column says what it is
+    // showing.
+    Navigation
+    // The center section: the document's own title and breadcrumb.
+    Principal
+    // The action the window is most likely to be asked for, at the trailing end.
+    PrimaryAction
+}
+
+// --- The sink ----------------------------------------------------------------
+//
+// Items are collected while the columns are lowered and read once the bar is
+// built, which is the order a split view already works in: it lowers every
+// column before it assembles anything. The collection lives in the ambient state
+// store rather than being threaded through `lower`, because an item can be
+// declared at any depth inside a column and every widget between it and the
+// window would otherwise have to carry a parameter for it. This is what
+// SwiftUI's preferences do, in the one direction this needs: child to ancestor.
+
+// How wide a `ToolbarSpacer` is, matching SwiftUI's `SpacerSizing`.
+public enum SpacerSizing {
+    // A stated gap.
+    Fixed
+    // Takes what is left, pushing the groups either side of it apart.
+    Flexible
+}
+
+// Whether an item joins the glass background its neighbors share, matching
+// SwiftUI's `Visibility` as `.sharedBackgroundVisibility(...)` takes it.
+public enum SharedBackgroundVisibility {
+    // The platform's answer: share it.
+    Automatic
+    Visible
+    // Stand alone. The item draws whatever it draws and nothing else joins it.
+    Hidden
+}
+
+// The semantic reason an item belongs to application chrome. A role deliberately
+// says nothing about an edge: the chrome compositor is the only code allowed to
+// turn these into top/bottom bars or a vertical edge rail.
+public enum ChromeRole {
+    Back
+    Navigation
+    Principal
+    Automatic
+    PrimaryAction
+    Tab
+    TabSearch
+}
+
+// Whether custom chrome is allowed to follow a vertical presentation. System
+// controls default to Automatic; a custom item may opt into vertical layout or
+// insist on remaining horizontal when its shape cannot sensibly rotate/reflow.
+public enum ChromeAxisBehavior {
+    Automatic
+    HorizontalOnly
+    VerticalPreferred
+}
+
+// Where the compositor resolved application chrome for this frame.
+public enum ChromeOrientation {
+    Horizontal
+    Vertical
+}
+
+public enum ChromeEdge {
+    Top
+    Bottom
+    Leading
+    Trailing
+}
+
+// One thing a view put on the bar: an item, or the space that ends a group.
+//
+// A bar is not a flat list of items — it is a run of GROUPS, and which items
+// share a group is the whole of the Liquid Glass look. Keeping the grouping on
+// the entry is what lets the bar be assembled after every column has spoken
+// without any column having to know what its neighbors declared.
+public struct ToolbarEntry {
+    // What the item draws, described where it was declared — under the
+    // modifiers and the theme of the view that put it on the bar.
+    let content: CALayerDescription = CALayerDescription {}
+    // Whether this item is drawn on glass at all.
+    let shared: Bool = true
+    // Which declaration the item came from. Items of one `ToolbarItemGroup`
+    // share one piece of glass; a `ToolbarItem` is a piece of glass of its own,
+    // as the platform draws two items written one after the other.
+    let group: Number = 0
+    // A spacer: closes the group before it and opens the next one. A fixed one
+    // holds the platform's spacer width open; a flexible one takes what is left.
+    let isSpacer: Bool = false
+    let flexible: Bool = false
+    let axisBehavior: ChromeAxisBehavior = .Automatic
+    // Higher-priority chrome survives compression before lower-priority chrome.
+    let visibilityPriority: Number = 0
+}
+
+// What one view in a stack put on the document's section of the bar: its back
+// button, its items, its title and its tabs.
+public struct ToolbarPage {
+    var back: [ToolbarEntry] = []
+    var tabs: [ToolbarEntry] = []
+    var principal: [ToolbarEntry] = []
+    var primaryAction: [ToolbarEntry] = []
+    var automatic: [ToolbarEntry] = []
+    var title: String = ""
+    var largeTitle: Bool = false
+    var titleCollapse: Number = 0.0
+}
+
+// How many entries each bucket held at some moment: what a stack takes as the
+// line between what the views around it declared and what its own views did.
+public struct ToolbarMark {
+    var back: Number = 0
+    var tabs: Number = 0
+    var principal: Number = 0
+    var primaryAction: Number = 0
+    var automatic: Number = 0
+}
+
+public struct ToolbarSink {
+    // Window chrome is collected semantically. The existing toolbar buckets stay
+    // separate because horizontal desktop chrome lays them out by section; Back
+    // and tabs are additional chrome families consumed by the same compositor.
+    var back: [ToolbarEntry] = []
+    var navigation: [ToolbarEntry] = []
+    var principal: [ToolbarEntry] = []
+    var primaryAction: [ToolbarEntry] = []
+    var automatic: [ToolbarEntry] = []
+    var tabs: [ToolbarEntry] = []
+    var tabSearch: [ToolbarEntry] = []
+    // What each column called itself with `.navigationTitle(...)`. A title is a
+    // string rather than a view because that is what makes it a TITLE: the bar
+    // decides how a title is set, which is how the sidebar's and the document's
+    // are set the same way without either column saying so.
+    var sidebarTitle: String = ""
+    var detailTitle: String = ""
+    // Whether the document's title is set large under the bar, by the stack
+    // showing it, rather than in the bar's own band; and how far that title
+    // has scrolled under the bar, which the band shows it inline as far as.
+    var largeTitle: Bool = false
+    var titleCollapse: Number = 0.0
+    // What each column holds its content off its edges by, so the SECTION over a
+    // column starts where that column's own content starts. A negative value is
+    // "the column did not say", and the size class answers instead.
+    var sidebarMargin: Number = -1.0
+    var detailMargin: Number = -1.0
+    // Geometry the navigation container reports after lowering. The root chrome
+    // compositor consumes this once, after every contributor has been collected.
+    var navigationWidth: Number = 0.0
+    var hasNavigationColumn: Bool = false
+    // Whether a navigation stack or split view lowered this frame. A Mac's
+    // window holding one keeps its toolbar at the stack's root as on every
+    // page pushed onto it, though the root puts nothing on the bar.
+    var hasNavigation: Bool = false
+    // How far out the sidebar is, from 0 tucked away to 1 beside the content,
+    // as its toggle's spring has it this frame.
+    var navigationShown: Number = 0.0
+    var visibleColumn: Number = 2
+    // Which column is being lowered, so a title declared inside one lands in the
+    // section over it: 0 the sidebar, 1 the content, 2 the detail.
+    var column: Number = 0
+    // Whether a bar is being collected at all. An item declared with no split
+    // view above it has nowhere to go, and is dropped rather than kept for
+    // whatever window is built next.
+    var collecting: Bool = false
+    // Zero means this frame has no window toolbar. Set by WindowToolbar itself,
+    // so a plain KiraUI tree and a raw KG app gain no phantom drag strip.
+    var windowDragHeight: Number = 0.0
+    // Set by `.sharedBackgroundVisibility(.hidden)` while an item's content is
+    // being lowered, and taken by the `ToolbarItem` around it.
+    //
+    // SwiftUI writes that modifier INSIDE the item, on the control itself, and a
+    // modifier context only travels downward — so the item cannot read it off
+    // its own modifiers. Lowering is depth-first: the flag is set while the
+    // content lowers and taken immediately after, which is the one moment it can
+    // belong to exactly that item.
+    var pendingSharedHidden: Bool = false
+    // The group the next declaration opens.
+    var nextGroup: Number = 1
+    // Whether a split view put its sidebar toggle on the bar this frame.
+    var sidebarToggle: Bool = false
+    // Whether a container in the tree laid its content out inside the window's
+    // safe area. A navigation container does, because its columns' backgrounds
+    // run under the bar while their content does not; when nothing did, the
+    // window insets its whole content instead.
+    var safeAreaHandled: Bool = false
+    // While a stack moves between two views, what the view coming into sight
+    // put on the bar, and how far into sight it is: 0 shows only the items
+    // above, 1 only these. The bar stays where it is and its items turn from
+    // one view's into the other's.
+    var moving: Bool = false
+    var covered: ToolbarPage = ToolbarPage {}
+    var coveredShown: Number = 0.0
+    // The transaction the bar changes in while a stack moves under it: the
+    // stack's own, so its titles and buttons travel on the pages' spring.
+    var motion: CALayerAnimation = .Inherit
+    // Where the view on top's own entries end: anything after was declared by
+    // the views around the stack, and is on the bar for both views.
+    var pageEnd: ToolbarMark = ToolbarMark {}
+    // The search field a view asked for with `.searchable`, if one did.
+    var search: WindowSearch? = .None
+    // Whether a phone's page has its search presented, which the bar steps
+    // aside for, as UIKit's navigation bar does during a search.
+    var searchPresented: Bool = false
+}
+
+public function toolbarSinkEnsure() {
+    if !ambientStateHas(StateSlot.toolbarSink) {
+        ambientStatePut(StateSlot.toolbarSink, nativeUserData(nativeState(ToolbarSink {})))
+    }
+}
+
+// Opens collection for the window about to lower its columns, discarding
+// whatever the last frame left: the tree is rebuilt every frame, and items are
+// rebuilt with it.
+public function toolbarCollect() {
+    toolbarSinkEnsure()
+    var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+    var back: [ToolbarEntry] = []
+    var navigation: [ToolbarEntry] = []
+    var principal: [ToolbarEntry] = []
+    var primaryAction: [ToolbarEntry] = []
+    var automatic: [ToolbarEntry] = []
+    var tabs: [ToolbarEntry] = []
+    var tabSearch: [ToolbarEntry] = []
+    sink.back = move back
+    sink.navigation = move navigation
+    sink.principal = move principal
+    sink.primaryAction = move primaryAction
+    sink.automatic = move automatic
+    sink.tabs = move tabs
+    sink.tabSearch = move tabSearch
+    sink.sidebarTitle = ""
+    sink.detailTitle = ""
+    sink.largeTitle = false
+    sink.titleCollapse = 0.0
+    sink.sidebarMargin = -1.0
+    sink.detailMargin = -1.0
+    sink.navigationWidth = 0.0
+    sink.hasNavigationColumn = false
+    sink.hasNavigation = false
+    sink.navigationShown = 0.0
+    sink.visibleColumn = ToolbarColumn.detail
+    // A plain NavigationStack or root view is the document/detail surface. A
+    // split view explicitly enters each of its columns while lowering them.
+    sink.column = ToolbarColumn.detail
+    sink.collecting = true
+    sink.windowDragHeight = 0.0
+    sink.safeAreaHandled = false
+    sink.nextGroup = 1
+    sink.sidebarToggle = false
+    sink.moving = false
+    sink.covered = ToolbarPage {}
+    sink.coveredShown = 0.0
+    sink.motion = .Inherit
+    sink.search = .None
+    sink.searchPresented = false
+}
+
+// What each bucket holds so far.
+public function toolbarMark() -> ToolbarMark {
+    toolbarSinkEnsure()
+    let sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+    return ToolbarMark {
+        back: sink.back.count,
+        tabs: sink.tabs.count,
+        principal: sink.principal.count,
+        primaryAction: sink.primaryAction.count,
+        automatic: sink.automatic.count
+    }
+}
+
+// The entries after `from`, taken out of `entries`.
+function toolbarSplit(entries: borrow mut [ToolbarEntry], from: Number) -> [ToolbarEntry] {
+    var kept: [ToolbarEntry] = []
+    var taken: [ToolbarEntry] = []
+    for i in 0..entries.count {
+        if i < from {
+            kept.append(copy entries[i])
+        } else {
+            taken.append(copy entries[i])
+        }
+    }
+    entries = move kept
+    return taken
+}
+
+// `entries` with `more` after them.
+function toolbarJoin(entries: borrow mut [ToolbarEntry], more: [ToolbarEntry]) {
+    for entry in more {
+        entries.append(copy entry)
+    }
+}
+
+// The view under a moving one is about to lower: what the view on top put on
+// the bar since `mark` is set aside, so what this one declares can be told
+// from it. What the views around the stack declared stays, for both.
+public function toolbarBeginCovered(mark: borrow ToolbarMark) -> ToolbarPage {
+    toolbarSinkEnsure()
+    var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+    let top = ToolbarPage {
+        back: toolbarSplit(sink.back, mark.back),
+        tabs: toolbarSplit(sink.tabs, mark.tabs),
+        principal: toolbarSplit(sink.principal, mark.principal),
+        primaryAction: toolbarSplit(sink.primaryAction, mark.primaryAction),
+        automatic: toolbarSplit(sink.automatic, mark.automatic),
+        title: sink.detailTitle,
+        largeTitle: sink.largeTitle,
+        titleCollapse: sink.titleCollapse
+    }
+    sink.detailTitle = ""
+    sink.largeTitle = false
+    sink.titleCollapse = 0.0
+    return top
+}
+
+// The covered view has lowered: everything on the bar now is what it shows
+// with, and becomes the covered set, shown as far as it is uncovered. The view
+// on top gets its own entries back.
+public function toolbarEndCovered(
+    top: ToolbarPage,
+    mark: borrow ToolbarMark,
+    shown: Number,
+    motion: CALayerAnimation
+) {
+    toolbarSinkEnsure()
+    var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+    var page = move top
+    sink.covered = ToolbarPage {
+        back: copy sink.back,
+        tabs: copy sink.tabs,
+        principal: copy sink.principal,
+        primaryAction: copy sink.primaryAction,
+        automatic: copy sink.automatic,
+        title: sink.detailTitle,
+        largeTitle: sink.largeTitle,
+        titleCollapse: sink.titleCollapse
+    }
+    toolbarSplit(sink.back, mark.back)
+    toolbarSplit(sink.tabs, mark.tabs)
+    toolbarSplit(sink.principal, mark.principal)
+    toolbarSplit(sink.primaryAction, mark.primaryAction)
+    toolbarSplit(sink.automatic, mark.automatic)
+    toolbarJoin(sink.back, move page.back)
+    toolbarJoin(sink.tabs, move page.tabs)
+    toolbarJoin(sink.principal, move page.principal)
+    toolbarJoin(sink.primaryAction, move page.primaryAction)
+    toolbarJoin(sink.automatic, move page.automatic)
+    sink.detailTitle = page.title
+    sink.largeTitle = page.largeTitle
+    sink.titleCollapse = page.titleCollapse
+    sink.moving = true
+    sink.coveredShown = shown
+    sink.motion = move motion
+    sink.pageEnd = ToolbarMark {
+        back: sink.back.count,
+        tabs: sink.tabs.count,
+        principal: sink.principal.count,
+        primaryAction: sink.primaryAction.count,
+        automatic: sink.automatic.count
+    }
+}
+
+// The covered view's entries for one bucket as the bar draws them: its own,
+// then whatever the views around the stack declared after the stack lowered.
+public function toolbarCoveredEntries(
+    covered: borrow [ToolbarEntry],
+    current: borrow [ToolbarEntry],
+    pageEnd: Number,
+) -> [ToolbarEntry] {
+    var entries = copy covered
+    for i in 0..current.count {
+        if i >= pageEnd {
+            entries.append(copy current[i])
+        }
+    }
+    return entries
+}
+
+// A fresh group for the declaration about to put its items on the bar.
+public function toolbarOpenGroup() -> Number {
+    toolbarSinkEnsure()
+    var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+    let group = sink.nextGroup
+    sink.nextGroup = group + 1
+    return group
+}
+
+// The column about to be lowered. Everything a view declares from here until the
+// next one belongs to it.
+public function toolbarEnterColumn(column: Number) {
+    toolbarSinkEnsure()
+    var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+    sink.column = column
+}
+
+// What a column calls itself. The LAST title wins, matching SwiftUI: a title set
+// deeper in a column is the one that column is currently showing.
+public function toolbarSetTitle(title: String) {
+    toolbarSinkEnsure()
+    var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+    if !sink.collecting {
+        return
+    }
+    if sink.column == ToolbarColumn.sidebar {
+        sink.sidebarTitle = move title
+        return
+    }
+    sink.detailTitle = move title
+}
+
+// A view asked for the window's search field. The last to ask wins, as the
+// last title does.
+public function toolbarSetSearch(search: WindowSearch) {
+    toolbarSinkEnsure()
+    var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+    if !sink.collecting {
+        return
+    }
+    sink.search = .Some(move search)
+}
+
+// Whether a tab view has put its tabs on the bar.
+public function toolbarHoldsTabs() -> Bool {
+    toolbarSinkEnsure()
+    let sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+    return sink.tabs.count > 0
+}
+
+// The page's search field is presented, so the bar steps aside for it.
+public function toolbarPresentPageSearch() {
+    toolbarSinkEnsure()
+    var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+    if !sink.collecting {
+        return
+    }
+    sink.searchPresented = true
+}
+
+// What the column being lowered calls itself, so far.
+public function toolbarColumnTitle() -> String {
+    toolbarSinkEnsure()
+    let sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+    if sink.column == ToolbarColumn.sidebar {
+        return copy sink.sidebarTitle
+    }
+    return copy sink.detailTitle
+}
+
+// What a page told the bar about its title: what it is called, whether it is
+// set large under the bar, and how far that has scrolled under.
+public struct ToolbarTitle {
+    var title: String = ""
+    var largeTitle: Bool = false
+    var titleCollapse: Number = 0.0
+}
+
+// The title the column just lowered declared, as a page, taken off the bar so
+// the next column starts with none. A stacked split view's sidebar is its
+// root page, and the bar shows its title only while it is the page in front.
+public function toolbarTakeColumnTitle() -> ToolbarTitle {
+    toolbarSinkEnsure()
+    var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+    let taken = ToolbarTitle {
+        title: toolbarColumnTitle(),
+        largeTitle: sink.largeTitle,
+        titleCollapse: sink.titleCollapse
+    }
+    sink.largeTitle = false
+    sink.titleCollapse = 0.0
+    return taken
+}
+
+// The bar shows `page`'s title as the document's.
+public function toolbarShowPageTitle(page: borrow ToolbarTitle) {
+    toolbarSinkEnsure()
+    var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+    sink.detailTitle = page.title
+    sink.largeTitle = page.largeTitle
+    sink.titleCollapse = page.titleCollapse
+}
+
+// The document's title is being set large under the bar, so the band leaves
+// it out.
+public function toolbarShowLargeTitle() {
+    toolbarSinkEnsure()
+    var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+    sink.largeTitle = true
+}
+
+// The document's large title has scrolled this far under the bar, from none
+// of it to all of it.
+public function toolbarCollapseLargeTitle(collapse: Number) {
+    toolbarSinkEnsure()
+    var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+    sink.titleCollapse = collapse
+}
+
+// What the column being lowered holds its content off its edges by.
+public function toolbarSetMargin(margin: Number) {
+    toolbarSinkEnsure()
+    var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+    if !sink.collecting {
+        return
+    }
+    if sink.column == ToolbarColumn.sidebar {
+        sink.sidebarMargin = margin
+        return
+    }
+    sink.detailMargin = margin
+}
+
+// A container laid its content out inside the window's safe area itself.
+public function chromeSafeAreaHandled() {
+    toolbarSinkEnsure()
+    var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+    sink.safeAreaHandled = true
+}
+
+// A column is about to be lowered, and has laid out nothing inside the safe
+// area yet.
+public function chromeSafeAreaPending() {
+    toolbarSinkEnsure()
+    var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+    sink.safeAreaHandled = false
+}
+
+public function chromeSafeAreaWasHandled() -> Bool {
+    toolbarSinkEnsure()
+    let sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+    return sink.safeAreaHandled
+}
+
+public function toolbarStopCollecting() {
+    toolbarSinkEnsure()
+    var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+    sink.collecting = false
+}
+
+// Navigation reports the geometry its horizontal chrome used to own directly.
+// The root compositor reads this after the whole tree has lowered.
+public function chromeSetNavigationLayout(
+    navigationWidth: Number,
+    hasNavigationColumn: Bool,
+    navigationShown: Number,
+    visibleColumn: Number,
+) {
+    toolbarSinkEnsure()
+    var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+    sink.navigationWidth = navigationWidth
+    sink.hasNavigationColumn = hasNavigationColumn
+    sink.navigationShown = navigationShown
+    sink.visibleColumn = visibleColumn
+}
+
+// Where the sidebar ends across the window, as the last frame laid it out: 0
+// with no sidebar beside the content, and partway while it slides.
+public function toolbarNavigationWidth() -> Number {
+    toolbarSinkEnsure()
+    let sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+    if !sink.hasNavigationColumn {
+        return 0.0
+    }
+    return sink.navigationWidth * sink.navigationShown
+}
+
+// A navigation stack or split view is lowering: the window keeps its toolbar.
+public function chromeDeclareNavigation() {
+    toolbarSinkEnsure()
+    var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+    sink.hasNavigation = true
+}
+
+public function chromeShowSidebarToggle() {
+    toolbarSinkEnsure()
+    var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+    sink.sidebarToggle = true
+}
+
+public function chromeAppend(role: ChromeRole, entry: ToolbarEntry) {
+    toolbarSinkEnsure()
+    var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+    if !sink.collecting {
+        return
+    }
+    let item = move entry
+    match role {
+        Back -> sink.back.append(move item)
+        Navigation -> sink.navigation.append(move item)
+        Principal -> sink.principal.append(move item)
+        Automatic -> sink.automatic.append(move item)
+        PrimaryAction -> sink.primaryAction.append(move item)
+        Tab -> sink.tabs.append(move item)
+        TabSearch -> sink.tabSearch.append(move item)
+    }
+}
+
+// How many tabs are on the bar so far this build: the place the next one
+// takes.
+public function chromeTabCount() -> Number {
+    toolbarSinkEnsure()
+    return nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink)).tabs.count
+}
+
+public function toolbarHideNextSharedBackground() {
+    toolbarSinkEnsure()
+    var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+    sink.pendingSharedHidden = true
+}
+
+public function toolbarTakePendingShared() -> Bool {
+    toolbarSinkEnsure()
+    var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+    let hidden = sink.pendingSharedHidden
+    sink.pendingSharedHidden = false
+    return !hidden
+}
+
+// The space that ends a group, matching SwiftUI's `ToolbarSpacer`. It is the
+// only way a view separates its items into two pieces of glass rather than one.
+public function toolbarAppendSpacer(placement: ToolbarItemPlacement, sizing: SpacerSizing) {
+    toolbarAppendEntry(
+        move placement,
+        ToolbarEntry { isSpacer: true, flexible: sizing == .Flexible }
+    )
+}
+
+public function toolbarAppendEntry(placement: ToolbarItemPlacement, entry: ToolbarEntry) {
+    toolbarSinkEnsure()
+    var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+    if !sink.collecting {
+        return
+    }
+    let view = move entry
+    match placement {
+        // "The trailing end of the section over the view that DECLARED it" is
+        // the whole meaning of `Automatic`, and `column` above is exactly which
+        // view that is. Sending every automatic item to one bucket made the
+        // default placement mean "the document section" wherever it was written,
+        // so a sidebar asking for its own trailing action got it over the
+        // detail column instead — the one placement a view can reach without
+        // naming a position, landing somewhere the view cannot see.
+        Automatic -> {
+            if sink.column == ToolbarColumn.sidebar {
+                sink.navigation.append(move view)
+            } else {
+                sink.automatic.append(move view)
+            }
+        }
+        Navigation -> sink.navigation.append(move view)
+        Principal -> sink.principal.append(move view)
+        PrimaryAction -> sink.primaryAction.append(move view)
+    }
+}

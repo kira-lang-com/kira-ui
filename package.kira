@@ -1,0 +1,73 @@
+construct KiraUI extends Package {
+    let version: String = "0.1.0"
+    let kind: PackageKind = .Library
+    let assets: [String] = ["Resources/Default.kcui"]
+    let dependencies: [Dependency] = [
+        Dependency { name: "ArgumentParser", path: "../argument-parser" },
+        Dependency { name: "Ember", path: "../ember" },
+        Dependency { name: "KCoreAnimation", path: "../kcoreanimation" },
+        Dependency { name: "KCoreUI", path: "../kcoreui" },
+        Dependency { name: "LibTessera", path: "../libtessera" }
+    ]
+    // The platform's current color scheme and accessibility settings where
+    // the platform keeps them behind a C interface of its own: the Windows
+    // registry and system parameters, Apple's preferences and UIAccessibility.
+    // Optional because the other platforms have no row: Linux answers in
+    // Kira, and the rest publish no scheme.
+    let nativeLibraries: [NativeLibrary] = [
+        NativeLibrary {
+            name: "kirauiappearance",
+            linkMode: LinkMode.Static,
+            availability: Availability.Optional,
+            headers: Headers {
+                entrypoint: "NativeLibs/Appearance/kira_ui_appearance.h",
+                includeDirs: ["NativeLibs/Appearance"]
+            },
+            sources: [
+                "NativeLibs/Appearance/kira_ui_appearance.c",
+                "NativeLibs/Appearance/kira_ui_accessibility.c"
+            ],
+            autobind: Autobind {
+                module: "appearance",
+                headers: ["NativeLibs/Appearance/kira_ui_appearance.h"],
+                mode: AutobindMode.AllPublic
+            },
+            // The other platforms have no row: Linux reads the scheme in Kira.
+            nativeTargets: [
+                NativeTarget { triple: "x86_64-windows-msvc", systemLibs: ["advapi32", "user32"] },
+                NativeTarget { triple: "aarch64-macos-none", frameworks: ["CoreFoundation"] },
+                NativeTarget { triple: "x86_64-macos-none", frameworks: ["CoreFoundation"] },
+                NativeTarget { triple: "aarch64-ios-none", frameworks: ["CoreFoundation", "UIKit"] },
+                NativeTarget { triple: "aarch64-ios-sim", frameworks: ["CoreFoundation", "UIKit"] }
+            ]
+        },
+        // What hands a URL to the platform to open, as `Link` and `openURL`
+        // do: the shell on Windows, Launch Services on macOS, UIApplication
+        // on iOS, the page on the web, and `xdg-open` on the free desktops.
+        NativeLibrary {
+            name: "kirauiopenurl",
+            linkMode: LinkMode.Static,
+            availability: Availability.Optional,
+            headers: Headers {
+                entrypoint: "NativeLibs/OpenURL/kira_ui_open_url.h",
+                includeDirs: ["NativeLibs/OpenURL"]
+            },
+            sources: ["NativeLibs/OpenURL/kira_ui_open_url.c"],
+            autobind: Autobind {
+                module: "openurl",
+                headers: ["NativeLibs/OpenURL/kira_ui_open_url.h"],
+                mode: AutobindMode.AllPublic
+            },
+            nativeTargets: [
+                NativeTarget { triple: "x86_64-linux-gnu" },
+                NativeTarget { triple: "aarch64-linux-gnu" },
+                NativeTarget { triple: "x86_64-windows-msvc", systemLibs: ["shell32"] },
+                NativeTarget { triple: "aarch64-macos-none", frameworks: ["CoreFoundation", "CoreServices"] },
+                NativeTarget { triple: "x86_64-macos-none", frameworks: ["CoreFoundation", "CoreServices"] },
+                NativeTarget { triple: "aarch64-ios-none", frameworks: ["CoreFoundation", "UIKit"] },
+                NativeTarget { triple: "aarch64-ios-sim", frameworks: ["CoreFoundation", "UIKit"] },
+                NativeTarget { triple: "wasm32-emscripten-unknown" }
+            ]
+        }
+    ]
+}

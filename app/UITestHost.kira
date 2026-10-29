@@ -1,0 +1,158 @@
+// An application a UI test launched answers it, as an app driven by a UI
+// test does: between frames it takes the test's request, presses, types and
+// scrolls as a person would, through the same events a window delivers, and
+// once what that set moving has come to rest, it says what is on screen.
+// UITestProtocol.kira holds the conversation. This file takes part only where
+// a platform has windows Ember opens, as WindowRun.kira does.
+
+import Ember on macos, ios, windows, linux, android, web, unknown
+import Foundation
+
+// The host for the UI test that launched this application, if one did.
+public function launchingTest() -> UITestHost? {
+    return match testSessionDirectory() {
+        Some(directory) -> .Some(UITestHost { directory: directory })
+        None -> .None
+    }
+}
+
+// Takes the test's next request and carries it out, before this frame decides
+// whether to rebuild, so the build sees what it did. One request is carried
+// out at a time: the next waits until this one is answered. A session whose
+// directory is gone belongs to a test that has ended, and the application
+// ends with it.
+public function kiraLayerTakeUITestRequest(state: borrow mut KiraLayerAppState) {
+    var host = match state.uiTest {
+        Some(host) -> host
+        None -> return
+    }
+    if host.owed != .None {
+        return
+    }
+    if !isDirectory(host.directory) {
+        processExit(0)
+    }
+    match receiveTestRequest(host.directory) {
+        Ok(received) -> {
+            match received {
+                Some(request) -> host.owed = .Some(kiraLayerPerform(state, request))
+                // The test has asked nothing since the last answer.
+                None -> {}
+            }
+        }
+        Error(failure) -> log warn("could not read the UI test's request", failure)
+    }
+    state.uiTest = .Some(move host)
+}
+
+// Answers the test once nothing is moving: no animation running in the
+// interface and none in the retained tree.
+public function kiraLayerAnswerUITest(state: borrow mut KiraLayerAppState) {
+    var host = match state.uiTest {
+        Some(host) -> host
+        None -> return
+    }
+    let owed = match host.owed {
+        Some(owed) -> owed
+        None -> return
+    }
+    if state.layersMoving || clockRunning() {
+        return
+    }
+    print(owed.answer().line())
+    host.owed = .None
+    state.uiTest = .Some(move host)
+}
+
+extend UITestOwed {
+    // The answer owed, as the interface stands now.
+    function answer() -> UITestAnswer {
+        match self {
+            Snapshot -> {
+                var elements: [UITestElement] = []
+                for element in accessibilityElementsOnScreen() {
+                    elements.append(element.testElement())
+                }
+                return .Elements(UITestTree { elements: move elements })
+            }
+            Done -> return .Done
+            NoKeyboardFocus -> return .NoKeyboardFocus
+        }
+    }
+}
+
+// Carries out `request` through the events a window delivers.
+function kiraLayerPerform(
+    state: borrow mut KiraLayerAppState,
+    request: borrow UITestRequest
+) -> UITestOwed {
+    match request {
+        Snapshot -> return .Snapshot
+        Tap(tap) -> {
+            kiraLayerTap(state, tap)
+            return .Done
+        }
+        TypeText(typed) -> return kiraLayerType(state, typed.text)
+        Scroll(scroll) -> {
+            kiraLayerScroll(state, scroll)
+            return .Done
+        }
+    }
+}
+
+// A press and release at the point, as many times as the tap asks, with the
+// pointer brought there first.
+function kiraLayerTap(state: borrow mut KiraLayerAppState, tap: borrow UITestTap) {
+    kiraLayerHandleEvent(state, AppEvent { kind: .PointerMoved, pointerX: tap.x, pointerY: tap.y })
+    for press in 0..tap.count {
+        kiraLayerHandleEvent(
+            state,
+            AppEvent { kind: .PointerDown, pointerButton: .Left, pointerX: tap.x, pointerY: tap.y }
+        )
+        kiraLayerHandleEvent(
+            state,
+            AppEvent { kind: .PointerUp, pointerButton: .Left, pointerX: tap.x, pointerY: tap.y }
+        )
+    }
+}
+
+// Each character as the keyboard types it, and a line break as Return.
+function kiraLayerType(state: borrow mut KiraLayerAppState, text: borrow String) -> UITestOwed {
+    if state.ui.focusedKey == 0 {
+        return .NoKeyboardFocus
+    }
+    for codepoint in stringToCodepoints(text) {
+        if codepoint == UnicodeScalar.lineFeed {
+            kiraLayerHandleEvent(state, AppEvent { kind: .KeyDown, key: .Enter })
+            kiraLayerHandleEvent(state, AppEvent { kind: .KeyUp, key: .Enter })
+        } else {
+            kiraLayerHandleEvent(
+                state,
+                AppEvent { kind: .TextInput, textCodepoint: UN32(codepoint) }
+            )
+        }
+    }
+    return .Done
+}
+
+// A wheel turned over the point by the scroll's points, in the wheel's lines.
+function kiraLayerScroll(state: borrow mut KiraLayerAppState, scroll: borrow UITestScroll) {
+    kiraLayerHandleEvent(
+        state,
+        AppEvent { kind: .PointerMoved, pointerX: scroll.x, pointerY: scroll.y }
+    )
+    kiraLayerHandleEvent(
+        state,
+        AppEvent {
+            kind: .Scroll,
+            pointerX: scroll.x,
+            pointerY: scroll.y,
+            scrollX: -scroll.deltaX / ScrollWheel.line,
+            scrollY: -scroll.deltaY / ScrollWheel.line
+        }
+    )
+}
+
+namespace UnicodeScalar {
+    let lineFeed: Number = 10
+}

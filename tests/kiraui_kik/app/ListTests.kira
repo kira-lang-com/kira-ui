@@ -1,0 +1,119 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// A sidebar's sections and a text field's runs, as the layers they describe.
+
+function kuiDescribeInSidebar(root: Any Widget) -> CALayerDescription {
+    let widgetContext = buildContext(FoundationUiContext {})
+    return root.describe(widgetContext, modifierContextPresenting(ModifierContext {}, .Sidebar))
+}
+
+function kuiNoAction() {}
+
+// Text bound to nothing: it reads `text` and drops what is set.
+function kuiText(text: String) -> Binding<String> {
+    return Binding<String> { get: { in return copy text }, set: { edited in return } }
+}
+
+// The leading edge of the text a sidebar row draws, from the section's edge.
+function kuiSidebarRowTextX(section: borrow CALayerDescription, row: Number) -> Number {
+    let cell = section.sublayers[row]
+    let band = cell.sublayers[0]
+    return cell.position.x + band.position.x + band.sublayers[0].position.x
+}
+
+// A sidebar section without a header is its rows alone: no band is held for a
+// title that is not there.
+construct KuiAHeaderlessSidebarSectionIsItsRows() extends Test {
+    test {
+        let described = kuiDescribeInSidebar(
+            Section() {
+                Text(content: "Settings")
+            }
+        )
+        return described.sublayers.count
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok(1)
+        return expected
+    }
+}
+
+// A sidebar section with a header puts its title over its rows.
+construct KuiASidebarSectionHeaderSitsOverItsRows() extends Test {
+    test {
+        let described = kuiDescribeInSidebar(
+            Section() {
+                Text(content: "Ocean")
+            } header: {
+                Text(content: "Games")
+            }
+        )
+        return described.sublayers.count
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok(2)
+        return expected
+    }
+}
+
+// A plain view in a sidebar section starts where a row's title does, as every
+// row of a SwiftUI sidebar list sits in the same cell.
+construct KuiAPlainSidebarRowLinesUpWithARow() extends Test {
+    test {
+        var described = kuiDescribeInSidebar(
+            Section() {
+                SidebarRow(selected: false, action: kuiNoAction) {
+                    Text(content: "Settings")
+                }
+
+                Text(content: "No saves yet")
+            }
+        )
+        described.layoutTree(320.0, 480.0)
+        var out = 0
+        if described.sublayers.count == 2 {
+            let row = kuiSidebarRowTextX(described, 0)
+            let plain = kuiSidebarRowTextX(described, 1)
+            if row > 0.0 && abs(row - plain) < 0.0001 {
+                out = 1
+            }
+        }
+        return out
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok(1)
+        return expected
+    }
+}
+
+// Focusing an empty field puts the caret beside the placeholder under keys of
+// their own, so the caret never takes over the placeholder's layer and grows
+// out of its width.
+construct KuiAFocusedFieldKeysItsCaretApartFromItsPlaceholder() extends Test {
+    test {
+        let field = TextField(title: "Client ID", text: kuiText(""))
+        .width(resolvedLength(200.0)).height(resolvedLength(32.0))
+        tapSeqReset()
+        let idle = field.describe(buildContext(FoundationUiContext {}), ModifierContext {})
+        tapSeqReset()
+        let focused = field.describe(
+            buildContext(FoundationUiContext { focusedKey: kuiFieldLayer(idle).hitKey }),
+            ModifierContext {}
+        )
+        let idleRuns = kuiFieldRuns(idle)
+        let focusedRuns = kuiFieldRuns(focused)
+        var out = 0
+        if idleRuns.count == 1 && focusedRuns.count == 2 {
+            if idleRuns[0].key == TextFieldPart.placeholder
+                && focusedRuns[0].key == TextFieldPart.caret
+                && focusedRuns[1].key == TextFieldPart.placeholder { out = 1 }
+        }
+        return out
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok(1)
+        return expected
+    }
+}

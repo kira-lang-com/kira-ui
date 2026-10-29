@@ -1,0 +1,42 @@
+import Foundation
+import KCoreAnimation
+
+// What the layers of this build whose content follows their own size hold,
+// as a `GeometryReader`'s does: each made from the size its layer is placed
+// at, kept under the key the layer carries until the next build starts.
+
+struct SizedContentTable {
+    var makers: [(Size) -> CALayerDescription] = []
+}
+
+function sizedContentEnsure() {
+    if !ambientStateHas(StateSlot.sizedContent) {
+        ambientStatePut(StateSlot.sizedContent, nativeUserData(nativeState(SizedContentTable {})))
+    }
+}
+
+// The key a layer whose content `make` makes from its size carries.
+public function sizedContentKey(make: (Size) -> CALayerDescription) -> Number {
+    sizedContentEnsure()
+    var table = nativeRecover<SizedContentTable>(ambientStateGet(StateSlot.sizedContent))
+    table.makers.append(move make)
+    return table.makers.count
+}
+
+// The content kept under `key`, made at `size`.
+function sizedContent(key: Number, size: Size) -> CALayerDescription {
+    sizedContentEnsure()
+    let table = nativeRecover<SizedContentTable>(ambientStateGet(StateSlot.sizedContent))
+    if key < 1 || key > table.makers.count {
+        return CALayerDescription {}
+    }
+    let make = table.makers[key - 1]
+    return make(move size)
+}
+
+// A new build keeps none of the last one's.
+function sizedContentReset() {
+    sizedContentEnsure()
+    var table = nativeRecover<SizedContentTable>(ambientStateGet(StateSlot.sizedContent))
+    table.makers = []
+}

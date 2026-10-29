@@ -1,0 +1,52 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// A split view's detail is the view of the sidebar's selection: a different
+// row selected is a new view, keyed apart from the old one, with nothing
+// carried over, and simply there in its place.
+
+construct SidebarSelectionWindow(chosen: Number) extends Widget {
+    body {
+        NavigationSplitView {
+            List {
+                SidebarRow(selected: chosen == 0, action: noAction) {
+                    Text(content: "Library")
+                }
+                SidebarRow(selected: chosen == 1, action: noAction) {
+                    Text(content: "Settings")
+                }
+            }
+        } detail: {
+            Text(content: chosen == 0 ? "Games" : "Preferences")
+        }
+    }
+}
+
+// The same row selected again is the same view, under the same key.
+@Test
+function sameSelectionKeepsTheDetailView() {
+    let first = describedLayerInWideWindow(SidebarSelectionWindow(chosen: 0)).sublayers[0]
+    let again = describedLayerInWideWindow(SidebarSelectionWindow(chosen: 0)).sublayers[0]
+    expect!((first.key) == (again.key))
+}
+
+// Another row's view is a new layer, there at once: it is keyed apart, nothing
+// fades in, nothing fades out, and it is not timed.
+@Test
+function anotherSelectionIsANewViewAtOnce() {
+    let again = describedLayerInWideWindow(SidebarSelectionWindow(chosen: 0)).sublayers[0]
+    let other = describedLayerInWideWindow(SidebarSelectionWindow(chosen: 1)).sublayers[0]
+    expect!((other.key != again.key) == (true))
+    expect!((other.entrance.active) == (false))
+    expect!((other.removal.duration) == (0.0))
+    expect!((isTimedLayer(other)) == (false))
+}
+
+// Once there, the new selection stays the view it became.
+@Test
+function selectionStaysSettled() {
+    let other = describedLayerInWideWindow(SidebarSelectionWindow(chosen: 1)).sublayers[0]
+    let settled = describedLayerInWideWindow(SidebarSelectionWindow(chosen: 1)).sublayers[0]
+    expect!((settled.key) == (other.key))
+}

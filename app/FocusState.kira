@@ -1,0 +1,95 @@
+import Foundation
+import KCoreAnimation
+
+// `@FocusState` — where the keyboard is, as SwiftUI's `FocusState` is: state
+// the app reads to know which field has the keyboard, and writes to move it.
+//
+//     @FocusState var isEditing: Bool = false
+//     @FocusState var field: Field? = .None
+//
+//     TextField(title: "Name", text: $name).focused($isEditing)
+//     TextField(title: "Email", text: $email).focused($field, equals: .Email)
+//
+// Pressing a field writes the state that names it, and Escape or a press
+// elsewhere writes it back. Writing it moves the keyboard: to the field it now
+// names, or away from the one it stopped naming.
+@Instance(Bool)
+public struct FocusState<Value> {
+    var wrappedValue: Value
+    var key: String = ""
+
+    function get() -> Value {
+        return State<Value> { wrappedValue: self.wrappedValue, key: self.key }.get()
+    }
+
+    function set(value: Value) {
+        State<Value> { wrappedValue: self.wrappedValue, key: self.key }.set(move value)
+    }
+
+    // `$name`: a binding to where the keyboard is, which `.focused(...)` takes.
+    function projectedValue() -> Binding<Value> {
+        return State<Value> { wrappedValue: self.wrappedValue, key: self.key }.projectedValue()
+    }
+}
+
+// One `.focused(...)` as a field sees it: whether the state wants the field to
+// have the keyboard, and what to write when the field gains or loses it.
+public struct FocusBinding {
+    let wanted: () -> Bool = layerNever
+    let changed: (Bool) -> Void = layerNoopFlag
+}
+
+// `bindings` and one more inside them.
+public function withFocusBinding(
+    bindings: borrow [FocusBinding],
+    binding: FocusBinding
+) -> [FocusBinding] {
+    var all = copy bindings
+    all.append(move binding)
+    return all
+}
+
+// What a field under `bindings` asks of the keyboard as it is built: to have it
+// when one of them wants it there, and to give it up when one stops wanting
+// it. Whatever the field gains or loses later, every binding hears.
+public function focusSync(key: Number, focused: Bool, bindings: borrow [FocusBinding]) {
+    if bindings.count == 0 {
+        return
+    }
+    var wanted = false
+    var unwanted = false
+    for binding in bindings {
+        if binding.wanted() {
+            wanted = true
+        } else {
+            unwanted = true
+        }
+    }
+    if focused && unwanted {
+        layerFocusRelease(key)
+    } else if !focused && wanted {
+        layerFocusClaim(key)
+    }
+    let heard = copy bindings
+    layerFocusRegister(
+        key,
+        { gained in
+            for binding in heard { binding.changed(gained) }
+            return
+        }
+    )
+}
+
+public construct FocusLayer(binding: FocusBinding) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        return content.describe(
+            context,
+            modifierContextApply(modifiers, modifierDeltaFocus(copy binding))
+        )
+    }
+}

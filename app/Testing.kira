@@ -1,0 +1,90 @@
+import Foundation
+import KCoreAnimation
+
+// Inspecting a described widget tree, for a test that has no window.
+//
+// A headless gate wants to ask what a widget tree came out as — does it say
+// "DEFEATED", how many painted surfaces does it have — and describing it is the
+// way to find out, because a widget's own value carries the intent and not the
+// result. So the described tree is a value KiraUI hands out and answers
+// questions about, over KCoreAnimation's `CALayerDescription`.
+
+public struct LoweredWidgetTree {
+    var view: CALayerDescription
+}
+
+// Describe `root` the way a frame would, with a fresh context and no inherited
+// modifiers.
+public function lowerWidgetForTest(root: Any Widget) -> LoweredWidgetTree {
+    let widgetContext = buildContext(FoundationUiContext {})
+    return LoweredWidgetTree { view: root.describe(widgetContext, ModifierContext {}) }
+}
+
+public function describedContainsText(
+    view: borrow CALayerDescription,
+    wanted: borrow String
+) -> Bool {
+    match view.content {
+        Text(run) -> {
+            if run.content == wanted {
+                return true
+            }
+        }
+        Empty -> {}
+        Solid(s) -> {}
+        Texture(x) -> {}
+        Icon(i) -> {}
+        Glass(g) -> {}
+        Gradient(g) -> {}
+    }
+    for i in 0..view.sublayers.count {
+        if describedContainsText(view.sublayers[i], wanted) {
+            return true
+        }
+    }
+    return false
+}
+
+// Whether any text node in the tree reads exactly `wanted`.
+public function loweredTreeContainsText(
+    tree: borrow LoweredWidgetTree,
+    wanted: borrow String
+) -> Bool {
+    return describedContainsText(tree.view, wanted)
+}
+
+public function describedSurfaceCount(view: borrow CALayerDescription) -> Number {
+    var count = 0
+    match view.content {
+        Solid(s) -> { count = 1 }
+        Glass(g) -> { count = 1 }
+        Gradient(g) -> { count = 1 }
+        Empty -> {}
+        Text(t) -> {}
+        Texture(x) -> {}
+        Icon(i) -> {}
+    }
+    for i in 0..view.sublayers.count {
+        count = count + describedSurfaceCount(view.sublayers[i])
+    }
+    return count
+}
+
+// How many painted surfaces the tree holds — what a test counts to say a panel
+// was built rather than skipped.
+public function loweredTreeSurfaceCount(tree: borrow LoweredWidgetTree) -> Number {
+    return describedSurfaceCount(tree.view)
+}
+
+// The accessibility elements `root` shows in a window `width` by `height`, as
+// a frame lays it out.
+public function accessibilityElementsForTest(
+    root: Any Widget,
+    width: Number,
+    height: Number
+) -> [AccessibilityElement] {
+    accessibilityReset()
+    var tree = lowerWidgetForTest(move root)
+    layOutLayerTree(tree.view, width, height)
+    return accessibilityTree(tree.view)
+}

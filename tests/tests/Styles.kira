@@ -1,0 +1,284 @@
+import Foundation
+import KiraUI
+
+// The default style's tokens.
+//
+// These are renditions in the KCoreUI catalog, and the catalog's colours are
+// Apple's: the variables of the iOS and iPadOS 27 design kit, quoted 0-255 as
+// the kit quotes them. A regression here is a regression in what the toolkit
+// draws. What Apple has no word for -- the intents, the border ladder, ink on a
+// filled control -- is the toolkit's own, quoted as it was authored.
+//
+// A catalog stores a channel as 16.16 fixed point, in Display P3, so a value
+// comes back within a few parts in 65536 of what was written. That is finer
+// than an 8-bit channel can express, and it is why these compare within a
+// tolerance rather than exactly.
+
+// The size, line height and tracking of a font, each within the tolerance.
+function fontMatches(
+    font: borrow FontImplementation,
+    size: Number,
+    lineHeight: Number,
+    tracking: Number
+) -> Bool {
+    return nearly(font.size, size) && nearly(font.lineHeight, lineHeight)
+        && nearly(font.tracking, tracking)
+}
+
+// --- Palette ---------------------------------------------------------------
+
+@Test
+function thePaletteKeepsItsAuthoredValues() {
+    let palette = defaultStyle().palette
+    expect!((channelsMatch(
+        channelsOf(palette.red.light.r, palette.red.light.g, palette.red.light.b, palette.red.light.a),
+        kitChannels(255.0, 56.0, 60.0, 1.0)
+    )) == (true))
+    expect!((channelsMatch(
+        channelsOf(palette.red.dark.r, palette.red.dark.g, palette.red.dark.b, palette.red.dark.a),
+        kitChannels(255.0, 66.0, 69.0, 1.0)
+    )) == (true))
+    expect!((channelsMatch(
+        channelsOf(palette.blue.light.r, palette.blue.light.g, palette.blue.light.b, palette.blue.light.a),
+        kitChannels(0.0, 136.0, 255.0, 1.0)
+    )) == (true))
+    expect!((channelsMatch(
+        channelsOf(palette.gray.dark.r, palette.gray.dark.g, palette.gray.dark.b, palette.gray.dark.a),
+        kitChannels(142.0, 142.0, 147.0, 1.0)
+    )) == (true))
+}
+
+// --- Foregrounds -----------------------------------------------------------
+
+@Test
+function theForegroundLadderKeepsItsAuthoredValues() {
+    let foregrounds = defaultStyle().foregrounds
+    expect!((channelsMatch(
+        channelsOf(foregrounds.primary.light.r, foregrounds.primary.light.g, foregrounds.primary.light.b, foregrounds.primary.light.a),
+        kitChannels(0.0, 0.0, 0.0, runsAsMac() ? 0.85 : 1.0)
+    )) == (true))
+    expect!((channelsMatch(
+        channelsOf(foregrounds.primary.dark.r, foregrounds.primary.dark.g, foregrounds.primary.dark.b, foregrounds.primary.dark.a),
+        kitChannels(255.0, 255.0, 255.0, runsAsMac() ? 0.85 : 1.0)
+    )) == (true))
+    expect!((channelsMatch(
+        channelsOf(foregrounds.secondary.light.r, foregrounds.secondary.light.g, foregrounds.secondary.light.b, foregrounds.secondary.light.a),
+        kitChannels(runsAsMac() ? 0.0 : 60.0, runsAsMac() ? 0.0 : 60.0, runsAsMac() ? 0.0 : 67.0, runsAsMac() ? 0.5 : 0.6)
+    )) == (true))
+    expect!((channelsMatch(
+        channelsOf(foregrounds.tertiary.light.r, foregrounds.tertiary.light.g, foregrounds.tertiary.light.b, foregrounds.tertiary.light.a),
+        kitChannels(runsAsMac() ? 0.0 : 60.0, runsAsMac() ? 0.0 : 60.0, runsAsMac() ? 0.0 : 67.0, runsAsMac() ? 0.26 : 0.3)
+    )) == (true))
+    expect!((channelsMatch(
+        channelsOf(foregrounds.quaternary.dark.r, foregrounds.quaternary.dark.g, foregrounds.quaternary.dark.b, foregrounds.quaternary.dark.a),
+        kitChannels(runsAsMac() ? 255.0 : 235.0, runsAsMac() ? 255.0 : 235.0, runsAsMac() ? 255.0 : 245.0, runsAsMac() ? 0.1 : 0.16)
+    )) == (true))
+}
+
+// Ink that stays readable on a filled control. Apple names no such colour, so
+// the catalog carries it under a name of the toolkit's own.
+@Test
+function theInverseForegroundSurvivedTheMove() {
+    let foregrounds = defaultStyle().foregrounds
+    expect!((channelsMatch(
+        channelsOf(foregrounds.inverse.light.r, foregrounds.inverse.light.g, foregrounds.inverse.light.b, foregrounds.inverse.light.a),
+        channelsOf(0.98, 0.98, 1.0, 1.0)
+    )) == (true))
+    expect!((channelsMatch(
+        channelsOf(foregrounds.inverse.dark.r, foregrounds.inverse.dark.g, foregrounds.inverse.dark.b, foregrounds.inverse.dark.a),
+        channelsOf(0.06, 0.07, 0.1, 1.0)
+    )) == (true))
+}
+
+// --- Backgrounds and fills -------------------------------------------------
+
+@Test
+function theElevationLadderKeepsItsAuthoredValues() {
+    let backgrounds = defaultStyle().backgrounds
+    expect!((channelsMatch(
+        channelsOf(backgrounds.canvas.light.r, backgrounds.canvas.light.g, backgrounds.canvas.light.b, backgrounds.canvas.light.a),
+        kitChannels(255.0, 255.0, 255.0, 1.0)
+    )) == (true))
+    expect!((channelsMatch(
+        channelsOf(backgrounds.canvas.dark.r, backgrounds.canvas.dark.g, backgrounds.canvas.dark.b, backgrounds.canvas.dark.a),
+        kitChannels(runsAsMac() ? 30.0 : 0.0, runsAsMac() ? 30.0 : 0.0, runsAsMac() ? 30.0 : 0.0, 1.0)
+    )) == (true))
+    expect!((channelsMatch(
+        channelsOf(backgrounds.surface.light.r, backgrounds.surface.light.g, backgrounds.surface.light.b, backgrounds.surface.light.a),
+        kitChannels(242.0, 242.0, 247.0, 1.0)
+    )) == (true))
+    expect!((channelsMatch(
+        channelsOf(backgrounds.raised.dark.r, backgrounds.raised.dark.g, backgrounds.raised.dark.b, backgrounds.raised.dark.a),
+        kitChannels(44.0, 44.0, 46.0, 1.0)
+    )) == (true))
+    expect!((channelsMatch(
+        channelsOf(backgrounds.overlay.light.r, backgrounds.overlay.light.g, backgrounds.overlay.light.b, backgrounds.overlay.light.a),
+        kitChannels(255.0, 255.0, 255.0, 1.0)
+    )) == (true))
+}
+
+@Test
+function theFillsKeepTheirAuthoredValues() {
+    let fills = defaultStyle().fills
+    expect!((channelsMatch(
+        channelsOf(fills.control.light.r, fills.control.light.g, fills.control.light.b, fills.control.light.a),
+        kitChannels(runsAsMac() ? 0.0 : 120.0, runsAsMac() ? 0.0 : 120.0, runsAsMac() ? 0.0 : 120.0, runsAsMac() ? 0.076 : 0.2)
+    )) == (true))
+    expect!((channelsMatch(
+        channelsOf(fills.hover.dark.r, fills.hover.dark.g, fills.hover.dark.b, fills.hover.dark.a),
+        kitChannels(runsAsMac() ? 255.0 : 120.0, runsAsMac() ? 255.0 : 120.0, runsAsMac() ? 255.0 : 128.0, runsAsMac() ? 0.08 : 0.32)
+    )) == (true))
+    expect!((channelsMatch(
+        channelsOf(fills.selection.light.r, fills.selection.light.g, fills.selection.light.b, fills.selection.light.a),
+        kitChannels(80.0, 156.0, 254.0, 0.2)
+    )) == (true))
+}
+
+// --- Tints -----------------------------------------------------------------
+
+@Test
+function theTintsKeepTheirAuthoredValues() {
+    let tints = defaultStyle().tints
+    expect!((channelsMatch(
+        channelsOf(tints.accent.light.r, tints.accent.light.g, tints.accent.light.b, tints.accent.light.a),
+        kitChannels(0.0, 136.0, 255.0, 1.0)
+    )) == (true))
+    expect!((channelsMatch(
+        channelsOf(tints.accent.dark.r, tints.accent.dark.g, tints.accent.dark.b, tints.accent.dark.a),
+        kitChannels(0.0, 145.0, 255.0, 1.0)
+    )) == (true))
+    expect!((channelsMatch(
+        channelsOf(tints.success.light.r, tints.success.light.g, tints.success.light.b, tints.success.light.a),
+        channelsOf(0.12, 0.58, 0.3, 1.0)
+    )) == (true))
+    expect!((channelsMatch(
+        channelsOf(tints.warning.dark.r, tints.warning.dark.g, tints.warning.dark.b, tints.warning.dark.a),
+        channelsOf(0.98, 0.75, 0.25, 1.0)
+    )) == (true))
+    expect!((channelsMatch(
+        channelsOf(tints.danger.dark.r, tints.danger.dark.g, tints.danger.dark.b, tints.danger.dark.a),
+        kitChannels(255.0, 66.0, 69.0, 1.0)
+    )) == (true))
+}
+
+// --- Borders ---------------------------------------------------------------
+
+// A border is a catalog colour and a width the toolkit still owns, so this case
+// checks both halves of that split.
+@Test
+function theBorderLadderKeepsItsColoursAndWidths() {
+    let borders = defaultStyle().borders
+    expect!((channelsMatch(
+        channelsOf(borders.subtle.color.light.r, borders.subtle.color.light.g, borders.subtle.color.light.b, borders.subtle.color.light.a),
+        kitChannels(0.0, 0.0, 0.0, runsAsMac() ? 0.1 : 0.12)
+    )) == (true))
+    expect!((channelsMatch(
+        channelsOf(borders.standard.color.dark.r, borders.standard.color.dark.g, borders.standard.color.dark.b, borders.standard.color.dark.a),
+        channelsOf(1.0, 1.0, 1.0, 0.18)
+    )) == (true))
+    expect!((channelsMatch(
+        channelsOf(borders.strong.color.light.r, borders.strong.color.light.g, borders.strong.color.light.b, borders.strong.color.light.a),
+        channelsOf(0.08, 0.1, 0.16, 0.32)
+    )) == (true))
+    expect!((channelsMatch(
+        channelsOf(borders.focus.color.dark.r, borders.focus.color.dark.g, borders.focus.color.dark.b, borders.focus.color.dark.a),
+        channelsOf(0.43, 0.67, 1.0, 0.9)
+    )) == (true))
+    expect!((borders.none.width) == (0.0))
+    expect!((borders.subtle.width) == (1.0))
+    expect!((borders.standard.width) == (1.0))
+    expect!((borders.strong.width) == (1.5))
+    expect!((borders.focus.width) == (2.0))
+}
+
+// --- Typography ------------------------------------------------------------
+
+@Test
+function theTextMetricsKeepTheirAuthoredValues() {
+    setInterfaceMode(.AdaptiveMobile)
+    let typography = defaultStyle().typography
+    expect!((fontMatches(typography.body, 17.0, 22.0, -0.43)) == (true))
+    expect!((fontMatches(typography.caption, 12.0, 16.0, 0.0)) == (true))
+    expect!((fontMatches(typography.control, 15.0, 20.0, 0.0)) == (true))
+    expect!((fontMatches(typography.title, 28.0, 34.0, 0.38)) == (true))
+    expect!((fontMatches(typography.footnote, 13.0, 18.0, -0.08)) == (true))
+    expect!((fontMatches(typography.overline, 10.0, 13.0, 0.5)) == (true))
+    expect!((fontMatches(typography.headline, 17.0, 22.0, -0.43)) == (true))
+    expect!((fontMatches(typography.title1, 30.0, 36.0, -0.3)) == (true))
+    expect!((fontMatches(typography.title2, 22.0, 28.0, -0.26)) == (true))
+    expect!((fontMatches(typography.title3, 20.0, 25.0, -0.45)) == (true))
+}
+
+// Weight survives the trip through the catalog's numeric axis.
+@Test
+function theTextWeightsSurviveTheNumericAxis() {
+    let typography = defaultStyle().typography
+    expect!((typography.body.weight) == (FontWeight.Regular))
+    expect!((typography.control.weight) == (FontWeight.SemiBold))
+    expect!((typography.label.weight) == (FontWeight.SemiBold))
+    expect!((typography.title.weight) == (FontWeight.Regular))
+    expect!((typography.section.weight) == (FontWeight.Bold))
+}
+
+// --- Through the theme -----------------------------------------------------
+
+// The resolved tokens a widget actually reads. `styleThemeTokens` is the one
+// place a style becomes tokens, so a value that survives the catalog but is
+// dropped here would still be a regression on screen.
+@Test
+function resolvedTokensReachAWidgetUnchanged() {
+    setInterfaceMode(.AdaptiveMobile)
+    let tokens = defaultTokens()
+    let expectedPrimary = themeAdaptiveColor(
+        defaultStyle().foregrounds.primary,
+        resolvedAppearance(defaultStyle().appearance)
+    )
+    expect!((channelsMatch(
+        channelsOf(tokens.foreground.primary.r, tokens.foreground.primary.g, tokens.foreground.primary.b, tokens.foreground.primary.a),
+        channelsOf(expectedPrimary.r, expectedPrimary.g, expectedPrimary.b, expectedPrimary.a)
+    )) == (true))
+    expect!((tokens.border.focus.width) == (2.0))
+    expect!((nearly(tokens.bodySize, 17.0)) == (true))
+}
+
+// --- Interface modes ---------------------------------------------------------
+
+// A desktop sets the same styles at the Mac's size.
+@Test
+function aDesktopSetsTheTextAtTheMacsSize() {
+    setInterfaceMode(.AdaptiveDesktop)
+    let typography = defaultStyle().typography
+    expect!((fontMatches(typography.body, 13.0, 16.0, -0.08)) == (true))
+    expect!((fontMatches(typography.largeTitle, 26.0, 32.0, 0.22)) == (true))
+    expect!((typography.headline.weight) == (FontWeight.Bold))
+}
+
+// Switching the mode while a program runs changes what the next read answers,
+// lengths and text alike, and switching back restores them.
+@Test
+function switchingTheModeResizesTheInterface() {
+    setInterfaceMode(.AdaptiveMobile)
+    let mobileRow = sidebarMetrics().rowHeight
+    let mobileBody = defaultTokens().bodySize
+    setInterfaceMode(.AdaptiveDesktop)
+    let desktopRow = sidebarMetrics().rowHeight
+    let desktopBody = defaultTokens().bodySize
+    setInterfaceMode(.AdaptiveMobile)
+    expect!((nearly(mobileRow, 44.0)) == (true))
+    expect!((nearly(desktopRow, 32.0)) == (true))
+    expect!((nearly(mobileBody, 17.0)) == (true))
+    expect!((nearly(desktopBody, 13.0)) == (true))
+    expect!((nearly(sidebarMetrics().rowHeight, 44.0)) == (true))
+}
+
+// Only a desktop lights what the pointer rests on.
+@Test
+function onlyADesktopHovers() {
+    let modifiers = ModifierContext {}
+    setInterfaceMode(.AdaptiveMobile)
+    let mobile = hoverHighlight(modifiers)
+    setInterfaceMode(.AdaptiveDesktop)
+    let desktop = hoverHighlight(modifiers)
+    expect!((mobile.a) == (0.0))
+    expect!((desktop.a > 0.0) == (true))
+}

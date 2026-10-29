@@ -1,0 +1,41 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// SwiftUI's `ToggleStyle`: an application's style draws the toggle from its
+// configuration, and the toggle still reads and flips as one.
+
+construct KuiStarToggleStyle() extends ToggleStyle {
+    function makeBody(configuration: borrow ToggleStyleConfiguration) -> Any Widget {
+        return HStack {
+            Icon(symbol: configuration.isOn.get() ? .StarFill : .Star)
+            configuration.label
+        }
+    }
+}
+
+// The style draws the body, and the toggle is one switch that reads its
+// label and state and flips through the configuration's binding.
+construct KuiAStyleDrawsTheToggleItConfigures() extends Test {
+    test {
+        var flippedTo = false
+        let elements = kuiElements(
+            Toggle(
+                title: "Favorite",
+                isOn: false,
+                onChange: { on in
+                    flippedTo = on
+                }
+            ).toggleStyle(KuiStarToggleStyle {})
+        )
+        let toggle = elements[0]
+        let activated = toggle.activate()
+        return "\(elements.count) \(toggle.role) \(toggle.label) \(toggle.value) \(activated) \(flippedTo)"
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok(
+            "1 AccessibilityRole.Switch Favorite 0 true true"
+        )
+        return expected
+    }
+}

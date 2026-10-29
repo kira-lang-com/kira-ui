@@ -1,0 +1,51 @@
+import Foundation
+import KCoreAnimation
+
+// A menu grows out of the glass its button stands on, as SwiftUI's does out
+// of a `.glassEffect` on its label: while the menu holds the glass, from the
+// first frame of its morph to the last of its way home, that glass is the
+// menu's and is not drawn where the button is.
+
+struct MenuGroundTable {
+    // The keys of the menus holding their glass in this build.
+    var keys: [Number] = []
+}
+
+function menuGroundEnsure() {
+    if !ambientStateHas(StateSlot.menuGround) {
+        ambientStatePut(StateSlot.menuGround, nativeUserData(nativeState(MenuGroundTable {})))
+    }
+}
+
+// The menu whose button is pressed by `key` holds its glass in this build.
+function menuGroundTake(key: Number) {
+    menuGroundEnsure()
+    var table = nativeRecover<MenuGroundTable>(ambientStateGet(StateSlot.menuGround))
+    table.keys.append(key)
+}
+
+// Whether `described`, what a glass holds, is a menu's button holding its
+// glass: the button itself or the button under modifiers that wrap it alone.
+function menuGroundTakenBy(described: borrow CALayerDescription) -> Bool {
+    menuGroundEnsure()
+    let table = nativeRecover<MenuGroundTable>(ambientStateGet(StateSlot.menuGround))
+    if table.keys.count == 0 { return false }
+    var layer = copy described
+    while true {
+        if layer.hitKey != 0 {
+            for key in table.keys {
+                if key == layer.hitKey { return true }
+            }
+        }
+        if layer.sublayers.count != 1 { return false }
+        layer = copy layer.sublayers[0]
+    }
+    return false
+}
+
+// A new build holds none of the last one's.
+function menuGroundReset() {
+    menuGroundEnsure()
+    var table = nativeRecover<MenuGroundTable>(ambientStateGet(StateSlot.menuGround))
+    table.keys = []
+}

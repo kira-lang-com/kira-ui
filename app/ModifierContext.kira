@@ -1,0 +1,644 @@
+import Foundation
+import KCoreAnimation
+
+// The compiler currently has no library-defined annotation hook for a form
+// such as `@Modifier(.Scoped)`. Keep the vocabulary explicit and typed here so
+// the declaration mechanism can migrate to that annotation when the compiler
+// grows it without changing the traversal or widget API.
+// Where a control finds itself, and therefore what it looks like.
+public enum ControlPresentation {
+    // Ordinary content: a control owns its fill and its standalone geometry.
+    Standalone
+    // System chrome: the bar owns the shared surface and controls resolve their
+    // geometry from the toolbar metrics instead of carrying standalone padding.
+    Toolbar
+    // A tab bar's capsule: a button is a symbol cell the tab's height, held
+    // off its ends by the tab's symbol inset and set in the tab's ink, as
+    // the kit's sidebar and search buttons stand beside its tabs.
+    TabBar
+    // A tab on a phone's tab bar: a label stacks its symbol over its title, as
+    // the kit's iPhone tab does.
+    PhoneTabBar
+    // A menu: a full-width row, the panel's ink, no fill.
+    MenuRow
+    // The group of actions across the top of a menu: an equal column, its glyph
+    // above its title.
+    MenuAction
+    // A list in the sidebar style: a section is its title over its rows, a link
+    // is a row that carries the selection band, and a label sets its glyph in
+    // the accent.
+    Sidebar
+    // The content of one row of a sidebar section, whose cell the section draws:
+    // a row states its press and its selection band and the section insets it.
+    SidebarCell
+    // A list in the inset grouped style, which is what a `Form` is: a section
+    // is a header over a card of rows over a footer, a link is a row that
+    // drills in, and a button is a row set in the accent.
+    InsetGrouped
+}
+
+public enum ModifierInheritance {
+    Inherited
+    Scoped
+    Cascading
+    Environment
+    Isolated
+}
+
+// What `.foregroundColor(...)` and `.backgroundColor(...)` accept: the content
+// hierarchy, the accent, and the standard palette, on one type — mirroring how
+// a color is named at a call site. Each case resolves through the theme's
+// separated token groups (foregrounds, tints, palette); `Black`, `White` and
+// `Clear` are absolute.
+public enum PrimaryColor {
+    Primary
+    Secondary
+    Tertiary
+    Quaternary
+    // The ink that stays readable ON a filled control, and the three semantic
+    // intents. They belong here beside `Accent` for the same reason it does: a
+    // destructive label asks for `.Danger` and follows the theme's tint, where
+    // `.Red` would pin it to a hue the theme does not own.
+    Inverse
+    Success
+    Warning
+    Danger
+    Accent
+    Red
+    Orange
+    Yellow
+    Green
+    Mint
+    Teal
+    Cyan
+    Blue
+    Indigo
+    Purple
+    Pink
+    Brown
+    Gray
+    Black
+    White
+    Clear
+}
+
+// What `.background(...)` paints with: a style, named after what it IS rather
+// than where it sits, resolved from the theme's own tokens. Beyond the four
+// elevation styles, list and tree UIs need the control interior, the band behind
+// a selected row, and the wash under a hovered one. `Clear` is the honest name
+// for a row in neither state — a conditional background answers with a style,
+// not with a transparent color.
+public enum BackgroundStyle {
+    Clear
+    Window
+    Surface
+    Raised
+    Control
+    Overlay
+    Accent
+    Selection
+    Hover
+}
+
+public enum ThemeBorder {
+    Subtle
+    Standard
+    Strong
+    Focus
+}
+
+// The resolved context is traversal-local. It is passed by borrow to every
+// widget and derived once at the point where a widget consumes a delta. Scoped
+// and isolated values are removed by modifierContextForChildren; inherited,
+// cascading, and environmental values remain available to descendants.
+public struct ModifierContext {
+    let theme: Any Theme = copy defaultTheme
+    let hasTheme: Bool = false
+    // `.foregroundColor(...)` cascades: it is the subtree's ink until something
+    // deeper restates it, exactly like text color in a retained environment.
+    let foregroundColor: PrimaryColor = .Primary
+    let hasForegroundColor: Bool = false
+    // Whether that ink is a labeled row's value ink rather than one a caller
+    // stated: a button under it keeps its own accent, as SwiftUI's does in a
+    // `LabeledContent`.
+    let foregroundIsValue: Bool = false
+    let material: Material = .Flat
+    let hasMaterial: Bool = false
+    let fillColor: RGBAColor = RGBAColor {}
+    let hasFill: Bool = false
+    // `.stroke(...)`: the shape is its outline alone, `strokeWidth` wide, in
+    // `strokeColor` when one was named and in the shape's ink otherwise.
+    let hasStroke: Bool = false
+    let strokeWidth: Number = 1.0
+    let hasStrokeColor: Bool = false
+    let strokeColor: RGBAColor = RGBAColor {}
+    let backgroundStyle: BackgroundStyle = .Surface
+    let hasBackgroundStyle: Bool = false
+    let themeBorder: ThemeBorder = .Subtle
+    let hasThemeBorder: Bool = false
+    let textColor: RGBAColor = RGBAColor {}
+    let hasTextColor: Bool = false
+    // How text is inked into what is under it: over it, or burned or dodged
+    // into it as a vibrant label is into glass. A text color stated without
+    // one inks over.
+    let textBlend: CABlendMode = .Normal
+    let typography: TypographyStyle = .body
+    let hasTypography: Bool = false
+    // The size class every control in this subtree is drawn at. Cascading, like
+    // typography: a panel names it once and its rows, fields and switches follow.
+    let controlSize: ControlSize = .Regular
+    let hasControlSize: Bool = false
+    // How large a glyph is drawn relative to the size class around it.
+    let imageScale: IconScale = .Medium
+    let hasImageScale: Bool = false
+    // Which drawing of a symbol is used: the outlined one, or its fill.
+    let symbolVariant: SymbolVariants = .None
+    let hasSymbolVariant: Bool = false
+    // The color a control's ACTIVE side takes: a switch's on-track, a slider's
+    // filled segment, a progress bar's fill. Separate from the foreground so a
+    // row can dim its label without draining the accent out of the switch that
+    // turns the row back on.
+    let tint: PrimaryColor = .Accent
+    let hasTint: Bool = false
+    // The corner a concentric shape takes where this view stands: the radius of
+    // the container it is in, less how far that container holds it off its
+    // edges. Zero is a square container, which the window's content area is.
+    let containerCornerRadius: Number = 0.0
+    // The glass that container is, which a menu grown out of it is made of.
+    let containerGlass: Glass = .Regular
+    let contentMargin: Number = 0.0
+    let hasContentMargin: Bool = false
+    let fontSize: Number = 16.0
+    let fontWeight: FontWeight = .Regular
+    let hasFont: Bool = false
+    let weightOverride: FontWeight = .Regular
+    let hasWeightOverride: Bool = false
+    let fontDesign: FontDesign = .Default
+    let textAlignment: TextAlignment = .Leading
+    let lineLimit: Number = 0
+    let lineSpacing: Number = 0.0
+    let buttonStyle: ButtonStyle = .Automatic
+    let toggleStyle: Any ToggleStyle = DefaultToggleStyle {}
+    let progressViewStyle: Any ProgressViewStyle = DefaultProgressViewStyle {}
+    let menuStyle: MenuStyle = .Automatic
+    let menuIndicator: Visibility = .Automatic
+    let pickerStyle: PickerStyle = .Automatic
+    let buttonBorderShape: ButtonBorderShape = .Automatic
+    let hasOpacity: Bool = false
+    let opacity: Number = 1.0
+    let disabled: Bool = false
+    // Every `.focused(...)` binding on the field, outermost first. Like
+    // material, it stays with the view it was written on.
+    let focus: [FocusBinding] = []
+    // How a control in this subtree presents itself.
+    //
+    // The same `Button(title:action:)` is a filled control in a form, a full
+    // width row in a menu, and one of three equal columns in a menu's action
+    // group at the top. Those are not three widgets — they are one declaration
+    // and three environments, which is exactly how SwiftUI's controls change
+    // shape by where they are put.
+    //
+    // How a `List` in this subtree is drawn. An environment value, like the
+    // theme: the split view states it for its sidebar column and `.listStyle`
+    // restates it anywhere below.
+    let listStyle: ListStyle = .Automatic
+    // How a `Table` in this subtree is drawn, whether its rows alternate a
+    // band, and whether its column headers show: environment values, as
+    // SwiftUI's `.tableStyle`, `.alternatingRowBackgrounds` and
+    // `.tableColumnHeaders` set them.
+    let tableStyle: TableStyle = .Automatic
+    let alternatingRowBackgrounds: AlternatingRowBackgroundBehavior = .Automatic
+    let tableColumnHeaders: Visibility = .Automatic
+    // Which halves of a `Label` show, an environment value like the list
+    // style: `.labelStyle` states it and every label below it follows.
+    let labelStyle: LabelStyle = .Automatic
+    // Whether the controls here show their titles: `.labelsHidden()` keeps a
+    // toggle or a picker to its control alone, its title left to the
+    // accessibility label, as SwiftUI's does.
+    let labelsHidden: Bool = false
+    // The axis of the stack the view stands in: a divider runs across it, a
+    // rule under a column's rows and a stroke between a row's.
+    let stackAxis: GuideAxis = .Vertical
+    // How the text fields here are drawn.
+    let textFieldStyle: TextFieldStyle = .Automatic
+    // What Return in a field here does: every `.onSubmit { }` around it, the
+    // nearest first.
+    let submit: () -> Void = layerNoop
+    // A kind rather than a Bool because there turned out to be three of them the
+    // moment a `ControlGroup` was put in a menu: the group's children are in a
+    // menu and are NOT rows, and a Bool can only say they are or they are not.
+    let controlPresentation: ControlPresentation = .Standalone
+}
+
+public function modifierContextApply(
+    context: borrow ModifierContext,
+    delta: ModifierDelta,
+) -> ModifierContext {
+    return ModifierContext {
+        theme: delta.hasTheme ? delta.theme : context.theme,
+        hasTheme: delta.hasTheme ? true : context.hasTheme,
+        foregroundColor: delta.hasForegroundColor ? delta.foregroundColor : context.foregroundColor,
+        hasForegroundColor: delta.hasForegroundColor ? true : context.hasForegroundColor,
+        foregroundIsValue: delta.hasForegroundColor ? delta.foregroundIsValue : context.foregroundIsValue,
+        material: delta.hasMaterial ? delta.material : context.material,
+        hasMaterial: delta.hasMaterial ? true : context.hasMaterial,
+        fillColor: delta.hasFill ? delta.fillColor : context.fillColor,
+        hasFill: delta.hasFill ? true : context.hasFill,
+        hasStroke: delta.hasStroke ? true : context.hasStroke,
+        strokeWidth: delta.hasStroke ? delta.strokeWidth : context.strokeWidth,
+        hasStrokeColor: delta.hasStroke ? delta.hasStrokeColor : context.hasStrokeColor,
+        strokeColor: delta.hasStroke ? delta.strokeColor : context.strokeColor,
+        backgroundStyle: delta.hasBackgroundStyle ? delta.backgroundStyle : context.backgroundStyle,
+        hasBackgroundStyle: delta.hasBackgroundStyle ? true : context.hasBackgroundStyle,
+        themeBorder: delta.hasThemeBorder ? delta.themeBorder : context.themeBorder,
+        hasThemeBorder: delta.hasThemeBorder ? true : context.hasThemeBorder,
+        textColor: delta.hasTextColor ? delta.textColor : context.textColor,
+        hasTextColor: delta.hasTextColor ? true : context.hasTextColor,
+        textBlend: delta.hasTextBlend ? copy delta.textBlend : (
+            delta.hasTextColor ? .Normal : copy context.textBlend
+        ),
+        typography: delta.hasTypography ? delta.typography : context.typography,
+        hasTypography: delta.hasTypography ? true : (delta.hasFont ? false : context.hasTypography),
+        controlSize: delta.hasControlSize ? delta.controlSize : context.controlSize,
+        hasControlSize: delta.hasControlSize ? true : context.hasControlSize,
+        imageScale: delta.hasImageScale ? delta.imageScale : context.imageScale,
+        hasImageScale: delta.hasImageScale ? true : context.hasImageScale,
+        symbolVariant: delta.hasSymbolVariant ? delta.symbolVariant : context.symbolVariant,
+        hasSymbolVariant: delta.hasSymbolVariant ? true : context.hasSymbolVariant,
+        tint: delta.hasTint ? delta.tint : context.tint,
+        hasTint: delta.hasTint ? true : context.hasTint,
+        containerCornerRadius: delta.containerCornerRadius.or(context.containerCornerRadius),
+        containerGlass: delta.containerGlass.or(context.containerGlass),
+        contentMargin: delta.hasContentMargin ? delta.contentMargin : context.contentMargin,
+        hasContentMargin: delta.hasContentMargin ? true : context.hasContentMargin,
+        fontSize: delta.hasFont ? delta.fontSize : context.fontSize,
+        fontWeight: delta.hasFont ? delta.fontWeight : context.fontWeight,
+        hasFont: delta.hasFont ? true : (delta.hasTypography ? false : context.hasFont),
+        weightOverride: delta.hasWeightOverride ? delta.weightOverride : context.weightOverride,
+        hasWeightOverride: delta.hasWeightOverride ? true : (
+            delta.hasFont ? false : context.hasWeightOverride
+        ),
+        fontDesign: delta.hasFontDesign ? delta.fontDesign : context.fontDesign,
+        textAlignment: delta.hasTextAlignment ? delta.textAlignment : context.textAlignment,
+        lineLimit: delta.hasLineLimit ? delta.lineLimit : context.lineLimit,
+        lineSpacing: delta.hasLineSpacing ? delta.lineSpacing : context.lineSpacing,
+        buttonStyle: delta.hasButtonStyle ? delta.buttonStyle : context.buttonStyle,
+        toggleStyle: delta.hasToggleStyle ? delta.toggleStyle : context.toggleStyle,
+        progressViewStyle: delta.hasProgressViewStyle ? delta.progressViewStyle : context.progressViewStyle,
+        menuStyle: delta.hasMenuStyle ? delta.menuStyle : context.menuStyle,
+        menuIndicator: delta.hasMenuIndicator ? delta.menuIndicator : context.menuIndicator,
+        pickerStyle: delta.hasPickerStyle ? delta.pickerStyle : context.pickerStyle,
+        buttonBorderShape: delta.hasButtonBorderShape ? delta.buttonBorderShape : context.buttonBorderShape,
+        hasOpacity: delta.hasOpacity ? true : context.hasOpacity,
+        opacity: context.opacity * (delta.hasOpacity ? delta.opacity : 1.0),
+        disabled: context.disabled || delta.disabled,
+        focus: delta.hasFocus ? withFocusBinding(context.focus, delta.focus) : context.focus,
+        listStyle: delta.hasListStyle ? delta.listStyle : context.listStyle,
+        tableStyle: delta.hasTableStyle ? delta.tableStyle : context.tableStyle,
+        alternatingRowBackgrounds: delta.hasAlternatingRowBackgrounds ? delta.alternatingRowBackgrounds : context.alternatingRowBackgrounds,
+        tableColumnHeaders: delta.hasTableColumnHeaders ? delta.tableColumnHeaders : context.tableColumnHeaders,
+        labelStyle: delta.hasLabelStyle ? delta.labelStyle : context.labelStyle,
+        labelsHidden: delta.hasLabelsHidden ? delta.labelsHidden : context.labelsHidden,
+        stackAxis: delta.hasStackAxis ? delta.stackAxis : context.stackAxis,
+        textFieldStyle: delta.hasTextFieldStyle ? delta.textFieldStyle : context.textFieldStyle,
+        submit: delta.hasSubmit ? delta.submit : context.submit,
+        // Carried, not defaulted: a `.foregroundColor(...)` inside a menu would
+        // otherwise rebuild the context without it and every control below that
+        // modifier would present itself as though it were not in one.
+        controlPresentation: context.controlPresentation
+    }
+}
+
+// The context something HOISTED is built in.
+//
+// An overlay has left the box it was declared in, so the visual state of that
+// box is no longer its own. Opacity is the one that matters and the one that
+// bites: a menu fading itself out behind an open submenu cascades that fade into
+// every view lowered under it — including the submenu, which is built there and
+// then hoisted away. The card comes out dimmed by the very thing it is supposed
+// to be standing in front of.
+//
+// The theme, the typography and the ink DO carry: an overlay opened from a
+// themed panel is still that panel's overlay, and a popover that lost the font
+// its content was written in would be a worse bug than the one this fixes. What
+// resets is the presenter's own transient state — how faded it currently is —
+// which describes the presenter's box and nothing beyond it.
+public function modifierContextForOverlay(context: borrow ModifierContext) -> ModifierContext {
+    let inherited = modifierContextForChildren(context)
+    return ModifierContext {
+        theme: inherited.theme,
+        hasTheme: inherited.hasTheme,
+        foregroundColor: inherited.foregroundColor,
+        hasForegroundColor: inherited.hasForegroundColor,
+        foregroundIsValue: inherited.foregroundIsValue,
+        material: inherited.material,
+        hasMaterial: inherited.hasMaterial,
+        fillColor: inherited.fillColor,
+        hasFill: inherited.hasFill,
+        hasStroke: inherited.hasStroke,
+        strokeWidth: inherited.strokeWidth,
+        hasStrokeColor: inherited.hasStrokeColor,
+        strokeColor: inherited.strokeColor,
+        backgroundStyle: inherited.backgroundStyle,
+        hasBackgroundStyle: inherited.hasBackgroundStyle,
+        themeBorder: inherited.themeBorder,
+        hasThemeBorder: inherited.hasThemeBorder,
+        textColor: inherited.textColor,
+        hasTextColor: inherited.hasTextColor,
+        textBlend: copy inherited.textBlend,
+        typography: inherited.typography,
+        hasTypography: inherited.hasTypography,
+        controlSize: inherited.controlSize,
+        hasControlSize: inherited.hasControlSize,
+        imageScale: inherited.imageScale,
+        hasImageScale: inherited.hasImageScale,
+        symbolVariant: inherited.symbolVariant,
+        hasSymbolVariant: inherited.hasSymbolVariant,
+        tint: inherited.tint,
+        hasTint: inherited.hasTint,
+        contentMargin: inherited.contentMargin,
+        hasContentMargin: inherited.hasContentMargin,
+        fontSize: inherited.fontSize,
+        fontWeight: inherited.fontWeight,
+        hasFont: inherited.hasFont,
+        weightOverride: inherited.weightOverride,
+        hasWeightOverride: inherited.hasWeightOverride,
+        fontDesign: inherited.fontDesign,
+        textAlignment: inherited.textAlignment,
+        lineLimit: inherited.lineLimit,
+        lineSpacing: inherited.lineSpacing,
+        buttonStyle: inherited.buttonStyle,
+        toggleStyle: inherited.toggleStyle,
+        progressViewStyle: inherited.progressViewStyle,
+        menuStyle: inherited.menuStyle,
+        menuIndicator: inherited.menuIndicator,
+        pickerStyle: inherited.pickerStyle,
+        buttonBorderShape: inherited.buttonBorderShape,
+        // Full strength, whatever the presenter currently is.
+        hasOpacity: false,
+        opacity: 1.0,
+        disabled: inherited.disabled,
+        focus: inherited.focus,
+        listStyle: inherited.listStyle,
+        tableStyle: inherited.tableStyle,
+        alternatingRowBackgrounds: inherited.alternatingRowBackgrounds,
+        tableColumnHeaders: inherited.tableColumnHeaders,
+        labelStyle: inherited.labelStyle,
+        labelsHidden: inherited.labelsHidden,
+        stackAxis: inherited.stackAxis,
+        textFieldStyle: inherited.textFieldStyle,
+        submit: inherited.submit,
+        controlPresentation: inherited.controlPresentation
+    }
+}
+
+// The context a menu's contents are built in. What makes a `Button` inside one
+// present itself as a row, and a `ControlGroup`'s children present themselves as
+// the actions across the top instead. A menu's rows are its own, whatever
+// button style the menu's label is drawn in, as SwiftUI's are.
+public function modifierContextPresenting(
+    context: borrow ModifierContext,
+    presentation: ControlPresentation,
+) -> ModifierContext {
+    let inherited = modifierContextForChildren(context)
+    return ModifierContext {
+        theme: inherited.theme,
+        hasTheme: inherited.hasTheme,
+        foregroundColor: inherited.foregroundColor,
+        hasForegroundColor: inherited.hasForegroundColor,
+        foregroundIsValue: inherited.foregroundIsValue,
+        material: inherited.material,
+        hasMaterial: inherited.hasMaterial,
+        fillColor: inherited.fillColor,
+        hasFill: inherited.hasFill,
+        hasStroke: inherited.hasStroke,
+        strokeWidth: inherited.strokeWidth,
+        hasStrokeColor: inherited.hasStrokeColor,
+        strokeColor: inherited.strokeColor,
+        backgroundStyle: inherited.backgroundStyle,
+        hasBackgroundStyle: inherited.hasBackgroundStyle,
+        themeBorder: inherited.themeBorder,
+        hasThemeBorder: inherited.hasThemeBorder,
+        textColor: inherited.textColor,
+        hasTextColor: inherited.hasTextColor,
+        textBlend: copy inherited.textBlend,
+        typography: inherited.typography,
+        hasTypography: inherited.hasTypography,
+        controlSize: inherited.controlSize,
+        hasControlSize: inherited.hasControlSize,
+        imageScale: inherited.imageScale,
+        hasImageScale: inherited.hasImageScale,
+        symbolVariant: inherited.symbolVariant,
+        hasSymbolVariant: inherited.hasSymbolVariant,
+        tint: inherited.tint,
+        hasTint: inherited.hasTint,
+        contentMargin: inherited.contentMargin,
+        hasContentMargin: inherited.hasContentMargin,
+        fontSize: inherited.fontSize,
+        fontWeight: inherited.fontWeight,
+        hasFont: inherited.hasFont,
+        weightOverride: inherited.weightOverride,
+        hasWeightOverride: inherited.hasWeightOverride,
+        fontDesign: inherited.fontDesign,
+        textAlignment: inherited.textAlignment,
+        lineLimit: inherited.lineLimit,
+        lineSpacing: inherited.lineSpacing,
+        buttonStyle: presentation == .MenuRow ? ButtonStyle.Automatic : inherited.buttonStyle,
+        toggleStyle: inherited.toggleStyle,
+        progressViewStyle: inherited.progressViewStyle,
+        menuStyle: inherited.menuStyle,
+        menuIndicator: inherited.menuIndicator,
+        pickerStyle: inherited.pickerStyle,
+        buttonBorderShape: inherited.buttonBorderShape,
+        hasOpacity: inherited.hasOpacity,
+        opacity: inherited.opacity,
+        disabled: inherited.disabled,
+        focus: inherited.focus,
+        listStyle: inherited.listStyle,
+        tableStyle: inherited.tableStyle,
+        alternatingRowBackgrounds: inherited.alternatingRowBackgrounds,
+        tableColumnHeaders: inherited.tableColumnHeaders,
+        labelStyle: inherited.labelStyle,
+        labelsHidden: inherited.labelsHidden,
+        stackAxis: inherited.stackAxis,
+        textFieldStyle: inherited.textFieldStyle,
+        submit: inherited.submit,
+        controlPresentation: presentation
+    }
+}
+
+// The context a container's content is built in: a container drawn with
+// `radius` corners is what a concentric shape inside it follows.
+public function modifierContextContained(
+    context: borrow ModifierContext,
+    radius: Number,
+    glass: Glass? = .None,
+) -> ModifierContext {
+    var delta = modifierDeltaContainerCornerRadius(radius)
+    delta.containerGlass = move glass
+    return modifierContextApply(modifierContextForChildren(context), move delta)
+}
+
+// The context content held `length` off its edges is built in. Its concentric
+// corner is the container's less that length, as AppKit's
+// `_NSConcentricCornerRadius` takes the container's radius less the corner's
+// distance from the container's, and never below a square.
+public function modifierContextInset(
+    context: borrow ModifierContext,
+    length: Number,
+) -> ModifierContext {
+    return modifierContextApply(
+        modifierContextForChildren(context),
+        modifierDeltaContainerCornerRadius(max(context.containerCornerRadius - length, 0.0))
+    )
+}
+
+public function modifierContextForChildren(context: borrow ModifierContext) -> ModifierContext {
+    return ModifierContext {
+        theme: context.theme,
+        hasTheme: context.hasTheme,
+        foregroundColor: context.foregroundColor,
+        hasForegroundColor: context.hasForegroundColor,
+        foregroundIsValue: context.foregroundIsValue,
+        material: .Flat,
+        hasMaterial: false,
+        fillColor: RGBAColor {},
+        hasFill: false,
+        hasStroke: false,
+        strokeWidth: 1.0,
+        hasStrokeColor: false,
+        strokeColor: RGBAColor {},
+        backgroundStyle: .Surface,
+        hasBackgroundStyle: false,
+        themeBorder: .Subtle,
+        hasThemeBorder: false,
+        // Text ink flows to everything under it, as SwiftUI's foreground
+        // style does: a label's glyph and title are inked as the label is.
+        textColor: context.textColor,
+        hasTextColor: context.hasTextColor,
+        textBlend: copy context.textBlend,
+        typography: context.typography,
+        hasTypography: context.hasTypography,
+        controlSize: context.controlSize,
+        hasControlSize: context.hasControlSize,
+        imageScale: context.imageScale,
+        hasImageScale: context.hasImageScale,
+        symbolVariant: context.symbolVariant,
+        hasSymbolVariant: context.hasSymbolVariant,
+        tint: context.tint,
+        hasTint: context.hasTint,
+        containerCornerRadius: context.containerCornerRadius,
+        containerGlass: copy context.containerGlass,
+        contentMargin: context.contentMargin,
+        hasContentMargin: context.hasContentMargin,
+        fontSize: context.fontSize,
+        fontWeight: context.fontWeight,
+        hasFont: context.hasFont,
+        weightOverride: context.weightOverride,
+        hasWeightOverride: context.hasWeightOverride,
+        fontDesign: context.fontDesign,
+        textAlignment: context.textAlignment,
+        lineLimit: context.lineLimit,
+        lineSpacing: context.lineSpacing,
+        buttonStyle: context.buttonStyle,
+        toggleStyle: context.toggleStyle,
+        progressViewStyle: context.progressViewStyle,
+        menuStyle: context.menuStyle,
+        menuIndicator: context.menuIndicator,
+        pickerStyle: context.pickerStyle,
+        buttonBorderShape: context.buttonBorderShape,
+        hasOpacity: context.hasOpacity,
+        opacity: context.opacity,
+        disabled: context.disabled,
+        focus: [],
+        listStyle: context.listStyle,
+        tableStyle: context.tableStyle,
+        alternatingRowBackgrounds: context.alternatingRowBackgrounds,
+        tableColumnHeaders: context.tableColumnHeaders,
+        labelStyle: context.labelStyle,
+        labelsHidden: context.labelsHidden,
+        stackAxis: context.stackAxis,
+        textFieldStyle: context.textFieldStyle,
+        submit: context.submit,
+        controlPresentation: context.controlPresentation
+    }
+}
+
+// A component such as Button renders its label as part of the receiving widget.
+// The cascading foreground and explicit text color remain available to that
+// local presentation, while material and focus remain isolated from the
+// internal label node.
+public function modifierContextForPresentation(context: borrow ModifierContext) -> ModifierContext {
+    return ModifierContext {
+        theme: context.theme,
+        hasTheme: context.hasTheme,
+        foregroundColor: context.foregroundColor,
+        hasForegroundColor: context.hasForegroundColor,
+        foregroundIsValue: context.foregroundIsValue,
+        material: .Flat,
+        hasMaterial: false,
+        fillColor: context.fillColor,
+        hasFill: context.hasFill,
+        hasStroke: context.hasStroke,
+        strokeWidth: context.strokeWidth,
+        hasStrokeColor: context.hasStrokeColor,
+        strokeColor: context.strokeColor,
+        backgroundStyle: .Surface,
+        hasBackgroundStyle: false,
+        themeBorder: .Subtle,
+        hasThemeBorder: false,
+        textColor: context.textColor,
+        hasTextColor: context.hasTextColor,
+        textBlend: copy context.textBlend,
+        typography: context.typography,
+        hasTypography: context.hasTypography,
+        controlSize: context.controlSize,
+        hasControlSize: context.hasControlSize,
+        imageScale: context.imageScale,
+        hasImageScale: context.hasImageScale,
+        symbolVariant: context.symbolVariant,
+        hasSymbolVariant: context.hasSymbolVariant,
+        tint: context.tint,
+        hasTint: context.hasTint,
+        containerCornerRadius: context.containerCornerRadius,
+        containerGlass: copy context.containerGlass,
+        contentMargin: context.contentMargin,
+        hasContentMargin: context.hasContentMargin,
+        fontSize: context.fontSize,
+        fontWeight: context.fontWeight,
+        hasFont: context.hasFont,
+        weightOverride: context.weightOverride,
+        hasWeightOverride: context.hasWeightOverride,
+        fontDesign: context.fontDesign,
+        textAlignment: context.textAlignment,
+        lineLimit: context.lineLimit,
+        lineSpacing: context.lineSpacing,
+        buttonStyle: context.buttonStyle,
+        toggleStyle: context.toggleStyle,
+        progressViewStyle: context.progressViewStyle,
+        menuStyle: context.menuStyle,
+        menuIndicator: context.menuIndicator,
+        pickerStyle: context.pickerStyle,
+        buttonBorderShape: context.buttonBorderShape,
+        hasOpacity: context.hasOpacity,
+        opacity: context.opacity,
+        disabled: context.disabled,
+        focus: [],
+        listStyle: context.listStyle,
+        tableStyle: context.tableStyle,
+        alternatingRowBackgrounds: context.alternatingRowBackgrounds,
+        tableColumnHeaders: context.tableColumnHeaders,
+        labelStyle: context.labelStyle,
+        labelsHidden: context.labelsHidden,
+        stackAxis: context.stackAxis,
+        textFieldStyle: context.textFieldStyle,
+        submit: context.submit,
+        controlPresentation: context.controlPresentation
+    }
+}
+
+// The modifiers in effect at an interface's root, before any view sets one:
+// what a host describes and paints the root with.
+public function rootModifierContext() -> ModifierContext {
+    return ModifierContext {}
+}

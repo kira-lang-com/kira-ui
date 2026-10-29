@@ -1,0 +1,54 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// SwiftUI's `Menu { … } label: { … }`, and the inline picker a menu holds.
+
+// An inline picker sets every option in place, each one press away, with the
+// chosen one selected and the rest not.
+@Test
+function inlinePickerSetsItsOptionsInPlace() {
+    var chosen = "Sleep"
+    let elements = accessibilityElementsOf(
+        Picker(
+            title: "Focus",
+            selection: Binding<String> {
+                get: { in
+                    return chosen
+                },
+                set: { value in
+                    chosen = value
+                }
+            }
+        ) {
+            Text(content: "Do Not Disturb").tag("Do Not Disturb")
+            Text(content: "Sleep").tag("Sleep")
+            Text(content: "Work").tag("Work")
+        }.pickerStyle(.Inline)
+    )
+    expect!((elements.count) == (3))
+    expect!((elements[0].label) == ("Do Not Disturb"))
+    expect!((elements[1].label) == ("Sleep"))
+    expect!((elements[2].label) == ("Work"))
+    expect!((elements[0].traits.contains(AccessibilityTraits.isSelected)) == (false))
+    expect!((elements[1].traits.contains(AccessibilityTraits.isSelected)) == (true))
+    expect!((elements[2].traits.contains(AccessibilityTraits.isSelected)) == (false))
+    let activated = elements[2].activate()
+    expect!((activated) == (true))
+    expect!((chosen) == ("Work"))
+}
+
+// A menu written with a label is that view, one menu button named by it.
+@Test
+function aMenuIsTheLabelItIsWrittenWith() {
+    let elements = accessibilityElementsOf(
+        Menu {
+            Button(title: "Sleep", action: { in })
+        } label: {
+            Text(content: "Focus")
+        }
+    )
+    expect!((elements.count) == (1))
+    expect!((elements[0].role) == (AccessibilityRole.MenuButton))
+    expect!((elements[0].label) == ("Focus"))
+}

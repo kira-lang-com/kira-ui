@@ -1,0 +1,56 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// Text's line breaks, `.lineLimit(_:)` and `.lineSpacing(_:)`, as SwiftUI's.
+
+function laidOutTextTree(root: Any Widget, width: Number) -> CALayerDescription {
+    var described = describedLayer(move root)
+    layOutLayerTree(described, width, 300.0)
+    return described
+}
+
+// A line break starts a line, so two words split by one stand on two lines.
+@Test
+function aLineBreakStartsALine() {
+    let one = laidOutTextTree(Text(content: "Reduce"), 400.0)
+    let two = laidOutTextTree(Text(content: "Reduce\nInterruptions"), 400.0)
+    expect!((one.size.height > 0.0) == (true))
+    expect!((two.size.height) == (one.size.height * 2))
+}
+
+// Limited to a line, a run too wide for its box stands on one line, which
+// ends in an ellipsis.
+@Test
+function aLineLimitCutsTheTail() {
+    let one = laidOutTextTree(Text(content: "Dazzling"), 60.0)
+    let cut = laidOutTextTree(
+        Text(content: "Dazzling Stars over the Shimmering Voyage").lineLimit(1).frame(
+            width: 60.0,
+            height: 100.0
+        ),
+        400.0
+    )
+    let lines = foundationTextLines(
+        "Dazzling Stars over the Shimmering Voyage",
+        15.0,
+        400.0,
+        60.0,
+        .Default,
+        1
+    )
+    let tail = foundationStringToCodepoints(lines[0])
+    expect!((lines.count) == (1))
+    expect!((tail[tail.count - 1]) == (8230))
+    expect!((innermostLayer(cut).size.height) == (one.size.height))
+}
+
+// Room between lines adds to the run's height once per gap.
+@Test
+function aLineSpacingSpacesTheLines() {
+    let tight = laidOutTextTree(Text(content: "A\nB\nC"), 400.0)
+    let spaced = laidOutTextTree(Text(content: "A\nB\nC").lineSpacing(4.0), 400.0)
+    expect!((tight.size.height > 0.0) == (true))
+    expect!((innermostLayer(spaced).size.height > tight.size.height) == (true))
+    expect!((innermostLayer(spaced).size.height - tight.size.height) == (8))
+}

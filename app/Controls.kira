@@ -1,0 +1,630 @@
+import Ember
+import Foundation
+import KiraLayout
+import KCoreAnimation
+
+// Value controls: Toggle and Slider.
+//
+// Both are drawn the way the platform draws them, at the catalog's sizes: a
+// switch is green when on and a gray wash when off, a slider fills with the
+// accent up to a white knob. `.tint(...)` retints the active side of either.
+// State lives with the caller — the control renders `isOn` / `value` and
+// reports interaction; the runner's per-frame rebuild shows the write on the
+// next frame.
+
+public function noopFloat(value: Number) {}
+
+public function noopBool(value: Bool) {}
+
+public function controlClamp01(value: Number) -> Number {
+    if value < 0.0 {
+        return 0.0
+    }
+    if value > 1.0 {
+        return 1.0
+    }
+    return value
+}
+
+// The active-side color: the cascading `.tint(...)` when one is set, the theme's
+// accent otherwise. Slider's filled segment and Progress's bar.
+//
+// It reads the TINT and not the foreground on purpose. A row that dims its label
+// while its property is switched off states that with a foreground, and the
+// switch that turns the property back on has to stay accented while it does —
+// the two are different decisions and were the same value for as long as this
+// read `foregroundColor`.
+public function controlActiveColor(modifiers: borrow ModifierContext) -> FoundationColor {
+    if modifiers.hasTint {
+        return modifierPrimaryColor(modifiers.tint, modifiers)
+    }
+    return foundationColor(modifierTokens(modifiers).tint.accent)
+}
+
+// A white capsule knob, as a switch and a slider both carry.
+public function controlKnobDescription(
+    width: Number,
+    height: Number,
+    modifiers: borrow ModifierContext
+) -> CALayerDescription {
+    let radius = min(width, height) / 2.0
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedWidth: width,
+            fixedHeight: height
+        },
+        cornerRadius: radius,
+        content: .Solid(
+            CASolid {
+                fill: colorFromFoundation(
+                    modifierColor(
+                        foundationColor(
+                            themeAdaptiveColor(controlKnob, modifierAppearance(modifiers))
+                        ),
+                        modifiers
+                    )
+                ),
+                cornerRadius: radius
+            }
+        )
+    }
+}
+
+// How opaque a switch or slider stands: the catalog's disabled opacity while it
+// is disabled, fully otherwise. The control fades as one picture, so its knob
+// still hides the track under it.
+public function controlOpacity(modifiers: borrow ModifierContext) -> Number {
+    if modifiers.disabled {
+        return disabledControlOpacity()
+    }
+    return 1.0
+}
+
+// A switch's or a slider's knob as it rests: a white capsule under the two
+// shadows AppKit casts under both. A layer casts one, so the soft shadow is
+// cast by a holder of the knob's own shape and the tight one by the knob.
+public function restingKnobDescription(
+    width: Number,
+    height: Number,
+    modifiers: borrow ModifierContext
+) -> CALayerDescription {
+    let metrics = sliderMetrics(modifiers.controlSize)
+    let ink = colorFromFoundation(
+        modifierColor(
+            foundationColor(themeAdaptiveColor(knobShadow, modifierAppearance(modifiers))),
+            modifiers
+        )
+    )
+    var knob = controlKnobDescription(width, height, modifiers)
+    knob.disablesActions = true
+    knob.shadow = CAShadow {
+        color: ink,
+        radius: metrics.knobContactShadowRadius,
+        offset: Point { x: 0.0, y: metrics.knobContactShadowOffset }
+    }
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedWidth: width,
+            fixedHeight: height,
+            alignment: Point { x: 0.5, y: 0.5 }
+        },
+        disablesActions: true,
+        cornerRadius: height / 2.0,
+        shadow: CAShadow {
+            color: ink,
+            radius: metrics.knobShadowRadius,
+            offset: Point { x: 0.0, y: metrics.knobShadowOffset }
+        },
+        sublayers: [knob]
+    }
+}
+
+// How a slider's knob is moving: lifted into glass while it is held, and
+// stretched along the track by how fast it is dragged.
+public struct SliderKnob {
+    var lift: MotionSpringState = MotionSpringState {}
+    var lifted: Number = 0.0
+    var held: Bool = false
+    var lastX: Number = 0.0
+    var stretch: Number = 0.0
+}
+
+public function sliderKnobSlotKey(key: Number) -> ViewStateKey {
+    return slotKey("kiraui.slider.", key)
+}
+
+// A toggle: a title and the switch or checkbox that sets it. It is its own
+// press, as SwiftUI's is: tapped, it hands `onChange` the value it flips to,
+// for the caller to store.
+//
+//     Toggle(title: "Wi-Fi", isOn: $wifi)
+//
+// Its title stands where the platform puts it. A checkbox's trails the box and
+// takes the press with it, as a Mac's does. A switch's leads it: across the
+// whole row on a phone, beside it on a Mac, and in the label's column of a
+// grouped form. Left untitled the toggle is the control alone, for a row that
+// names it itself.
+//
+// Handed a binding, `Toggle(isOn: $isOn)`, it reads the value through it and
+// writes the one it flips to back, as SwiftUI's does. Its title may be a view
+// of its own:
+//
+//     Toggle(isOn: wifi, onChange: { on in
+//         wifi = on
+//     }) {
+//         Text("Wi-Fi")
+//     }
+//
+// Under `.labelsHidden()` it is the control alone, whatever its title. How
+// it is drawn is its style's (`.toggleStyle(_:)`, ToggleStyle.kira).
+public construct Toggle(
+    title: String = "",
+    isOn: Bool,
+    onChange: (Bool) -> Void = noopBool,
+) extends Widget {
+    let label: some Widget = EmptyView()
+
+    // SwiftUI's `Toggle(isOn:label:)`: the binding's toggle, titled by a
+    // view of its own.
+    init(isOn: Binding<Bool>, label: some Widget = EmptyView()) {
+        let written = copy isOn
+        return Toggle(
+            title: "",
+            isOn: isOn.get(),
+            onChange: { value in
+                written.set(value)
+            }
+        ) {
+            label
+        }
+    }
+
+    init(title: String, isOn: Binding<Bool>) {
+        let written = copy isOn
+        return Toggle(
+            title: title,
+            isOn: isOn.get(),
+            onChange: { value in
+                written.set(value)
+            }
+        )
+    }
+
+    // The title as a view: the one written for it, its text, or nothing.
+    function titleView() -> Any Widget {
+        if title.count == 0 {
+            return label
+        }
+        return LabelPart(fallback: Text(content: title)) { label }
+    }
+
+    // One element, standing for the toggle and its title, that reads on or
+    // off and flips, whatever its style draws.
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let on = isOn
+        let change = onChange
+        let configuration = ToggleStyleConfiguration {
+            label: self.titleView(),
+            isOn: Binding<Bool> {
+                get: { in
+                    return on
+                },
+                set: { value in
+                    change(value)
+                }
+            }
+        }
+        var described = modifiers.toggleStyle.makeBody(configuration).describe(context, modifiers)
+        var node = accessibilityPressable(
+            toggleRoleIn(described),
+            toggleFlipFn(isOn, onChange),
+            modifiers
+        )
+        node.value = isOn ? AccessibilityToggleValue.on : AccessibilityToggleValue.off
+        node.traits = node.traits.union(AccessibilityTraits.isToggle)
+        described.accessibilityCombined(move node)
+        return described
+    }
+}
+
+// What a toggle a style drew is to assistive technology: the checkbox a
+// platform style says it drew, and otherwise a switch, as SwiftUI reads a
+// toggle a style of an application's draws.
+function toggleRoleIn(described: borrow CALayerDescription) -> AccessibilityRole {
+    for key in described.accessibilityElementsWithin() {
+        if accessibilityNode(key).role == .CheckBox {
+            return .CheckBox
+        }
+    }
+    return .Switch
+}
+
+// The value a toggle reads, as UIKit's switch states it.
+public namespace AccessibilityToggleValue {
+    let on: String = "1"
+    let off: String = "0"
+}
+
+// A checkbox and its title as one press: the box, then the title the size's
+// spacing past it, the pair answering a click anywhere on it.
+function checkboxDescription(
+    titled: Bool,
+    title: Any Widget,
+    isOn: Bool,
+    onChange: (Bool) -> Void,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext
+) -> CALayerDescription {
+    let k = tapSeqKey()
+    layerActionRegister(k, toggleFlipFn(isOn, move onChange))
+    let metrics = checkboxMetrics(modifiers.controlSize)
+    let titled = HStack(spacing: .Length(metrics.spacing), alignment: .Center) {
+        ToggleCheckbox(isOn: isOn)
+
+        if titled {
+            title
+        }
+    }
+    .hugWidth()
+    var described = titled.describe(context, modifiers)
+    described.hittable = !modifiers.disabled
+    described.hitKey = k
+    return described
+}
+
+// A Mac's checkbox: a rounded box in the gray wash when off, and in the accent
+// under a white checkmark when on.
+construct ToggleCheckbox(isOn: Bool) extends Widget {
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let metrics = checkboxMetrics(modifiers.controlSize)
+        var fill = foundationColor(themeAdaptiveColor(switchOff, modifierAppearance(modifiers)))
+        var marks: [CALayerDescription] = []
+        if isOn {
+            fill = controlActiveColor(modifiers)
+            let checkmark = Icon(symbol: .Checkmark)
+            .font(size: resolvedLength(metrics.checkmarkSize), weight: .Bold)
+            .foregroundColor(.White)
+            marks.append(checkmark.describe(context, modifiers))
+        }
+        return CALayerDescription {
+            layout: CALayoutIntent {
+                axis: .None,
+                widthFill: false,
+                heightFill: false,
+                fixedWidth: metrics.size,
+                fixedHeight: metrics.size,
+                alignment: Point { x: 0.5, y: 0.5 }
+            },
+            opacity: controlOpacity(modifiers),
+            allowsGroupOpacity: true,
+            cornerRadius: metrics.cornerRadius,
+            content: .Solid(
+                CASolid {
+                    fill: colorFromFoundation(modifierColor(move fill, modifiers)),
+                    cornerRadius: metrics.cornerRadius,
+                    shapeKind: 1
+                }
+            ),
+            sublayers: move marks
+        }
+    }
+}
+
+// A switch: a capsule track with the knob held at its leading end when off and
+// its trailing end when on. Tapped, it lights nothing, since a switch answers
+// by moving. The knob slides between its ends because it is the same layer in
+// a new place.
+//
+// It is drawn at the control size in effect. In a grouped row on a Mac it is
+// the mini switch, as a grouped `Form` draws one there.
+construct ToggleSwitch(isOn: Bool, onChange: (Bool) -> Void) extends Widget {
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let k = tapSeqKey()
+        layerActionRegister(k, toggleFlipFn(isOn, onChange))
+        let metrics = switchMetrics(toggleControlSize(modifiers))
+        let height = metrics.height
+        let inset = metrics.knobInset
+        let radius = height / 2.0
+        let knob = restingKnobDescription(metrics.knobWidth, height - inset * 2.0, modifiers)
+        return CALayerDescription {
+            hittable: !modifiers.disabled,
+            hitKey: k,
+            layout: CALayoutIntent {
+                widthFill: false,
+                heightFill: false,
+                fixedWidth: metrics.width,
+                fixedHeight: height,
+                paddingLeading: inset,
+                paddingTrailing: inset,
+                alignment: Point { x: isOn ? 1.0 : 0.0, y: 0.5 }
+            },
+            opacity: controlOpacity(modifiers),
+            allowsGroupOpacity: true,
+            cornerRadius: radius,
+            content: .Solid(
+                CASolid {
+                    fill: colorFromFoundation(
+                        modifierColor(toggleTrackColor(isOn, modifiers), modifiers)
+                    ),
+                    cornerRadius: radius,
+                    shapeKind: 1
+                }
+            ),
+            sublayers: [knob]
+        }
+    }
+}
+
+// The size a switch is drawn at: the mini one in a grouped row on a Mac, and
+// the size in effect anywhere else.
+public function toggleControlSize(modifiers: borrow ModifierContext) -> ControlSize {
+    if modifiers.controlPresentation == .InsetGrouped && interfaceMode() == .AdaptiveDesktop {
+        return .Mini
+    }
+    return modifiers.controlSize
+}
+
+// What tapping a switch does: hand on the value it flips to.
+public function toggleFlipFn(isOn: Bool, onChange: (Bool) -> Void) -> () -> Void {
+    let change = onChange
+    let flipped = !isOn
+    let press: () -> Void = { in
+        change(flipped)
+        return
+    }
+    return press
+}
+
+// A switch's track: the tint when one is set and the switch is on, the
+// platform's on color otherwise, and the gray wash when off. A phone's switch
+// is on in green; a Mac's, like its other controls, in the accent.
+public function toggleTrackColor(isOn: Bool, modifiers: borrow ModifierContext) -> FoundationColor {
+    let appearance = modifierAppearance(modifiers)
+    if !isOn {
+        return foundationColor(themeAdaptiveColor(switchOff, appearance))
+    }
+    if modifiers.hasTint || interfaceMode() == .AdaptiveDesktop {
+        return controlActiveColor(modifiers)
+    }
+    return foundationColor(themeAdaptiveColor(switchOn, appearance))
+}
+
+// A horizontal slider over 0...1: a thin track filled with the tint up to the
+// value, under a knob that rides it. It runs `width` long, or across whatever
+// it is offered when that is zero — in a row, the room the row has left.
+//
+// The slider is an interactive surface, so while it is held the runner hands it
+// the pointer in its own coordinates: the knob follows the pointer at once and
+// `onChange` receives the clamped value for the caller to store.
+public construct Slider(
+    value: Number,
+    width: Number = 0.0,
+    onChange: (Number) -> Void = noopFloat,
+) extends Widget {
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let k = tapSeqKey()
+        let metrics = sliderMetrics(modifiers.controlSize)
+        let inset = metrics.knobInset
+        let held = context.heldKey == k
+        var shown = controlClamp01(value)
+        if held && context.heldSize.width > inset * 2.0 {
+            shown = controlClamp01(
+                (context.heldPoint.x - inset) / (context.heldSize.width - inset * 2.0)
+            )
+            if shown != value {
+                let change = onChange
+                change(shown)
+            }
+        }
+
+        // The fill runs from the track's start to the knob's center, which
+        // travels the track less an inset at either end: the inset is its
+        // basis, and the value its share of the rest.
+        let trackRadius = metrics.trackHeight / 2.0
+        let filledShare = trunc(shown * 1000.0 + 0.5)
+        let track = CALayerDescription {
+            layout: CALayoutIntent {
+                axis: .Row,
+                heightFill: false,
+                fixedHeight: metrics.trackHeight
+            },
+            cornerRadius: trackRadius,
+            content: .Solid(
+                CASolid {
+                    fill: colorFromFoundation(
+                        modifierColor(
+                            foundationColor(
+                                themeAdaptiveColor(sliderTrack, modifierAppearance(modifiers))
+                            ),
+                            modifiers
+                        )
+                    ),
+                    cornerRadius: trackRadius
+                }
+            ),
+            sublayers: [CALayerDescription {
+                layout: CALayoutIntent { minWidth: inset, flex: filledShare },
+                cornerRadius: trackRadius,
+                content: .Solid(
+                    CASolid {
+                        fill: colorFromFoundation(
+                            modifierColor(controlActiveColor(modifiers), modifiers)
+                        ),
+                        cornerRadius: trackRadius
+                    }
+                )
+            }, CALayerDescription {
+                layout: CALayoutIntent { minWidth: inset, flex: 1000 - filledShare }
+            }]
+        }
+
+        // The knob rides a point with no size, as the kit lays it out, and
+        // stands centered on it.
+        let lane = CALayerDescription {
+            layout: CALayoutIntent {
+                paddingLeading: inset,
+                paddingTrailing: inset,
+                alignment: Point { x: shown, y: 0.5 }
+            },
+            sublayers: [CALayerDescription {
+                layout: CALayoutIntent {
+                    widthFill: false,
+                    heightFill: false,
+                    fixedWidth: 0.0,
+                    fixedHeight: 0.0,
+                    alignment: Point { x: 0.5, y: 0.5 }
+                },
+                sublayers: sliderKnobLayers(context, k, held, modifiers)
+            }]
+        }
+        var described = CALayerDescription {
+            layout: CALayoutIntent {
+                widthFill: width <= 0.0,
+                heightFill: false,
+                fixedWidth: width > 0.0 ? width : -1.0,
+                fixedHeight: metrics.height,
+                expandsWidth: width <= 0.0,
+                alignment: Point { x: 0.0, y: 0.5 }
+            },
+            opacity: controlOpacity(modifiers),
+            allowsGroupOpacity: true,
+            hittable: !modifiers.disabled,
+            interactive: !modifiers.disabled,
+            hitKey: k,
+            sublayers: [track, lane]
+        }
+        described.accessibilityElementOf(sliderAccessibility(shown, onChange, modifiers))
+        return described
+    }
+}
+
+namespace SliderAccessibility {
+    // How far one swipe moves a slider: a tenth of its range, as UIKit's does.
+    let step: Number = 0.1
+}
+
+// A slider to assistive technology: its value as a share of its range, and a
+// swipe up or down moving it a step.
+function sliderAccessibility(
+    value: Number,
+    onChange: (Number) -> Void,
+    modifiers: borrow ModifierContext
+) -> AccessibilityNode {
+    if modifiers.disabled {
+        return AccessibilityNode { role: .Slider, value: percentText(value), isEnabled: false }
+    }
+    let change = onChange
+    return AccessibilityNode {
+        role: .Slider,
+        value: percentText(value),
+        adjustable: true,
+        adjust: { direction in
+            match direction {
+                Increment -> change(controlClamp01(value + SliderAccessibility.step))
+                Decrement -> change(controlClamp01(value - SliderAccessibility.step))
+            }
+        }
+    }
+}
+
+// A share of a whole as VoiceOver reads it: `0.5` is "50%".
+public function percentText(share: Number) -> String {
+    return "\(round(share * 100))%"
+}
+
+// The knob as it stands this frame. At rest it is the white capsule. Held, it
+// swells into a larger piece of clear glass the track shows through, and
+// dragged fast it stretches along the track and thins; let go, it springs
+// back into the capsule.
+public function sliderKnobLayers(
+    context: borrow BuildContext,
+    key: Number,
+    held: Bool,
+    modifiers: borrow ModifierContext
+) -> [CALayerDescription] {
+    let metrics = sliderMetrics(modifiers.controlSize)
+    let slot = sliderKnobSlotKey(key)
+    if !ambientStateHasView(slot) {
+        ambientStatePutView(copy slot, nativeUserData(nativeState(SliderKnob {})))
+    }
+    var knob = nativeRecover<SliderKnob>(ambientStateGetView(slot))
+    let delta = clockDelta()
+    let x = context.heldPoint.x
+    if held != knob.held {
+        let curve = motionCurveFor(.Snappy, held ? 1.0 : 0.0, prefersReducedMotion())
+        knob.lift = motionSpringStart(move curve, knob.lifted, 0.0)
+        knob.held = held
+        knob.lastX = x
+    }
+    let sample = motionSpringAdvance(knob.lift, delta)
+    knob.lifted = sample.value
+    var speed: Number = 0.0
+    if held && delta > 0.0 {
+        speed = abs(x - knob.lastX) / delta
+    }
+    knob.lastX = x
+    let reach = prefersReducedMotion() ? 0.0 : min(speed / 2000.0, 1.0) * 0.12
+    knob.stretch = knob.stretch + (reach - knob.stretch) * min(delta * 12.0, 1.0)
+    let settled = motionSpringSettled(knob.lift, sample, MotionSpringLimit.epsilon)
+    if !settled || knob.stretch > 0.001 {
+        clockStillMoving()
+    }
+
+    let t = knob.lifted
+    let width = (metrics.knobWidth + (metrics.heldKnobWidth - metrics.knobWidth) * t) * (
+        1.0 + knob.stretch
+    )
+    let height = (metrics.knobHeight + (metrics.heldKnobHeight - metrics.knobHeight) * t) * (
+        1.0 - knob.stretch * 0.6
+    )
+    var resting = restingKnobDescription(width, height, modifiers)
+    resting.opacity = clamp01(1.0 - t)
+    var layers = [resting]
+    if t > 0.001 {
+        var glass = liquidGlassDescription(
+            CALayoutIntent {
+                widthFill: false,
+                heightFill: false,
+                fixedWidth: width,
+                fixedHeight: height,
+                alignment: Point { x: 0.5, y: 0.5 }
+            },
+            height / 2.0,
+            .Capsule,
+            modifiers,
+            [],
+            .Clear
+        )
+        var lens = liquidGlassContent(.Capsule, modifiers, .Clear)
+        lens.tint = colorFromFoundation(
+            modifierColor(
+                foundationColor(themeAdaptiveColor(sliderKnobGlass, modifierAppearance(modifiers))),
+                modifiers
+            )
+        )
+        glass.content = .Glass(move lens)
+        glass.opacity = clamp01(t)
+        glass.disablesActions = true
+        layers.append(glass)
+    }
+    return layers
+}

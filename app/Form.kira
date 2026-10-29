@@ -1,0 +1,410 @@
+import Foundation
+import Ember
+import KiraLayout
+import KCoreAnimation
+
+// Forms: the inspector vocabulary.
+//
+// A property panel is a column of sections, each a card of rows, each row a
+// label against the control that edits it. SwiftUI spells that `Form`, `Section`
+// and `LabeledContent`, and the reason it does is that the geometry — the row's
+// height, the column its label starts in, the width of the field on the right —
+// is the FORM's decision, not the caller's. Written by hand it is a stack of
+// literals per row, and every panel drifts from the one beside it.
+//
+//     Form {
+//         Section {
+//             LabeledContent(label = "Blur", symbol = .Drop) {
+//                 Toggle(isOn = blurOn, onChange = setBlur)
+//                 ValueField(text = "50", unit = "%").onScrub(scrubBlur)
+//             }
+//
+//             LabeledContent(label = "Dark") {
+//                 Picker(options = ["Inside"], selection = 0)
+//             }
+//             .disabled(true)
+//         } header: {
+//             Text("Liquid Glass")
+//         }
+//     }
+//     .controlSize(.Small)
+//
+// Nothing there is a length.
+
+// --- Form --------------------------------------------------------------------
+
+// The sections of a form, which on iPad is a list in the inset grouped style:
+// each section a header over a card of rows over a footer, down one readable
+// column on the grouped canvas, scrolling as one.
+public construct Form() extends Widget {
+    let children: [some Widget]
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let list = ScrollView() {
+            InsetGroupedList() {
+                For(section in children) {
+                    section
+                }
+            }
+        }
+        // The grouped canvas runs to the bottom of the form's frame, below
+        // the last section too, as a Settings page's does.
+        var layer = list.describe(context, modifiers)
+        let canvas = themeAdaptiveColor(groupedBackground(), modifierAppearance(modifiers))
+        layer.content = .Solid(
+            CASolid {
+                fill: colorFromFoundation(modifierColor(foundationColor(move canvas), modifiers))
+            }
+        )
+        return layer
+    }
+}
+
+// --- Rows --------------------------------------------------------------------
+
+// One row of a form: a label on the left, the controls that edit it on the
+// right.
+//
+// `active` is whether the property the row names is currently doing anything — a
+// switched-off effect, an appearance that is not the one being edited. It dims
+// the row's LABEL and GLYPH and nothing else, which is the distinction the ink
+// actually carries: the switch that turns the property back on has to stay
+// legible and accented while the property is off.
+//
+// A row whose value is text names it, as SwiftUI's does:
+//
+//     LabeledContent(label: "Version", value: "2.7.2")
+public construct LabeledContent(
+    label: String = "",
+    symbol: Symbol = .None,
+    active: Bool = true,
+    spacing: Spacing = .Small,
+) extends Widget {
+    let children: [some Widget]
+
+    init(label: String, value: String) {
+        return LabeledContent(label: label) {
+            Text(content: value)
+            .foregroundColor(.Secondary)
+        }
+    }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let row = LabeledRow(
+            title: Label(title: label, systemImage: symbol).foregroundColor(rowLabelInk(active)),
+            spacing: spacing
+        ) {
+            For(control in children) {
+                control
+            }
+        }
+        return row.describe(context, modifiers)
+    }
+}
+
+// A row of `LabeledContent`'s shape with any view for its title, as a
+// toggle's label is in a grouped form.
+construct LabeledRow(title: Any Widget, spacing: Spacing = .Small) extends Widget {
+    let children: [some Widget]
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        // In a grouped list what the row holds on the right is its value, in
+        // the secondary ink. A button there keeps its accent, as a Settings
+        // row's does: it is an action, not the value.
+        if modifiers.controlPresentation == .InsetGrouped {
+            // On a Mac the row is two columns, the label's and the value's,
+            // and a field or a slider runs across the value's with its text
+            // set against the row's end, as a grouped `Form` lays it out
+            // there. On an iPad the value trails the label.
+            if interfaceMode() == .AdaptiveDesktop {
+                return labeledColumns(
+                    title.describe(context, modifiers),
+                    labeledValueColumn(children, spacing, context, modifiers)
+                )
+            }
+            let groupedRow = HStack(
+                spacing: .Length(listMetrics().accessorySpacing),
+                alignment: .Center
+            ) {
+                title
+
+                Spacer()
+
+                LabeledValue() {
+                    HStack(spacing: spacing, alignment: .Center) {
+                        For(control in children) {
+                            control
+                        }
+                    }
+                    .hugWidth()
+                }
+            }
+            return groupedRow.describe(context, modifiers)
+        }
+        // Standing on its own, the row is as tall as what it holds, as
+        // SwiftUI's is: its controls share one height per control size, so
+        // rows of them line up without the row stating one.
+        let row = HStack(alignment: .Center) {
+            title
+
+            Spacer()
+
+            HStack(spacing: spacing, alignment: .Center) {
+                For(control in children) {
+                    control
+                }
+            }
+            .hugWidth()
+        }
+        return row.describe(context, modifiers)
+    }
+}
+
+// A desktop grouped row's two columns: the label's, then the value's, sharing
+// the row as the list says.
+function labeledColumns(
+    title: CALayerDescription,
+    value: CALayerDescription
+) -> CALayerDescription {
+    let share = listMetrics().valueColumnShare
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            axis: .Row,
+            heightFill: false,
+            alignment: Point { x: 0.0, y: 0.5 }
+        },
+        sublayers: [
+            CALayerDescription {
+                layout: CALayoutIntent {
+                    axis: .Row,
+                    heightFill: false,
+                    flex: 1.0 - share,
+                    alignment: Point { x: 0.0, y: 0.5 }
+                },
+                sublayers: [move title]
+            },
+            move value
+        ]
+    }
+}
+
+// The value column of a desktop grouped row: its controls against the
+// column's end, a field or a slider running across what they leave, and text
+// set against the end too.
+function labeledValueColumn(
+    controls: borrow [some Widget],
+    spacing: Spacing,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext
+) -> CALayerDescription {
+    let valueModifiers = modifierContextApply(
+        modifierContextApply(modifiers, modifierDeltaValueInk()),
+        modifierDeltaTextAlignment(.Trailing)
+    )
+    var layers: [CALayerDescription] = []
+    var runsAcross = false
+    for control in controls {
+        let layer = control.describe(context, valueModifiers)
+        if !describesNothing(layer) {
+            runsAcross = runsAcross || layer.layout.expandsWidth
+            layers.append(move layer)
+        }
+    }
+    // The controls stand in one row, which takes the whole column when one of
+    // them runs across it and otherwise is as wide as they are, at the end.
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            heightFill: false,
+            flex: listMetrics().valueColumnShare,
+            alignment: Point { x: 1.0, y: 0.5 }
+        },
+        sublayers: [
+            CALayerDescription {
+                layout: CALayoutIntent {
+                    axis: .Row,
+                    widthFill: runsAcross,
+                    heightFill: false,
+                    spacing: modifierSpacing(modifiers, spacing),
+                    alignment: Point { x: 0.0, y: 0.5 }
+                },
+                sublayers: move layers
+            }
+        ]
+    }
+}
+
+// A grouped row's value, in the value ink.
+construct LabeledValue() extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let resolved = modifierContextApply(modifiers, modifierDeltaValueInk())
+        return content.describe(context, resolved)
+    }
+}
+
+public function rowLabelInk(active: Bool) -> PrimaryColor {
+    if active {
+        return .Primary
+    }
+    return .Quaternary
+}
+
+public function rowGlyphInk(active: Bool) -> PrimaryColor {
+    if active {
+        return .Secondary
+    }
+    return .Quaternary
+}
+
+// --- Value field -------------------------------------------------------------
+
+// A numeric readout: the value right-aligned in a field's fill with the unit
+// that qualifies it set quieter beside it.
+//
+//     ValueField(text: "50", unit: "%")
+//         .onScrub(scrubBlur)
+//
+// Like a text field it runs across the room it is given, so a column of them
+// aligns on its right edge whatever the numbers currently read; `.width(...)`
+// says otherwise. Whether
+// it can be changed at all is `.onScrub(...)`; whether it is live is
+// `.disabled(...)`. A field with neither is a readout, and it looks like one
+// without being told to.
+public construct ValueField(text: String, unit: String = "") extends Widget {
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let tokens = modifierTokens(modifiers)
+        let size = resolvedControlSizeMetrics(modifiers)
+        let content = HStack(spacing: .ExtraSmall, alignment: .Center) {
+            Spacer()
+
+            Text(content: text)
+            .typography(.label)
+            .foregroundColor(fieldValueInk(modifiers.disabled))
+
+            if unit.count > 0 {
+                Text(content: unit)
+                .typography(.footnote)
+                .foregroundColor(fieldUnitInk(modifiers.disabled))
+            }
+        }
+        let radius = textFieldRadius(modifiers)
+        // The readout stands in the frame `NumberField` types into, its value
+        // held off the fill's edge as a field's text is.
+        return CALayerDescription {
+            layout: CALayoutIntent {
+                widthFill: true,
+                heightFill: false,
+                fixedHeight: size.fieldHeight,
+                paddingLeading: size.fieldInset,
+                paddingTrailing: size.fieldInset,
+                expandsWidth: true
+            },
+            cornerRadius: radius,
+            clipsChildren: true,
+            content: .Solid(
+                CASolid {
+                    fill: colorFromFoundation(
+                        modifierSurfaceFill(foundationColor(tokens.fill.control), modifiers)
+                    ),
+                    cornerRadius: radius
+                }
+            ),
+            sublayers: [content.describe(context, modifiers)]
+        }
+    }
+}
+
+// The same field, typed into: a value a person edits by selecting it and
+// writing a new one, committed with Enter.
+//
+//     NumberField(key: positionFieldKey(0), text: "1.500", onSubmit: commitX)
+//
+// It is a separate widget from `ValueField` rather than a flag on it, because
+// the two are different things to the input system: a readout registers no hit
+// area and cannot take the keyboard, while a field is focusable and keeps what
+// is being typed under its KEY. A caller that wanted both from one widget would
+// get a readout that takes focus.
+//
+// The key is the caller's, and it has to mean the same field from one frame to
+// the next — the edit buffer lives under it. A field does not take focus on its
+// own: a form that grabbed the keyboard the moment it was drawn would take it
+// off whatever the person was doing, so a focus state, `.focused($editing)`,
+// is how one is asked for. It carries no unit, which is the other half of that split: a unit
+// belongs beside a number nobody is typing over.
+public construct NumberField(key: Number, text: String, onSubmit: () -> Void) extends Widget {
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        // What is typed stays in the field's buffer until Return submits it.
+        textFieldSeed(key, text)
+        let labeled = modifierContextApply(modifiers, modifierDeltaTypography(.label))
+        var described = textFieldDescription(
+            key,
+            "",
+            false,
+            { edited in return },
+            onSubmit,
+            context,
+            labeled
+        )
+        let element = TextFieldElement {
+            role: .TextField,
+            key: key,
+            label: "",
+            value: copy text,
+            placeholder: ""
+        }
+        described.accessibilityClear()
+        described.accessibilityElementOf(element.node(context, modifiers))
+        return described
+    }
+}
+
+// A word that qualifies a field rather than a property: the axis a pair of
+// fields runs along, a unit outside the fill. Quieter than a label and set at
+// the same size as a unit inside a field.
+public construct FieldCaption(text: String) extends Widget {
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let caption = Text(content: text)
+        .typography(.footnote)
+        .foregroundColor(fieldUnitInk(modifiers.disabled))
+        return caption.describe(context, modifiers)
+    }
+}
+
+public function fieldValueInk(disabled: Bool) -> PrimaryColor {
+    if disabled {
+        return .Quaternary
+    }
+    return .Primary
+}
+
+public function fieldUnitInk(disabled: Bool) -> PrimaryColor {
+    if disabled {
+        return .Quaternary
+    }
+    return .Tertiary
+}

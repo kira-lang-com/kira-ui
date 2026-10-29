@@ -1,0 +1,184 @@
+import Foundation
+
+// What a UI test and the application it launched say to each other. This
+// file is the one place the conversation is written and read: KiraUITesting
+// sends the requests and reads the answers, and the running application
+// (UITestHost.kira) reads the requests and sends the answers.
+//
+// The test hands the application a session directory in its environment. A
+// request is written there whole, by a rename, for the application to find on
+// its next frame. The answer is one line on the application's output, so the
+// test waits on the pipe for it rather than on the file system.
+
+public namespace UITestSession {
+    // The variable naming the session directory of an application a UI test
+    // launched.
+    let variable: String = "KIRAUI_UI_TEST_SESSION"
+    // The request the application reads next, and the name it is written
+    // under first, so the application never reads half of one.
+    let requestFile: String = "request"
+    let pendingRequestFile: String = "request.pending"
+    // Where the application keeps its data while a test drives it, so each
+    // test starts from an application as it was installed.
+    let dataDirectory: String = "Data"
+    // What starts an answer's line on the application's output.
+    let answerMarker: String = "__kiraui_ui_test_answer__:"
+}
+
+// The session directory of the UI test that launched this application, if
+// one did.
+public function testSessionDirectory() -> String? {
+    if !environmentIsSet(UITestSession.variable) {
+        return .None
+    }
+    return .Some(environmentValue(UITestSession.variable))
+}
+
+// What a test asks the application.
+@Derive(Serializable)
+public enum UITestRequest {
+    // The elements on screen, once the application has settled.
+    Snapshot
+    // Press and release at a point in the window, `count` times in a row.
+    Tap(UITestTap)
+    // Type text into the field that has the keyboard: each character as the
+    // keyboard gives it, and a line break as the Return key.
+    TypeText(UITestText)
+    // Turn the scroll wheel over a point.
+    Scroll(UITestScroll)
+}
+
+@Derive(Serializable)
+public struct UITestTap {
+    let x: Number
+    let y: Number
+    let count: Number
+}
+
+@Derive(Serializable)
+public struct UITestText {
+    let text: String
+}
+
+// A scroll by points along each axis, positive toward the content's end.
+@Derive(Serializable)
+public struct UITestScroll {
+    let x: Number
+    let y: Number
+    let deltaX: Number
+    let deltaY: Number
+}
+
+// What the application answers, once whatever the request set moving has
+// come to rest.
+@Derive(Serializable)
+public enum UITestAnswer {
+    Elements(UITestTree)
+    Done
+    // Text was sent with no field holding the keyboard.
+    NoKeyboardFocus
+}
+
+@Derive(Serializable)
+public struct UITestTree {
+    let elements: [UITestElement]
+}
+
+// One accessibility element as a test sees it.
+@Derive(Serializable)
+public struct UITestElement {
+    let role: AccessibilityRole
+    let label: String
+    let value: String
+    let placeholder: String
+    let identifier: String
+    // The traits' bits, as `AccessibilityTraits` holds them.
+    let traits: Number
+    let isEnabled: Bool
+    let hasKeyboardFocus: Bool
+    let x: Number
+    let y: Number
+    let width: Number
+    let height: Number
+    let children: [UITestElement]
+}
+
+extend AccessibilityElement {
+    // The element, as a test is told of it.
+    function testElement() -> UITestElement {
+        var held: [UITestElement] = []
+        for child in children {
+            held.append(child.testElement())
+        }
+        return UITestElement {
+            role: role,
+            label: copy label,
+            value: copy value,
+            placeholder: copy placeholder,
+            identifier: copy identifier,
+            traits: traits.raw,
+            isEnabled: isEnabled,
+            hasKeyboardFocus: hasKeyboardFocus,
+            x: frame.x,
+            y: frame.y,
+            width: frame.width,
+            height: frame.height,
+            children: move held
+        }
+    }
+}
+
+extend UITestAnswer {
+    // The line the answer travels on.
+    function line() -> String {
+        return UITestSession.answerMarker + serialize_UITestAnswer(self)
+    }
+}
+
+// The answer a line of the application's output carries, if it carries one.
+public function answerOnLine(line: borrow String) -> UITestAnswer? {
+    if !line.startsWith(UITestSession.answerMarker) {
+        return .None
+    }
+    return .Some(
+        deserialize_UITestAnswer(line.substring(UITestSession.answerMarker.count, line.count))
+    )
+}
+
+extend UITestRequest {
+    // Hands the request to the application whose session is `directory`.
+    function send(directory: borrow String) -> Result<Void, FileFailure> {
+        let pending = directory + "/" + UITestSession.pendingRequestFile
+        try writeFile(pending, serialize_UITestRequest(self))
+        return renamePath(pending, directory + "/" + UITestSession.requestFile)
+    }
+}
+
+// The request waiting in the session `directory`, taken from it, if one is.
+public function receiveTestRequest(
+    directory: borrow String
+) -> Result<UITestRequest?, FileFailure> {
+    let path = directory + "/" + UITestSession.requestFile
+    if !fileExists(path) {
+        return .Ok(.None)
+    }
+    let contents = try readFile(path)
+    try removePath(path)
+    return .Ok(.Some(deserialize_UITestRequest(contents.text)))
+}
+
+// The UI test driving this application: the session it was handed, and the
+// answer it is owed once the interface settles. Declared here rather than in
+// UITestHost.kira because every platform's app state holds one, including
+// those without the windows that file takes part in.
+public struct UITestHost {
+    let directory: String
+    var owed: UITestOwed? = .None
+}
+
+// What a request leaves the test waiting for.
+public enum UITestOwed {
+    Snapshot
+    Done
+    NoKeyboardFocus
+}

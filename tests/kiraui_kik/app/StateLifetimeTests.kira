@@ -1,0 +1,132 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// A view's `@State` lives while the view is in the interface: kept while each
+// build describes it, gone once one does not, and kept for a view its
+// container holds without describing it.
+
+construct KuiTally() extends Widget {
+    @State var taps: Number = 0
+
+    body {
+        Text("Tally")
+    }
+}
+
+// One build that describes the tally with `taps` set, or describes nothing.
+function kuiTallyBuild(taps: Number?) {
+    var build = stateBuildBegin()
+    match taps {
+        Some(count) -> {
+            var tally = KuiTally()
+            tally.taps = count
+            kuiDescribe(move tally)
+        }
+        // The tally is out of the interface for this build.
+        None -> {}
+    }
+    build.finish()
+}
+
+struct KuiKeyedValue {
+    var value: Number = 0
+}
+
+@Test
+function stateStaysWhileDescribed() {
+    kuiTallyBuild(.Some(5))
+    var build = stateBuildBegin()
+    kuiDescribe(KuiTally())
+    build.finish()
+    expect!(KuiTally().taps == 5)
+}
+
+@Test
+function stateGoesWithItsView() {
+    kuiTallyBuild(.Some(5))
+    kuiTallyBuild(.None)
+    expect!(KuiTally().taps == 0)
+}
+
+@Test
+function stateStaysInAKeptScope() {
+    var first = stateBuildBegin()
+    stateScopeRecord("kui.kept")
+    var tally = KuiTally()
+    tally.taps = 3
+    kuiDescribe(move tally)
+    stateScopeRecorded()
+    first.finish()
+    var second = stateBuildBegin()
+    stateScopeRetain("kui.kept")
+    second.finish()
+    expect!(KuiTally().taps == 3)
+    kuiTallyBuild(.None)
+    expect!(KuiTally().taps == 0)
+}
+
+// Keyed control state is in a kept scope too: a container that keeps a view
+// undescribed keeps the scroll position and the rest of the state the view
+// used, not only its declared `@State`.
+@Test
+function keyedStateStaysInAKeptScope() {
+    let key = slotKey("kui.keyed.kept.", 3)
+    var first = stateBuildBegin()
+    stateScopeRecord("kui.keyed.kept")
+    ambientStatePutView(copy key, nativeUserData(nativeState(KuiKeyedValue { value: 11 })))
+    stateScopeRecorded()
+    first.finish()
+    expect!(ambientStateHasView(key))
+    var second = stateBuildBegin()
+    stateScopeRetain("kui.keyed.kept")
+    second.finish()
+    expect!(ambientStateHasView(key))
+    var third = stateBuildBegin()
+    third.finish()
+    expect!(!ambientStateHasView(key))
+}
+
+// A keyed control's state belongs to the build that touched it. A rebuild
+// that mints a different key is a different control: the old state leaves
+// with the build instead of living for the window.
+@Test
+function keyedStateUnderANewKeyDropsTheOldOne() {
+    let old = slotKey("kui.keyed.", 1)
+    var seed = stateBuildBegin()
+    ambientStatePutView(copy old, nativeUserData(nativeState(KuiKeyedValue { value: 7 })))
+    seed.finish()
+    expect!(ambientStateHasView(old))
+    let next = slotKey("kui.keyed.", 2)
+    var shifted = stateBuildBegin()
+    ambientStatePutView(copy next, nativeUserData(nativeState(KuiKeyedValue { value: 7 })))
+    shifted.finish()
+    expect!(!ambientStateHasView(old))
+    expect!(ambientStateHasView(next))
+    let removed = ambientStateRemoveView(copy next)
+    expect!(removed)
+}
+
+// A frame that mints new keys each build leaves only the keys it touched:
+// the state of the frame before goes with the build that ended.
+@Test
+function keyedStateAcrossBuildsStaysBounded() {
+    var settle = stateBuildBegin()
+    settle.finish()
+    let baseline = ambientStateViewCount()
+    for build in 0..100 {
+        var frame = stateBuildBegin()
+        for index in 0..10 {
+            let key = slotKey("kui.keyed.churn.", build * 10 + index)
+            ambientStatePutView(
+                copy key,
+                nativeUserData(nativeState(KuiKeyedValue { value: build }))
+            )
+        }
+        frame.finish()
+        expect!(ambientStateViewCount() == baseline + 10)
+    }
+    var last = stateBuildBegin()
+    last.finish()
+    expect!(ambientStateViewCount() == baseline)
+}

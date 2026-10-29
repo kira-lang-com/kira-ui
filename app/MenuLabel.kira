@@ -1,0 +1,74 @@
+import Foundation
+import KCoreAnimation
+
+// How a menu written with a label draws it: SwiftUI's `.menuStyle(_:)` and
+// `.menuIndicator(_:)`.
+
+// SwiftUI's `MenuStyle`. On a Mac a `.Button` menu is a pull-down button, its
+// label on a control's bezel unless the button style in effect has none; a
+// borderless one, and every menu elsewhere, is its label alone.
+public enum MenuStyle {
+    Automatic
+    Button
+    BorderlessButton
+}
+
+// Whether a menu's label shows the indicator: when asked to, and left to the
+// platform, on a Mac, whose pull-down buttons carry a chevron.
+function menuShowsIndicator(modifiers: borrow ModifierContext) -> Bool {
+    match modifiers.menuIndicator {
+        Automatic -> return interfaceMode() == .AdaptiveDesktop
+        Visible -> return true
+        Hidden -> return false
+    }
+}
+
+// Whether a menu's label stands on a control's bezel.
+function menuLabelBezeled(modifiers: borrow ModifierContext) -> Bool {
+    if interfaceMode() != .AdaptiveDesktop || modifiers.menuStyle == .BorderlessButton {
+        return false
+    }
+    return modifiers.buttonStyle != .Plain && modifiers.buttonStyle != .Borderless
+}
+
+// The label as the menu's button: as large as it is, with the indicator after
+// it, taking the press.
+function menuLabelButtonDescription(
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+    key: Number,
+    label: borrow Any Widget
+) -> CALayerDescription {
+    let popUp = popUpMetrics(modifiers.controlSize)
+    var shown: Any Widget = copy label
+    if menuShowsIndicator(modifiers) {
+        shown = HStack(spacing: .Length(popUp.chevronSpacing), alignment: .Center) {
+            label
+
+            Icon(symbol: .ChevronDown)
+            .font(size: resolvedLength(popUp.chevronSize))
+        }
+    }
+    if menuLabelBezeled(modifiers) {
+        shown = shown
+        .height(resolvedLength(popUp.height))
+        .edgePadding(edges: EdgeSet.leading, length: resolvedLength(popUp.leadingInset))
+        .edgePadding(edges: EdgeSet.trailing, length: resolvedLength(popUp.trailingInset))
+        .background(
+            RoundedRectangle(
+                cornerRadius: resolvedControlSizeMetrics(modifiers).cornerRadius,
+                style: .Continuous
+            ).backgroundStyle(.Control)
+        )
+    }
+    var described = shown.describe(context, modifiers)
+    described.layout.widthFill = false
+    described.layout.heightFill = false
+    return CALayerDescription {
+        hittable: !modifiers.disabled,
+        hitKey: key,
+        opacity: modifiers.disabled ? 0.4 : 1.0,
+        layout: CALayoutIntent { widthFill: false, heightFill: false },
+        sublayers: [described]
+    }
+}

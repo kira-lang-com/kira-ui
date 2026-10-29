@@ -1,0 +1,70 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// Text's line breaks, `.lineLimit(_:)` and `.lineSpacing(_:)`, as SwiftUI's.
+
+function kuiTextLaidOut(root: Any Widget, width: Number) -> CALayerDescription {
+    var described = kuiDescribe(move root)
+    layOutLayerTree(described, width, 300.0)
+    return described
+}
+
+// A line break starts a line, so two words split by one stand on two lines.
+construct KuiALineBreakStartsALine() extends Test {
+    test {
+        let one = kuiTextLaidOut(Text(content: "Reduce"), 400.0)
+        let two = kuiTextLaidOut(Text(content: "Reduce\nInterruptions"), 400.0)
+        return two.size.height == one.size.height * 2
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok(true)
+        return expected
+    }
+}
+
+// Limited to a line, a run too wide for its box stands on one line, which
+// ends in an ellipsis.
+construct KuiALineLimitCutsTheTail() extends Test {
+    test {
+        let one = kuiTextLaidOut(Text(content: "Dazzling"), 60.0)
+        let cut = kuiTextLaidOut(
+            Text(content: "Dazzling Stars over the Shimmering Voyage").lineLimit(1).frame(
+                width: 60.0,
+                height: 100.0
+            ),
+            400.0
+        )
+        let lines = foundationTextLines(
+            "Dazzling Stars over the Shimmering Voyage",
+            15.0,
+            400.0,
+            60.0,
+            .Default,
+            1
+        )
+        let tail = foundationStringToCodepoints(lines[0])
+        var text = cut
+        while text.sublayers.count == 1 { text = copy text.sublayers[0] }
+        return "\(lines.count) \(tail[tail.count - 1] == 8230) \(text.size.height == one.size.height)"
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok("1 true true")
+        return expected
+    }
+}
+
+// Room between lines adds to the run's height once per gap.
+construct KuiLineSpacingSpacesTheLines() extends Test {
+    test {
+        let tight = kuiTextLaidOut(Text(content: "A\nB\nC"), 400.0)
+        let spaced = kuiTextLaidOut(Text(content: "A\nB\nC").lineSpacing(4.0), 400.0)
+        var text = spaced
+        while text.sublayers.count == 1 { text = copy text.sublayers[0] }
+        return text.size.height - tight.size.height
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok(8)
+        return expected
+    }
+}

@@ -1,0 +1,327 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// A row that fills its width spreads its Spacers across it however deep it
+// stands: in a fixed-width column, in a row of such columns, as a paged home
+// screen holds its pages side by side, under a stack, an offset and an
+// animation.
+
+function spreadLaidOut(root: Any Widget) -> CALayerDescription {
+    var described = describedLayer(move root)
+    layOutLayerTree(described, 1000.0, 400.0)
+    return described
+}
+
+// Three boxes 40 wide with Spacers between, written as a children array as a
+// grid of tiles is.
+function threeTileRow() -> Any Widget {
+    var row: [Any Widget] = []
+    for column in 0..3 {
+        if column > 0 { row.append(Spacer()) }
+        row.append(Rectangle().frame(width: 20.0, height: 40.0).width(resolvedLength(40)))
+    }
+    return HStack(spacing: .None, alignment: .Top, children: row)
+    .fillWidth()
+    .edgePadding(EdgeSet.horizontal, resolvedLength(10))
+}
+
+// The widest row of five boxes in `layer`, and how far its last box's right edge
+// stands from the row's own. A layer with no such row has no width and a gap of
+// -1.
+struct RowSpread {
+    var width: Number = 0
+    var gap: Number = -1
+}
+
+function widestRowSpread(layer: borrow CALayerDescription) -> RowSpread {
+    var found = RowSpread {}
+    if layer.sublayers.count == 5 && layer.sublayers[0].position.y == layer.sublayers[4].position.y {
+        let last = layer.sublayers[4]
+        found = RowSpread {
+            width: layer.size.width,
+            gap: layer.size.width - last.position.x - last.size.width
+        }
+    }
+    for sub in layer.sublayers {
+        let deeper = widestRowSpread(sub)
+        if deeper.width > found.width { found = deeper }
+    }
+    return found
+}
+
+function pageOf(row: Any Widget) -> Any Widget {
+    return VStack(spacing: .None, alignment: .Center) {
+        FixedGap(width: 0, height: 20)
+        VStack(spacing: .Length(10), alignment: .Center, children: [row])
+        .fillWidth()
+        Spacer()
+    }
+    .width(resolvedLength(500))
+    .fillHeight()
+}
+
+// A row of three spread tiles, at the root, spreads across the whole surface.
+@Test
+function spreadsAtTheRoot() {
+    let spread = widestRowSpread(spreadLaidOut(threeTileRow()))
+    expect!((spread.width) == (980))
+    expect!((spread.gap) == (0))
+}
+
+// The same row in a page spreads across the page's width.
+@Test
+function spreadsInAPage() {
+    let spread = widestRowSpread(spreadLaidOut(pageOf(threeTileRow())))
+    expect!((spread.width) == (480))
+    expect!((spread.gap) == (0))
+}
+
+// Two pages side by side each spread their own row.
+@Test
+function spreadsInPagesSideBySide() {
+    let spread = widestRowSpread(
+        spreadLaidOut(
+            HStack(
+                spacing: .None,
+                alignment: .Top,
+                children: [pageOf(threeTileRow()), pageOf(threeTileRow())]
+            )
+        )
+    )
+    expect!((spread.width) == (480))
+    expect!((spread.gap) == (0))
+}
+
+// Pages under a stack, with an offset and an animation, still spread.
+@Test
+function spreadsInPagesUnderAStack() {
+    let spread = widestRowSpread(
+        spreadLaidOut(
+            ZStack(alignment: .TopLeading) {
+                HStack(
+                    spacing: .None,
+                    alignment: .Top,
+                    children: [pageOf(threeTileRow()), pageOf(threeTileRow())]
+                )
+                .offset(x: resolvedLength(-500), y: resolvedLength(0))
+                .animation(.Smooth)
+            }.fillWidth().fillHeight()
+        )
+    )
+    expect!((spread.width) == (480))
+    expect!((spread.gap) == (0))
+}
+
+// Tiles that are buttons whose label hugs its width, set to a column's width,
+// as a home screen's icons are.
+function buttonRow(stacked: Bool) -> Any Widget {
+    var row: [Any Widget] = []
+    for column in 0..3 {
+        if column > 0 { row.append(Spacer()) }
+        let label = VStack(spacing: .Small, alignment: .Center) {
+            Rectangle().frame(width: 20.0, height: 20.0)
+            Text("Name")
+        }
+        .hugWidth()
+        let button = Button(action: { in return }) {
+            label
+        }
+        .buttonStyle(.Plain)
+        if stacked {
+            row.append(
+                ZStack(alignment: .TopLeading) {
+                    button
+                    Circle().frame(width: 8.0, height: 8.0).offset(
+                        x: resolvedLength(4),
+                        y: resolvedLength(-4)
+                    )
+                }.width(resolvedLength(40))
+            )
+        } else {
+            row.append(button.width(resolvedLength(40)))
+        }
+    }
+    return HStack(spacing: .None, alignment: .Top, children: row)
+    .fillWidth()
+    .edgePadding(EdgeSet.horizontal, resolvedLength(10))
+}
+
+// Button tiles spread across a page, bare and under a badge.
+@Test
+function spreadsButtonTiles() {
+    let spread = widestRowSpread(spreadLaidOut(pageOf(buttonRow(false))))
+    expect!((spread.width) == (480))
+    expect!((spread.gap) == (0))
+}
+
+@Test
+function spreadsStackedButtonTiles() {
+    let spread = widestRowSpread(spreadLaidOut(pageOf(buttonRow(true))))
+    expect!((spread.width) == (480))
+    expect!((spread.gap) == (0))
+}
+
+// Tiles whose names are wider than their column, as long application names are
+// under their icons, still spread, and still spread faded.
+function longNameRow(opaque: Bool) -> Any Widget {
+    var row: [Any Widget] = []
+    for column in 0..3 {
+        if column > 0 { row.append(Spacer()) }
+        let label = VStack(spacing: .Small, alignment: .Center) {
+            Rectangle().frame(width: 20.0, height: 20.0)
+            Text("A very long application name")
+            .font(size: resolvedLength(12), weight: .Medium)
+        }
+        .hugWidth()
+        let tile: Any Widget = Button(action: { in return }) {
+            label
+        }
+        .buttonStyle(.Plain)
+        if opaque {
+            row.append(tile.opacity(1).width(resolvedLength(40)))
+        } else {
+            row.append(tile.width(resolvedLength(40)))
+        }
+    }
+    return HStack(spacing: .None, alignment: .Top, children: row)
+    .fillWidth()
+    .edgePadding(EdgeSet.horizontal, resolvedLength(10))
+}
+
+@Test
+function spreadsLongNames() {
+    let spread = widestRowSpread(spreadLaidOut(pageOf(longNameRow(false))))
+    expect!((spread.width) == (480))
+    expect!((spread.gap) == (0))
+}
+
+@Test
+function spreadsFadedLongNames() {
+    let spread = widestRowSpread(spreadLaidOut(pageOf(longNameRow(true))))
+    expect!((spread.width) == (480))
+    expect!((spread.gap) == (0))
+}
+
+// A widget that describes its content itself, turned, as an icon wobbling while
+// a home screen is edited is.
+construct TurnedTile() extends Widget {
+    let content: some Widget
+
+    body {
+        content
+    }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var described = content.describe(context, modifiers)
+        described.rotation = 0.02
+        described.disablesActions = true
+        return described
+    }
+}
+
+function turnedRow() -> Any Widget {
+    var row: [Any Widget] = []
+    for column in 0..3 {
+        if column > 0 { row.append(Spacer()) }
+        let tile = Button(action: { in return }) {
+            VStack(spacing: .Small, alignment: .Center) {
+                Rectangle().frame(width: 20.0, height: 20.0)
+                Text("Name")
+            }
+            .hugWidth()
+        }
+        .buttonStyle(.Plain)
+        row.append(
+            ZStack(alignment: .TopLeading) {
+                TurnedTile() {
+                    tile
+                }
+                Button(action: { in return }) {
+                    Icon(symbol: .MinusCircleFill)
+                    .font(size: resolvedLength(12))
+                }
+                .buttonStyle(.Plain)
+                .offset(x: resolvedLength(4), y: resolvedLength(-4))
+            }.opacity(1).width(resolvedLength(40))
+        )
+    }
+    return HStack(spacing: .None, alignment: .Top, children: row)
+    .fillWidth()
+    .edgePadding(EdgeSet.horizontal, resolvedLength(10))
+}
+
+@Test
+function spreadsTurnedTiles() {
+    let spread = widestRowSpread(spreadLaidOut(pageOf(turnedRow())))
+    expect!((spread.width) == (480))
+    expect!((spread.gap) == (0))
+}
+
+// A page whose band over the grid shows only when it holds something, as a home
+// screen page's widgets do.
+function bandedPage(row: Any Widget, banded: Bool) -> Any Widget {
+    return VStack(spacing: .None, alignment: .Center) {
+        FixedGap(width: 0, height: 20)
+        if banded {
+            Rectangle().frame(width: 100.0, height: 30.0)
+            FixedGap(width: 0, height: 10)
+        }
+        VStack(spacing: .Length(10), alignment: .Center, children: [row])
+        .fillWidth()
+        Spacer()
+    }
+    .width(resolvedLength(500))
+    .fillHeight()
+}
+
+// A page with no band over its grid spreads its row across the page.
+@Test
+function spreadsUnderNoBand() {
+    let spread = widestRowSpread(spreadLaidOut(bandedPage(turnedRow(), false)))
+    expect!((spread.width) == (480))
+    expect!((spread.gap) == (0))
+}
+
+// A band over the grid takes its own height and the row still spreads beneath it.
+@Test
+function spreadsUnderABand() {
+    let spread = widestRowSpread(spreadLaidOut(bandedPage(turnedRow(), true)))
+    expect!((spread.width) == (480))
+    expect!((spread.gap) == (0))
+}
+
+// Six tiles to a row, as a home screen's grid has: eleven children.
+function sixTileRow() -> Any Widget {
+    var row: [Any Widget] = []
+    for column in 0..6 {
+        if column > 0 { row.append(Spacer()) }
+        row.append(Rectangle().frame(width: 20.0, height: 40.0).width(resolvedLength(40)))
+    }
+    return HStack(spacing: .None, alignment: .Top, children: row)
+    .fillWidth()
+    .edgePadding(EdgeSet.horizontal, resolvedLength(10))
+}
+
+// The right edge of the last of a row's eleven children, short of the row's
+// own; -1 when no such row is in the layer.
+function gapAfterLastRowChild(layer: borrow CALayerDescription) -> Number {
+    if layer.sublayers.count == 11 && layer.sublayers[0].position.y == layer.sublayers[10].position.y {
+        let last = layer.sublayers[10]
+        return layer.size.width - last.position.x - last.size.width
+    }
+    for sub in layer.sublayers {
+        let deeper = gapAfterLastRowChild(sub)
+        if deeper >= 0 { return deeper }
+    }
+    return -1
+}
+
+// A row of six spread tiles ends flush with the page's far edge.
+@Test
+function spreadsSixTiles() {
+    expect!((gapAfterLastRowChild(spreadLaidOut(pageOf(sixTileRow())))) == (0))
+}

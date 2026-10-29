@@ -1,0 +1,38 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// SwiftUI's `.overlay(_:alignment:)`: drawn over the content, in its box.
+
+// An overlay wider than its content leaves the content its size.
+construct KuiAnOverlayTakesNoRoom() extends Test {
+    test {
+        let base = Rectangle().frame(width: 20.0, height: 10.0)
+        let measured = kuiDescribe(base.overlay(Text(content: "Reduce Interruptions"))).measure(
+            400.0
+        )
+        return "\(measured.width)x\(measured.height)"
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok("20x10")
+        return expected
+    }
+}
+
+// Aligned to the trailing edge, a narrower overlay ends where its content does.
+construct KuiAnOverlayStandsWhereItsAlignmentSays() extends Test {
+    test {
+        let base = Rectangle().frame(width: 100.0, height: 40.0)
+        let mark = Rectangle().frame(width: 10.0, height: 10.0)
+        var described = kuiDescribe(base.overlay(move mark, alignment: .Trailing))
+        layOutLayerTree(described, 400.0, 300.0)
+        var overlaid = copy described
+        while overlaid.sublayers.count == 1 { overlaid = copy overlaid.sublayers[0] }
+        let over = overlaid.sublayers[1]
+        return "\(over.position.x),\(over.position.y) \(over.size.width)"
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok("90,15 10")
+        return expected
+    }
+}

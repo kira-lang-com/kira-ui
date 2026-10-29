@@ -1,0 +1,262 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// What a view is to assistive technology: the elements it makes, what each
+// says, and what the accessibility modifiers change about them.
+
+// Each text is an element that reads its words, in the order written.
+@Test
+function aTextIsAStaticTextElement() {
+    let elements = accessibilityElementsOf(
+        VStack {
+            Text(content: "One")
+            Text(content: "Two")
+        }
+    )
+    expect!((elements.count) == (2))
+    expect!((elements[0].label) == ("One"))
+    expect!((elements[1].label) == ("Two"))
+    expect!((elements[0].role) == (AccessibilityRole.StaticText))
+}
+
+// A button is one element, reading its label, that presses.
+@Test
+function aButtonCombinesItsLabel() {
+    var pressed = 0
+    let elements = accessibilityElementsOf(
+        Button(
+            action: { in
+                pressed = pressed + 1
+            }
+        ) {
+            HStack {
+                Text(content: "Send")
+                Text(content: "Now")
+            }
+        }
+    )
+    expect!((elements.count) == (1))
+    expect!((elements[0].label) == ("Send, Now"))
+    expect!((elements[0].role) == (AccessibilityRole.Button))
+    let activated = elements[0].activate()
+    expect!((activated) == (true))
+    expect!((pressed) == (1))
+}
+
+// The label, value, hint and identifier modifiers say what is stated.
+@Test
+function theModifiersDescribeTheElement() {
+    let elements = accessibilityElementsOf(
+        Text(content: "80").accessibilityLabel("Battery").accessibilityValue(
+            "80%"
+        ).accessibilityHint("Charging").accessibilityIdentifier("battery")
+    )
+    expect!((elements.count) == (1))
+    expect!((elements[0].label) == ("Battery"))
+    expect!((elements[0].value) == ("80%"))
+    expect!((elements[0].hint) == ("Charging"))
+    expect!((elements[0].identifier) == ("battery"))
+}
+
+// Combining children reads them as one element.
+@Test
+function combineMergesChildren() {
+    let elements = accessibilityElementsOf(
+        HStack {
+            Text(content: "Battery")
+            Text(content: "80%")
+        }.accessibilityElement(children: .Combine)
+    )
+    expect!((elements.count) == (1))
+    expect!((elements[0].label) == ("Battery, 80%"))
+}
+
+// Containing children keeps them, inside a group.
+@Test
+function containHoldsChildren() {
+    let elements = accessibilityElementsOf(
+        VStack {
+            Text(content: "One")
+            Text(content: "Two")
+        }.accessibilityElement(children: .Contain).accessibilityIdentifier("list")
+    )
+    expect!((elements.count) == (1))
+    let group = elements[0]
+    expect!((group.role) == (AccessibilityRole.Group))
+    expect!((group.identifier) == ("list"))
+    expect!((group.children.count) == (2))
+}
+
+// A hidden view shows nothing, whatever is said about it outside.
+@Test
+function aHiddenViewShowsNothing() {
+    let elements = accessibilityElementsOf(
+        VStack {
+            Text(content: "Shown")
+            Text(content: "Gone").accessibilityHidden(true).accessibilityLabel("Still gone")
+        }
+    )
+    expect!((elements.count) == (1))
+    expect!((elements[0].label) == ("Shown"))
+}
+
+// A shape given a label becomes an element.
+@Test
+function aLabelMakesAShapeAnElement() {
+    let elements = accessibilityElementsOf(Circle().accessibilityLabel("Online"))
+    expect!((elements.count) == (1))
+    expect!((elements[0].label) == ("Online"))
+    expect!((elements[0].role) == (AccessibilityRole.Other))
+}
+
+// A higher sort priority is visited first.
+@Test
+function aSortPriorityOrders() {
+    let elements = accessibilityElementsOf(
+        VStack {
+            Text(content: "Second")
+            Text(content: "First").accessibilitySortPriority(1)
+        }
+    )
+    expect!((elements[0].label) == ("First"))
+    expect!((elements[1].label) == ("Second"))
+}
+
+// Each element stands where layout put it: the second text below the first, and
+// both took a real height.
+@Test
+function framesFollowLayout() {
+    let elements = accessibilityElementsOf(
+        VStack {
+            Text(content: "One")
+            Text(content: "Two")
+        }
+    )
+    expect!((elements[1].frame.y > elements[0].frame.y) == (true))
+    expect!((elements[0].frame.height > 0) == (true))
+}
+
+// A toggle reads its title and state, and flips.
+@Test
+function aToggleReadsAndFlips() {
+    var flippedTo = false
+    let elements = accessibilityElementsOf(
+        Toggle(
+            title: "Wi-Fi",
+            isOn: false,
+            onChange: { on in
+                flippedTo = on
+            }
+        )
+    )
+    expect!((elements.count) == (1))
+    let toggle = elements[0]
+    expect!((toggle.label) == ("Wi-Fi"))
+    expect!((toggle.value) == ("0"))
+    let activated = toggle.activate()
+    expect!((activated) == (true))
+    expect!((flippedTo) == (true))
+}
+
+// A slider reads its share and steps when adjusted, by one tenth of its range.
+@Test
+function aSliderAdjusts() {
+    var moved: Number = 0
+    let elements = accessibilityElementsOf(
+        Slider(
+            value: 0.5,
+            onChange: { value in
+                moved = value
+            }
+        )
+    )
+    expect!((elements[0].value) == ("50%"))
+    let adjusted = elements[0].adjustValue(.Increment)
+    expect!((adjusted) == (true))
+    expect!((moved) == (0.6))
+}
+
+// A named action is listed and runs.
+@Test
+function aNamedActionRuns() {
+    var deleted = false
+    let elements = accessibilityElementsOf(
+        Text(content: "Mail").accessibilityAction(
+            kind: .Named("Delete"),
+            handler: { in
+                deleted = true
+            }
+        )
+    )
+    let ran = elements[0].perform(.Named("Delete"))
+    expect!((ran) == (true))
+    expect!((deleted) == (true))
+}
+
+// A text field reads its title, the text it holds, and its prompt.
+@Test
+function aTextFieldReadsItsText() {
+    var name = "Ada"
+    let elements = accessibilityElementsOf(
+        TextField(
+            title: "Name",
+            text: Binding<String> {
+                get: { in
+                    return name
+                },
+                set: { value in
+                    name = value
+                }
+            },
+            prompt: "Your name"
+        )
+    )
+    expect!((elements.count) == (1))
+    let field = elements[0]
+    expect!((field.role) == (AccessibilityRole.TextField))
+    expect!((field.label) == ("Name"))
+    expect!((field.value) == ("Ada"))
+    expect!((field.placeholder) == ("Your name"))
+}
+
+// A link is a link, not a button, and reads its title.
+@Test
+function aLinkIsALink() {
+    let elements = accessibilityElementsOf(Link(title: "Docs", destination: "https://example.com"))
+    let link = elements[0]
+    expect!((link.role) == (AccessibilityRole.Link))
+    expect!((link.traits.has(AccessibilityTraits.isButton)) == (false))
+    expect!((link.label) == ("Docs"))
+}
+
+// A label reads its title once, its glyph a picture beside the words.
+@Test
+function aLabelReadsItsTitle() {
+    let elements = accessibilityElementsOf(Label(title: "Inbox", systemImage: .Tray))
+    expect!((elements.count) == (1))
+    expect!((elements[0].label) == ("Inbox"))
+    expect!((elements[0].role) == (AccessibilityRole.StaticText))
+}
+
+// A view represented by a toggle reads and flips as one.
+@Test
+function aRepresentationStandsIn() {
+    var on = false
+    let elements = accessibilityElementsOf(
+        Circle().accessibilityRepresentation(
+            representation: Toggle(
+                title: "Power",
+                isOn: false,
+                onChange: { value in
+                    on = value
+                }
+            )
+        )
+    )
+    expect!((elements.count) == (1))
+    expect!((elements[0].label) == ("Power"))
+    let activated = elements[0].activate()
+    expect!((activated) == (true))
+    expect!((on) == (true))
+}

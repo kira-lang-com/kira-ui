@@ -1,0 +1,38 @@
+import Foundation
+
+// A value kept somewhere else, read and written through, as SwiftUI's
+// `Binding` is: a control handed `$name` changes the property it projects.
+//
+//     @State var isOn: Bool = false
+//     Toggle("Wi-Fi", isOn: $isOn)
+//
+// A view handed one keeps it with `@Binding`, and reads and assigns the
+// property as its own:
+//
+//     construct SettingsView() extends Widget {
+//         @Binding var appearance: String
+//         ...
+//     }
+//
+//     SettingsView(appearance: $appearance)
+// `@Instance` names the instances other modules reach through RIDL (KLF-RIDL
+// section 23.5).
+@Instance(Bool)
+@Instance(Number)
+@Instance(String)
+public struct Binding<Value> {
+    let get: () -> Value
+    let set: (Value) -> Void
+
+    // A binding projects itself, so `$name` hands it on.
+    function projectedValue() -> Binding<Value> {
+        return copy self
+    }
+}
+
+extend Binding<Bool> {
+    // Flips the value, as SwiftUI's `isOn.wrappedValue.toggle()` does.
+    function toggle() {
+        self.set(!self.get())
+    }
+}

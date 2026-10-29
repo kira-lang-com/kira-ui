@@ -1,0 +1,652 @@
+import Foundation
+import Ember
+import KiraLayout
+import KCoreAnimation
+
+// A menu, and the submenus that open inside it.
+//
+//     ContextMenu {
+//         Button("Start Slideshow", systemImage: .PlayRectangle, action: startSlideshow)
+//
+//         Menu("Add To", systemImage: .PhotoOnRectangle) {
+//             Button("Album", action: addToAlbum)
+//             Button("Shared Album", action: addToShared)
+//         }
+//     }
+//
+// # A submenu opens out of its own row
+//
+// The platform's submenu does not fly a second panel out to the side. The row
+// that owns it becomes the header of a card of its own, exactly as wide as the
+// menu was, and the card opens out of the row: its top rises to leave air
+// over the header, its bottom falls past the last item, and the header rides
+// up between them, set emphasized, its chevron turned down. The card's items
+// are there almost at once, uncovered where they will stay; its glass comes up
+// over the menu's only once it is half open. The card stays where the row was
+// unless it would run off the window, and then rises as far as it has to.
+//
+// Everything else in the menu falls back behind it -- smaller, toward where
+// the menu came from, and dimmer -- so the submenu is the only thing at the
+// front. Pressing the header again, or anywhere on the menu behind, puts it
+// back: the items go first, and the card closes into a pill on the row.
+//
+// The row keeps its place in the menu while it is out, so nothing below it
+// moves, and the card is presented over the menu at the row's rectangle.
+//
+// # Going waits, coming back does not
+//
+// Measured off the platform's menu frame by frame. The card opens and closes
+// on one short critically damped spring, and the menu behind shrinks on that
+// same spring. Its ink does not: going, it HOLDS at full strength while the
+// submenu arrives and only then dims, slowly -- a spring cannot express a
+// hold, since a spring starts moving immediately, so it is a hold and then a
+// spring. Coming back there is no hold and the ink returns in a fraction of
+// the time: what you are returning to arrives first.
+
+// --- measured metrics --------------------------------------------------------
+//
+// From Apple's iOS and iPadOS 27 design kit, its iPad menu: a 238pt card with
+// ten points of air top and bottom, 36pt rows held 16pt off its edges, a 28pt
+// glyph column eight points before 15pt titles, and separators that are a line
+// in a 16pt band. On a computer the menu is the platform's dense one.
+
+// Menu geometry is the interface's, from the catalog, drawn at the size class
+// in effect; see `menuMetrics`.
+public function menuRowPitch(modifiers: borrow ModifierContext) -> Number {
+    return menuMetrics(modifiers).rowHeight
+}
+
+public function menuRowLeading(modifiers: borrow ModifierContext) -> Number {
+    return menuMetrics(modifiers).leadingInset
+}
+
+public function menuRowTrailing(modifiers: borrow ModifierContext) -> Number {
+    return menuMetrics(modifiers).trailingInset
+}
+
+public function menuLabelSize(modifiers: borrow ModifierContext) -> Number {
+    return menuMetrics(modifiers).labelSize
+}
+
+// The corner every menu card takes -- the panel and the submenu that opens over
+// it alike. It is part of menu presentation geometry, so it resolves through the
+// active metric table rather than living as a private literal here.
+public function menuCardRadius(modifiers: borrow ModifierContext) -> Number {
+    return menuMetrics(modifiers).cardRadius
+}
+
+// --- the submenu's motion ---------------------------------------------------
+//
+// Every number is the catalog's, measured off the platform's menu; see
+// `MenuSubmenuMetrics`.
+
+// The submenu's card growing out of its row, and going back into it.
+public function menuSubmenuSpring(opening: Bool) -> MotionSpring {
+    let metrics = menuSubmenuMetrics()
+    if opening {
+        return MotionSpring {
+            response: metrics.openResponse,
+            damping: metrics.openDamping,
+            target: 1.0
+        }
+    }
+    return MotionSpring {
+        response: metrics.closeResponse,
+        damping: metrics.closeDamping,
+        target: 0.0
+    }
+}
+
+// The menu behind it falling back. Slow, and it starts late -- see
+// `recedeHold`.
+public function menuRecedeInSpring() -> MotionSpring {
+    return MotionSpring {
+        response: menuSubmenuMetrics().recedeInResponse,
+        damping: menuSubmenuMetrics().recedeInDamping,
+        target: 1.0
+    }
+}
+
+// The menu behind it coming back. Nothing like the same motion, and no hold at
+// all: the thing you are returning to does not wait.
+public function menuRecedeOutSpring() -> MotionSpring {
+    return MotionSpring {
+        response: menuSubmenuMetrics().recedeOutResponse,
+        damping: menuSubmenuMetrics().recedeOutDamping,
+        target: 0.0
+    }
+}
+
+// --- the menu row ------------------------------------------------------------
+
+// How far the chevron has turned, in radians.
+//
+// ONE glyph, turned — not two glyphs swapped at the halfway point. A symbol is
+// rasterized trimmed to its ink, so a chevron pointing right and one pointing
+// down are different widths and different pictures: swapping them changes the
+// shape in a single frame and re-resolves the row around it, which is the
+// padding that appeared and disappeared at each end of the animation.
+//
+// A quarter turn clockwise, following the reveal and done before it is, so the
+// chevron points down by the time the card has mostly opened -- and on the way
+// back stays down until the card is mostly shut.
+public function menuChevronTurn(amount: Number) -> Number {
+    return 1.5707963267948966 * menuHeaderEmphasis(amount)
+}
+
+// How far a header has gone from its row's weight to its card's, on the
+// chevron's schedule.
+public function menuHeaderEmphasis(amount: Number) -> Number {
+    return min(max(amount / menuSubmenuMetrics().chevronTurn, 0.0), 1.0)
+}
+
+// The box the chevron is centered in. A turning glyph sweeps its own diagonal, so
+// the box is squared and large enough to hold it at every angle rather than at
+// the two it rests at.
+public function menuChevronBox(modifiers: borrow ModifierContext) -> Number {
+    return menuMetrics(modifiers).chevronBox
+}
+
+// A submenu's header: the row that owns it, which stays put while the card grows
+// around it and is pressed again to close.
+//
+// While the submenu is out the row is its card's header: emphasized, its
+// chevron turned down and its label thickened to semibold with the same value
+// that grows the card, both done before the card is.
+public construct MenuHeader(
+    title: String,
+    systemImage: Symbol,
+    amount: Number,
+    key: Number
+) extends Widget {
+
+    // The header row as one press region: label, spacer and the disclosure
+    // chevron, in a pill as every menu row is. The chevron turns inside a squared
+    // box, so the row does not re-resolve around it while it turns.
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let row = HStack(spacing: .Small, alignment: .Center) {
+            Label(title: title, systemImage: systemImage)
+            .font(
+                size: resolvedLength(menuLabelSize(modifiers)),
+                weight: fontWeightBetween(.Regular, .SemiBold, menuHeaderEmphasis(amount))
+            )
+
+            Spacer()
+
+            ZStack(alignment: .Center) {
+                Icon(symbol: .ChevronRight)
+                .font(size: resolvedLength(menuMetrics(modifiers).chevronSize))
+                .foregroundColor(.Secondary)
+                .rotationEffect(menuChevronTurn(amount))
+            }
+            .width(resolvedLength(menuChevronBox(modifiers)))
+            .height(resolvedLength(menuChevronBox(modifiers)))
+        }
+        .height(resolvedLength(menuRowPitch(modifiers)))
+        return menuRowPill(key, row.describe(context, modifiers), 0.0, modifiers)
+    }
+}
+
+// A submenu.
+//
+// Collapsed it is a row in the menu. Open, that same row is the header of a card
+// floating above the menu — the card closes around the element rather than
+// appearing beneath it. The row is LIFTED into the card rather than copied, so
+// there is one of it: one view, one hit region, one key. What stays behind is
+// its SPACE, so the rows below do not slide up into a gap and back down.
+//
+// # The structure does not change while it animates
+//
+// This is the whole difference between it working and it not. A widget that
+// swaps its shape at either end of a transition — a row here on one frame and
+// inside a card on the next, a placeholder that is the traveling size rather
+// than the resting one — re-resolves layout at exactly the moments the eye is
+// following it, moves its keys, and leaves frames where its press region does
+// not exist. What that produces is padding appearing and disappearing at each
+// end, panels landing in the wrong place, and clicks that turn the chevron and
+// open nothing.
+//
+// So there are exactly two shapes, and the boundary between them is a single
+// value reaching zero:
+//
+//   amount == 0   the row is in the menu, nothing floats
+//   amount  > 0   the row is in the card, the card floats, the menu holds a
+//                 gap of the ROW's natural height — the same height whatever
+//                 the animation is currently doing
+//
+// The row's key is the menu's own key in both, so the press region is one region
+// that never changes identity. The gap is the row's resting height in both, so
+// nothing below it ever moves.
+//
+// The card carries the animation instead: it grows and shrinks and fades, and it
+// is a floating view, so nothing reflows when it does. A closing submenu shrinks
+// away rather than standing at full size until its spring happens to reach zero.
+//
+// Written with a `label` instead of a title, as SwiftUI's
+// `Menu { … } label: { … }`, a menu standing in content is that view as a
+// button, whose glass becomes the menu as a bar's does.
+public construct Menu(title: String = "", systemImage: Symbol = .None) extends Widget {
+    let children: [some Widget]
+    let label: some Widget = EmptyView()
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        if modifiers.controlPresentation == .Toolbar || modifiers.controlPresentation == .TabBar {
+            return presentedMenuDescription(context, modifiers)
+        }
+        if modifiers.controlPresentation == .Standalone && !describesNothing(
+            label.describe(context, modifiers)
+        ) {
+            return presentedMenuDescription(context, modifiers)
+        }
+        let key = tapSeqKey()
+        layerActionRegister(key, toggleMenuFn(key))
+        // The card's glass answers under a key of its own, so its header is a
+        // row in it that a sliding press can come to rest on.
+        // And off the card, a key of its own for what takes the press there.
+        let card = tapSeqKey()
+        let away = tapSeqKey()
+        menuDwellAdvance(context, key, away)
+        let amount = menuRevealAdvance(key)
+        let header = MenuHeader(title: title, systemImage: systemImage, amount: amount, key: key)
+        var row = header.describe(context, modifiers)
+        row.accessibilityCombined(accessibilityPressable(.MenuButton, toggleMenuFn(key), modifiers))
+        if amount <= 0.0 {
+            return row
+        }
+        menuSubmenuOut(context)
+        // Out: the row keeps its place and draws nothing there. While the card
+        // is open its header is the row's press; while it goes back the row's
+        // own place is, so pressing it again reopens it at once.
+        let open = openMenuKey() == key
+        row.sublayers[0].opacity = 0.0
+        if open {
+            row.makeInert()
+        }
+        let band = tapSeqEnterOverlay()
+        let overlayModifiers = modifierContextForOverlay(modifiers)
+        let lifted = header.describe(context, overlayModifiers)
+        let rule = Divider().describe(context, overlayModifiers)
+        var items = VStack(spacing: .None, alignment: .Leading) {
+            For(item in children) {
+                item
+            }
+        }
+        .describe(context, overlayModifiers)
+        menuCardFoot(items, modifiers)
+        var overlay = menuAnchor(key)
+        let reveal = menuRevealState(key)
+        var panel = menuSubmenuCard(
+            context,
+            card,
+            move lifted,
+            move rule,
+            move items,
+            reveal,
+            modifiers
+        )
+        if !open {
+            panel.makeInert()
+        }
+        // The card's box, placed exactly: its leading edge where its span
+        // starts, and its top where the card's top lands open.
+        overlay.z = OverlayLevel.submenu
+        overlay.alignment = 0.0
+        overlay.anchorX = menuSubmenuLeft(reveal, modifiers)
+        overlay.anchorW = menuSubmenuWidth(reveal, modifiers)
+        overlay.spacing = menuSubmenuTop(
+            reveal,
+            panel.layout.fixedHeight,
+            context.viewportHeight
+        ) - overlay.anchorY - overlay.anchorH
+        overlay.content = move panel
+        // A tap off the card closes it.
+        if open {
+            layerActionRegister(away, toggleMenuFn(key))
+            overlay.dismissKey = away
+        }
+        tapSeqLeaveOverlay(band)
+        overlayPresent(move overlay)
+        return row
+    }
+
+    // On a bar a menu is a button whose glass becomes the menu, as on the
+    // platform since iOS 26. Pressed, the glass leaves the button and grows
+    // into the card, falling past it and spreading back up, the items coming
+    // clear in it; dismissed, the items blur away first and the glass sinks a
+    // touch, then shrinks home into the button as it flies. The card covers the
+    // button, its top and trailing edges on the button's. The button shows the
+    // symbol when the menu has one, as the platform's bar does, and the title
+    // when it has none.
+    function presentedMenuDescription(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let key = tapSeqKey()
+        layerActionRegister(key, presentMenuFn(key))
+        var shown: Any Widget = Text(content: title)
+        if systemImage != .None {
+            shown = Icon(symbol: systemImage)
+        }
+        // On a tab bar the menu's button is the bar's symbol cell, and in
+        // content the label it is written with.
+        var button = menuLabelButtonDescription(context, modifiers, key, label)
+        if modifiers.controlPresentation == .TabBar {
+            button = tabBarButtonDescription(context, modifiers, key, shown)
+        } else if modifiers.controlPresentation == .Toolbar {
+            button = toolbarButtonDescription(context, modifiers, key, shown)
+        }
+        // A menu shown by its symbol alone is still named by its title.
+        var node = accessibilityPressable(.MenuButton, presentMenuFn(key), modifiers)
+        if systemImage != .None {
+            node.label = copy title
+        }
+        button.accessibilityCombined(move node)
+        if !menuHoldsGlass(key) {
+            return button
+        }
+        menuGroundTake(key)
+        let reveal = menuMorphAdvance(key)
+        let presented = menuState().presentedKey == key
+        // The glyph travels with the glass, so the button keeps only its press.
+        var glyph = copy button.sublayers[0]
+        button.sublayers[0].opacity = 0.0
+        let band = tapSeqEnterOverlay()
+        // The glass's key before its rows', which draw more on a frame a
+        // submenu is out; see `GlassEffectLayer`.
+        let surface = tapSeqKey()
+        let overlayModifiers = modifierContextForOverlay(modifiers)
+        var items = MenuItems() {
+            For(item in children) {
+                item
+            }
+        }
+        .describe(context, overlayModifiers)
+        if !presented {
+            items.makeInert()
+        }
+        var overlay = menuAnchor(key)
+        // Hung by its own height above the bottom of the button: over it.
+        overlay.spacing = -overlay.anchorH
+        overlay.alignment = 1.0
+        var morph = menuMorphDescription(
+            context,
+            surface,
+            move items,
+            move glyph,
+            reveal,
+            modifiers
+        )
+        // Falls back behind a submenu open in it, as a whole, toward the button
+        // it came out of.
+        let recession = menuRecession(context)
+        morph.scaleX = recession.scale
+        morph.scaleY = recession.scale
+        morph.anchorPoint = stackAlignmentUnitPoint(.TopTrailing)
+        if menuSubmenuIsOut(context) {
+            morph.makeInert()
+        }
+        menuRecedesFrom(Point { x: overlay.anchorX + overlay.anchorW, y: overlay.anchorY })
+        overlay.content = move morph
+        if presented {
+            let dismissKey = tapSeqKey()
+            layerActionRegister(dismissKey, dismissMenuFn())
+            overlay.dismissKey = dismissKey
+        }
+        tapSeqLeaveOverlay(band)
+        overlayPresent(move overlay)
+        return button
+    }
+}
+
+// Where a submenu's card starts across, and how wide it is, this far open.
+// Shut it is the row that owns it: the press found the row's pill, so out
+// from that by the pill's inset. Open it is wider than the menu by the
+// platform's margin, all of it on the leading side, so its trailing edge
+// stays on the menu's.
+public function menuSubmenuLeft(
+    reveal: borrow MenuReveal,
+    modifiers: borrow ModifierContext
+) -> Number {
+    return reveal.anchorX - menuPillInset(modifiers) - menuSubmenuWidening(reveal)
+}
+
+public function menuSubmenuWidth(
+    reveal: borrow MenuReveal,
+    modifiers: borrow ModifierContext
+) -> Number {
+    return reveal.anchorW + menuPillInset(modifiers) * 2.0 + menuSubmenuWidening(reveal)
+}
+
+public function menuSubmenuWidening(reveal: borrow MenuReveal) -> Number {
+    return menuSubmenuMetrics().widen * min(max(reveal.amount, 0.0), 1.0)
+}
+
+// Where an open submenu's card tops out: so the header is where its row was,
+// the card's air above it, unless the card would run off the bottom of the
+// window -- then as far up as it has to go, and never off the top.
+public function menuSubmenuTop(
+    reveal: borrow MenuReveal,
+    full: Number,
+    viewportHeight: Number
+) -> Number {
+    let margin = windowChromeMetrics().edgeInset
+    let inset = menuSubmenuMetrics().headerCenter - reveal.anchorH * 0.5
+    return max(min(reveal.anchorY - inset, viewportHeight - margin - full), margin)
+}
+
+// A submenu's card at one moment, in a box the open card's size: the row's
+// width, from its top to the last item.
+//
+// The card is the row at first, on the row, and opens on one spring: its top
+// rises to the box's and its bottom falls to the box's, the header riding
+// between them to its place under the card's air, so the items are uncovered
+// in place rather than slid in. They are there almost at once, over the rows
+// of the menu behind as those dim; the card's own glass, and the rule under
+// its header, come up only once it is half open, over the menu's. Going back the items go first and the glass
+// last, as a pill the size of the row, back on it.
+public function menuSubmenuCard(
+    context: borrow BuildContext,
+    surface: Number,
+    header: CALayerDescription,
+    rule: CALayerDescription,
+    items: CALayerDescription,
+    reveal: borrow MenuReveal,
+    modifiers: borrow ModifierContext,
+) -> CALayerDescription {
+    let metrics = menuSubmenuMetrics()
+    let width = menuSubmenuWidth(reveal, modifiers)
+    let rowHeight = reveal.anchorH
+    let inset = metrics.headerCenter - rowHeight * 0.5
+    let full = inset + rowHeight + rule.measure(width).height + items.measure(width).height
+    let top = menuSubmenuTop(reveal, full, context.viewportHeight)
+    let grown = reveal.amount
+    // The menu it opened in falls back toward its pivot, taking the row this
+    // card hangs from with it, and the card follows, overshoot and all. Shut,
+    // the card IS that row, so it shrinks with the menu as the row does and
+    // hands over to it exactly wherever the menu's own spring has got to;
+    // open, it is its own card at its own size, and only falls back with it.
+    let recession = menuRecession(context)
+    let shut = 1.0 - min(max(grown, 0.0), 1.0)
+    let scale = recession.pivoted ? 1.0 - (1.0 - recession.scale) * shut : 1.0
+    let followed = recession.pivoted ? (1.0 - recession.scale) * (
+        reveal.anchorY - recession.pivot.y
+    ) * (1.0 - shut) : 0.0
+    let height = rowHeight + (full - rowHeight) * grown
+    let radius = min(menuCardRadius(modifiers), height * 0.5)
+
+    var glassOpacity = min(max(grown / metrics.cardVanish, 0.0), 1.0)
+    var itemsOpacity = min(max((grown - metrics.itemsVanish) / metrics.itemsVanishSpan, 0.0), 1.0)
+    if reveal.opening {
+        glassOpacity = min(max((grown - metrics.cardAppear) / metrics.cardAppearSpan, 0.0), 1.0)
+        itemsOpacity = min(max((grown - metrics.itemsAppear) / metrics.itemsAppearSpan, 0.0), 1.0)
+    }
+    // The card is interactive as a whole, rows and all, under the glass's
+    // light. Only what it holds is clipped to it: the glass draws its rim
+    // just past its own edge, and a clip at that edge would shave it off.
+    var panel = CALayerDescription {
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedWidth: width,
+            fixedHeight: height,
+            offset: Point {
+                x: 0.0,
+                y: (reveal.anchorY - top) * (1.0 - grown) - metrics.rise * reveal.risen
+            }
+        },
+        cornerRadius: radius
+    }
+    let light = interactivePress(panel, surface, context, true)
+    var glass = liquidGlassDescription(
+        CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedWidth: width,
+            fixedHeight: height
+        },
+        radius,
+        .Squircle(radius),
+        modifiers,
+        []
+    )
+    var lit = liquidGlassContent(.Squircle(radius), modifiers)
+    interactiveGlassLit(lit, light, modifiers)
+    glass.content = .Glass(move lit)
+    glass.opacity = glassOpacity
+
+    // The rule under the header is the card's, not the items': it comes and
+    // goes with the glass.
+    var divider = move rule
+    divider.opacity = divider.opacity * glassOpacity
+    var shown = move items
+    shown.opacity = shown.opacity * itemsOpacity
+    let content = CALayerDescription {
+        layout: CALayoutIntent {
+            axis: .Column,
+            widthFill: false,
+            heightFill: false,
+            fixedWidth: width,
+            offset: Point { x: 0.0, y: inset * grown }
+        },
+        sublayers: [move header, move divider, move shown]
+    }
+
+    var card = CALayerDescription {
+        anchorPoint: Point {
+            x: (recession.pivot.x - menuSubmenuLeft(reveal, modifiers)) / width,
+            y: (recession.pivot.y - top + followed) / full
+        },
+        scaleX: scale,
+        scaleY: scale,
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedWidth: width,
+            fixedHeight: full,
+            offset: Point { x: 0.0, y: -followed }
+        },
+        sublayers: []
+    }
+    let clip = CALayerDescription {
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedWidth: width,
+            fixedHeight: height
+        },
+        cornerRadius: radius,
+        clipsChildren: true,
+        sublayers: [move content]
+    }
+    panel.sublayers = [move glass, move clip]
+    card.sublayers.append(move panel)
+    card.makeImmediate()
+    return card
+}
+
+// --- the card a menu is presented in -----------------------------------------
+
+// The panel a menu's rows sit on.
+//
+// This is what `.contextMenu { … }` will present once the library can present
+// anything; until then an application places it. Either way it is the thing that
+// RECEDES when a submenu inside it opens, which is why the recession is read
+// here rather than pushed down from the menu that caused it.
+public construct ContextMenu() extends Widget {
+    let children: [some Widget]
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let recession = menuRecession(context)
+        // The panel is interactive glass: pressed or scrubbed anywhere it
+        // leans after the pointer, rows and all. It is lifted off what it is
+        // over by the kit's wide, soft shadow.
+        let card = MenuItems() {
+            For(item in children) {
+                item
+            }
+        }
+        .glassEffect(
+            glass = .Regular,
+            shape = .Squircle(menuCardRadius(modifiers)),
+            interactive = true
+        )
+        .shadow(
+            color: themeAdaptiveColor(menuShadow, modifierAppearance(modifiers)),
+            radius: resolvedLength(menuShadowMetrics().radius),
+            x: resolvedLength(0.0),
+            y: resolvedLength(menuShadowMetrics().offset)
+        )
+        .scaleEffect(recession.scale, anchor: recession.anchor)
+        var described = card.describe(context, modifierContextPresenting(modifiers, .MenuRow))
+        if menuSubmenuIsOut(context) {
+            described.makeInert()
+        }
+        return described
+    }
+}
+
+// A menu's rows, without the card: what a `ContextMenu` sets on its panel and
+// a bar's menu carries inside the glass it grows. The card is the platform's
+// width, not its rows': a short menu is not a narrow one, and a long title
+// wraps rather than widening it. The rows dim while a submenu is open over
+// them.
+public construct MenuItems() extends Widget {
+    let children: [some Widget]
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let recession = menuRecession(context)
+        let menu = menuMetrics(modifiers)
+        let rows = VStack(spacing: .None, alignment: .Leading) {
+            For(item in children) {
+                item
+            }
+        }
+        .opacity(recession.ink)
+        .width(resolvedLength(menu.cardWidth))
+        var described = rows.describe(context, modifierContextPresenting(modifiers, .MenuRow))
+        described.layout.paddingTop = menu.cardPadding
+        menuCardFoot(described, modifiers)
+        return described
+    }
+}
+
+// A menu card's rows end on the card's padding, whichever card they are in:
+// a menu's own, or a submenu's under its header.
+public function menuCardFoot(
+    rows: borrow mut CALayerDescription,
+    modifiers: borrow ModifierContext
+) {
+    rows.layout.paddingBottom = menuMetrics(modifiers).cardPadding
+}

@@ -1,0 +1,57 @@
+import KiraUI
+import Foundation
+
+struct Person: Identifiable {
+    let id: String
+    let givenName: String
+    let familyName: String
+    let age: Int
+}
+
+let playgroundPeople = [
+    Person { id: "1", givenName: "Juan", familyName: "Chavez", age: 41 },
+    Person { id: "2", givenName: "Mei", familyName: "Chen", age: 29 },
+    Person { id: "3", givenName: "Tom", familyName: "Clark", age: 35 },
+    Person { id: "4", givenName: "Gita", familyName: "Kumar", age: 52 },
+    Person { id: "5", givenName: "Ana", familyName: "Silva", age: 23 }
+]
+
+construct TablePlayground() extends Widget {
+    @State var people: [Person] = playgroundPeople
+    @State var selection: Set<String> = Set<String>()
+    @State var sortOrder: [KeyPathComparator<Person>] = [KeyPathComparator(\Person.givenName)]
+    @State var opened: String = ""
+
+    body {
+        VStack(spacing: .None, alignment: .Leading) {
+            Table(people, selection: $selection, sortOrder: $sortOrder) {
+                TableColumn("Given Name", value: \.givenName)
+                TableColumn("Family Name", value: \.familyName)
+                TableColumn("Age", value: \.age) { person in
+                    Text(String(person.age))
+                }
+                .width(60)
+                .alignment(.Numeric)
+            }
+            .contextMenu(menu: { ids in
+                Button(title: "Open " + String(ids.count()), action: { in
+                    opened = String(ids.count())
+                    return
+                })
+            }, primaryAction: { ids in
+                opened = String(ids.count())
+                return
+            })
+            .onChange(of: sortOrder) { old, new in
+                people.sort(using: new)
+                return
+            }
+            Text(opened.count == 0 ? "Double-click a row" : "Opened " + opened)
+            .foregroundColor(.Secondary)
+            .padding()
+        }
+        .toolbar {
+            PlaygroundSourceLink(file: "TablePlayground.swift")
+        }
+    }
+}

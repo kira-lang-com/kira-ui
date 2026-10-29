@@ -1,0 +1,46 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// Swift's `Duration` formatted as its time style writes it, and SwiftUI's
+// `TimelineView`.
+
+construct KuiADurationIsWrittenInItsUnits() extends Test {
+    test {
+        let short = Duration { seconds: 97.0 }.formatted(.Time(.MinuteSecond))
+        let rounded = Duration { seconds: 2.5 }.formatted(.Time(.MinuteSecond))
+        let long = Duration { seconds: 3725.0 }.formatted(.Time(.HourMinuteSecond))
+        let hours = Duration { seconds: 3725.0 }.formatted(.Time(.HourMinute))
+        return "\(short) \(rounded) \(long) \(hours)"
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok("1:37 0:02 1:02:05 1:02")
+        return expected
+    }
+}
+
+// A timeline view is built from the time, and asks to be built again on its
+// next tick.
+construct KuiATimelineViewAsksForItsNextTick() extends Test {
+    test {
+        var built: Number = 0.0
+        kuiDescribe(
+            TimelineView(
+                schedule: .Periodic(5.0),
+                content: { timeline in
+                    built = timeline.date
+                    return Text(content: "tick")
+                }
+            )
+        )
+        let wait = match redrawWaitLimit(.None) {
+            Some(limit) -> limit
+            None -> -1.0
+        }
+        return built > 0.0 && wait >= 0.0 && wait <= 5000.0
+    }
+    expect {
+        let expected: Result<Any, TestFailure> = .Ok(true)
+        return expected
+    }
+}

@@ -1,0 +1,95 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's structural identity for the children of an `if`: the compiler
+// hands each child of an arm of an `if` in a content block to
+// `contentPlace` with that arm's place, and the layer the child makes carries
+// it. The reconciler takes an unkeyed layer for the one an earlier build made
+// only at the same place, so a view put in or taken away by an `if` never
+// moves a sibling from where it was, and the view of one arm never animates
+// out of where the other arm's was.
+//
+//     ZStack {
+//         if locked { LockScreen() }
+//         StatusBar()
+//     }
+//
+// The status bar is at place zero either way, and the lock screen at its
+// arm's: taking the lock screen away leaves the status bar its own layer.
+// The keys an arm's controls are given come from a band of its own too, so a
+// press held on the status bar is still held by it, with the drag it began,
+// when the lock screen comes in before it.
+
+public construct ContentPlaced(place: Number) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let entered = tapSeqEnterPlace(place)
+        var described = content.describe(context, modifiers)
+        tapSeqLeavePlace(entered)
+        described.place = place
+        return described
+    }
+
+    // What the child placed is to a menu and a list, which read through the
+    // place to it.
+    function menuTitle() -> String {
+        return content.menuTitle()
+    }
+
+    function isSection() -> Bool {
+        return content.isSection()
+    }
+}
+
+extend Widget {
+    // The child of an `if`'s arm at `place`, which the compiler asks for.
+    function contentPlace(place: Number) -> Any Widget {
+        return ContentPlaced(place: place) {
+            self
+        }
+    }
+}
+
+// Where the keys of an arm's controls are drawn: past every other band, each
+// band `width` keys wide, and `bands` of them.
+namespace TapBands {
+    let base: Number = 1000000
+    let width: Number = 1048576
+    let bands: Number = 1099511627776
+}
+
+// The band and the place in it the main sequence was at before an arm was
+// entered, to go back to.
+struct TapBandEntry {
+    let band: Number
+    let next: Number
+}
+
+// Draws the main sequence's keys from the band of the arm at `place`, made
+// from the band around it and the place, and the times this build the same
+// band was entered before.
+function tapSeqEnterPlace(place: Number) -> TapBandEntry {
+    if !ambientStateHas(StateSlot.tapSequence) {
+        ambientStatePut(StateSlot.tapSequence, nativeUserData(nativeState(TapSeq {})))
+    }
+    var seq = nativeRecover<TapSeq>(ambientStateGet(StateSlot.tapSequence))
+    let entry = TapBandEntry { band: seq.band, next: seq.next }
+    let mixed = (seq.band * 1000003 + place) % TapBands.bands
+    let name = String(mixed)
+    let times = try seq.bandsEntered.value(name) otherwise 0
+    seq.bandsEntered.set(copy name, times + 1)
+    seq.band = (mixed * 31 + times) % (TapBands.bands - 1) + 1
+    seq.next = 0
+    return entry
+}
+
+// Goes back to the band and the place in it `entry` left.
+function tapSeqLeavePlace(entry: borrow TapBandEntry) {
+    var seq = nativeRecover<TapSeq>(ambientStateGet(StateSlot.tapSequence))
+    seq.band = entry.band
+    seq.next = entry.next
+}

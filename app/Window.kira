@@ -1,0 +1,519 @@
+import Foundation
+import Ember
+import KiraLayout
+import KCoreAnimation
+
+// The window: its content, the chrome over it -- the menu bar across the top
+// and the toolbar's band under it -- and what floats over both.
+//
+// A window's frame is lowered in one order everywhere it is drawn: the content
+// declares its commands and its toolbar items while it lowers and is laid out
+// in the safe area the chrome leaves, then the chrome is drawn from what it
+// declared, and whatever floats is stacked over all of it. `windowFrame` is
+// that order, so a window's runner and anything else that draws one draw the
+// same window.
+
+// One frame of the window, lowered: `root` under the chrome, in the
+// application named `application`.
+public function windowFrame(
+    root: Any Widget,
+    application: String,
+    context: BuildContext,
+    viewport: borrow Size
+) -> CALayerDescription {
+    var windowContext = move context
+    // The content lowers under last frame's bar, and is held under this
+    // frame's once it has said what the bar holds.
+    let systemTop = windowContext.safeArea.top
+    windowContext.safeArea.top = systemTop + windowBarTop(windowContext.viewportWidth)
+    windowCanvasReset()
+    windowStyleCollect(copy application)
+    windowBackdropCollect()
+    overlayCollect()
+    commandsCollect(move application)
+    toolbarCollect()
+    let content = root.describe(windowContext, ModifierContext {})
+    windowBarSettle()
+    windowContext.safeArea.top = systemTop + windowBarTop(windowContext.viewportWidth)
+    toolbarStopCollecting()
+    commandsStopCollecting()
+    let window = windowDescription(move content, windowContext, ModifierContext {})
+    overlayStopCollecting()
+    return overlayStack(move window, overlaysThisFrame(), viewport.width, viewport.height)
+}
+
+// The window: its background, its content, and its chrome over both.
+//
+// The content is laid out inside the safe area the chrome leaves, unless a
+// container in it already did that itself — a split view does, so its sidebar
+// can run under the bar. The menu bar, where the window has one, is the
+// chrome's first row, and the toolbar's band is drawn under it.
+public function windowDescription(
+    content: CALayerDescription,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext
+) -> CALayerDescription {
+    var body = move content
+    if !chromeSafeAreaWasHandled() {
+        body = safeAreaInset(move body, context.safeArea)
+    }
+    if windowBar() != .Toolbar {
+        return windowSurface(move body, windowTitleBar(context, modifiers), modifiers)
+    }
+    var chrome = WindowChrome().describe(context, modifiers)
+    chrome.animation = toolbarMotion()
+    chrome.layout.widthFill = true
+    if menuBarShown() {
+        let bar = MenuBar().describe(context, modifiers)
+        chrome = CALayerDescription {
+            layout: CALayoutIntent { axis: .Column, heightFill: false },
+            sublayers: [bar, chrome]
+        }
+    }
+    let clearance = windowTopClearance()
+    if !menuBarShown() && clearance > 0.0 {
+        chrome = CALayerDescription {
+            layout: CALayoutIntent { axis: .Column, heightFill: false, paddingTop: clearance },
+            sublayers: [chrome]
+        }
+    }
+    chrome = safeAreaInset(move chrome, context.systemSafeArea)
+    if tabBarAtFoot(context) {
+        // A phone's tab bar, or its search field, floats at the foot of the
+        // screen, over the content and the home indicator's room alike.
+        chrome = CALayerDescription {
+            sublayers: [move chrome, WindowBottomBar().describe(context, modifiers)]
+        }
+    }
+    return windowSurface(move body, move chrome, modifiers)
+}
+
+// The window's canvas with its content and chrome on it, in the window's own
+// frame where it draws one.
+function windowSurface(
+    body: CALayerDescription,
+    chrome: CALayerDescription,
+    modifiers: borrow ModifierContext
+) -> CALayerDescription {
+    if !windowDecorated() {
+        return CALayerDescription {
+            content: .Solid(CASolid { fill: colorFromFoundation(windowCanvas(modifiers)) }),
+            sublayers: [body, chrome]
+        }
+    }
+    // A window that draws its own frame rounds every corner alike, holds what
+    // it shows inside them, and edges them with a hairline over everything,
+    // as a Mac's window does.
+    let radius = windowChromeMetrics().cornerRadius
+    let edge = CALayerDescription {
+        layout: CALayoutIntent { widthFill: true, heightFill: true },
+        content: .Solid(
+            CASolid {
+                fill: CAColor { a: 0.0 },
+                border: windowEdgeColor(modifiers),
+                borderWidth: 1.0,
+                cornerRadius: radius,
+                shapeKind: WindowShape.continuous
+            }
+        )
+    }
+    return CALayerDescription {
+        content: .Solid(
+            CASolid {
+                fill: colorFromFoundation(windowCanvas(modifiers)),
+                cornerRadius: radius,
+                shapeKind: WindowShape.continuous
+            }
+        ),
+        cornerRadius: radius,
+        clipsChildren: true,
+        shadow: windowShadowHosted() ? CAShadow {} : windowShadow(),
+        sublayers: windowLayers(move body, move chrome, move edge)
+    }
+}
+
+// The shadow a window that draws its own frame casts, as a Mac's does: deep
+// and soft under the window in front, and shallower under one behind, so the
+// one that takes the keyboard stands above the rest.
+public namespace WindowShadow {
+    // How far round the window its buffer reaches to hold the shadow, in
+    // points: the deeper shadow's blur and fall, with room to fade out.
+    let margin: Number = 64
+    let activeRadius: Number = 32
+    let activeFall: Number = 16
+    let activeOpacity: Number = 0.55
+    let inactiveRadius: Number = 16
+    let inactiveFall: Number = 6
+    let inactiveOpacity: Number = 0.3
+}
+
+function windowShadow() -> CAShadow {
+    if windowActive() {
+        return CAShadow {
+            color: CAColor { r: 0.0, g: 0.0, b: 0.0, a: WindowShadow.activeOpacity },
+            radius: WindowShadow.activeRadius,
+            offset: Point { x: 0.0, y: WindowShadow.activeFall }
+        }
+    }
+    return CAShadow {
+        color: CAColor { r: 0.0, g: 0.0, b: 0.0, a: WindowShadow.inactiveOpacity },
+        radius: WindowShadow.inactiveRadius,
+        offset: Point { x: 0.0, y: WindowShadow.inactiveFall }
+    }
+}
+
+// How far round the window its buffer reaches: the shadow's margin when the
+// window draws its own frame and its shadow, and nothing when it fills the
+// screen or its host draws the shadow.
+public function windowShadowMargin() -> Number {
+    return windowDecorated() && !windowShadowHosted() ? WindowShadow.margin : 0
+}
+
+// The radius a window that draws its own frame rounds its corners by, which
+// a host that clips the window clips it to; nothing when it fills the screen.
+public function windowCornerRadius() -> Number {
+    return windowDecorated() ? windowChromeMetrics().cornerRadius : 0
+}
+
+public namespace WindowShape {
+    // `CASolid.shapeKind`'s continuous curve, which a window's corners follow.
+    let continuous: Number = 1
+}
+
+// The hairline round a window that draws its own frame: light on a dark
+// window, dark on a light one.
+function windowEdgeColor(modifiers: borrow ModifierContext) -> CAColor {
+    return match modifierAppearance(modifiers) {
+        Dark -> CAColor { r: 1.0, g: 1.0, b: 1.0, a: 0.16 }
+        Light -> CAColor { r: 0.0, g: 0.0, b: 0.0, a: 0.12 }
+    }
+}
+
+// --- The window's own frame ----------------------------------------------------
+
+// Whether the window draws its own frame: its corners, its edge and the close,
+// minimize and zoom buttons. A display that leaves them to the window says so
+// (one whose windows float free); a native window has them drawn for it.
+struct WindowDecoration {
+    var drawn: Bool = false
+    // Whether the run keeps the window's chrome at all: its frame, its
+    // controls and the room kept for them.
+    var chrome: Bool = hostWindowChrome()
+    // Whether the window is the one in front, which takes the keyboard. A
+    // window behind draws its controls grey, as a Mac's does.
+    var active: Bool = true
+    // Whether the host draws the window's shadow round the frame it clips the
+    // window to, as a Mac's window server does, rather than the window drawing
+    // it into a margin of its own buffer.
+    var shadowHosted: Bool = false
+    // The style the content asked for this frame, the bar it settled on, which
+    // the next frame lowers under first, and the application's name, which a
+    // title bar shows when the content names itself nothing.
+    var style: WindowStyle = .Automatic
+    var bar: WindowBar = .Toolbar
+    var title: String = ""
+}
+
+// Whether windows draw their chrome. A runtime choice, the same build on every
+// host: `KIRA_UI_WINDOW_CHROME=hidden` takes the frame, the close, minimize and
+// zoom buttons and the room kept for them away for a run, so the content fills
+// the window edge to edge as a phone's screen does.
+public function hostWindowChrome() -> Bool {
+    return environmentValue("KIRA_UI_WINDOW_CHROME") != "hidden"
+}
+
+public function windowChromeShown() -> Bool {
+    windowDecorationEnsure()
+    let state = nativeRecover<WindowDecoration>(ambientStateGet(StateSlot.windowDecoration))
+    return state.chrome
+}
+
+function windowDecorationEnsure() {
+    if !ambientStateHas(StateSlot.windowDecoration) {
+        ambientStatePut(
+            StateSlot.windowDecoration,
+            nativeUserData(nativeState(WindowDecoration {}))
+        )
+    }
+}
+
+public function windowDecorationSet(drawn: Bool) {
+    windowDecorationEnsure()
+    var state = nativeRecover<WindowDecoration>(ambientStateGet(StateSlot.windowDecoration))
+    state.drawn = drawn
+}
+
+// The host says whether it draws the window's shadow itself.
+public function windowShadowHostedSet(hosted: Bool) {
+    windowDecorationEnsure()
+    var state = nativeRecover<WindowDecoration>(ambientStateGet(StateSlot.windowDecoration))
+    state.shadowHosted = hosted
+}
+
+function windowShadowHosted() -> Bool {
+    windowDecorationEnsure()
+    let state = nativeRecover<WindowDecoration>(ambientStateGet(StateSlot.windowDecoration))
+    return state.shadowHosted
+}
+
+public function windowActiveSet(active: Bool) {
+    windowDecorationEnsure()
+    var state = nativeRecover<WindowDecoration>(ambientStateGet(StateSlot.windowDecoration))
+    state.active = active
+}
+
+public function windowActive() -> Bool {
+    windowDecorationEnsure()
+    let state = nativeRecover<WindowDecoration>(ambientStateGet(StateSlot.windowDecoration))
+    return state.active
+}
+
+function windowStyleCollect(title: String) {
+    windowDecorationEnsure()
+    var state = nativeRecover<WindowDecoration>(ambientStateGet(StateSlot.windowDecoration))
+    state.style = .Automatic
+    state.title = move title
+}
+
+function windowStyleDeclare(style: WindowStyle) {
+    windowDecorationEnsure()
+    var state = nativeRecover<WindowDecoration>(ambientStateGet(StateSlot.windowDecoration))
+    state.style = style
+}
+
+function windowStyleDeclared() -> WindowStyle {
+    windowDecorationEnsure()
+    let state = nativeRecover<WindowDecoration>(ambientStateGet(StateSlot.windowDecoration))
+    return state.style
+}
+
+function windowBarSet(bar: WindowBar) {
+    windowDecorationEnsure()
+    var state = nativeRecover<WindowDecoration>(ambientStateGet(StateSlot.windowDecoration))
+    state.bar = bar
+}
+
+public function windowBar() -> WindowBar {
+    windowDecorationEnsure()
+    let state = nativeRecover<WindowDecoration>(ambientStateGet(StateSlot.windowDecoration))
+    return state.bar
+}
+
+function windowTitleName() -> String {
+    windowDecorationEnsure()
+    let state = nativeRecover<WindowDecoration>(ambientStateGet(StateSlot.windowDecoration))
+    return copy state.title
+}
+
+public function windowDecorated() -> Bool {
+    windowDecorationEnsure()
+    let state = nativeRecover<WindowDecoration>(ambientStateGet(StateSlot.windowDecoration))
+    return state.drawn && state.chrome
+}
+
+// What the window is painted in this frame: the theme's canvas, or the grouped
+// background when its content is a workspace's cards.
+struct WindowCanvas {
+    var grouped: Bool = false
+}
+
+function windowCanvasEnsure() {
+    if !ambientStateHas(StateSlot.windowCanvas) {
+        ambientStatePut(StateSlot.windowCanvas, nativeUserData(nativeState(WindowCanvas {})))
+    }
+}
+
+function windowCanvasReset() {
+    windowCanvasEnsure()
+    var state = nativeRecover<WindowCanvas>(ambientStateGet(StateSlot.windowCanvas))
+    state.grouped = false
+}
+
+// The window's content stands on it as grouped content does.
+public function windowCanvasGrouped() {
+    windowCanvasEnsure()
+    var state = nativeRecover<WindowCanvas>(ambientStateGet(StateSlot.windowCanvas))
+    state.grouped = true
+}
+
+public function windowCanvas(modifiers: borrow ModifierContext) -> FoundationColor {
+    windowCanvasEnsure()
+    let state = nativeRecover<WindowCanvas>(ambientStateGet(StateSlot.windowCanvas))
+    if state.grouped {
+        let resolved = themeAdaptiveColor(workspaceCanvasColor, modifierAppearance(modifiers))
+        return foundationColor(move resolved)
+    }
+    return navigationCanvas(modifiers)
+}
+
+// Content held inside a safe area, its box otherwise its own.
+public function safeAreaInset(
+    content: CALayerDescription,
+    insets: borrow EdgeInsets
+) -> CALayerDescription {
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            paddingLeading: insets.leading,
+            paddingTop: insets.top,
+            paddingTrailing: insets.trailing,
+            paddingBottom: insets.bottom
+        },
+        sublayers: [move content]
+    }
+}
+
+// --- The window controls -----------------------------------------------------
+
+// Whether the close, minimize and zoom buttons lead the toolbar's band. They
+// lead the window's first row: the menu bar's, where the window has one.
+public function windowControlsInToolbar() -> Bool {
+    return windowHasControls() && !menuBarShown()
+}
+
+// The room above the bar's row. Where the window has a menu row, that row is
+// it. A window whose close, minimize and zoom buttons lead its bar -- its menus
+// are on the platform's bar -- keeps the room still, so the buttons stand off
+// the top edge as far as they stand off the leading one, as a Mac's do: AppKit
+// draws them 19 down and its toolbar items 8 down, whoever draws the buttons.
+// A window with no buttons, as a phone's screen, starts its bar at the top.
+public function windowTopClearance() -> Number {
+    if menuBarShown() { return menuBarHeight() }
+    if !windowHasControls() { return 0.0 }
+    let metrics = windowChromeMetrics()
+    return max(0.0, metrics.controlsLeading + (metrics.controlDiameter - metrics.itemHeight) / 2.0)
+}
+
+// How tall the window's first row is, which the window controls are centered
+// in.
+public function windowControlsRowHeight() -> Number {
+    if menuBarShown() {
+        return menuBarMetrics().height
+    }
+    return windowChromeMetrics().toolbarHeight
+}
+
+// The native compositor asks this only for a real pointer press. Controls in
+// the chrome still receive their ordinary UI event; the window decides whether
+// the press begins a move once it belongs to the chrome.
+public function toolbarWindowDragRegion(x: Number, y: Number) -> Bool {
+    toolbarSinkEnsure()
+    let sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+    if sink.windowDragHeight <= 0.0 {
+        return graphicsApplicationFallbackWindowDragRegion(x, y)
+    }
+    if x < 0.0 || y < 0.0 || y >= sink.windowDragHeight {
+        return false
+    }
+    // The row the controls are in: the menu row, the bar's under the room
+    // kept above it, or a title bar's.
+    let titled = windowBar() != .Toolbar
+    let rowTop = menuBarShown() || titled ? 0.0 : windowTopClearance()
+    let rowHeight = titled ? TitleBarMetrics.height : windowControlsRowHeight()
+    if y < rowTop || y >= rowTop + rowHeight {
+        return true
+    }
+    // The close, minimize and zoom buttons are the window's, wherever they are
+    // drawn, and a press on them is theirs.
+    let metrics = windowChromeMetrics()
+    let controlsStart = titled ? TitleBarMetrics.controlsLeading : metrics.controlsLeading
+    let controlsEnd = controlsStart + metrics.controlDiameter * 3.0 + metrics.controlSpacing * 2.0
+    return x < controlsStart || x > controlsEnd
+}
+
+// --- Window commands ---------------------------------------------------------
+
+// A button press happens in the input callback, while the native window is
+// owned by the next RenderFrame. Keep one pending request in the same ambient
+// store as the toolbar and consume it at the start of that frame.
+// What the window was asked to do: closed, sent to the Dock, or zoomed.
+@Derive(Copy)
+public enum WindowCommand {
+    Close
+    Minimize
+    ToggleMaximize
+}
+
+public struct WindowCommandState {
+    var command: WindowCommand? = .None
+}
+
+public function windowCommandEnsure() {
+    if !ambientStateHas(StateSlot.windowCommand) {
+        ambientStatePut(StateSlot.windowCommand, nativeUserData(nativeState(WindowCommandState {})))
+    }
+}
+
+public function requestWindowClose() {
+    requestWindowCommand(.Close)
+}
+
+public function requestWindowMinimize() {
+    requestWindowCommand(.Minimize)
+}
+
+public function requestWindowToggleMaximize() {
+    requestWindowCommand(.ToggleMaximize)
+}
+
+function requestWindowCommand(command: WindowCommand) {
+    windowCommandEnsure()
+    var state = nativeRecover<WindowCommandState>(ambientStateGet(StateSlot.windowCommand))
+    state.command = .Some(command)
+}
+
+// The command asked for since the last frame, taken: none when nothing was.
+public function takeWindowCommand() -> WindowCommand? {
+    windowCommandEnsure()
+    var state = nativeRecover<WindowCommandState>(ambientStateGet(StateSlot.windowCommand))
+    let command = state.command
+    state.command = .None
+    return command
+}
+
+public function consumeWindowCommand(frame: borrow mut Ember.RenderFrame) {
+    match takeWindowCommand() {
+        Some(command) -> match command {
+            Close -> frame.requestQuit()
+            Minimize -> frame.minimizeWindow()
+            ToggleMaximize -> frame.toggleMaximizeWindow()
+        }
+        None -> {}
+    }
+}
+
+// The window's layers bottom first: its content, the sidebar's cut and the
+// sidebar over it where the backdrop shows through, then its chrome and its
+// edge over all of them.
+function windowLayers(
+    body: CALayerDescription,
+    chrome: CALayerDescription,
+    edge: CALayerDescription
+) -> [CALayerDescription] {
+    var layers: [CALayerDescription] = [placedIn(move body, WindowLayerPlace.body)]
+    for layer in windowBackdropLayers() {
+        layers.append(placedIn(copy layer, WindowLayerPlace.backdrop))
+    }
+    layers.append(placedIn(move chrome, WindowLayerPlace.chrome))
+    layers.append(placedIn(move edge, WindowLayerPlace.edge))
+    return layers
+}
+
+// Where each of a window's layers stands among its frame's, as structural
+// identity counts it. The sidebar's backdrop comes and goes with the
+// sidebar; without places of their own, the layers after it were matched by
+// order to whatever stood in their slot before, and the window's edge,
+// taking the backdrop's old layer, grew from the sidebar's frame to the
+// window's under the default implicit animation.
+namespace WindowLayerPlace {
+    let body: Number = 1
+    let backdrop: Number = 2
+    let chrome: Number = 3
+    let edge: Number = 4
+}
+
+// `layer` at `place` among its parent's layers.
+function placedIn(layer: CALayerDescription, place: Number) -> CALayerDescription {
+    var placed = move layer
+    placed.place = place
+    return placed
+}

@@ -1,0 +1,66 @@
+import Foundation
+
+// SwiftUI's `TimelineView(.after(_:))`, in the form an interface that changes
+// with time needs: the interface is described again once `seconds` have gone
+// by, with nothing having happened meanwhile. What the description reads then
+// -- the clock, a phase that has run its course -- is what it shows.
+//
+// A view whose look only moves needs none of this: `.animation(_:)` carries it
+// to the new description, and the interface is described again when that
+// motion ends. This is for what changes when nothing moves: a motion's last
+// step that takes a view away, a countdown, a clock without seconds.
+
+// When the interface is next described of itself, in milliseconds since 1970;
+// none while nothing asked. Kept in the process's ambient state.
+struct RedrawDeadline {
+    var at: Number? = .None
+}
+
+// The slot, made the first time it is asked for.
+function redrawDeadlineEnsure() {
+    if !ambientStateHas(StateSlot.redraw) {
+        ambientStatePut(StateSlot.redraw, nativeUserData(nativeState(RedrawDeadline {})))
+    }
+}
+
+// Describe the interface again `seconds` from now. The earliest of the
+// deadlines asked for stands.
+public function redrawAfter(seconds: Number) {
+    let previous = enterProcessScope()
+    redrawDeadlineEnsure()
+    var deadline = nativeRecover<RedrawDeadline>(ambientStateGet(StateSlot.redraw))
+    let at = unixMillis() + seconds * 1000
+    deadline.at = match deadline.at {
+        Some(asked) -> .Some(min(asked, at))
+        None -> .Some(at)
+    }
+    ambientScopeEnter(previous)
+}
+
+// How long a host may wait before describing the interface again, in
+// milliseconds: until the deadline asked for, or `otherwise` when that is
+// sooner or none was asked. A deadline that has come is taken, and is a wait
+// of nothing.
+public function redrawWaitLimit(otherwise: Number?) -> Number? {
+    let previous = enterProcessScope()
+    redrawDeadlineEnsure()
+    var deadline = nativeRecover<RedrawDeadline>(ambientStateGet(StateSlot.redraw))
+    var limit = otherwise
+    match deadline.at {
+        Some(at) -> {
+            let left = at - unixMillis()
+            if left <= 0 {
+                deadline.at = .None
+                limit = .Some(0)
+            } else {
+                limit = match otherwise {
+                    Some(asked) -> .Some(min(asked, left))
+                    None -> .Some(left)
+                }
+            }
+        }
+        None -> {}
+    }
+    ambientScopeEnter(previous)
+    return limit
+}

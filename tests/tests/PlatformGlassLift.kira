@@ -1,0 +1,44 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// A capsule of platform glass, pressed: its scale lifts it where the scale
+// puts it, and its corner is half its height however far past every box a
+// capsule's radius is asked for.
+
+function pressedCapsuleLayer(scale: Number) -> CALayerDescription {
+    return CALayerDescription {
+        size: Size { width: 120.0, height: 40.0 },
+        sublayers: [
+            CALayerDescription {
+                position: Point { x: 20.0, y: 10.0 },
+                size: Size { width: 80.0, height: 30.0 },
+                cornerRadius: containerShapeUnbounded(),
+                scaleX: scale,
+                scaleY: scale,
+                content: .Glass(CAGlass {})
+            }
+        ]
+    }
+}
+
+// A pressed capsule lifts by its scale, and its corner stays half its height.
+@Test
+function pressedCapsuleLiftsWithItsCorner() {
+    var described = pressedCapsuleLayer(1.115)
+    let lifted = platformLiftGlass(described)
+    expect!((lifted.count) == (1))
+    expect!((lifted[0].capsule) == (true))
+    expect!((abs(lifted[0].corner - lifted[0].height / 2) < 0.001) == (true))
+    expect!((abs(lifted[0].height - 30 * 1.115) < 0.001) == (true))
+}
+
+// A capsule at rest is not lifted: its height is its own and its corner is
+// exactly half of it.
+@Test
+function restingCapsuleLiftsWhole() {
+    var described = pressedCapsuleLayer(1)
+    let lifted = platformLiftGlass(described)
+    expect!((lifted.count) == (1))
+    expect!((lifted[0].corner) == (15))
+}

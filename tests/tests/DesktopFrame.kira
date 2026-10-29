@@ -1,0 +1,183 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// A home screen as a platform's desktop draws one, from the top: a picture,
+// and over it a view of its own with state, whose pages of tiles stand side by
+// side under a page's dots, framed as a desktop surface is. Its rows of tiles
+// spread across the page and stand one under the next.
+
+namespace HomeGrid {
+    let columns: Number = 6
+    let column: Number = 96
+    let side: Number = 148
+    let rowGap: Number = 30
+    let width: Number = 1120
+    let height: Number = 630
+}
+
+construct HomeAppIcon(name: String) extends Widget {
+    body {
+        ZStack(alignment: .Center) {
+            RoundedRectangle(cornerRadius: 15, style: .Continuous)
+            .fill(RGBAColor { r: 0.5, g: 0.2, b: 0.8, a: 1.0 })
+            Text("W")
+        }
+        .width(resolvedLength(68))
+        .height(resolvedLength(68))
+    }
+}
+
+function homeTile(name: String) -> Any Widget {
+    return Button(action: { in return }) {
+        VStack(spacing: .Length(8.5), alignment: .Center) {
+            HomeAppIcon(name: copy name)
+            Text(copy name)
+            .font(size: resolvedLength(12), weight: .Medium)
+        }
+        .hugWidth()
+    }
+    .buttonStyle(.Plain)
+}
+
+function homeRows(count: Number) -> Any Widget {
+    var tiles: [Any Widget] = []
+    for index in 0..count { tiles.append(homeTile("App" + "\(index)").opacity(1)) }
+    var rows: [Any Widget] = []
+    var start: Number = 0
+    while start < tiles.count {
+        var row: [Any Widget] = []
+        for column in 0..HomeGrid.columns {
+            if column > 0 { row.append(Spacer()) }
+            let at = start + column
+            if at < tiles.count {
+                row.append(tiles[at].width(resolvedLength(HomeGrid.column)))
+            } else {
+                row.append(FixedGap(width: HomeGrid.column, height: 0))
+            }
+        }
+        rows.append(
+            HStack(spacing: .None, alignment: .Top, children: row).fillWidth().edgePadding(
+                EdgeSet.horizontal,
+                resolvedLength(HomeGrid.side)
+            )
+        )
+        start = start + HomeGrid.columns
+    }
+    return VStack(spacing: .Length(HomeGrid.rowGap), alignment: .Center, children: rows)
+    .fillWidth()
+}
+
+construct HomeScreen(count: Number, pageWidth: Number = HomeGrid.width) extends Widget {
+    @State var page: Number = 0
+    @State var swipe: Number = 0
+
+    body {
+        var strip: [Any Widget] = []
+        for at in 0..2 {
+            strip.append(
+                VStack(spacing: .None, alignment: .Center) {
+                    FixedGap(width: 0, height: 84)
+                    homeRows(count)
+                    Spacer()
+                }.width(resolvedLength(pageWidth)).fillHeight()
+            )
+        }
+        ZStack(alignment: .TopLeading) {
+            HStack(spacing: .None, alignment: .Top, children: strip)
+            .offset(x: resolvedLength(-page * HomeGrid.width + swipe), y: resolvedLength(0))
+            .animation(.Smooth)
+            VStack(spacing: .None, alignment: .Center) {
+                Spacer()
+                Text("dots")
+            }
+            .fillWidth()
+            .fillHeight()
+            .edgePadding(EdgeSet.bottom, resolvedLength(120))
+        }
+        .fillWidth()
+        .fillHeight()
+        .statusBarHidden(false)
+        .alert(title: "Remove?", isPresented: false, message: "", actions: [])
+        .gesture(DragGesture(minimumDistance: 0))
+    }
+}
+
+function homeScreenLaidOut(count: Number, pageWidth: Number = HomeGrid.width) -> CALayerDescription {
+    let root = ZStack(alignment: .Top) {
+        Rectangle().fill(RGBAColor { r: 0.1, g: 0.1, b: 0.1, a: 1.0 })
+        HomeScreen(count: count, pageWidth: pageWidth)
+        .opacity(1)
+    }
+    .fillWidth()
+    .fillHeight()
+    let context = buildContext(FoundationUiContext {})
+    var described = desktopFrame(
+        move root,
+        "Desktop",
+        move context,
+        Size { width: HomeGrid.width, height: HomeGrid.height }
+    )
+    layOutLayerTree(described, HomeGrid.width, HomeGrid.height)
+    return described
+}
+
+// Every row of eleven children in `layer`, outermost first: its width, the
+// gap past its last child, and where it stands on the surface.
+struct HomeRow {
+    var width: Number = 0
+    var gap: Number = 0
+    var x: Number = 0
+    var y: Number = 0
+}
+
+function homeRowsIn(
+    layer: borrow CALayerDescription,
+    x: Number,
+    y: Number,
+    found: borrow mut [HomeRow]
+) {
+    let left = x + layer.position.x
+    let top = y + layer.position.y
+    if layer.sublayers.count == 11 && layer.sublayers[0].position.y == layer.sublayers[10].position.y {
+        let last = layer.sublayers[10]
+        found.append(
+            HomeRow {
+                width: layer.size.width,
+                gap: layer.size.width - last.position.x - last.size.width,
+                x: left,
+                y: top
+            }
+        )
+    }
+    for sub in layer.sublayers { homeRowsIn(sub, left, top, found) }
+}
+
+// Seven tiles make a row of six and a row of one, and a row spreads its tiles
+// across the page: the first row starts at the side margin, fills the page
+// between its margins, and ends flush with its last tile.
+@Test
+function homeRowsSpreadAndStack() {
+    var rows: [HomeRow] = []
+    homeRowsIn(homeScreenLaidOut(7), 0, 0, rows)
+    expect!((rows.count) == (4))
+    expect!((rows[0].x) == (HomeGrid.side))
+    expect!((rows[0].width) == (HomeGrid.width - 2 * HomeGrid.side))
+    expect!((rows[0].gap) == (0))
+    expect!((rows[1].y > rows[0].y) == (true))
+}
+
+// A home screen sizes its pages to the viewport, which a host writes before
+// it builds: written, the rows spread across a page as they do at a fixed
+// width; unwritten, the pages had no width and the tiles packed together.
+@Test
+function homeRowsSpreadInTheViewport() {
+    foundationWriteViewportSnapshot(HomeGrid.width, HomeGrid.height)
+    expect!((viewportWidth()) == (HomeGrid.width))
+    var rows: [HomeRow] = []
+    homeRowsIn(homeScreenLaidOut(7, viewportWidth()), 0, 0, rows)
+    expect!((rows.count) == (4))
+    expect!((rows[0].x) == (HomeGrid.side))
+    expect!((rows[0].width) == (HomeGrid.width - 2 * HomeGrid.side))
+    expect!((rows[0].gap) == (0))
+}

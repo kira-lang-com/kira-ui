@@ -1,0 +1,74 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// The children of an `if` carry their arm's place, and a sibling after the
+// `if` none, so taking the arm's child away never moves the sibling into the
+// layer it left (ContentPlace.kira).
+
+function kuiPlacedStack(shown: Bool) -> CALayerDescription {
+    return kuiDescribe(
+        ZStack {
+            if shown {
+                Text(content: "Lock")
+            } else {
+                Text(content: "Home")
+            }
+            Text(content: "Bar")
+        }
+    )
+}
+
+@Test
+function ifArmsCarryTheirPlaces() {
+    let shown = kuiPlacedStack(true)
+    let hidden = kuiPlacedStack(false)
+    expect!(shown.sublayers.count == 2)
+    expect!(shown.sublayers[0].place != 0)
+    expect!(hidden.sublayers[0].place != 0)
+    expect!(shown.sublayers[0].place != hidden.sublayers[0].place)
+    expect!(shown.sublayers[1].place == 0)
+}
+
+@Test
+function siblingAfterAnIfKeepsItsLayer() {
+    var tree = layerTree()
+    let first = CALayerDescription {
+        key: 1,
+        sublayers: [
+            CALayerDescription { place: 3, opacity: 0.0 },
+            CALayerDescription { opacity: 1.0 }
+        ]
+    }
+    let root = tree.reconcile(first)
+    tree.beginReconcile()
+    tree.reuse(root)
+    let bar = tree.matchChild(root, 0)
+    tree.endReconcile()
+    tree.reconcile(CALayerDescription { key: 1, sublayers: [CALayerDescription { opacity: 1.0 }] })
+    tree.advance(0.0)
+    expect!(tree.isMounted(bar))
+    expect!(tree.presentationOpacity(bar) == 1.0)
+}
+
+function kuiDragAfterIf(shown: Bool) -> CALayerDescription {
+    tapSeqReset()
+    return kuiDescribe(
+        ZStack {
+            if shown {
+                Text(content: "Lock").gesture(DragGesture(minimumDistance: 0))
+            }
+            Text(content: "Bar").gesture(DragGesture(minimumDistance: 0))
+        }
+    )
+}
+
+@Test
+function controlAfterAnIfKeepsItsKey() {
+    let without = kuiDragAfterIf(false)
+    let with = kuiDragAfterIf(true)
+    expect!(without.sublayers.count == 1)
+    expect!(with.sublayers.count == 2)
+    expect!(with.sublayers[1].hitKey == without.sublayers[0].hitKey)
+    expect!(with.sublayers[0].hitKey != with.sublayers[1].hitKey)
+}

@@ -1,0 +1,136 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// A view's `@State` lives while the view is in the interface: kept while each
+// build describes it, gone once one does not, and kept for a view its
+// container holds without describing it.
+
+construct StateTally() extends Widget {
+    @State var taps: Number = 0
+
+    body {
+        Text("Tally")
+    }
+}
+
+// One build that describes the tally with `taps` set, or describes nothing.
+function buildTally(taps: Number?) {
+    var build = stateBuildBegin()
+    match taps {
+        Some(count) -> {
+            var tally = StateTally()
+            tally.taps = count
+            describedLayer(move tally)
+        }
+        // The tally is out of the interface for this build.
+        None -> {}
+    }
+    build.finish()
+}
+
+struct KeyedStateValue {
+    var value: Number = 0
+}
+
+// A view's state is kept while its build describes it.
+@Test
+function stateStaysWhileDescribed() {
+    buildTally(.Some(5))
+    var build = stateBuildBegin()
+    describedLayer(StateTally())
+    build.finish()
+    expect!((StateTally().taps) == (5))
+}
+
+// A view that a build leaves out loses its state.
+@Test
+function stateGoesWithItsView() {
+    buildTally(.Some(5))
+    buildTally(.None)
+    expect!((StateTally().taps) == (0))
+}
+
+// State is kept for a view in a scope its container keeps, and dropped when the
+// scope is not kept.
+@Test
+function stateStaysInAKeptScope() {
+    var first = stateBuildBegin()
+    stateScopeRecord("kui.kept")
+    var tally = StateTally()
+    tally.taps = 3
+    describedLayer(move tally)
+    stateScopeRecorded()
+    first.finish()
+    var second = stateBuildBegin()
+    stateScopeRetain("kui.kept")
+    second.finish()
+    expect!((StateTally().taps) == (3))
+    buildTally(.None)
+    expect!((StateTally().taps) == (0))
+}
+
+// Keyed control state is in a kept scope too: a container that keeps a view
+// undescribed keeps the scroll position and the rest of the state the view
+// used, not only its declared `@State`.
+@Test
+function keyedStateStaysInAKeptScope() {
+    let key = slotKey("kui.keyed.kept.", 3)
+    var first = stateBuildBegin()
+    stateScopeRecord("kui.keyed.kept")
+    ambientStatePutView(copy key, nativeUserData(nativeState(KeyedStateValue { value: 11 })))
+    stateScopeRecorded()
+    first.finish()
+    expect!((ambientStateHasView(key)) == (true))
+    var second = stateBuildBegin()
+    stateScopeRetain("kui.keyed.kept")
+    second.finish()
+    expect!((ambientStateHasView(key)) == (true))
+    var third = stateBuildBegin()
+    third.finish()
+    expect!((ambientStateHasView(key)) == (false))
+}
+
+// A keyed control's state belongs to the build that touched it. A rebuild
+// that mints a different key is a different control: the old state leaves
+// with the build instead of living for the window.
+@Test
+function keyedStateUnderANewKeyDropsTheOldOne() {
+    let old = slotKey("kui.keyed.", 1)
+    var seed = stateBuildBegin()
+    ambientStatePutView(copy old, nativeUserData(nativeState(KeyedStateValue { value: 7 })))
+    seed.finish()
+    expect!((ambientStateHasView(old)) == (true))
+    let next = slotKey("kui.keyed.", 2)
+    var shifted = stateBuildBegin()
+    ambientStatePutView(copy next, nativeUserData(nativeState(KeyedStateValue { value: 7 })))
+    shifted.finish()
+    expect!((ambientStateHasView(old)) == (false))
+    expect!((ambientStateHasView(next)) == (true))
+    let removed = ambientStateRemoveView(copy next)
+    expect!((removed) == (true))
+}
+
+// A frame that mints new keys each build leaves only the keys it touched:
+// the state of the frame before goes with the build that ended.
+@Test
+function keyedStateAcrossBuildsStaysBounded() {
+    var settle = stateBuildBegin()
+    settle.finish()
+    let baseline = ambientStateViewCount()
+    for build in 0..100 {
+        var frame = stateBuildBegin()
+        for index in 0..10 {
+            let key = slotKey("kui.keyed.churn.", build * 10 + index)
+            ambientStatePutView(
+                copy key,
+                nativeUserData(nativeState(KeyedStateValue { value: build }))
+            )
+        }
+        frame.finish()
+        expect!((ambientStateViewCount()) == (baseline + 10))
+    }
+    var last = stateBuildBegin()
+    last.finish()
+    expect!((ambientStateViewCount()) == (baseline))
+}

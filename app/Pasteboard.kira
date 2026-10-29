@@ -1,0 +1,111 @@
+import Foundation
+import Ember
+
+// The pasteboard a text field copies to and pastes from, as SwiftUI's fields
+// use the system's. The host running the application says how to reach the
+// system's (`pasteboardAccessSet`): on Tessera that is the Pasteboard
+// service, whose reads need the key press that asked for them. With no host
+// saying so, the text stays in this program alone.
+
+/// Why the pasteboard gave nothing or took nothing.
+public enum PasteboardRefusal {
+    /// The pasteboard holds no text.
+    Empty
+    /// A read came from no key press or click, so the system refused it.
+    NoInteraction
+    /// The system's pasteboard could not be reached, for this reason.
+    Unavailable(String)
+}
+
+/// How the host reaches the system's pasteboard. `write` says itself why
+/// the system's pasteboard did not take a text.
+public struct PasteboardAccess {
+    let write: (String) -> Void
+    let read: () -> Result<String, PasteboardRefusal>
+}
+
+struct PasteboardSlotState {
+    var access: PasteboardAccess? = .None
+    // The text copied while no host gave a pasteboard.
+    var local: String? = .None
+}
+
+namespace PasteboardSlot {
+    let key: PersistentStateKey = PersistentStateKey { name: "kiraui.pasteboard" }
+}
+
+function pasteboardSlot() -> RawPtr {
+    if !ambientStateHas(PasteboardSlot.key) {
+        ambientStatePut(PasteboardSlot.key, nativeUserData(nativeState(PasteboardSlotState {})))
+    }
+    return ambientStateGet(PasteboardSlot.key)
+}
+
+/// The host says how text fields reach the system's pasteboard.
+public function pasteboardAccessSet(access: PasteboardAccess) {
+    let previous = enterProcessScope()
+    var state = nativeRecover<PasteboardSlotState>(pasteboardSlot())
+    state.access = .Some(access)
+    ambientScopeEnter(previous)
+}
+
+/// Puts `text` on the pasteboard.
+public function pasteboardCopy(text: borrow String) {
+    let previous = enterProcessScope()
+    var state = nativeRecover<PasteboardSlotState>(pasteboardSlot())
+    let access = copy state.access
+    if access.isNone() { state.local = .Some(copy text) }
+    ambientScopeEnter(previous)
+    match access {
+        Some(host) -> host.write(copy text)
+        // The text stays in this program, as `local`.
+        None -> {}
+    }
+}
+
+/// The text on the pasteboard.
+///
+/// # Errors
+///
+/// [`PasteboardRefusal`] when it holds none or the system refused the read.
+public function pasteboardText() -> Result<String, PasteboardRefusal> {
+    let previous = enterProcessScope()
+    let state = nativeRecover<PasteboardSlotState>(pasteboardSlot())
+    let access = copy state.access
+    let local = copy state.local
+    ambientScopeEnter(previous)
+    return match access {
+        Some(host) -> host.read()
+        None -> match local {
+            Some(text) -> .Ok(text)
+            None -> .Error(.Empty)
+        }
+    }
+}
+
+/// What a key held with the command key does to the text field that has the
+/// keyboard, as a Mac's Edit menu does.
+public enum TextEditCommand {
+    SelectAll
+    Copy
+    Cut
+    Paste
+}
+
+/// The edit `pressed` asks of a focused field with `held` keys down: the
+/// command key and A, C, X or V, and nothing else held.
+public function textEditCommandFor(
+    pressed: borrow Key,
+    held: borrow ModifierState
+) -> TextEditCommand? {
+    let apple = hostUsesCommandKey()
+    let command = apple ? held.superKey : held.control
+    if !command || held.shift || held.alt || (apple && held.control) { return .None }
+    return match pressed {
+        A -> .Some(.SelectAll)
+        C -> .Some(.Copy)
+        X -> .Some(.Cut)
+        V -> .Some(.Paste)
+        else -> .None
+    }
+}
