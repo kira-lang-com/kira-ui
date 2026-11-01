@@ -49,162 +49,180 @@ public function textFieldEnsure(key: Number) {
 }
 
 public function textFieldSeed(key: Number, initial: borrow String) {
-    textFieldEnsure(key)
-    var st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
-    if !st.seeded {
-        st.codes = foundationStringToCodepoints(initial)
-        st.caret = st.codes.count
-        st.anchor = st.caret
-        st.seeded = true
+    unsafe {
+        textFieldEnsure(key)
+        var st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
+        if !st.seeded {
+            st.codes = foundationStringToCodepoints(initial)
+            st.caret = st.codes.count
+            st.anchor = st.caret
+            st.seeded = true
+        }
     }
 }
 
 public function textFieldText(key: Number) -> String {
-    textFieldEnsure(key)
-    let st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
-    return foundationStringFromCodepoints(st.codes, 0, st.codes.count)
+    unsafe {
+        textFieldEnsure(key)
+        let st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
+        return foundationStringFromCodepoints(st.codes, 0, st.codes.count)
+    }
 }
 
 public function textFieldReset(key: Number) {
-    textFieldEnsure(key)
-    var st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
-    var empty: [Number] = []
-    st.codes = move empty
-    st.caret = 0
-    st.anchor = 0
-    st.seeded = false
+    unsafe {
+        textFieldEnsure(key)
+        var st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
+        var empty: [Number] = []
+        st.codes = move empty
+        st.caret = 0
+        st.anchor = 0
+        st.seeded = false
+    }
 }
 
 // Delete the selected range (if any), collapsing the caret to its start.
 public function textFieldDeleteSelection(key: Number) {
-    textFieldEnsure(key)
-    var st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
-    if st.anchor == st.caret {
-        return
-    }
-    let a = textFieldSelMin(st.anchor, st.caret)
-    let b = textFieldSelMax(st.anchor, st.caret)
-    var next: [Number] = []
-    for i in 0..st.codes.count {
-        if i < a || i >= b {
-            next.append(st.codes[i])
+    unsafe {
+        textFieldEnsure(key)
+        var st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
+        if st.anchor == st.caret {
+            return
         }
+        let a = textFieldSelMin(st.anchor, st.caret)
+        let b = textFieldSelMax(st.anchor, st.caret)
+        var next: [Number] = []
+        for i in 0..st.codes.count {
+            if i < a || i >= b {
+                next.append(st.codes[i])
+            }
+        }
+        st.codes = move next
+        st.caret = a
+        st.anchor = a
     }
-    st.codes = move next
-    st.caret = a
-    st.anchor = a
 }
 
 public function textFieldSelectAll(key: Number) {
-    textFieldEnsure(key)
-    var st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
-    st.anchor = 0
-    st.caret = st.codes.count
+    unsafe {
+        textFieldEnsure(key)
+        var st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
+        st.anchor = 0
+        st.caret = st.codes.count
+    }
 }
 
 public function textFieldInsert(key: Number, cp: Number) {
-    if cp < 32 {
-        return
+    unsafe {
+        if cp < 32 {
+            return
+        }
+        // Typing over a selection replaces it.
+        textFieldDeleteSelection(key)
+        textFieldEnsure(key)
+        var st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
+        var next: [Number] = []
+        for i in 0..st.caret {
+            next.append(st.codes[i])
+        }
+        next.append(cp)
+        for i in st.caret..st.codes.count {
+            next.append(st.codes[i])
+        }
+        st.codes = move next
+        st.caret++
+        st.anchor = st.caret
     }
-    // Typing over a selection replaces it.
-    textFieldDeleteSelection(key)
-    textFieldEnsure(key)
-    var st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
-    var next: [Number] = []
-    for i in 0..st.caret {
-        next.append(st.codes[i])
-    }
-    next.append(cp)
-    for i in st.caret..st.codes.count {
-        next.append(st.codes[i])
-    }
-    st.codes = move next
-    st.caret++
-    st.anchor = st.caret
 }
 
 public function textFieldBackspace(key: Number) {
-    textFieldEnsure(key)
-    var st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
-    // A selection is deleted whole.
-    if st.anchor != st.caret {
-        textFieldDeleteSelection(key)
-        return
-    }
-    if st.caret <= 0 {
-        return
-    }
-    let removeAt = st.caret - 1
-    var next: [Number] = []
-    for i in 0..st.codes.count {
-        if i != removeAt {
-            next.append(st.codes[i])
+    unsafe {
+        textFieldEnsure(key)
+        var st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
+        // A selection is deleted whole.
+        if st.anchor != st.caret {
+            textFieldDeleteSelection(key)
+            return
         }
+        if st.caret <= 0 {
+            return
+        }
+        let removeAt = st.caret - 1
+        var next: [Number] = []
+        for i in 0..st.codes.count {
+            if i != removeAt {
+                next.append(st.codes[i])
+            }
+        }
+        st.codes = move next
+        st.caret--
+        st.anchor = st.caret
     }
-    st.codes = move next
-    st.caret--
-    st.anchor = st.caret
 }
 
 public function textFieldDeleteForward(key: Number) {
-    textFieldEnsure(key)
-    var st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
-    if st.anchor != st.caret {
-        textFieldDeleteSelection(key)
-        return
-    }
-    if st.caret >= st.codes.count {
-        return
-    }
-    let removeAt = st.caret
-    var next: [Number] = []
-    for i in 0..st.codes.count {
-        if i != removeAt {
-            next.append(st.codes[i])
+    unsafe {
+        textFieldEnsure(key)
+        var st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
+        if st.anchor != st.caret {
+            textFieldDeleteSelection(key)
+            return
         }
+        if st.caret >= st.codes.count {
+            return
+        }
+        let removeAt = st.caret
+        var next: [Number] = []
+        for i in 0..st.codes.count {
+            if i != removeAt {
+                next.append(st.codes[i])
+            }
+        }
+        st.codes = move next
     }
-    st.codes = move next
 }
 
 // Moves the caret, or deletes ahead of it, for a key that types nothing.
 public function textFieldNav(key: Number, pressed: borrow Key) {
-    match pressed {
-        Delete -> {
-            textFieldDeleteForward(key)
-            return
-        }
-        else -> {}
-    }
-    textFieldEnsure(key)
-    var st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
-    let hasSel = st.anchor != st.caret
-    match pressed {
-        Left -> {
-            // Collapse a selection to its start, else step left.
-            if hasSel {
-                st.caret = textFieldSelMin(st.anchor, st.caret)
-            } else if st.caret > 0 {
-                st.caret--
+    unsafe {
+        match pressed {
+            Delete -> {
+                textFieldDeleteForward(key)
+                return
             }
-            st.anchor = st.caret
+            else -> {}
         }
-        Right -> {
-            if hasSel {
-                st.caret = textFieldSelMax(st.anchor, st.caret)
-            } else if st.caret < st.codes.count {
-                st.caret++
+        textFieldEnsure(key)
+        var st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
+        let hasSel = st.anchor != st.caret
+        match pressed {
+            Left -> {
+                // Collapse a selection to its start, else step left.
+                if hasSel {
+                    st.caret = textFieldSelMin(st.anchor, st.caret)
+                } else if st.caret > 0 {
+                    st.caret--
+                }
+                st.anchor = st.caret
             }
-            st.anchor = st.caret
+            Right -> {
+                if hasSel {
+                    st.caret = textFieldSelMax(st.anchor, st.caret)
+                } else if st.caret < st.codes.count {
+                    st.caret++
+                }
+                st.anchor = st.caret
+            }
+            Home -> {
+                st.caret = 0
+                st.anchor = 0
+            }
+            End -> {
+                st.caret = st.codes.count
+                st.anchor = st.caret
+            }
+            else -> {}
         }
-        Home -> {
-            st.caret = 0
-            st.anchor = 0
-        }
-        End -> {
-            st.caret = st.codes.count
-            st.anchor = st.caret
-        }
-        else -> {}
     }
 }
 
@@ -241,43 +259,45 @@ public function textFieldClickCaret(
     alignment: Number,
     secure: Bool
 ) {
-    textFieldEnsure(key)
-    var st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
-    let textWidth = foundationTextRunWidth(
-        textFieldShown(st.codes, 0, st.codes.count, secure),
-        size,
-        weight
-    )
-    let slack = max(pressBoundsW() - leftPad - rightPad - textWidth, 0.0)
-    let relX = pointerX() - pressBoundsX() - leftPad - slack * alignment
-    if relX <= 0.0 {
-        st.caret = 0
-        st.anchor = 0
-        return
-    }
-    let n = st.codes.count
-    var k = 0
-    var prevW: Number = 0.0
-    var placed = false
-    while k <= n && !placed {
-        let prefix = textFieldShown(st.codes, 0, k, secure)
-        let w = foundationTextRunWidth(prefix, size, weight)
-        if w >= relX {
-            if k > 0 && (relX - prevW) < (w - relX) {
-                st.caret = k - 1
-            } else {
-                st.caret = k
-            }
-            placed = true
+    unsafe {
+        textFieldEnsure(key)
+        var st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
+        let textWidth = foundationTextRunWidth(
+            textFieldShown(st.codes, 0, st.codes.count, secure),
+            size,
+            weight
+        )
+        let slack = max(pressBoundsW() - leftPad - rightPad - textWidth, 0.0)
+        let relX = pointerX() - pressBoundsX() - leftPad - slack * alignment
+        if relX <= 0.0 {
+            st.caret = 0
+            st.anchor = 0
+            return
         }
-        prevW = w
-        k++
+        let n = st.codes.count
+        var k = 0
+        var prevW: Number = 0.0
+        var placed = false
+        while k <= n && !placed {
+            let prefix = textFieldShown(st.codes, 0, k, secure)
+            let w = foundationTextRunWidth(prefix, size, weight)
+            if w >= relX {
+                if k > 0 && (relX - prevW) < (w - relX) {
+                    st.caret = k - 1
+                } else {
+                    st.caret = k
+                }
+                placed = true
+            }
+            prevW = w
+            k++
+        }
+        if !placed {
+            st.caret = n
+        }
+        // A click positions the caret and clears any selection.
+        st.anchor = st.caret
     }
-    if !placed {
-        st.caret = n
-    }
-    // A click positions the caret and clears any selection.
-    st.anchor = st.caret
 }
 
 // --- Closure builders (capture locals, never widget fields). ---
@@ -358,11 +378,13 @@ public function textFieldCommandFn(
 // The selected characters of the field under `key`, none when nothing is
 // selected.
 public function textFieldSelectedText(key: Number) -> String {
-    textFieldEnsure(key)
-    let st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
-    let from = textFieldSelMin(st.anchor, st.caret)
-    let to = textFieldSelMax(st.anchor, st.caret)
-    return foundationStringFromCodepoints(st.codes, from, to)
+    unsafe {
+        textFieldEnsure(key)
+        let st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
+        let from = textFieldSelMin(st.anchor, st.caret)
+        let to = textFieldSelMax(st.anchor, st.caret)
+        return foundationStringFromCodepoints(st.codes, from, to)
+    }
 }
 
 // Puts `text` at the caret of the field under `key`, over its selection; a

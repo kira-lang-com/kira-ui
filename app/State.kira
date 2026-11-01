@@ -85,35 +85,39 @@ public struct State<Value> {
     var key: String = ""
 
     function get() -> Value {
-        let slot = ViewStateKey { name: copy self.key }
-        if !ambientStateHasView(slot) {
-            ambientStatePutView(
-                copy slot,
-                nativeUserData(
-                    nativeState(
-                        State<Value> { wrappedValue: self.wrappedValue, key: copy self.key }
+        unsafe {
+            let slot = ViewStateKey { name: copy self.key }
+            if !ambientStateHasView(slot) {
+                ambientStatePutView(
+                    copy slot,
+                    nativeUserData(
+                        nativeState(
+                            State<Value> { wrappedValue: self.wrappedValue, key: copy self.key }
+                        )
                     )
                 )
-            )
+            }
+            let store = nativeRecover<State<Value>>(ambientStateGetView(slot))
+            return copy store.wrappedValue
         }
-        let store = nativeRecover<State<Value>>(ambientStateGetView(slot))
-        return copy store.wrappedValue
     }
 
     function set(value: Value) {
-        let slot = ViewStateKey { name: copy self.key }
-        if !ambientStateHasView(slot) {
-            ambientStatePutView(
-                copy slot,
-                nativeUserData(
-                    nativeState(
-                        State<Value> { wrappedValue: self.wrappedValue, key: copy self.key }
+        unsafe {
+            let slot = ViewStateKey { name: copy self.key }
+            if !ambientStateHasView(slot) {
+                ambientStatePutView(
+                    copy slot,
+                    nativeUserData(
+                        nativeState(
+                            State<Value> { wrappedValue: self.wrappedValue, key: copy self.key }
+                        )
                     )
                 )
-            )
+            }
+            var store = nativeRecover<State<Value>>(ambientStateGetView(slot))
+            store.wrappedValue = move value
         }
-        var store = nativeRecover<State<Value>>(ambientStateGetView(slot))
-        store.wrappedValue = move value
     }
 
     // `$name`: a binding to the value this state keeps, which a control

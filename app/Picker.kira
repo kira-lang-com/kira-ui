@@ -301,8 +301,10 @@ public function pickerEnsure() {
 
 // The state as it stands, to read.
 public function pickerState() -> PickerState {
-    pickerEnsure()
-    return nativeRecover<PickerState>(ambientStateGet(StateSlot.picker))
+    unsafe {
+        pickerEnsure()
+        return nativeRecover<PickerState>(ambientStateGet(StateSlot.picker))
+    }
 }
 
 public function openPickerKey() -> Number {
@@ -310,15 +312,17 @@ public function openPickerKey() -> Number {
 }
 
 public function setOpenPickerKey(key: Number) {
-    pickerEnsure()
-    var state = nativeRecover<PickerState>(ambientStateGet(StateSlot.picker))
-    state.openKey = key
-    // Opened by a press, the list hangs from the region the press fired on.
-    if key != 0 {
-        state.anchorX = pressBoundsX()
-        state.anchorY = pressBoundsY()
-        state.anchorW = pressBoundsW()
-        state.anchorH = pressBoundsH()
+    unsafe {
+        pickerEnsure()
+        var state = nativeRecover<PickerState>(ambientStateGet(StateSlot.picker))
+        state.openKey = key
+        // Opened by a press, the list hangs from the region the press fired on.
+        if key != 0 {
+            state.anchorX = pressBoundsX()
+            state.anchorY = pressBoundsY()
+            state.anchorW = pressBoundsW()
+            state.anchorH = pressBoundsH()
+        }
     }
 }
 
@@ -453,288 +457,3 @@ function pickerOptionTraits(selected: Bool) -> AccessibilityTraits {
 //         Text("Chocolate").tag(Flavor.chocolate)
 //         Text("Vanilla").tag(Flavor.vanilla)
 //     }
-// SwiftUI's `PickerStyle`, of the ones drawn here: the platform's,
-// `.inline`, the options set in place as rows, and `.segmented`, the options
-// side by side on one control, the chosen one raised.
-public enum PickerStyle {
-    Automatic
-    Menu
-    Inline
-    Segmented
-}
-
-@Instance(Number)
-@Instance(String)
-public construct Picker<SelectionValue>(
-    title: String,
-    selection: Binding<SelectionValue>
-) extends Widget {
-    let children: [some Widget]
-
-    function describe(
-        context: borrow BuildContext,
-        modifiers: borrow ModifierContext
-    ) -> CALayerDescription {
-        // Inline, and in a menu, the options are rows in place, as SwiftUI's
-        // `.inline` sets them.
-        if modifiers.pickerStyle == .Inline || modifiers.controlPresentation == .MenuRow {
-            tagSelectionSeen(false)
-            let asked = TagScope(selector: tagSelector(.PickerSelected, selection)) {
-                VStack(spacing: .None, alignment: .Leading) {
-                    For(option in children) {
-                        option
-                    }
-                }
-            }
-            asked.describe(context, modifiers)
-            var selector = tagSelector(.PickerOption, selection)
-            selector.checks = tagSelectionSeen(false)
-            let options = TagScope(selector: move selector) {
-                VStack(spacing: .None, alignment: .Leading) {
-                    For(option in children) {
-                        option
-                    }
-                }
-            }
-            return options.describe(context, modifiers)
-        }
-        // Segmented, the options share one filled capsule, the chosen one on a
-        // lighter capsule of its own, as SwiftUI's `.segmented`
-        // draws them. A segment pressed lifts into a lens of Liquid Glass until
-        // it is let go, and is chosen.
-        if modifiers.pickerStyle == .Segmented {
-            let segments = TagScope(selector: tagSelector(.PickerSegment, selection)) {
-                HStack(spacing: .None, alignment: .Center) {
-                    For(option in children) {
-                        option
-                    }
-                }
-            }
-            .padding(resolvedLength(2.0))
-            .background(Capsule())
-            .backgroundStyle(.Control)
-            .hugWidth()
-            .accessibilityElement(children: .Contain)
-            .accessibilityLabel(copy title)
-            if modifiers.labelsHidden || title.count == 0 {
-                return segments.describe(context, modifiers)
-            }
-            let labeled = HStack(spacing: .Small, alignment: .Center) {
-                Text(content: copy title)
-                .accessibilityHidden(true)
-                segments
-            }
-            return labeled.describe(context, modifiers)
-        }
-        let key = tapSeqKey()
-        let open = openPickerKey() == key
-        // Under `.labelsHidden()` the picker is its control alone.
-        var shownTitle = copy title
-        if modifiers.labelsHidden {
-            shownTitle = ""
-        }
-        // On a Mac a picker standing on its own is its title beside a pop-up
-        // button: the option chosen and a chevron on a button's bezel, as
-        // wide as they are.
-        if interfaceMode() == .AdaptiveDesktop && modifiers.controlPresentation == .Standalone {
-            let popUp = popUpMetrics(modifiers.controlSize)
-            // The title stands centered on the button, not on the list the
-            // button opens under itself. An empty one is no title, so the
-            // button stands where the picker does.
-            let labeled = HStack(alignment: .Top) {
-                // The title names the pop-up, which reads it.
-                if shownTitle.count > 0 {
-                    ZStack(alignment: .Leading) {
-                        Text(content: shownTitle)
-                    }
-                    .height(resolvedLength(popUp.height))
-                    .accessibilityHidden(true)
-                }
-
-                VStack(spacing: .ExtraSmall, alignment: .Leading) {
-                    HStack(spacing: .Length(popUp.chevronSpacing), alignment: .Center) {
-                        TagScope(selector: tagSelector(.PickerValue, selection)) {
-                            ZStack(alignment: .Leading) {
-                                For(option in children) {
-                                    option
-                                }
-                            }
-                            .hugWidth()
-                        }
-
-                        Icon(symbol: .ChevronUpChevronDown)
-                        .font(size: resolvedLength(popUp.chevronSize))
-                    }
-                    .height(resolvedLength(popUp.height))
-                    .edgePadding(edges: EdgeSet.leading, length: resolvedLength(popUp.leadingInset))
-                    .edgePadding(
-                        edges: EdgeSet.trailing,
-                        length: resolvedLength(popUp.trailingInset)
-                    )
-                    .background(
-                        RoundedRectangle(
-                            cornerRadius: resolvedControlSizeMetrics(modifiers).cornerRadius,
-                            style: .Continuous
-                        ).backgroundStyle(.Control)
-                    )
-                    .hugWidth()
-                    .onClick(pickerToggleFn(key))
-                    .pickerButton(title: shownTitle, press: pickerToggleFn(key))
-
-                }
-                .hugWidth()
-            }
-            .hugWidth()
-            let described = labeled.describe(context, modifiers)
-            if open {
-                self.presentList(context, modifiers, 0.0)
-            }
-            return described
-        }
-        let picker = LabeledContent(label: shownTitle) {
-            VStack(spacing: .ExtraSmall, alignment: .Leading) {
-                HStack(spacing: .ExtraSmall, alignment: .Center) {
-                    TagScope(selector: tagSelector(.PickerValue, selection)) {
-                        ZStack(alignment: .Leading) {
-                            For(option in children) {
-                                option
-                            }
-                        }
-                        .hugWidth()
-                    }
-
-                    Icon(symbol: .ChevronUpChevronDown)
-                    .imageScale(.Small)
-                    .foregroundColor(.Secondary)
-                }
-                .hugWidth()
-                .onClick(pickerToggleFn(key))
-                .pickerButton(title: shownTitle, press: pickerToggleFn(key))
-
-            }
-            .hugWidth()
-        }
-        let described = picker.describe(context, modifiers)
-        if open {
-            self.presentList(context, modifiers, 1.0)
-        }
-        return described
-    }
-
-    // The list, open: a menu floating over the button that opened it, as a
-    // Mac's pop-up button opens its menu over itself, so nothing under it
-    // moves. `alignment` is the edge it shares with the button, 0 the leading
-    // and 1 the trailing. A press anywhere off it closes it.
-    function presentList(
-        context: borrow BuildContext,
-        modifiers: borrow ModifierContext,
-        alignment: Number
-    ) {
-        let band = tapSeqEnterOverlay()
-        let away = tapSeqKey()
-        layerActionRegister(
-            away,
-            { in
-                setOpenPickerKey(0)
-                return
-            }
-        )
-        var list = PickerList(selection: selection) {
-            For(option in children) {
-                option
-            }
-        }
-        .describe(context, modifierContextForOverlay(modifiers))
-        let state = pickerState()
-        let size = list.measure(context.viewportWidth)
-        let menuWidth = max(min(size.width, PickerListMetrics.widest), state.anchorW)
-        let menuHeight = min(size.height, context.viewportHeight * 0.7)
-        if size.height > menuHeight {
-            list = ScrollView {
-                PickerList(selection: selection) {
-                    For(option in children) { option }
-                }
-            }
-            .frame(width: menuWidth, height: menuHeight)
-            .describe(context, modifierContextForOverlay(modifiers))
-        }
-        list.layout.fixedWidth = menuWidth
-        list.layout.fixedHeight = menuHeight
-        tapSeqLeaveOverlay(band)
-        overlayPresent(
-            Overlay {
-                anchorX: state.anchorX,
-                anchorY: state.anchorY,
-                anchorW: state.anchorW,
-                anchorH: state.anchorH,
-                z: OverlayLevel.surface,
-                content: move list,
-                spacing: -state.anchorH,
-                alignment: alignment,
-                dismissKey: away
-            }
-        )
-    }
-}
-
-// How wide a picker's list stands at most, its options' own width up to it.
-namespace PickerListMetrics {
-    let widest: Number = 240.0
-}
-
-// The button a picker opens its list with, to assistive technology: a pop-up
-// named by the picker's title, reading the option chosen as its value.
-construct PickerButtonLayer(title: String, press: () -> Void) extends Widget {
-    let content: some Widget
-
-    function describe(
-        context: borrow BuildContext,
-        modifiers: borrow ModifierContext
-    ) -> CALayerDescription {
-        var described = content.describe(context, modifiers)
-        var chosen = AccessibilityNode {}
-        for key in described.accessibilityElementsWithin() {
-            chosen.absorb(accessibilityNode(key))
-        }
-        var node = accessibilityPressable(.PopUpButton, press, modifiers)
-        node.label = copy title
-        node.value = move chosen.label
-        described.accessibilityClear()
-        described.accessibilityElementOf(move node)
-        return described
-    }
-}
-
-extend Widget {
-    function pickerButton(title: String, press: () -> Void) -> Any Widget {
-        return PickerButtonLayer(title: title, press: press) {
-            self
-        }
-    }
-}
-
-// The options a picker opens, as a menu's card under it: each a row of the
-// menu's geometry, the one chosen in the accent.
-construct PickerList<SelectionValue>(selection: Binding<SelectionValue>) extends Widget {
-    let children: [some Widget]
-
-    function describe(
-        context: borrow BuildContext,
-        modifiers: borrow ModifierContext
-    ) -> CALayerDescription {
-        let menu = menuMetrics(modifiers)
-        let list = TagScope(selector: tagSelector(.PickerOption, selection)) {
-            VStack(spacing: .None, alignment: .Leading) {
-                For(option in children) {
-                    option
-                }
-            }
-        }
-        .padding(length: resolvedLength(menu.cardPadding))
-        .background(RoundedRectangle(cornerRadius: menu.cardRadius, style: .Continuous))
-        .backgroundStyle(.Overlay)
-        .themeBorder(.Subtle)
-        .hugHeight()
-        return list.describe(context, modifiers)
-    }
-}

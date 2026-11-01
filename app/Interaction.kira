@@ -57,44 +57,50 @@ public struct TapSeq {
 // Reset the auto-key counter. An interactive app root calls this once at the top
 // of every frame's build so each frame gets the same stable key assignment.
 public function tapSeqReset() {
-    if !ambientStateHas(StateSlot.tapSequence) {
-        ambientStatePut(StateSlot.tapSequence, nativeUserData(nativeState(TapSeq {})))
+    unsafe {
+        if !ambientStateHas(StateSlot.tapSequence) {
+            ambientStatePut(StateSlot.tapSequence, nativeUserData(nativeState(TapSeq {})))
+        }
+        var seq = nativeRecover<TapSeq>(ambientStateGet(StateSlot.tapSequence))
+        seq.next = 0
+        seq.band = 0
+        seq.bandsEntered = Map()
+        seq.overlayNext = 0
+        seq.inOverlay = false
+        seq.coveredNext = 0
+        seq.inCovered = false
+        sizedContentReset()
+        menuGroundReset()
     }
-    var seq = nativeRecover<TapSeq>(ambientStateGet(StateSlot.tapSequence))
-    seq.next = 0
-    seq.band = 0
-    seq.bandsEntered = Map()
-    seq.overlayNext = 0
-    seq.inOverlay = false
-    seq.coveredNext = 0
-    seq.inCovered = false
-    sizedContentReset()
-    menuGroundReset()
 }
 
 public function tapSeqBandCount() -> Number {
-    if !ambientStateHas(StateSlot.tapSequence) { return 0 }
-    let seq = nativeRecover<TapSeq>(ambientStateGet(StateSlot.tapSequence))
-    return seq.bandsEntered.count()
+    unsafe {
+        if !ambientStateHas(StateSlot.tapSequence) { return 0 }
+        let seq = nativeRecover<TapSeq>(ambientStateGet(StateSlot.tapSequence))
+        return seq.bandsEntered.count()
+    }
 }
 
 // Next auto key in the current build.
 public function tapSeqKey() -> Number {
-    if !ambientStateHas(StateSlot.tapSequence) {
-        ambientStatePut(StateSlot.tapSequence, nativeUserData(nativeState(TapSeq {})))
+    unsafe {
+        if !ambientStateHas(StateSlot.tapSequence) {
+            ambientStatePut(StateSlot.tapSequence, nativeUserData(nativeState(TapSeq {})))
+        }
+        var seq = nativeRecover<TapSeq>(ambientStateGet(StateSlot.tapSequence))
+        if seq.inOverlay {
+            seq.overlayNext++
+            return 800000 + seq.overlayNext
+        }
+        if seq.inCovered {
+            seq.coveredNext++
+            return 900000 + seq.coveredNext
+        }
+        seq.next++
+        if seq.band == 0 { return 600000 + seq.next }
+        return TapBands.base + seq.band * TapBands.width + seq.next
     }
-    var seq = nativeRecover<TapSeq>(ambientStateGet(StateSlot.tapSequence))
-    if seq.inOverlay {
-        seq.overlayNext++
-        return 800000 + seq.overlayNext
-    }
-    if seq.inCovered {
-        seq.coveredNext++
-        return 900000 + seq.coveredNext
-    }
-    seq.next++
-    if seq.band == 0 { return 600000 + seq.next }
-    return TapBands.base + seq.band * TapBands.width + seq.next
 }
 
 // Draw keys from the overlay band while lowering a view presented over the
@@ -103,39 +109,47 @@ public function tapSeqKey() -> Number {
 // `tapSeqLeaveOverlay`: a submenu presented from inside a menu that is
 // itself presented leaves the band only when the outer one does.
 public function tapSeqEnterOverlay() -> Bool {
-    if !ambientStateHas(StateSlot.tapSequence) {
-        ambientStatePut(StateSlot.tapSequence, nativeUserData(nativeState(TapSeq {})))
+    unsafe {
+        if !ambientStateHas(StateSlot.tapSequence) {
+            ambientStatePut(StateSlot.tapSequence, nativeUserData(nativeState(TapSeq {})))
+        }
+        var seq = nativeRecover<TapSeq>(ambientStateGet(StateSlot.tapSequence))
+        let was = seq.inOverlay
+        seq.inOverlay = true
+        return was
     }
-    var seq = nativeRecover<TapSeq>(ambientStateGet(StateSlot.tapSequence))
-    let was = seq.inOverlay
-    seq.inOverlay = true
-    return was
 }
 
 public function tapSeqLeaveOverlay(was: Bool) {
-    if !ambientStateHas(StateSlot.tapSequence) {
-        return
+    unsafe {
+        if !ambientStateHas(StateSlot.tapSequence) {
+            return
+        }
+        var seq = nativeRecover<TapSeq>(ambientStateGet(StateSlot.tapSequence))
+        seq.inOverlay = was
     }
-    var seq = nativeRecover<TapSeq>(ambientStateGet(StateSlot.tapSequence))
-    seq.inOverlay = was
 }
 
 // Draw keys from the covered band while a stack lowers the view under the one
 // moving over it.
 public function tapSeqEnterCovered() {
-    if !ambientStateHas(StateSlot.tapSequence) {
-        ambientStatePut(StateSlot.tapSequence, nativeUserData(nativeState(TapSeq {})))
+    unsafe {
+        if !ambientStateHas(StateSlot.tapSequence) {
+            ambientStatePut(StateSlot.tapSequence, nativeUserData(nativeState(TapSeq {})))
+        }
+        var seq = nativeRecover<TapSeq>(ambientStateGet(StateSlot.tapSequence))
+        seq.inCovered = true
     }
-    var seq = nativeRecover<TapSeq>(ambientStateGet(StateSlot.tapSequence))
-    seq.inCovered = true
 }
 
 public function tapSeqLeaveCovered() {
-    if !ambientStateHas(StateSlot.tapSequence) {
-        return
+    unsafe {
+        if !ambientStateHas(StateSlot.tapSequence) {
+            return
+        }
+        var seq = nativeRecover<TapSeq>(ambientStateGet(StateSlot.tapSequence))
+        seq.inCovered = false
     }
-    var seq = nativeRecover<TapSeq>(ambientStateGet(StateSlot.tapSequence))
-    seq.inCovered = false
 }
 
 // The wash a pressable region lights with while the pointer rests on it: the

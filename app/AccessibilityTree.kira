@@ -320,25 +320,29 @@ struct AccessibilitySnapshot {
 // Read the laid-out tree a window is about to show into its elements, for
 // `accessibilityElementsOnScreen` to answer until the next build.
 public function accessibilityTakeSnapshot(described: borrow CALayerDescription) {
-    if !ambientStateHas(StateSlot.accessibilitySnapshot) {
-        ambientStatePut(
-            StateSlot.accessibilitySnapshot,
-            nativeUserData(nativeState(AccessibilitySnapshot {}))
+    unsafe {
+        if !ambientStateHas(StateSlot.accessibilitySnapshot) {
+            ambientStatePut(
+                StateSlot.accessibilitySnapshot,
+                nativeUserData(nativeState(AccessibilitySnapshot {}))
+            )
+        }
+        var snapshot = nativeRecover<AccessibilitySnapshot>(
+            ambientStateGet(StateSlot.accessibilitySnapshot)
         )
+        snapshot.elements = accessibilityTree(described)
     }
-    var snapshot = nativeRecover<AccessibilitySnapshot>(
-        ambientStateGet(StateSlot.accessibilitySnapshot)
-    )
-    snapshot.elements = accessibilityTree(described)
 }
 
 // The elements the window shows, as its last build laid them out.
 public function accessibilityElementsOnScreen() -> [AccessibilityElement] {
-    if !ambientStateHas(StateSlot.accessibilitySnapshot) {
-        return []
+    unsafe {
+        if !ambientStateHas(StateSlot.accessibilitySnapshot) {
+            return []
+        }
+        let snapshot = nativeRecover<AccessibilitySnapshot>(
+            ambientStateGet(StateSlot.accessibilitySnapshot)
+        )
+        return copy snapshot.elements
     }
-    let snapshot = nativeRecover<AccessibilitySnapshot>(
-        ambientStateGet(StateSlot.accessibilitySnapshot)
-    )
-    return copy snapshot.elements
 }

@@ -64,21 +64,25 @@ function menuBarShowingEnsure() {
 }
 
 public function menuBarVisibility() -> MenuBarVisibility {
-    let previous = enterProcessScope()
-    menuBarShowingEnsure()
-    let showing = nativeRecover<MenuBarShowing>(ambientStateGet(StateSlot.menuBarVisibility))
-    let visibility = copy showing.visibility
-    ambientScopeEnter(previous)
-    return visibility
+    unsafe {
+        let previous = enterProcessScope()
+        menuBarShowingEnsure()
+        let showing = nativeRecover<MenuBarShowing>(ambientStateGet(StateSlot.menuBarVisibility))
+        let visibility = copy showing.visibility
+        ambientScopeEnter(previous)
+        return visibility
+    }
 }
 
 // Draw the menu bar, or not, from the next build on.
 public function setMenuBarVisibility(visibility: MenuBarVisibility) {
-    let previous = enterProcessScope()
-    menuBarShowingEnsure()
-    var showing = nativeRecover<MenuBarShowing>(ambientStateGet(StateSlot.menuBarVisibility))
-    showing.visibility = visibility
-    ambientScopeEnter(previous)
+    unsafe {
+        let previous = enterProcessScope()
+        menuBarShowingEnsure()
+        var showing = nativeRecover<MenuBarShowing>(ambientStateGet(StateSlot.menuBarVisibility))
+        showing.visibility = visibility
+        ambientScopeEnter(previous)
+    }
 }
 
 public function menuBarShown() -> Bool {
@@ -108,48 +112,54 @@ public function menuBarEnsure() {
 }
 
 public function menuBarState() -> MenuBarState {
-    menuBarEnsure()
-    return nativeRecover<MenuBarState>(ambientStateGet(StateSlot.menuBar))
+    unsafe {
+        menuBarEnsure()
+        return nativeRecover<MenuBarState>(ambientStateGet(StateSlot.menuBar))
+    }
 }
 
 // Puts out the menu at `index` on the bar, or puts the bar's menu away with
 // -1. A menu going away takes any submenu open in it.
 public function menuBarSetOpen(index: Number) {
-    menuBarEnsure()
-    var bar = nativeRecover<MenuBarState>(ambientStateGet(StateSlot.menuBar))
-    if bar.open == index {
-        return
-    }
-    let closedBefore = bar.open < 0
-    bar.open = index
-    if index >= 0 {
-        bar.shown = index
-    }
-    if index < 0 || closedBefore {
-        menuRetarget(bar.reveal, index >= 0 ? 1.0 : 0.0, menuSubmenuSpring(index >= 0))
-    }
-    menuEnsure()
-    var menus = nativeRecover<MenuState>(ambientStateGet(StateSlot.menu))
-    if menus.openKey != 0 {
-        menuRevealPutAway(menus.openKey)
-        menus.openKey = 0
-        menus.recede = MotionSpringState {}
-        menus.receded = 0.0
-        menus.shrink = MotionSpringState {}
-        menus.shrunk = 0.0
-        menus.holdRemaining = 0.0
-        menus.pivoted = false
+    unsafe {
+        menuBarEnsure()
+        var bar = nativeRecover<MenuBarState>(ambientStateGet(StateSlot.menuBar))
+        if bar.open == index {
+            return
+        }
+        let closedBefore = bar.open < 0
+        bar.open = index
+        if index >= 0 {
+            bar.shown = index
+        }
+        if index < 0 || closedBefore {
+            menuRetarget(bar.reveal, index >= 0 ? 1.0 : 0.0, menuSubmenuSpring(index >= 0))
+        }
+        menuEnsure()
+        var menus = nativeRecover<MenuState>(ambientStateGet(StateSlot.menu))
+        if menus.openKey != 0 {
+            menuRevealPutAway(menus.openKey)
+            menus.openKey = 0
+            menus.recede = MotionSpringState {}
+            menus.receded = 0.0
+            menus.shrink = MotionSpringState {}
+            menus.shrunk = 0.0
+            menus.holdRemaining = 0.0
+            menus.pivoted = false
+        }
     }
 }
 
 // The bar's menu gone at once, with no motion home.
 public function menuBarPutAway() {
-    menuBarEnsure()
-    var bar = nativeRecover<MenuBarState>(ambientStateGet(StateSlot.menuBar))
-    bar.open = -1
-    bar.shown = -1
-    bar.reveal = MotionSpringState {}
-    bar.amount = 0.0
+    unsafe {
+        menuBarEnsure()
+        var bar = nativeRecover<MenuBarState>(ambientStateGet(StateSlot.menuBar))
+        bar.open = -1
+        bar.shown = -1
+        bar.reveal = MotionSpringState {}
+        bar.amount = 0.0
+    }
 }
 
 // Pressing a title puts its menu out, or away if it is the one out.
@@ -181,19 +191,21 @@ public function menuBarDismiss() -> Bool {
 
 // How far the card is out this frame, on the menus' own spring.
 public function menuBarRevealAdvance() -> Number {
-    menuBarEnsure()
-    var bar = nativeRecover<MenuBarState>(ambientStateGet(StateSlot.menuBar))
-    let sample = motionSpringAdvance(bar.reveal, clockDelta())
-    bar.amount = max(sample.value, 0.0)
-    if motionSpringSettled(bar.reveal, sample, MotionSpringLimit.epsilon) {
-        bar.amount = min(max(bar.reveal.spring.target, 0.0), 1.0)
-        if bar.amount <= 0.0 {
-            bar.shown = -1
+    unsafe {
+        menuBarEnsure()
+        var bar = nativeRecover<MenuBarState>(ambientStateGet(StateSlot.menuBar))
+        let sample = motionSpringAdvance(bar.reveal, clockDelta())
+        bar.amount = max(sample.value, 0.0)
+        if motionSpringSettled(bar.reveal, sample, MotionSpringLimit.epsilon) {
+            bar.amount = min(max(bar.reveal.spring.target, 0.0), 1.0)
+            if bar.amount <= 0.0 {
+                bar.shown = -1
+            }
+            return bar.amount
         }
+        clockStillMoving()
         return bar.amount
     }
-    clockStillMoving()
-    return bar.amount
 }
 
 // --- What the menus hold -----------------------------------------------------
@@ -296,16 +308,18 @@ public function menuBarMenus(commands: borrow CommandsSink) -> [MenuBarMenu] {
 
 // Showing and hiding the sidebar, in a window that has one.
 public function menuBarSidebarCommands() -> [Any Widget] {
-    toolbarSinkEnsure()
-    let toolbar = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
-    if !toolbar.sidebarToggle {
-        return []
+    unsafe {
+        toolbarSinkEnsure()
+        let toolbar = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+        if !toolbar.sidebarToggle {
+            return []
+        }
+        let title = toolbar.navigationShown > 0.5 ? "Hide Sidebar" : "Show Sidebar"
+        return [Button(title: title, action: navigationSidebarToggleAction()).keyboardShortcut(
+            "S",
+            modifiers: [.Control, .Command]
+        )]
     }
-    let title = toolbar.navigationShown > 0.5 ? "Hide Sidebar" : "Show Sidebar"
-    return [Button(title: title, action: navigationSidebarToggleAction()).keyboardShortcut(
-        "S",
-        modifiers: [.Control, .Command]
-    )]
 }
 
 // What a standard group comes to: the groups declared before it, it -- or the

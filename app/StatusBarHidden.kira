@@ -23,15 +23,19 @@ function statusBarRequestEnsure() {
 
 // Forgets what the last build asked, before the next one.
 public function statusBarRequestBegin() {
-    statusBarRequestEnsure()
-    var request = nativeRecover<StatusBarRequest>(ambientStateGet(StateSlot.statusBar))
-    request.hidden = false
+    unsafe {
+        statusBarRequestEnsure()
+        var request = nativeRecover<StatusBarRequest>(ambientStateGet(StateSlot.statusBar))
+        request.hidden = false
+    }
 }
 
 // Whether a view in the last build asked for the status bar to be hidden.
 public function statusBarHiddenRequested() -> Bool {
-    statusBarRequestEnsure()
-    return nativeRecover<StatusBarRequest>(ambientStateGet(StateSlot.statusBar)).hidden
+    unsafe {
+        statusBarRequestEnsure()
+        return nativeRecover<StatusBarRequest>(ambientStateGet(StateSlot.statusBar)).hidden
+    }
 }
 
 public construct StatusBarHiddenLayer(hidden: Bool) extends Widget {
@@ -41,12 +45,14 @@ public construct StatusBarHiddenLayer(hidden: Bool) extends Widget {
         context: borrow BuildContext,
         modifiers: borrow ModifierContext
     ) -> CALayerDescription {
-        if hidden {
-            statusBarRequestEnsure()
-            var request = nativeRecover<StatusBarRequest>(ambientStateGet(StateSlot.statusBar))
-            request.hidden = true
+        unsafe {
+            if hidden {
+                statusBarRequestEnsure()
+                var request = nativeRecover<StatusBarRequest>(ambientStateGet(StateSlot.statusBar))
+                request.hidden = true
+            }
+            return content.describe(context, modifiers)
         }
-        return content.describe(context, modifiers)
     }
 }
 

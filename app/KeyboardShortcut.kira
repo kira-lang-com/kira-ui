@@ -91,15 +91,17 @@ public struct KeyboardShortcut {
 // (`hostUsesCommandKeySet`), as a host drawing a Mac's or an iPad's
 // interface does.
 public function hostUsesCommandKey() -> Bool {
-    let platform = targetPlatform!()
-    if platform == .MacOS || platform == .Ios { return true }
-    let previous = enterProcessScope()
-    var uses = false
-    if ambientStateHas(StateSlot.commandKey) {
-        uses = nativeRecover<CommandKey>(ambientStateGet(StateSlot.commandKey)).command
+    unsafe {
+        let platform = targetPlatform!()
+        if platform == .MacOS || platform == .Ios { return true }
+        let previous = enterProcessScope()
+        var uses = false
+        if ambientStateHas(StateSlot.commandKey) {
+            uses = nativeRecover<CommandKey>(ambientStateGet(StateSlot.commandKey)).command
+        }
+        ambientScopeEnter(previous)
+        return uses
     }
-    ambientScopeEnter(previous)
-    return uses
 }
 
 // What the host said of its keyboard's GUI key.
@@ -110,13 +112,15 @@ struct CommandKey {
 // The host running the application says whether its keyboard's GUI key is
 // ⌘, as a Mac's is; shortcuts then answer to it and menus show ⌘.
 public function hostUsesCommandKeySet(uses: Bool) {
-    let previous = enterProcessScope()
-    if !ambientStateHas(StateSlot.commandKey) {
-        ambientStatePut(StateSlot.commandKey, nativeUserData(nativeState(CommandKey {})))
+    unsafe {
+        let previous = enterProcessScope()
+        if !ambientStateHas(StateSlot.commandKey) {
+            ambientStatePut(StateSlot.commandKey, nativeUserData(nativeState(CommandKey {})))
+        }
+        var key = nativeRecover<CommandKey>(ambientStateGet(StateSlot.commandKey))
+        key.command = uses
+        ambientScopeEnter(previous)
     }
-    var key = nativeRecover<CommandKey>(ambientStateGet(StateSlot.commandKey))
-    key.command = uses
-    ambientScopeEnter(previous)
 }
 
 // The keys a shortcut names that carry no character, as SwiftUI's
@@ -237,20 +241,24 @@ public function pendingShortcutEnsure() {
 
 // What the next button to lower answers to, and none after it.
 public function shortcutTake() -> KeyboardShortcut {
-    pendingShortcutEnsure()
-    var pending = nativeRecover<PendingShortcut>(ambientStateGet(StateSlot.pendingShortcut))
-    let taken = pending.shortcut
-    pending.shortcut = KeyboardShortcut {}
-    return taken
+    unsafe {
+        pendingShortcutEnsure()
+        var pending = nativeRecover<PendingShortcut>(ambientStateGet(StateSlot.pendingShortcut))
+        let taken = pending.shortcut
+        pending.shortcut = KeyboardShortcut {}
+        return taken
+    }
 }
 
 public function shortcutRegister(shortcut: borrow KeyboardShortcut, action: () -> Void) {
-    if shortcut.isEmpty() {
-        return
+    unsafe {
+        if shortcut.isEmpty() {
+            return
+        }
+        layerActionSinkEnsure()
+        var sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+        sink.shortcuts.append(ShortcutEntry { shortcut: copy shortcut, action: action })
     }
-    layerActionSinkEnsure()
-    var sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
-    sink.shortcuts.append(ShortcutEntry { shortcut: copy shortcut, action: action })
 }
 
 // Presses the button a key going down is the shortcut of, and says whether
@@ -262,17 +270,19 @@ public function shortcutPerform(
     held: borrow ModifierState,
     typing: Bool
 ) -> Bool {
-    layerActionSinkEnsure()
-    let sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
-    for index in 0..sink.shortcuts.count {
-        let shortcut = sink.shortcuts[index].shortcut
-        let typed = typing && shortcut.modifiers.count == 0 && !passesTyping(shortcut.key)
-        if shortcut.matches(pressed, held) && !typed {
-            sink.shortcuts[index].action()
-            return true
+    unsafe {
+        layerActionSinkEnsure()
+        let sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+        for index in 0..sink.shortcuts.count {
+            let shortcut = sink.shortcuts[index].shortcut
+            let typed = typing && shortcut.modifiers.count == 0 && !passesTyping(shortcut.key)
+            if shortcut.matches(pressed, held) && !typed {
+                sink.shortcuts[index].action()
+                return true
+            }
         }
+        return false
     }
-    return false
 }
 
 public construct KeyboardShortcutLayer(shortcut: KeyboardShortcut) extends Widget {
@@ -282,13 +292,15 @@ public construct KeyboardShortcutLayer(shortcut: KeyboardShortcut) extends Widge
         context: borrow BuildContext,
         modifiers: borrow ModifierContext
     ) -> CALayerDescription {
-        pendingShortcutEnsure()
-        var pending = nativeRecover<PendingShortcut>(ambientStateGet(StateSlot.pendingShortcut))
-        pending.shortcut = copy shortcut
-        let described = content.describe(context, modifiers)
-        // Content with no button in it leaves the shortcut to nothing.
-        pending.shortcut = KeyboardShortcut {}
-        return described
+        unsafe {
+            pendingShortcutEnsure()
+            var pending = nativeRecover<PendingShortcut>(ambientStateGet(StateSlot.pendingShortcut))
+            pending.shortcut = copy shortcut
+            let described = content.describe(context, modifiers)
+            // Content with no button in it leaves the shortcut to nothing.
+            pending.shortcut = KeyboardShortcut {}
+            return described
+        }
     }
 }
 

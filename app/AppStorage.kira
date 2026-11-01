@@ -129,57 +129,65 @@ function appStorageEnsure() {
 // Names the app whose values are kept: its bundle identifier, which its file
 // is kept under. The runner names it before anything is built.
 public function appStorageIdentify(bundleIdentifier: String) {
-    let previous = enterProcessScope()
-    appStorageEnsure()
-    var state = nativeRecover<AppStorageState>(ambientStateGet(StateSlot.appStorage))
-    state.bundleIdentifier = move bundleIdentifier
-    state.loaded = false
-    state.values = Map<String, String>()
-    ambientScopeEnter(previous)
+    unsafe {
+        let previous = enterProcessScope()
+        appStorageEnsure()
+        var state = nativeRecover<AppStorageState>(ambientStateGet(StateSlot.appStorage))
+        state.bundleIdentifier = move bundleIdentifier
+        state.loaded = false
+        state.values = Map<String, String>()
+        ambientScopeEnter(previous)
+    }
 }
 
 // The text stored under `name`, or nothing while nothing is.
 public function appStorageText(name: borrow String) -> Optional<String> {
-    let previous = enterProcessScope()
-    appStorageLoad()
-    let state = nativeRecover<AppStorageState>(ambientStateGet(StateSlot.appStorage))
-    let text = state.values.value(copy name)
-    ambientScopeEnter(previous)
-    return text
+    unsafe {
+        let previous = enterProcessScope()
+        appStorageLoad()
+        let state = nativeRecover<AppStorageState>(ambientStateGet(StateSlot.appStorage))
+        let text = state.values.value(copy name)
+        ambientScopeEnter(previous)
+        return text
+    }
 }
 
 // Stores `text` under `name`, and writes the app's file again.
 public function appStorageStore(name: borrow String, text: String) {
-    let previous = enterProcessScope()
-    appStorageLoad()
-    var state = nativeRecover<AppStorageState>(ambientStateGet(StateSlot.appStorage))
-    state.values.set(copy name, move text)
-    appStorageWrite(state)
-    ambientScopeEnter(previous)
+    unsafe {
+        let previous = enterProcessScope()
+        appStorageLoad()
+        var state = nativeRecover<AppStorageState>(ambientStateGet(StateSlot.appStorage))
+        state.values.set(copy name, move text)
+        appStorageWrite(state)
+        ambientScopeEnter(previous)
+    }
 }
 
 // Reads the app's file into the store, the first time it is asked for.
 function appStorageLoad() {
-    appStorageEnsure()
-    var state = nativeRecover<AppStorageState>(ambientStateGet(StateSlot.appStorage))
-    if state.loaded {
-        return
-    }
-    state.loaded = true
-    if state.bundleIdentifier.count == 0 {
-        return
-    }
-    let path = appStorageFile(state.bundleIdentifier)
-    let nodes = klistNodes(path)
-    if nodes.count == 0 || nodes[0].kind != "dict" {
-        return
-    }
-    var child = 1
-    while child < nodes[0].end {
-        if nodes[child].kind == "string" {
-            state.values.set(copy nodes[child].key, copy nodes[child].text)
+    unsafe {
+        appStorageEnsure()
+        var state = nativeRecover<AppStorageState>(ambientStateGet(StateSlot.appStorage))
+        if state.loaded {
+            return
         }
-        child = nodes[child].end
+        state.loaded = true
+        if state.bundleIdentifier.count == 0 {
+            return
+        }
+        let path = appStorageFile(state.bundleIdentifier)
+        let nodes = klistNodes(path)
+        if nodes.count == 0 || nodes[0].kind != "dict" {
+            return
+        }
+        var child = 1
+        while child < nodes[0].end {
+            if nodes[child].kind == "string" {
+                state.values.set(copy nodes[child].key, copy nodes[child].text)
+            }
+            child = nodes[child].end
+        }
     }
 }
 

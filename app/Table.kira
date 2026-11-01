@@ -360,120 +360,130 @@ public construct Table<Value: Identifiable>(
     // A row's press: the selection as a click, a Command-click or a
     // Shift-click makes it, and on a double-click the table's primary action.
     function selectFn(index: Number, slot: borrow ViewStateKey) -> () -> Void {
-        let key = copy slot
-        let id = rows[index].id
-        var ids: [Value.ID] = []
-        for row in rows { ids.append(row.id) }
-        let target = copy selecting
-        let action = copy primaryAction
-        let press: () -> Void = { in
-            tableInteractionEnsure<Value.ID>(key)
-            var interaction = nativeRecover<TableInteraction<Value.ID>>(ambientStateGetView(key))
-            match target {
-                None -> {}
-                Single(binding) -> {
-                    var already = false
-                    match binding.get() {
-                        Some(current) -> already = current == id
+        unsafe {
+            let key = copy slot
+            let id = rows[index].id
+            var ids: [Value.ID] = []
+            for row in rows { ids.append(row.id) }
+            let target = copy selecting
+            let action = copy primaryAction
+            let press: () -> Void = { in
+                unsafe {
+                    tableInteractionEnsure<Value.ID>(key)
+                    var interaction = nativeRecover<TableInteraction<Value.ID>>(ambientStateGetView(key))
+                    match target {
                         None -> {}
-                    }
-                    if commandHeld() && already {
-                        binding.set(.None)
-                    } else {
-                        binding.set(.Some(id))
-                    }
-                }
-                Multiple(binding) -> {
-                    var chosen = binding.get()
-                    if commandHeld() {
-                        if !chosen.remove(id) { chosen.insert(id) }
-                    } else if shiftHeld() && interaction.anchor >= 0 && interaction.anchor < ids.count {
-                        chosen = Set<Value.ID>()
-                        let low = interaction.anchor < index ? interaction.anchor : index
-                        let high = interaction.anchor < index ? index : interaction.anchor
-                        for position in low..high + 1 { chosen.insert(ids[position]) }
-                    } else {
-                        chosen = Set<Value.ID>()
-                        chosen.insert(id)
-                    }
-                    binding.set(move chosen)
-                }
-            }
-            if !shiftHeld() { interaction.anchor = index }
-            if clickCount() == 2 {
-                match action {
-                    Some(primary) -> {
-                        var acted = Set<Value.ID>()
-                        acted.insert(id)
-                        match target {
-                            Multiple(binding) -> {
-                                let chosen = binding.get()
-                                if chosen.contains(id) { acted = chosen }
+                        Single(binding) -> {
+                            var already = false
+                            match binding.get() {
+                                Some(current) -> already = current == id
+                                None -> {}
                             }
-                            Single -> {}
+                            if commandHeld() && already {
+                                binding.set(.None)
+                            } else {
+                                binding.set(.Some(id))
+                            }
+                        }
+                        Multiple(binding) -> {
+                            var chosen = binding.get()
+                            if commandHeld() {
+                                if !chosen.remove(id) { chosen.insert(id) }
+                            } else if shiftHeld() && interaction.anchor >= 0 && interaction.anchor < ids.count {
+                                chosen = Set<Value.ID>()
+                                let low = interaction.anchor < index ? interaction.anchor : index
+                                let high = interaction.anchor < index ? index : interaction.anchor
+                                for position in low..high + 1 { chosen.insert(ids[position]) }
+                            } else {
+                                chosen = Set<Value.ID>()
+                                chosen.insert(id)
+                            }
+                            binding.set(move chosen)
+                        }
+                    }
+                    if !shiftHeld() { interaction.anchor = index }
+                    if clickCount() == 2 {
+                        match action {
+                            Some(primary) -> {
+                                var acted = Set<Value.ID>()
+                                acted.insert(id)
+                                match target {
+                                    Multiple(binding) -> {
+                                        let chosen = binding.get()
+                                        if chosen.contains(id) { acted = chosen }
+                                    }
+                                    Single -> {}
+                                    None -> {}
+                                }
+                                primary(move acted)
+                            }
                             None -> {}
                         }
-                        primary(move acted)
                     }
-                    None -> {}
+                    return
                 }
             }
-            return
+            return press
         }
-        return press
     }
 
     // A row's secondary click: the context menu, for the selection when the
     // row is in it and for the row alone when it is not, at the pointer.
     function menuFn(index: Number, slot: borrow ViewStateKey, menuKey: Number) -> () -> Void {
-        let key = copy slot
-        let id = rows[index].id
-        let chosen = selectedIDs()
-        let offered = menu.isSome()
-        let press: () -> Void = { in
-            if !offered { return }
-            tableInteractionEnsure<Value.ID>(key)
-            var interaction = nativeRecover<TableInteraction<Value.ID>>(ambientStateGetView(key))
-            var rows = Set<Value.ID>()
-            if chosen.contains(id) {
-                rows = copy chosen
-            } else {
-                rows.insert(id)
+        unsafe {
+            let key = copy slot
+            let id = rows[index].id
+            let chosen = selectedIDs()
+            let offered = menu.isSome()
+            let press: () -> Void = { in
+                unsafe {
+                    if !offered { return }
+                    tableInteractionEnsure<Value.ID>(key)
+                    var interaction = nativeRecover<TableInteraction<Value.ID>>(ambientStateGetView(key))
+                    var rows = Set<Value.ID>()
+                    if chosen.contains(id) {
+                        rows = copy chosen
+                    } else {
+                        rows.insert(id)
+                    }
+                    interaction.menuRows = rows
+                    interaction.menuX = pointerX()
+                    interaction.menuY = pointerY()
+                    menuToggle(menuKey)
+                    return
+                }
             }
-            interaction.menuRows = rows
-            interaction.menuX = pointerX()
-            interaction.menuY = pointerY()
-            menuToggle(menuKey)
-            return
+            return press
         }
-        return press
     }
 
     // The context menu while it is open: its items on a menu's card, hung
     // from where the secondary click landed, put away by a press off it.
     function presentContextMenu(context: borrow BuildContext, modifiers: borrow ModifierContext, slot: borrow ViewStateKey, menuKey: Number) {
-        if openMenuKey() != menuKey { return }
-        match menu {
-            Some(items) -> {
-                tableInteractionEnsure<Value.ID>(slot)
-                let interaction = nativeRecover<TableInteraction<Value.ID>>(ambientStateGetView(slot))
-                let band = tapSeqEnterOverlay()
-                let away = tapSeqKey()
-                let card = ContextMenu() {
-                    items(interaction.menuRows)
+        unsafe {
+            if openMenuKey() != menuKey { return }
+            match menu {
+                Some(items) -> {
+                    tableInteractionEnsure<Value.ID>(slot)
+                    let interaction = nativeRecover<TableInteraction<Value.ID>>(ambientStateGetView(slot))
+                    let band = tapSeqEnterOverlay()
+                    let away = tapSeqKey()
+                    let card = ContextMenu() {
+                        items(interaction.menuRows)
+                    }
+                    .describe(context, modifierContextForOverlay(modifiers))
+                    layerActionRegister(away, toggleMenuFn(menuKey))
+                    overlayPresent(Overlay {
+                        anchorX: interaction.menuX,
+                        anchorY: interaction.menuY,
+                        z: OverlayLevel.submenu,
+                        content: move card,
+                        dismissKey: away
+                    })
+                    tapSeqLeaveOverlay(band)
                 }
-                .describe(context, modifierContextForOverlay(modifiers))
-                layerActionRegister(away, toggleMenuFn(menuKey))
-                overlayPresent(Overlay {
-                    anchorX: interaction.menuX,
-                    anchorY: interaction.menuY,
-                    z: OverlayLevel.submenu,
-                    content: move card,
-                    dismissKey: away
-                })
-                tapSeqLeaveOverlay(band)
+                None -> {}
             }
-            None -> {}
         }
     }
 }

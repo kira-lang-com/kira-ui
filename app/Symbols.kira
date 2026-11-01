@@ -40,14 +40,16 @@ struct SymbolAssets {
 
 // The library's own drawing of a symbol.
 public function symbolAsset(symbol: borrow Symbol) -> String {
-    if !ambientStateHas(StateSlot.symbolAssets) {
-        ambientStatePut(
-            StateSlot.symbolAssets,
-            nativeUserData(nativeState(SymbolAssets { drawings: symbolAssetTable() }))
-        )
+    unsafe {
+        if !ambientStateHas(StateSlot.symbolAssets) {
+            ambientStatePut(
+                StateSlot.symbolAssets,
+                nativeUserData(nativeState(SymbolAssets { drawings: symbolAssetTable() }))
+            )
+        }
+        let assets = nativeRecover<SymbolAssets>(ambientStateGet(StateSlot.symbolAssets))
+        return assets.drawings[code(symbol)]
     }
-    let assets = nativeRecover<SymbolAssets>(ambientStateGet(StateSlot.symbolAssets))
-    return assets.drawings[code(symbol)]
 }
 
 public function styleSymbol(symbols: borrow StyleSymbolTokens, symbol: borrow Symbol) -> String {

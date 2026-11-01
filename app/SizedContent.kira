@@ -17,26 +17,32 @@ function sizedContentEnsure() {
 
 // The key a layer whose content `make` makes from its size carries.
 public function sizedContentKey(make: (Size) -> CALayerDescription) -> Number {
-    sizedContentEnsure()
-    var table = nativeRecover<SizedContentTable>(ambientStateGet(StateSlot.sizedContent))
-    table.makers.append(move make)
-    return table.makers.count
+    unsafe {
+        sizedContentEnsure()
+        var table = nativeRecover<SizedContentTable>(ambientStateGet(StateSlot.sizedContent))
+        table.makers.append(move make)
+        return table.makers.count
+    }
 }
 
 // The content kept under `key`, made at `size`.
 function sizedContent(key: Number, size: Size) -> CALayerDescription {
-    sizedContentEnsure()
-    let table = nativeRecover<SizedContentTable>(ambientStateGet(StateSlot.sizedContent))
-    if key < 1 || key > table.makers.count {
-        return CALayerDescription {}
+    unsafe {
+        sizedContentEnsure()
+        let table = nativeRecover<SizedContentTable>(ambientStateGet(StateSlot.sizedContent))
+        if key < 1 || key > table.makers.count {
+            return CALayerDescription {}
+        }
+        let make = table.makers[key - 1]
+        return make(move size)
     }
-    let make = table.makers[key - 1]
-    return make(move size)
 }
 
 // A new build keeps none of the last one's.
 function sizedContentReset() {
-    sizedContentEnsure()
-    var table = nativeRecover<SizedContentTable>(ambientStateGet(StateSlot.sizedContent))
-    table.makers = []
+    unsafe {
+        sizedContentEnsure()
+        var table = nativeRecover<SizedContentTable>(ambientStateGet(StateSlot.sizedContent))
+        table.makers = []
+    }
 }

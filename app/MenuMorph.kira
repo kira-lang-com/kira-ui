@@ -16,107 +16,111 @@ public function menuMorphSpring(response: Number, damping: Number, target: Numbe
 // Only a menu leaving from home starts round; one caught on its way home goes
 // back out the shape it is.
 public function menuMorphRetarget(key: Number, opening: Bool) {
-    menuRevealEnsure(key)
-    var reveal = nativeRecover<MenuReveal>(ambientStateGetView(menuRevealSlotKey(key)))
-    let metrics = menuMorphMetrics()
-    if opening && reveal.amount <= 0.0 {
-        reveal.anchorX = pressBoundsX()
-        reveal.anchorY = pressBoundsY()
-        reveal.anchorW = pressBoundsW()
-        reveal.anchorH = pressBoundsH()
-        reveal.corner = MotionSpringState {}
-        reveal.cornered = 0.0
-    }
-    reveal.opening = opening
-    if opening {
-        menuRetarget(
-            reveal.progress,
-            1.0,
-            menuMorphSpring(metrics.growthResponse, metrics.growthDamping, 1.0)
-        )
-        menuRetarget(
-            reveal.height,
-            1.0,
-            menuMorphSpring(metrics.heightResponse, metrics.heightDamping, 1.0)
-        )
-        menuRetarget(
-            reveal.across,
-            1.0,
-            menuMorphSpring(metrics.growthResponse, metrics.growthDamping, 1.0)
-        )
-        menuRetarget(
-            reveal.fall,
-            1.0,
-            menuMorphSpring(metrics.dropResponse, metrics.dropDamping, 1.0),
-            metrics.dropLaunch
-        )
-        menuRetarget(reveal.corner, 1.0, menuMorphSpring(metrics.cornerResponse, 1.0, 1.0))
-    } else {
-        reveal.homeward = 0.0
-        menuRetarget(
-            reveal.progress,
-            0.0,
-            menuMorphSpring(metrics.closeResponse, metrics.closeDamping, 0.0)
-        )
-        menuRetarget(
-            reveal.height,
-            0.0,
-            menuMorphSpring(metrics.closeResponse, metrics.closeDamping, 0.0)
-        )
-        menuRetarget(
-            reveal.across,
-            0.0,
-            menuMorphSpring(metrics.flightResponse, metrics.flightDamping, 0.0)
-        )
-        menuRetarget(
-            reveal.fall,
-            0.0,
-            menuMorphSpring(metrics.flightResponse, metrics.flightDamping, 0.0)
-        )
-        menuRetarget(reveal.corner, 0.0, menuMorphSpring(metrics.closeCornerResponse, 1.0, 0.0))
+    unsafe {
+        menuRevealEnsure(key)
+        var reveal = nativeRecover<MenuReveal>(ambientStateGetView(menuRevealSlotKey(key)))
+        let metrics = menuMorphMetrics()
+        if opening && reveal.amount <= 0.0 {
+            reveal.anchorX = pressBoundsX()
+            reveal.anchorY = pressBoundsY()
+            reveal.anchorW = pressBoundsW()
+            reveal.anchorH = pressBoundsH()
+            reveal.corner = MotionSpringState {}
+            reveal.cornered = 0.0
+        }
+        reveal.opening = opening
+        if opening {
+            menuRetarget(
+                reveal.progress,
+                1.0,
+                menuMorphSpring(metrics.growthResponse, metrics.growthDamping, 1.0)
+            )
+            menuRetarget(
+                reveal.height,
+                1.0,
+                menuMorphSpring(metrics.heightResponse, metrics.heightDamping, 1.0)
+            )
+            menuRetarget(
+                reveal.across,
+                1.0,
+                menuMorphSpring(metrics.growthResponse, metrics.growthDamping, 1.0)
+            )
+            menuRetarget(
+                reveal.fall,
+                1.0,
+                menuMorphSpring(metrics.dropResponse, metrics.dropDamping, 1.0),
+                metrics.dropLaunch
+            )
+            menuRetarget(reveal.corner, 1.0, menuMorphSpring(metrics.cornerResponse, 1.0, 1.0))
+        } else {
+            reveal.homeward = 0.0
+            menuRetarget(
+                reveal.progress,
+                0.0,
+                menuMorphSpring(metrics.closeResponse, metrics.closeDamping, 0.0)
+            )
+            menuRetarget(
+                reveal.height,
+                0.0,
+                menuMorphSpring(metrics.closeResponse, metrics.closeDamping, 0.0)
+            )
+            menuRetarget(
+                reveal.across,
+                0.0,
+                menuMorphSpring(metrics.flightResponse, metrics.flightDamping, 0.0)
+            )
+            menuRetarget(
+                reveal.fall,
+                0.0,
+                menuMorphSpring(metrics.flightResponse, metrics.flightDamping, 0.0)
+            )
+            menuRetarget(reveal.corner, 0.0, menuMorphSpring(metrics.closeCornerResponse, 1.0, 0.0))
+        }
     }
 }
 
 // Advances a bar's menu by a frame and answers where it is. The fall is left
 // unclamped: overshooting the card is its whole motion.
 public function menuMorphAdvance(key: Number) -> MenuReveal {
-    menuRevealEnsure(key)
-    var reveal = nativeRecover<MenuReveal>(ambientStateGetView(menuRevealSlotKey(key)))
-    let delta = clockDelta()
-    let growth = motionSpringAdvance(reveal.progress, delta)
-    let height = motionSpringAdvance(reveal.height, delta)
-    let across = motionSpringAdvance(reveal.across, delta)
-    let fall = motionSpringAdvance(reveal.fall, delta)
-    let corner = motionSpringAdvance(reveal.corner, delta)
-    reveal.amount = min(max(growth.value, 0.0), 1.0)
-    reveal.widthAmount = growth.value
-    reveal.heightAmount = height.value
-    reveal.acrossAmount = across.value
-    reveal.fallen = fall.value
-    reveal.cornered = min(max(corner.value, 0.0), 1.0)
-    if !reveal.opening {
-        reveal.homeward = reveal.homeward + delta
-    }
-    let grown = motionSpringSettled(reveal.progress, growth, MotionSpringLimit.epsilon)
-    let risen = motionSpringSettled(reveal.height, height, MotionSpringLimit.epsilon)
-    let crossed = motionSpringSettled(reveal.across, across, MotionSpringLimit.epsilon)
-    let landed = motionSpringSettled(reveal.fall, fall, MotionSpringLimit.epsilon)
-    let squared = motionSpringSettled(reveal.corner, corner, MotionSpringLimit.epsilon)
-    // Home, the button's glass leading the menu there runs on its own time,
-    // and the menu stays out until it has run it: let go when the springs
-    // land, the two would still be apart and the glyph not yet back.
-    let arrived = reveal.opening || reveal.homeward >= menuMorphMetrics().closeDuration
-    if grown && risen && crossed && landed && squared && arrived {
-        reveal.amount = min(max(reveal.progress.spring.target, 0.0), 1.0)
-        reveal.widthAmount = reveal.progress.spring.target
-        reveal.heightAmount = reveal.height.spring.target
-        reveal.acrossAmount = reveal.across.spring.target
-        reveal.fallen = reveal.fall.spring.target
-        reveal.cornered = min(max(reveal.corner.spring.target, 0.0), 1.0)
+    unsafe {
+        menuRevealEnsure(key)
+        var reveal = nativeRecover<MenuReveal>(ambientStateGetView(menuRevealSlotKey(key)))
+        let delta = clockDelta()
+        let growth = motionSpringAdvance(reveal.progress, delta)
+        let height = motionSpringAdvance(reveal.height, delta)
+        let across = motionSpringAdvance(reveal.across, delta)
+        let fall = motionSpringAdvance(reveal.fall, delta)
+        let corner = motionSpringAdvance(reveal.corner, delta)
+        reveal.amount = min(max(growth.value, 0.0), 1.0)
+        reveal.widthAmount = growth.value
+        reveal.heightAmount = height.value
+        reveal.acrossAmount = across.value
+        reveal.fallen = fall.value
+        reveal.cornered = min(max(corner.value, 0.0), 1.0)
+        if !reveal.opening {
+            reveal.homeward = reveal.homeward + delta
+        }
+        let grown = motionSpringSettled(reveal.progress, growth, MotionSpringLimit.epsilon)
+        let risen = motionSpringSettled(reveal.height, height, MotionSpringLimit.epsilon)
+        let crossed = motionSpringSettled(reveal.across, across, MotionSpringLimit.epsilon)
+        let landed = motionSpringSettled(reveal.fall, fall, MotionSpringLimit.epsilon)
+        let squared = motionSpringSettled(reveal.corner, corner, MotionSpringLimit.epsilon)
+        // Home, the button's glass leading the menu there runs on its own time,
+        // and the menu stays out until it has run it: let go when the springs
+        // land, the two would still be apart and the glyph not yet back.
+        let arrived = reveal.opening || reveal.homeward >= menuMorphMetrics().closeDuration
+        if grown && risen && crossed && landed && squared && arrived {
+            reveal.amount = min(max(reveal.progress.spring.target, 0.0), 1.0)
+            reveal.widthAmount = reveal.progress.spring.target
+            reveal.heightAmount = reveal.height.spring.target
+            reveal.acrossAmount = reveal.across.spring.target
+            reveal.fallen = reveal.fall.spring.target
+            reveal.cornered = min(max(reveal.corner.spring.target, 0.0), 1.0)
+            return copy reveal
+        }
+        clockStillMoving()
         return copy reveal
     }
-    clockStillMoving()
-    return copy reveal
 }
 
 // Whether a bar button's glass is out with its menu: from the press that opens
@@ -135,28 +139,30 @@ public function menuHoldsGlass(key: Number) -> Bool {
 // coming: an interactive app only rebuilds when something happened, and a
 // spring settling is the one thing that happens while nothing does.
 public function menuRevealAdvance(key: Number) -> Number {
-    menuRevealEnsure(key)
-    var reveal = nativeRecover<MenuReveal>(ambientStateGetView(menuRevealSlotKey(key)))
-    let delta = clockDelta()
-    let sample = motionSpringAdvance(reveal.progress, delta)
-    let thrown = motionSpringAdvance(reveal.rise, delta)
-    // Past open as the spring overshoots, which is the card's bounce; never
-    // past shut, which would be a card smaller than its row.
-    reveal.amount = max(sample.value, 0.0)
-    reveal.risen = thrown.value
-    if motionSpringSettled(
-        reveal.progress,
-        sample,
-        MotionSpringLimit.epsilon
-    ) && motionSpringSettled(reveal.rise, thrown, MotionSpringLimit.epsilon) {
-        // Landed exactly. A card left 0.999 open is one drawn a fraction short
-        // of its own height for as long as it is on screen.
-        reveal.amount = min(max(reveal.progress.spring.target, 0.0), 1.0)
-        reveal.risen = reveal.rise.spring.target
+    unsafe {
+        menuRevealEnsure(key)
+        var reveal = nativeRecover<MenuReveal>(ambientStateGetView(menuRevealSlotKey(key)))
+        let delta = clockDelta()
+        let sample = motionSpringAdvance(reveal.progress, delta)
+        let thrown = motionSpringAdvance(reveal.rise, delta)
+        // Past open as the spring overshoots, which is the card's bounce; never
+        // past shut, which would be a card smaller than its row.
+        reveal.amount = max(sample.value, 0.0)
+        reveal.risen = thrown.value
+        if motionSpringSettled(
+            reveal.progress,
+            sample,
+            MotionSpringLimit.epsilon
+        ) && motionSpringSettled(reveal.rise, thrown, MotionSpringLimit.epsilon) {
+            // Landed exactly. A card left 0.999 open is one drawn a fraction short
+            // of its own height for as long as it is on screen.
+            reveal.amount = min(max(reveal.progress.spring.target, 0.0), 1.0)
+            reveal.risen = reveal.rise.spring.target
+            return reveal.amount
+        }
+        clockStillMoving()
         return reveal.amount
     }
-    clockStillMoving()
-    return reveal.amount
 }
 
 // What the menu behind an open submenu is drawn with at one moment: its ink,
@@ -188,29 +194,31 @@ public function menuRecessionAnchor(sideX: Number, viewportWidth: Number) -> Sta
 // Advances the shared recession, once per frame however many cards ask, and
 // answers where it stands.
 public function menuRecession(context: borrow BuildContext) -> MenuRecession {
-    menuEnsure()
-    var state = nativeRecover<MenuState>(ambientStateGet(StateSlot.menu))
-    if state.advancedOn != context.frameCount {
-        state.advancedOn = context.frameCount
-        let delta = clockDelta()
-        state.shrunk = menuRecessionStep(state.shrink, delta)
-        // Held: the ink stays exactly where it is and its spring's clock does
-        // not start. Reported as still moving, because a hold is part of the
-        // transition and the frames have to keep coming or it would end here.
-        if state.holdRemaining > 0.0 {
-            state.holdRemaining = state.holdRemaining - delta
-            clockStillMoving()
-        } else {
-            state.receded = menuRecessionStep(state.recede, delta)
+    unsafe {
+        menuEnsure()
+        var state = nativeRecover<MenuState>(ambientStateGet(StateSlot.menu))
+        if state.advancedOn != context.frameCount {
+            state.advancedOn = context.frameCount
+            let delta = clockDelta()
+            state.shrunk = menuRecessionStep(state.shrink, delta)
+            // Held: the ink stays exactly where it is and its spring's clock does
+            // not start. Reported as still moving, because a hold is part of the
+            // transition and the frames have to keep coming or it would end here.
+            if state.holdRemaining > 0.0 {
+                state.holdRemaining = state.holdRemaining - delta
+                clockStillMoving()
+            } else {
+                state.receded = menuRecessionStep(state.recede, delta)
+            }
         }
-    }
-    let metrics = menuSubmenuMetrics()
-    return MenuRecession {
-        ink: 1.0 - (1.0 - metrics.recededOpacity) * min(state.receded, 1.0),
-        scale: 1.0 - (1.0 - metrics.recedeScale) * state.shrunk,
-        anchor: menuRecessionAnchor(state.sideX, context.viewportWidth),
-        pivot: state.pivot,
-        pivoted: state.pivoted
+        let metrics = menuSubmenuMetrics()
+        return MenuRecession {
+            ink: 1.0 - (1.0 - metrics.recededOpacity) * min(state.receded, 1.0),
+            scale: 1.0 - (1.0 - metrics.recedeScale) * state.shrunk,
+            anchor: menuRecessionAnchor(state.sideX, context.viewportWidth),
+            pivot: state.pivot,
+            pivoted: state.pivoted
+        }
     }
 }
 
@@ -218,10 +226,12 @@ public function menuRecession(context: borrow BuildContext) -> MenuRecession {
 // it can fall back with it rather than hang still while the menu moves under
 // it.
 public function menuRecedesFrom(pivot: Point) {
-    menuEnsure()
-    var state = nativeRecover<MenuState>(ambientStateGet(StateSlot.menu))
-    state.pivot = pivot
-    state.pivoted = true
+    unsafe {
+        menuEnsure()
+        var state = nativeRecover<MenuState>(ambientStateGet(StateSlot.menu))
+        state.pivot = pivot
+        state.pivoted = true
+    }
 }
 
 // One frame of one of the recession's springs, landing exactly on its end.

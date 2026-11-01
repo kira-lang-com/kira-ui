@@ -93,20 +93,22 @@ public function windowBarTop(width: Number) -> Number {
 
 // Settles this frame's bar from what the content declared, after it lowered.
 public function windowBarSettle() {
-    toolbarSinkEnsure()
-    let sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
-    var bar: WindowBar = .Toolbar
-    if windowDrawsTitleBar() && !windowHasToolbar(sink) {
-        bar = match windowStyleDeclared() {
-            HiddenTitleBar -> .Hidden
-            Automatic -> .TitleBar
-            TitleBar -> .TitleBar
+    unsafe {
+        toolbarSinkEnsure()
+        let sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+        var bar: WindowBar = .Toolbar
+        if windowDrawsTitleBar() && !windowHasToolbar(sink) {
+            bar = match windowStyleDeclared() {
+                HiddenTitleBar -> .Hidden
+                Automatic -> .TitleBar
+                TitleBar -> .TitleBar
+            }
         }
-    }
-    windowBarSet(bar)
-    if bar != .Toolbar {
-        var drag = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
-        drag.windowDragHeight = TitleBarMetrics.height
+        windowBarSet(bar)
+        if bar != .Toolbar {
+            var drag = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+            drag.windowDragHeight = TitleBarMetrics.height
+        }
     }
 }
 
@@ -170,8 +172,10 @@ public function windowTitleBar(
 
 // The title a Mac's bar shows: the content's own, else the application's.
 function windowTitleShown() -> String {
-    toolbarSinkEnsure()
-    let sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
-    if sink.detailTitle.count > 0 { return copy sink.detailTitle }
-    return windowTitleName()
+    unsafe {
+        toolbarSinkEnsure()
+        let sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+        if sink.detailTitle.count > 0 { return copy sink.detailTitle }
+        return windowTitleName()
+    }
 }

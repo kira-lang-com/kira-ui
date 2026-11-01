@@ -150,58 +150,68 @@ public function workspaceSinkEnsure() {
 // Open collection for a workspace's panels, answering whether it was already
 // open, to be handed back when it closes.
 public function workspaceCollect() -> Bool {
-    workspaceSinkEnsure()
-    var sink = nativeRecover<WorkspaceSink>(ambientStateGet(StateSlot.workspaceSink))
-    let previous = sink.collecting
-    sink.collecting = true
-    var empty: [PanelDeclaration] = []
-    sink.panels = move empty
-    return previous
+    unsafe {
+        workspaceSinkEnsure()
+        var sink = nativeRecover<WorkspaceSink>(ambientStateGet(StateSlot.workspaceSink))
+        let previous = sink.collecting
+        sink.collecting = true
+        var empty: [PanelDeclaration] = []
+        sink.panels = move empty
+        return previous
+    }
 }
 
 public function workspaceCollecting() -> Bool {
-    workspaceSinkEnsure()
-    let sink = nativeRecover<WorkspaceSink>(ambientStateGet(StateSlot.workspaceSink))
-    return sink.collecting
+    unsafe {
+        workspaceSinkEnsure()
+        let sink = nativeRecover<WorkspaceSink>(ambientStateGet(StateSlot.workspaceSink))
+        return sink.collecting
+    }
 }
 
 public function workspaceDeclare(declaration: PanelDeclaration) {
-    workspaceSinkEnsure()
-    var sink = nativeRecover<WorkspaceSink>(ambientStateGet(StateSlot.workspaceSink))
-    sink.panels.append(move declaration)
+    unsafe {
+        workspaceSinkEnsure()
+        var sink = nativeRecover<WorkspaceSink>(ambientStateGet(StateSlot.workspaceSink))
+        sink.panels.append(move declaration)
+    }
 }
 
 public function workspaceTakeDeclarations(previous: Bool) -> [PanelDeclaration] {
-    workspaceSinkEnsure()
-    var sink = nativeRecover<WorkspaceSink>(ambientStateGet(StateSlot.workspaceSink))
-    sink.collecting = previous
-    let panels = copy sink.panels
-    var empty: [PanelDeclaration] = []
-    sink.panels = move empty
-    return panels
+    unsafe {
+        workspaceSinkEnsure()
+        var sink = nativeRecover<WorkspaceSink>(ambientStateGet(StateSlot.workspaceSink))
+        sink.collecting = previous
+        let panels = copy sink.panels
+        var empty: [PanelDeclaration] = []
+        sink.panels = move empty
+        return panels
+    }
 }
 
 // The first build to declare a panel places it where it was declared, and
 // selects it there if nothing at that edge is yet.
 public function workspaceSeed(panel: String, edge: borrow PanelEdge, isPresented: Bool) {
-    workspaceArrangementEnsure()
-    var state = nativeRecover<WorkspaceArrangement>(ambientStateGet(StateSlot.workspaceArrangement))
-    if workspacePlacementIndex(state, panel) >= 0 {
-        return
-    }
-    let pinned = edge == .Center
-    let awaited = state.awaited == panel
-    let shown = isPresented || pinned || awaited
-    state.placements.append(
-        PanelPlacement { panel: copy panel, edge: copy edge, shown: shown, pinned: pinned }
-    )
-    let index = panelEdgeIndex(edge)
-    if awaited {
-        state.awaited = ""
-        state.edges[index].folded = false
-    }
-    if shown && (awaited || state.edges[index].selected == "") {
-        state.edges[index].selected = move panel
+    unsafe {
+        workspaceArrangementEnsure()
+        var state = nativeRecover<WorkspaceArrangement>(ambientStateGet(StateSlot.workspaceArrangement))
+        if workspacePlacementIndex(state, panel) >= 0 {
+            return
+        }
+        let pinned = edge == .Center
+        let awaited = state.awaited == panel
+        let shown = isPresented || pinned || awaited
+        state.placements.append(
+            PanelPlacement { panel: copy panel, edge: copy edge, shown: shown, pinned: pinned }
+        )
+        let index = panelEdgeIndex(edge)
+        if awaited {
+            state.awaited = ""
+            state.edges[index].folded = false
+        }
+        if shown && (awaited || state.edges[index].selected == "") {
+            state.edges[index].selected = move panel
+        }
     }
 }
 
@@ -219,31 +229,39 @@ public function workspaceIsSelected(panel: borrow String) -> Bool {
 // The panels this build declared, in order: what a tab's key is read back
 // through.
 public function workspaceRemember(panels: borrow [PanelDeclaration]) {
-    workspaceArrangementEnsure()
-    var state = nativeRecover<WorkspaceArrangement>(ambientStateGet(StateSlot.workspaceArrangement))
-    var declared: [String] = []
-    for declaration in panels {
-        declared.append(copy declaration.panel)
+    unsafe {
+        workspaceArrangementEnsure()
+        var state = nativeRecover<WorkspaceArrangement>(ambientStateGet(StateSlot.workspaceArrangement))
+        var declared: [String] = []
+        for declaration in panels {
+            declared.append(copy declaration.panel)
+        }
+        state.declared = move declared
     }
-    state.declared = move declared
 }
 
 public function workspaceSetSize(size: borrow Size) {
-    workspaceArrangementEnsure()
-    var state = nativeRecover<WorkspaceArrangement>(ambientStateGet(StateSlot.workspaceArrangement))
-    state.workspaceSize = copy size
+    unsafe {
+        workspaceArrangementEnsure()
+        var state = nativeRecover<WorkspaceArrangement>(ambientStateGet(StateSlot.workspaceArrangement))
+        state.workspaceSize = copy size
+    }
 }
 
 public function workspaceSetPresentation(presentation: WorkspacePresentation) {
-    workspaceArrangementEnsure()
-    var state = nativeRecover<WorkspaceArrangement>(ambientStateGet(StateSlot.workspaceArrangement))
-    state.presentation = presentation
+    unsafe {
+        workspaceArrangementEnsure()
+        var state = nativeRecover<WorkspaceArrangement>(ambientStateGet(StateSlot.workspaceArrangement))
+        state.presentation = presentation
+    }
 }
 
 public function workspaceSetCenter(center: WorkspaceCenter) {
-    workspaceArrangementEnsure()
-    var state = nativeRecover<WorkspaceArrangement>(ambientStateGet(StateSlot.workspaceArrangement))
-    state.center = center
+    unsafe {
+        workspaceArrangementEnsure()
+        var state = nativeRecover<WorkspaceArrangement>(ambientStateGet(StateSlot.workspaceArrangement))
+        state.center = center
+    }
 }
 
 public function workspaceDeclarationIndex(

@@ -115,28 +115,34 @@ public function navigationEnsure() {
 }
 
 public function navigationValues() -> [Any NavigationRoute] {
-    navigationEnsure()
-    let state = nativeRecover<NavigationPathState>(ambientStateGet(StateSlot.navigationPath))
-    return copy state.values
+    unsafe {
+        navigationEnsure()
+        let state = nativeRecover<NavigationPathState>(ambientStateGet(StateSlot.navigationPath))
+        return copy state.values
+    }
 }
 
 // The path, replaced as it is: nothing moves.
 public function navigationStore(values: [Any NavigationRoute]) {
-    navigationEnsure()
-    var state = nativeRecover<NavigationPathState>(ambientStateGet(StateSlot.navigationPath))
-    state.values = move values
+    unsafe {
+        navigationEnsure()
+        var state = nativeRecover<NavigationPathState>(ambientStateGet(StateSlot.navigationPath))
+        state.values = move values
+    }
 }
 
 // The path changed to `values`. Nothing moves yet: the change is settled
 // with every other change the same action made, when the next frame begins.
 public function navigationChange(values: [Any NavigationRoute]) {
-    navigationEnsure()
-    var state = nativeRecover<NavigationPathState>(ambientStateGet(StateSlot.navigationPath))
-    if !state.unsettled {
-        state.settled = copy state.values
-        state.unsettled = true
+    unsafe {
+        navigationEnsure()
+        var state = nativeRecover<NavigationPathState>(ambientStateGet(StateSlot.navigationPath))
+        if !state.unsettled {
+            state.settled = copy state.values
+            state.unsettled = true
+        }
+        state.values = move values
     }
-    state.values = move values
 }
 
 // The changes made to the path since it was last settled, landed as one, the
@@ -146,29 +152,31 @@ public function navigationChange(values: [Any NavigationRoute]) {
 // that grew pushes its new view in over the old; one that shrank takes the
 // old view off the one under it.
 public function navigationSettle() {
-    navigationEnsure()
-    var state = nativeRecover<NavigationPathState>(ambientStateGet(StateSlot.navigationPath))
-    if !state.unsettled {
-        return
-    }
-    state.unsettled = false
-    let before = copy state.settled
-    let after = copy state.values
-    // A path that starts elsewhere replaces what was showing. Stacked, though,
-    // the sidebar is the root, and a path that empties is going back to it --
-    // and one that fills from empty is going on from it.
-    let fromSidebar = navigationRootDepth() == 0 && (before.count == 0 || after.count == 0)
-    if fromSidebar && before.count == 0 && after.count > 0 {
-        state.detailRun++
-    }
-    if !navigationSameRoot(before, after) && !fromSidebar {
-        navigationTransitionCancel()
-        state.generation++
-        menuDismissAll()
-    } else if after.count < before.count {
-        navigationTransitionPop(move before, move after)
-    } else if after.count > before.count || !navigationSamePath(before, after) {
-        navigationTransitionPush(move before, move after)
+    unsafe {
+        navigationEnsure()
+        var state = nativeRecover<NavigationPathState>(ambientStateGet(StateSlot.navigationPath))
+        if !state.unsettled {
+            return
+        }
+        state.unsettled = false
+        let before = copy state.settled
+        let after = copy state.values
+        // A path that starts elsewhere replaces what was showing. Stacked, though,
+        // the sidebar is the root, and a path that empties is going back to it --
+        // and one that fills from empty is going on from it.
+        let fromSidebar = navigationRootDepth() == 0 && (before.count == 0 || after.count == 0)
+        if fromSidebar && before.count == 0 && after.count > 0 {
+            state.detailRun++
+        }
+        if !navigationSameRoot(before, after) && !fromSidebar {
+            navigationTransitionCancel()
+            state.generation++
+            menuDismissAll()
+        } else if after.count < before.count {
+            navigationTransitionPop(move before, move after)
+        } else if after.count > before.count || !navigationSamePath(before, after) {
+            navigationTransitionPush(move before, move after)
+        }
     }
 }
 
@@ -200,15 +208,19 @@ public function navigationSameRoot(
 }
 
 public function navigationDetailRun() -> Number {
-    navigationEnsure()
-    let state = nativeRecover<NavigationPathState>(ambientStateGet(StateSlot.navigationPath))
-    return state.detailRun
+    unsafe {
+        navigationEnsure()
+        let state = nativeRecover<NavigationPathState>(ambientStateGet(StateSlot.navigationPath))
+        return state.detailRun
+    }
 }
 
 public function currentNavigationGeneration() -> Number {
-    navigationEnsure()
-    let state = nativeRecover<NavigationPathState>(ambientStateGet(StateSlot.navigationPath))
-    return state.generation
+    unsafe {
+        navigationEnsure()
+        let state = nativeRecover<NavigationPathState>(ambientStateGet(StateSlot.navigationPath))
+        return state.generation
+    }
 }
 
 // A value pushed.
@@ -253,40 +265,48 @@ public struct NavigationEnvironment {
 }
 
 public function navigationEnvironment() -> NavigationEnvironment {
-    if !ambientStateHas(StateSlot.navigationEnvironment) {
-        ambientStatePut(
-            StateSlot.navigationEnvironment,
-            nativeUserData(nativeState(NavigationEnvironment {}))
-        )
+    unsafe {
+        if !ambientStateHas(StateSlot.navigationEnvironment) {
+            ambientStatePut(
+                StateSlot.navigationEnvironment,
+                nativeUserData(nativeState(NavigationEnvironment {}))
+            )
+        }
+        return nativeRecover<NavigationEnvironment>(ambientStateGet(StateSlot.navigationEnvironment))
     }
-    return nativeRecover<NavigationEnvironment>(ambientStateGet(StateSlot.navigationEnvironment))
 }
 
 public function navigationEnter(split: Bool) -> NavigationEnvironment {
-    let previous = navigationEnvironment()
-    var current = nativeRecover<NavigationEnvironment>(
-        ambientStateGet(StateSlot.navigationEnvironment)
-    )
-    current.split = split
-    chromeDeclareNavigation()
-    return previous
+    unsafe {
+        let previous = navigationEnvironment()
+        var current = nativeRecover<NavigationEnvironment>(
+            ambientStateGet(StateSlot.navigationEnvironment)
+        )
+        current.split = split
+        chromeDeclareNavigation()
+        return previous
+    }
 }
 
 public function navigationSetBackground(color: RGBAColor) {
-    navigationEnvironment()
-    var current = nativeRecover<NavigationEnvironment>(
-        ambientStateGet(StateSlot.navigationEnvironment)
-    )
-    current.hasBackground = true
-    current.background = move color
+    unsafe {
+        navigationEnvironment()
+        var current = nativeRecover<NavigationEnvironment>(
+            ambientStateGet(StateSlot.navigationEnvironment)
+        )
+        current.hasBackground = true
+        current.background = move color
+    }
 }
 
 public function navigationClearBackground() {
-    navigationEnvironment()
-    var current = nativeRecover<NavigationEnvironment>(
-        ambientStateGet(StateSlot.navigationEnvironment)
-    )
-    current.hasBackground = false
+    unsafe {
+        navigationEnvironment()
+        var current = nativeRecover<NavigationEnvironment>(
+            ambientStateGet(StateSlot.navigationEnvironment)
+        )
+        current.hasBackground = false
+    }
 }
 
 // The column's canvas: what the view in it asked for, or the window's own.
@@ -299,10 +319,12 @@ public function navigationColumnCanvas(modifiers: borrow ModifierContext) -> Fou
 }
 
 public function navigationLeave(previous: borrow NavigationEnvironment) {
-    var current = nativeRecover<NavigationEnvironment>(
-        ambientStateGet(StateSlot.navigationEnvironment)
-    )
-    current.split = previous.split
+    unsafe {
+        var current = nativeRecover<NavigationEnvironment>(
+            ambientStateGet(StateSlot.navigationEnvironment)
+        )
+        current.split = previous.split
+    }
 }
 
 // --- Links and destinations -------------------------------------------------

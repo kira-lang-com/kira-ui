@@ -98,83 +98,85 @@ public construct DragGestureLayer(gesture: DragGesture) extends Widget {
     // Reports the press holding the view: each move once it has come
     // `minimumDistance` from where it began, and the end when it lets go.
     function follow(borrow self, context: borrow BuildContext, key: Number) {
-        let slot = slotKey("kiraui.drag.", key)
-        if !ambientStateHasView(slot) {
-            ambientStatePutView(copy slot, nativeUserData(nativeState(DragGestureTrack {})))
-        }
-        var track = nativeRecover<DragGestureTrack>(ambientStateGetView(slot))
-        let held = context.heldKey == key
-        if !held {
-            if track.began {
-                // A drag held still before it was let go has no speed left.
-                var ended = copy track.last
-                if unixMillis() - track.moved > DragMotion.stale {
-                    ended.velocity = Size {}
-                    ended.predictedEndLocation = copy ended.location
-                    ended.predictedEndTranslation = copy ended.translation
-                }
-                let end = gesture.ended
-                end(move ended)
-                // The view this gesture holds was built before its action ran,
-                // from the state as it was, so what the action changed shows
-                // in the next description, and nothing else is sure to ask
-                // for one: a drag let go has no more input to come.
-                redrawAfter(0)
+        unsafe {
+            let slot = slotKey("kiraui.drag.", key)
+            if !ambientStateHasView(slot) {
+                ambientStatePutView(copy slot, nativeUserData(nativeState(DragGestureTrack {})))
             }
-            track.press = 0
-            track.began = false
-            return
-        }
-        let location = copy context.heldPoint
-        let now = unixMillis()
-        if track.press != context.heldPress {
-            track.press = context.heldPress
-            track.began = false
-            track.moved = now
-            track.last = DragGestureValue {
+            var track = nativeRecover<DragGestureTrack>(ambientStateGetView(slot))
+            let held = context.heldKey == key
+            if !held {
+                if track.began {
+                    // A drag held still before it was let go has no speed left.
+                    var ended = copy track.last
+                    if unixMillis() - track.moved > DragMotion.stale {
+                        ended.velocity = Size {}
+                        ended.predictedEndLocation = copy ended.location
+                        ended.predictedEndTranslation = copy ended.translation
+                    }
+                    let end = gesture.ended
+                    end(move ended)
+                    // The view this gesture holds was built before its action ran,
+                    // from the state as it was, so what the action changed shows
+                    // in the next description, and nothing else is sure to ask
+                    // for one: a drag let go has no more input to come.
+                    redrawAfter(0)
+                }
+                track.press = 0
+                track.began = false
+                return
+            }
+            let location = copy context.heldPoint
+            let now = unixMillis()
+            if track.press != context.heldPress {
+                track.press = context.heldPress
+                track.began = false
+                track.moved = now
+                track.last = DragGestureValue {
+                    time: now / 1000,
+                    location: copy location,
+                    startLocation: copy location,
+                    predictedEndLocation: copy location
+                }
+            }
+            let start = copy track.last.startLocation
+            let moved = location.x != track.last.location.x || location.y != track.last.location.y
+            // The speed of the last move, or the one before while it has not moved.
+            let elapsed = (now - track.moved) / 1000
+            let velocity = moved && elapsed > 0
+            ? Size {
+                width : (location.x - track.last.location.x) / elapsed,
+                height: (location.y - track.last.location.y) / elapsed
+            }
+            : copy track.last.velocity
+            let carryX = dragCarry(velocity.width)
+            let carryY = dragCarry(velocity.height)
+            let value = DragGestureValue {
                 time: now / 1000,
                 location: copy location,
-                startLocation: copy location,
-                predictedEndLocation: copy location
+                startLocation: copy start,
+                translation: Size { width: location.x - start.x, height: location.y - start.y },
+                velocity: copy velocity,
+                predictedEndLocation: Point { x: location.x + carryX, y: location.y + carryY },
+                predictedEndTranslation: Size {
+                    width: location.x - start.x + carryX,
+                    height: location.y - start.y + carryY
+                }
             }
-        }
-        let start = copy track.last.startLocation
-        let moved = location.x != track.last.location.x || location.y != track.last.location.y
-        // The speed of the last move, or the one before while it has not moved.
-        let elapsed = (now - track.moved) / 1000
-        let velocity = moved && elapsed > 0
-        ? Size {
-            width : (location.x - track.last.location.x) / elapsed,
-            height: (location.y - track.last.location.y) / elapsed
-        }
-        : copy track.last.velocity
-        let carryX = dragCarry(velocity.width)
-        let carryY = dragCarry(velocity.height)
-        let value = DragGestureValue {
-            time: now / 1000,
-            location: copy location,
-            startLocation: copy start,
-            translation: Size { width: location.x - start.x, height: location.y - start.y },
-            velocity: copy velocity,
-            predictedEndLocation: Point { x: location.x + carryX, y: location.y + carryY },
-            predictedEndTranslation: Size {
-                width: location.x - start.x + carryX,
-                height: location.y - start.y + carryY
+            if moved { track.moved = now }
+            let distance = sqrt(
+                value.translation.width * value.translation.width + value.translation.height * value.translation.height
+            )
+            if !track.began && distance < gesture.minimumDistance { return }
+            let first = !track.began
+            track.began = true
+            track.last = copy value
+            if first || moved {
+                let change = gesture.changed
+                change(move value)
+                // As for the end: the move shows in the next description.
+                redrawAfter(0)
             }
-        }
-        if moved { track.moved = now }
-        let distance = sqrt(
-            value.translation.width * value.translation.width + value.translation.height * value.translation.height
-        )
-        if !track.began && distance < gesture.minimumDistance { return }
-        let first = !track.began
-        track.began = true
-        track.last = copy value
-        if first || moved {
-            let change = gesture.changed
-            change(move value)
-            // As for the end: the move shows in the next description.
-            redrawAfter(0)
         }
     }
 }

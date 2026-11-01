@@ -84,28 +84,30 @@ struct ImageDrawings {
 // The drawing the app keeps under `name`, or nothing drawn when it keeps
 // none, which is said once.
 function imageDrawing(name: borrow String) -> String {
-    let previous = enterProcessScope()
-    if !ambientStateHas(StateSlot.imageDrawings) {
-        ambientStatePut(StateSlot.imageDrawings, nativeUserData(nativeState(ImageDrawings {})))
-    }
-    var state = nativeRecover<ImageDrawings>(ambientStateGet(StateSlot.imageDrawings))
-    let drawing = match state.drawings.value(copy name) {
-        Some(known) -> known
-        None -> {
-            let path = "Resources/Images/" + name + ".svg"
-            var read = ""
-            match readFile(path) {
-                Ok(contents) -> read = copy contents.text
-                Error(failure) -> log warn(
-                    "the app keeps no image by this name",
-                    path: path,
-                    failure
-                )
-            }
-            state.drawings.set(copy name, copy read)
-            read
+    unsafe {
+        let previous = enterProcessScope()
+        if !ambientStateHas(StateSlot.imageDrawings) {
+            ambientStatePut(StateSlot.imageDrawings, nativeUserData(nativeState(ImageDrawings {})))
         }
+        var state = nativeRecover<ImageDrawings>(ambientStateGet(StateSlot.imageDrawings))
+        let drawing = match state.drawings.value(copy name) {
+            Some(known) -> known
+            None -> {
+                let path = "Resources/Images/" + name + ".svg"
+                var read = ""
+                match readFile(path) {
+                    Ok(contents) -> read = copy contents.text
+                    Error(failure) -> log warn(
+                        "the app keeps no image by this name",
+                        path: path,
+                        failure
+                    )
+                }
+                state.drawings.set(copy name, copy read)
+                read
+            }
+        }
+        ambientScopeEnter(previous)
+        return drawing
     }
-    ambientScopeEnter(previous)
-    return drawing
 }

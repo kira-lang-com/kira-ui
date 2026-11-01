@@ -91,26 +91,32 @@ public function commandsSinkEnsure() {
 // `applicationName`. The tree declares its commands again every frame, as it
 // does its toolbar.
 public function commandsCollect(applicationName: String) {
-    commandsSinkEnsure()
-    var sink = nativeRecover<CommandsSink>(ambientStateGet(StateSlot.commands))
-    var noGroups: [DeclaredCommandGroup] = []
-    sink.groups = move noGroups
-    var noMenus: [DeclaredCommandMenu] = []
-    sink.menus = move noMenus
-    sink.applicationName = applicationName
-    sink.collecting = true
+    unsafe {
+        commandsSinkEnsure()
+        var sink = nativeRecover<CommandsSink>(ambientStateGet(StateSlot.commands))
+        var noGroups: [DeclaredCommandGroup] = []
+        sink.groups = move noGroups
+        var noMenus: [DeclaredCommandMenu] = []
+        sink.menus = move noMenus
+        sink.applicationName = applicationName
+        sink.collecting = true
+    }
 }
 
 public function commandsStopCollecting() {
-    commandsSinkEnsure()
-    var sink = nativeRecover<CommandsSink>(ambientStateGet(StateSlot.commands))
-    sink.collecting = false
+    unsafe {
+        commandsSinkEnsure()
+        var sink = nativeRecover<CommandsSink>(ambientStateGet(StateSlot.commands))
+        sink.collecting = false
+    }
 }
 
 // The commands this frame declared, to read.
 public function declaredCommands() -> CommandsSink {
-    commandsSinkEnsure()
-    return nativeRecover<CommandsSink>(ambientStateGet(StateSlot.commands))
+    unsafe {
+        commandsSinkEnsure()
+        return nativeRecover<CommandsSink>(ambientStateGet(StateSlot.commands))
+    }
 }
 
 // --- Declaring them ----------------------------------------------------------
@@ -123,22 +129,24 @@ public construct CommandMenu(title: String) extends Widget {
         context: borrow BuildContext,
         modifiers: borrow ModifierContext
     ) -> CALayerDescription {
-        commandsSinkEnsure()
-        var sink = nativeRecover<CommandsSink>(ambientStateGet(StateSlot.commands))
-        if sink.collecting {
-            sink.menus.append(
-                DeclaredCommandMenu {
-                    title: copy title,
-                    items: VStack(spacing: .None, alignment: .Leading) {
-                        For(item in children) {
-                            item
-                        }
+        unsafe {
+            commandsSinkEnsure()
+            var sink = nativeRecover<CommandsSink>(ambientStateGet(StateSlot.commands))
+            if sink.collecting {
+                sink.menus.append(
+                    DeclaredCommandMenu {
+                        title: copy title,
+                        items: VStack(spacing: .None, alignment: .Leading) {
+                            For(item in children) {
+                                item
+                            }
 
+                        }
                     }
-                }
-            )
+                )
+            }
+            return CALayerDescription {}
         }
-        return CALayerDescription {}
     }
 }
 
@@ -151,22 +159,24 @@ public construct CommandGroup(placement: CommandPlacement) extends Widget {
         context: borrow BuildContext,
         modifiers: borrow ModifierContext
     ) -> CALayerDescription {
-        commandsSinkEnsure()
-        var sink = nativeRecover<CommandsSink>(ambientStateGet(StateSlot.commands))
-        if sink.collecting {
-            sink.groups.append(
-                DeclaredCommandGroup {
-                    placement: copy placement,
-                    items: VStack(spacing: .None, alignment: .Leading) {
-                        For(item in children) {
-                            item
-                        }
+        unsafe {
+            commandsSinkEnsure()
+            var sink = nativeRecover<CommandsSink>(ambientStateGet(StateSlot.commands))
+            if sink.collecting {
+                sink.groups.append(
+                    DeclaredCommandGroup {
+                        placement: copy placement,
+                        items: VStack(spacing: .None, alignment: .Leading) {
+                            For(item in children) {
+                                item
+                            }
 
+                        }
                     }
-                }
-            )
+                )
+            }
+            return CALayerDescription {}
         }
-        return CALayerDescription {}
     }
 }
 

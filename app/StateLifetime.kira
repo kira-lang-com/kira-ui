@@ -37,22 +37,24 @@ public struct StateLifetimeCounts {
 }
 
 public function stateLifetimeCounts() -> StateLifetimeCounts {
-    var presence = nativeRecover<StatePresence>(statePresenceSlot())
-    var scopes = 0
-    var keptKeys = 0
-    for entry in presence.scopes.entries() {
-        scopes += 1
-        keptKeys += entry.value.keys.count
-    }
-    return StateLifetimeCounts {
-        slots: ambientStateCountAll(),
-        viewSlots: ambientStateViewCount(),
-        scopes: scopes,
-        keptKeys: keptKeys,
-        recordings: presence.recording.count,
-        touched: ambientStateTouchedCount(),
-        viewLog: ambientStateViewLogCount(),
-        scopesIssued: ambientStateScopeCount()
+    unsafe {
+        var presence = nativeRecover<StatePresence>(statePresenceSlot())
+        var scopes = 0
+        var keptKeys = 0
+        for entry in presence.scopes.entries() {
+            scopes += 1
+            keptKeys += entry.value.keys.count
+        }
+        return StateLifetimeCounts {
+            slots: ambientStateCountAll(),
+            viewSlots: ambientStateViewCount(),
+            scopes: scopes,
+            keptKeys: keptKeys,
+            recordings: presence.recording.count,
+            touched: ambientStateTouchedCount(),
+            viewLog: ambientStateViewLogCount(),
+            scopesIssued: ambientStateScopeCount()
+        }
     }
 }
 
@@ -102,23 +104,27 @@ function statePresenceSlot() -> RawPtr {
 // Starts a build. The returned guard is held for the build; when it drops it
 // sweeps the view state the build did not touch.
 public function stateBuildBegin() -> StateBuild {
-    ambientStateBuildBegin()
-    var presence = nativeRecover<StatePresence>(statePresenceSlot())
-    presence.build += 1
-    presence.recording = []
-    return StateBuild {}
+    unsafe {
+        ambientStateBuildBegin()
+        var presence = nativeRecover<StatePresence>(statePresenceSlot())
+        presence.build += 1
+        presence.recording = []
+        return StateBuild {}
+    }
 }
 
 // Ends a build: the state of every view it neither described nor kept goes,
 // and so does every kept scope no container held. Dropping the build's guard
 // calls this.
 function stateBuildSweep() {
-    var presence = nativeRecover<StatePresence>(statePresenceSlot())
-    let build = presence.build
-    for entry in presence.scopes.entries() {
-        if entry.value.build != build { presence.scopes.remove(entry.key) }
+    unsafe {
+        var presence = nativeRecover<StatePresence>(statePresenceSlot())
+        let build = presence.build
+        for entry in presence.scopes.entries() {
+            if entry.value.build != build { presence.scopes.remove(entry.key) }
+        }
+        ambientStateBuildEnd()
     }
-    ambientStateBuildEnd()
 }
 
 // Marks `keys`, a described view's state, present in this build. The mark is
@@ -134,39 +140,45 @@ public function stateMarkPresent(keys: borrow [String]) {
 // Starts recording, under `scope`, the view keys touched while a container
 // describes a view it keeps, until `stateScopeRecorded`.
 public function stateScopeRecord(scope: borrow String) {
-    var presence = nativeRecover<StatePresence>(statePresenceSlot())
-    ambientStateRecordBegin()
-    presence.recording.append(
-        StateRecording { scope: copy scope, start: ambientStateViewLogCount() }
-    )
+    unsafe {
+        var presence = nativeRecover<StatePresence>(statePresenceSlot())
+        ambientStateRecordBegin()
+        presence.recording.append(
+            StateRecording { scope: copy scope, start: ambientStateViewLogCount() }
+        )
+    }
 }
 
 // Ends the innermost recording: the keys the build touched since it started
 // are the ones the container keeps while it holds the view undescribed.
 public function stateScopeRecorded() {
-    var presence = nativeRecover<StatePresence>(statePresenceSlot())
-    let last = presence.recording.count - 1
-    if last < 0 { return }
-    let done = copy presence.recording[last]
-    var open: [StateRecording] = []
-    for index in 0..last { open.append(copy presence.recording[index]) }
-    presence.recording = move open
-    presence.scopes.set(
-        copy done.scope,
-        KeptScope { keys: ambientStateViewKeysSince(done.start), build: presence.build }
-    )
-    ambientStateRecordEnd()
+    unsafe {
+        var presence = nativeRecover<StatePresence>(statePresenceSlot())
+        let last = presence.recording.count - 1
+        if last < 0 { return }
+        let done = copy presence.recording[last]
+        var open: [StateRecording] = []
+        for index in 0..last { open.append(copy presence.recording[index]) }
+        presence.recording = move open
+        presence.scopes.set(
+            copy done.scope,
+            KeptScope { keys: ambientStateViewKeysSince(done.start), build: presence.build }
+        )
+        ambientStateRecordEnd()
+    }
 }
 
 // Marks again the keys `scope` recorded, for a view its container keeps
 // though it does not describe it in this build. The touch is logged too, so
 // an outer container keeping this one keeps them as well.
 public function stateScopeRetain(scope: borrow String) {
-    var presence = nativeRecover<StatePresence>(statePresenceSlot())
-    let build = presence.build
-    let kept = try presence.scopes.value(scope) otherwise return
-    for key in kept.keys {
-        ambientStateTouchView(ViewStateKey { name: copy key })
+    unsafe {
+        var presence = nativeRecover<StatePresence>(statePresenceSlot())
+        let build = presence.build
+        let kept = try presence.scopes.value(scope) otherwise return
+        for key in kept.keys {
+            ambientStateTouchView(ViewStateKey { name: copy key })
+        }
+        presence.scopes.set(copy scope, KeptScope { keys: copy kept.keys, build: build })
     }
-    presence.scopes.set(copy scope, KeptScope { keys: copy kept.keys, build: build })
 }

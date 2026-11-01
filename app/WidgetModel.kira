@@ -98,17 +98,19 @@ public struct TokenCache {
 }
 
 public function defaultTokens() -> ThemeTokens {
-    let scheme = interfaceScheme()
-    if !ambientStateHas(StateSlot.tokens) {
-        let made = TokenCache { scheme: scheme, tokens: defaultTheme.tokens() }
-        ambientStatePut(StateSlot.tokens, nativeUserData(nativeState(move made)))
+    unsafe {
+        let scheme = interfaceScheme()
+        if !ambientStateHas(StateSlot.tokens) {
+            let made = TokenCache { scheme: scheme, tokens: defaultTheme.tokens() }
+            ambientStatePut(StateSlot.tokens, nativeUserData(nativeState(move made)))
+        }
+        var cache = nativeRecover<TokenCache>(ambientStateGet(StateSlot.tokens))
+        if cache.scheme != scheme {
+            cache.tokens = defaultTheme.tokens()
+            cache.scheme = scheme
+        }
+        return copy cache.tokens
     }
-    var cache = nativeRecover<TokenCache>(ambientStateGet(StateSlot.tokens))
-    if cache.scheme != scheme {
-        cache.tokens = defaultTheme.tokens()
-        cache.scheme = scheme
-    }
-    return copy cache.tokens
 }
 
 public function primaryColorAsColor(

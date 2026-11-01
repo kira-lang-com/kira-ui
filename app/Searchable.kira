@@ -136,20 +136,26 @@ public function searchPresentationEnsure() {
 
 // The presentation the window keeps, as a binding.
 public function searchPresentation() -> Binding<Bool> {
-    searchPresentationEnsure()
-    return Binding<Bool> {
-        get: { in
-            let kept = nativeRecover<SearchPresentation>(
-                ambientStateGet(StateSlot.searchPresentation)
-            )
-            return kept.presented
-        },
-        set: { presented in
-            var kept = nativeRecover<SearchPresentation>(
-                ambientStateGet(StateSlot.searchPresentation)
-            )
-            kept.presented = presented
-            return
+    unsafe {
+        searchPresentationEnsure()
+        return Binding<Bool> {
+            get: { in
+                unsafe {
+                    let kept = nativeRecover<SearchPresentation>(
+                        ambientStateGet(StateSlot.searchPresentation)
+                    )
+                    return kept.presented
+                }
+            },
+            set: { presented in
+                unsafe {
+                    var kept = nativeRecover<SearchPresentation>(
+                        ambientStateGet(StateSlot.searchPresentation)
+                    )
+                    kept.presented = presented
+                    return
+                }
+            }
         }
     }
 }
@@ -157,14 +163,16 @@ public function searchPresentation() -> Binding<Bool> {
 // A search that has come to be presented takes the keyboard into its field,
 // and one taken back takes it out.
 public function searchPresentationFollow(presented: Bool) {
-    searchPresentationEnsure()
-    var kept = nativeRecover<SearchPresentation>(ambientStateGet(StateSlot.searchPresentation))
-    if presented && !kept.followed {
-        layerFocusClaim(SearchField.key)
-    } else if !presented && kept.followed {
-        layerFocusRelease(SearchField.key)
+    unsafe {
+        searchPresentationEnsure()
+        var kept = nativeRecover<SearchPresentation>(ambientStateGet(StateSlot.searchPresentation))
+        if presented && !kept.followed {
+            layerFocusClaim(SearchField.key)
+        } else if !presented && kept.followed {
+            layerFocusRelease(SearchField.key)
+        }
+        kept.followed = presented
     }
-    kept.followed = presented
 }
 
 // The field taking the keyboard presents the search.
@@ -243,89 +251,91 @@ public function searchFieldParts(
     symbolModifiers: borrow ModifierContext,
     modifiers: borrow ModifierContext,
 ) -> [CALayerDescription] {
-    let key = SearchField.key
-    let size = searchFieldTextSize(modifiers)
-    let st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
-    let focused = context.focusedKey == key
-    var runs: [CALayerDescription] = []
-    if st.codes.count == 0 {
-        if focused {
+    unsafe {
+        let key = SearchField.key
+        let size = searchFieldTextSize(modifiers)
+        let st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
+        let focused = context.focusedKey == key
+        var runs: [CALayerDescription] = []
+        if st.codes.count == 0 {
+            if focused {
+                runs.append(textFieldCaret(modifiers))
+            }
+            runs.append(
+                textFieldLine(
+                    Text(move prompt).font(
+                        size: resolvedLength(size),
+                        weight: move promptWeight
+                    ).foregroundColor(.Secondary).describe(context, modifiers),
+                    TextFieldPart.placeholder
+                )
+            )
+        } else if focused {
+            runs.append(
+                textFieldRun(
+                    foundationStringFromCodepoints(st.codes, 0, st.caret),
+                    size,
+                    TextFieldPart.lead,
+                    .Primary,
+                    context,
+                    modifiers
+                )
+            )
             runs.append(textFieldCaret(modifiers))
+            runs.append(
+                textFieldRun(
+                    foundationStringFromCodepoints(st.codes, st.caret, st.codes.count),
+                    size,
+                    TextFieldPart.trail,
+                    .Primary,
+                    context,
+                    modifiers
+                )
+            )
+        } else {
+            runs.append(
+                textFieldRun(
+                    foundationStringFromCodepoints(st.codes, 0, st.codes.count),
+                    size,
+                    TextFieldPart.lead,
+                    .Primary,
+                    context,
+                    modifiers
+                )
+            )
         }
-        runs.append(
-            textFieldLine(
-                Text(move prompt).font(
-                    size: resolvedLength(size),
-                    weight: move promptWeight
-                ).foregroundColor(.Secondary).describe(context, modifiers),
-                TextFieldPart.placeholder
-            )
-        )
-    } else if focused {
-        runs.append(
-            textFieldRun(
-                foundationStringFromCodepoints(st.codes, 0, st.caret),
-                size,
-                TextFieldPart.lead,
-                .Primary,
-                context,
-                modifiers
-            )
-        )
-        runs.append(textFieldCaret(modifiers))
-        runs.append(
-            textFieldRun(
-                foundationStringFromCodepoints(st.codes, st.caret, st.codes.count),
-                size,
-                TextFieldPart.trail,
-                .Primary,
-                context,
-                modifiers
-            )
-        )
-    } else {
-        runs.append(
-            textFieldRun(
-                foundationStringFromCodepoints(st.codes, 0, st.codes.count),
-                size,
-                TextFieldPart.lead,
-                .Primary,
-                context,
-                modifiers
-            )
-        )
-    }
-    var text = CALayerDescription {
-        layout: CALayoutIntent {
-            axis: .Row,
-            heightFill: false,
-            flex: 1,
-            alignment: Point { x: 0.0, y: 0.5 }
-        },
-        clipsChildren: true,
-        sublayers: [CALayerDescription {
+        var text = CALayerDescription {
             layout: CALayoutIntent {
                 axis: .Row,
-                widthFill: false,
                 heightFill: false,
+                flex: 1,
                 alignment: Point { x: 0.0, y: 0.5 }
             },
-            sublayers: move runs
-        }]
+            clipsChildren: true,
+            sublayers: [CALayerDescription {
+                layout: CALayoutIntent {
+                    axis: .Row,
+                    widthFill: false,
+                    heightFill: false,
+                    alignment: Point { x: 0.0, y: 0.5 }
+                },
+                sublayers: move runs
+            }]
+        }
+        var parts = [
+            Icon(symbol: .Search).foregroundColor(move glyph).describe(context, symbolModifiers),
+            move text
+        ]
+        if st.codes.count > 0 {
+            var clear = Icon(symbol: .XmarkCircleFill)
+            .foregroundColor(.Tertiary)
+            .describe(context, symbolModifiers)
+            clear.hittable = true
+            clear.hitKey = clearKey
+            parts.append(move clear)
+        }
+        return parts
     }
-    var parts = [
-        Icon(symbol: .Search).foregroundColor(move glyph).describe(context, symbolModifiers),
-        move text
-    ]
-    if st.codes.count > 0 {
-        var clear = Icon(symbol: .XmarkCircleFill)
-        .foregroundColor(.Tertiary)
-        .describe(context, symbolModifiers)
-        clear.hittable = true
-        clear.hitKey = clearKey
-        parts.append(move clear)
-    }
-    return parts
 }
 
 // The field a phone's page sets under its large title, as iOS draws it: a

@@ -70,37 +70,39 @@ public function workspaceDragAdvance(
     origin: borrow Point,
     size: borrow Size
 ) {
-    workspaceArrangementEnsure()
-    var state = nativeRecover<WorkspaceArrangement>(ambientStateGet(StateSlot.workspaceArrangement))
-    let held = context.heldControl
-    let pointer = Point { x: context.pointerX - origin.x, y: context.pointerY - origin.y }
-    if state.drag.key != 0 && held != state.drag.key {
-        // Let go: a tab carried over another edge docks its panel there.
-        let carried = copy state.drag.panel
-        let target = state.drag.kind == .Tab && state.drag.moving ? state.drag.target : -1
-        state.drag = WorkspaceDrag {}
-        if target >= 0 {
-            workspaceDock(move carried, panelEdgeAt(target))
+    unsafe {
+        workspaceArrangementEnsure()
+        var state = nativeRecover<WorkspaceArrangement>(ambientStateGet(StateSlot.workspaceArrangement))
+        let held = context.heldControl
+        let pointer = Point { x: context.pointerX - origin.x, y: context.pointerY - origin.y }
+        if state.drag.key != 0 && held != state.drag.key {
+            // Let go: a tab carried over another edge docks its panel there.
+            let carried = copy state.drag.panel
+            let target = state.drag.kind == .Tab && state.drag.moving ? state.drag.target : -1
+            state.drag = WorkspaceDrag {}
+            if target >= 0 {
+                workspaceDock(move carried, panelEdgeAt(target))
+            }
+            return
         }
-        return
+        if state.drag.key == 0 {
+            workspaceDragBegin(state, held, pointer)
+            return
+        }
+        state.drag.pointer = copy pointer
+        let travel = max(abs(pointer.x - state.drag.origin.x), abs(pointer.y - state.drag.origin.y))
+        if travel > MotionPreset.dragSlop {
+            state.drag.moving = true
+        }
+        if !state.drag.moving {
+            return
+        }
+        if state.drag.kind == .Divider {
+            workspaceDividerFollow(state, pointer, size)
+            return
+        }
+        state.drag.target = workspaceDropTarget(state, size, pointer)
     }
-    if state.drag.key == 0 {
-        workspaceDragBegin(state, held, pointer)
-        return
-    }
-    state.drag.pointer = copy pointer
-    let travel = max(abs(pointer.x - state.drag.origin.x), abs(pointer.y - state.drag.origin.y))
-    if travel > MotionPreset.dragSlop {
-        state.drag.moving = true
-    }
-    if !state.drag.moving {
-        return
-    }
-    if state.drag.kind == .Divider {
-        workspaceDividerFollow(state, pointer, size)
-        return
-    }
-    state.drag.target = workspaceDropTarget(state, size, pointer)
 }
 
 // A press just landed on a divider or a tab: the drag starts from here. A tab

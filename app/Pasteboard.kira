@@ -43,23 +43,27 @@ function pasteboardSlot() -> RawPtr {
 
 /// The host says how text fields reach the system's pasteboard.
 public function pasteboardAccessSet(access: PasteboardAccess) {
-    let previous = enterProcessScope()
-    var state = nativeRecover<PasteboardSlotState>(pasteboardSlot())
-    state.access = .Some(access)
-    ambientScopeEnter(previous)
+    unsafe {
+        let previous = enterProcessScope()
+        var state = nativeRecover<PasteboardSlotState>(pasteboardSlot())
+        state.access = .Some(access)
+        ambientScopeEnter(previous)
+    }
 }
 
 /// Puts `text` on the pasteboard.
 public function pasteboardCopy(text: borrow String) {
-    let previous = enterProcessScope()
-    var state = nativeRecover<PasteboardSlotState>(pasteboardSlot())
-    let access = copy state.access
-    if access.isNone() { state.local = .Some(copy text) }
-    ambientScopeEnter(previous)
-    match access {
-        Some(host) -> host.write(copy text)
-        // The text stays in this program, as `local`.
-        None -> {}
+    unsafe {
+        let previous = enterProcessScope()
+        var state = nativeRecover<PasteboardSlotState>(pasteboardSlot())
+        let access = copy state.access
+        if access.isNone() { state.local = .Some(copy text) }
+        ambientScopeEnter(previous)
+        match access {
+            Some(host) -> host.write(copy text)
+            // The text stays in this program, as `local`.
+            None -> {}
+        }
     }
 }
 
@@ -69,16 +73,18 @@ public function pasteboardCopy(text: borrow String) {
 ///
 /// [`PasteboardRefusal`] when it holds none or the system refused the read.
 public function pasteboardText() -> Result<String, PasteboardRefusal> {
-    let previous = enterProcessScope()
-    let state = nativeRecover<PasteboardSlotState>(pasteboardSlot())
-    let access = copy state.access
-    let local = copy state.local
-    ambientScopeEnter(previous)
-    return match access {
-        Some(host) -> host.read()
-        None -> match local {
-            Some(text) -> .Ok(text)
-            None -> .Error(.Empty)
+    unsafe {
+        let previous = enterProcessScope()
+        let state = nativeRecover<PasteboardSlotState>(pasteboardSlot())
+        let access = copy state.access
+        let local = copy state.local
+        ambientScopeEnter(previous)
+        return match access {
+            Some(host) -> host.read()
+            None -> match local {
+                Some(text) -> .Ok(text)
+                None -> .Error(.Empty)
+            }
         }
     }
 }

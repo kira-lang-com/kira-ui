@@ -99,30 +99,36 @@ public struct TagEnvironment {
 }
 
 public function tagEnvironment() -> TagEnvironment {
-    if !ambientStateHas(StateSlot.tagEnvironment) {
-        ambientStatePut(StateSlot.tagEnvironment, nativeUserData(nativeState(TagEnvironment {})))
+    unsafe {
+        if !ambientStateHas(StateSlot.tagEnvironment) {
+            ambientStatePut(StateSlot.tagEnvironment, nativeUserData(nativeState(TagEnvironment {})))
+        }
+        return nativeRecover<TagEnvironment>(ambientStateGet(StateSlot.tagEnvironment))
     }
-    return nativeRecover<TagEnvironment>(ambientStateGet(StateSlot.tagEnvironment))
 }
 
 // Makes `environment` the one views are built in, and answers the one that was.
 public function tagEnter(environment: TagEnvironment) -> TagEnvironment {
-    let previous = tagEnvironment()
-    var current = nativeRecover<TagEnvironment>(ambientStateGet(StateSlot.tagEnvironment))
-    current.selector = environment.selector
-    current.entry = environment.entry
-    current.item = environment.item
-    return previous
+    unsafe {
+        let previous = tagEnvironment()
+        var current = nativeRecover<TagEnvironment>(ambientStateGet(StateSlot.tagEnvironment))
+        current.selector = environment.selector
+        current.entry = environment.entry
+        current.item = environment.item
+        return previous
+    }
 }
 
 // Whether an option was the selection since `selectionSeen` was cleared, and
 // clears it to `seen`.
 public function tagSelectionSeen(seen: Bool) -> Bool {
-    tagEnvironment()
-    var current = nativeRecover<TagEnvironment>(ambientStateGet(StateSlot.tagEnvironment))
-    let was = current.selectionSeen
-    current.selectionSeen = seen
-    return was
+    unsafe {
+        tagEnvironment()
+        var current = nativeRecover<TagEnvironment>(ambientStateGet(StateSlot.tagEnvironment))
+        let was = current.selectionSeen
+        current.selectionSeen = seen
+        return was
+    }
 }
 
 public function tagLeave(previous: TagEnvironment) {

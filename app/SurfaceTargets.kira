@@ -68,28 +68,34 @@ public function surfaceSinkEnsure() {
 // Open collection for the frame about to be built, discarding what the last one
 // left. The tree is rebuilt every frame and its targets are rebuilt with it.
 public function surfaceCollect() {
-    surfaceSinkEnsure()
-    var sink = nativeRecover<SurfaceSink>(ambientStateGet(StateSlot.surfaceSink))
-    var empty: [SurfaceTarget] = []
-    sink.targets = move empty
-    sink.collecting = true
+    unsafe {
+        surfaceSinkEnsure()
+        var sink = nativeRecover<SurfaceSink>(ambientStateGet(StateSlot.surfaceSink))
+        var empty: [SurfaceTarget] = []
+        sink.targets = move empty
+        sink.collecting = true
+    }
 }
 
 public function surfaceStopCollecting() {
-    surfaceSinkEnsure()
-    var sink = nativeRecover<SurfaceSink>(ambientStateGet(StateSlot.surfaceSink))
-    sink.collecting = false
+    unsafe {
+        surfaceSinkEnsure()
+        var sink = nativeRecover<SurfaceSink>(ambientStateGet(StateSlot.surfaceSink))
+        sink.collecting = false
+    }
 }
 
 public function surfaceDeclare(target: SurfaceTarget) {
-    surfaceSinkEnsure()
-    var sink = nativeRecover<SurfaceSink>(ambientStateGet(StateSlot.surfaceSink))
-    if !sink.collecting {
-        // Declared with no frame collecting. It has nowhere to go, and is
-        // dropped rather than kept for whatever frame is built next.
-        return
+    unsafe {
+        surfaceSinkEnsure()
+        var sink = nativeRecover<SurfaceSink>(ambientStateGet(StateSlot.surfaceSink))
+        if !sink.collecting {
+            // Declared with no frame collecting. It has nowhere to go, and is
+            // dropped rather than kept for whatever frame is built next.
+            return
+        }
+        sink.targets.append(move target)
     }
-    sink.targets.append(move target)
 }
 
 // Everything this frame declared, for the application to publish.
@@ -98,9 +104,11 @@ public function surfaceDeclare(target: SurfaceTarget) {
 // compositor. Nothing in the widget layer sends anything: a widget that talked
 // to another process would be a widget that could not be drawn in a window.
 public function surfaceTargets() -> [SurfaceTarget] {
-    surfaceSinkEnsure()
-    let sink = nativeRecover<SurfaceSink>(ambientStateGet(StateSlot.surfaceSink))
-    return copy sink.targets
+    unsafe {
+        surfaceSinkEnsure()
+        let sink = nativeRecover<SurfaceSink>(ambientStateGet(StateSlot.surfaceSink))
+        return copy sink.targets
+    }
 }
 
 // How many targets this frame declared.

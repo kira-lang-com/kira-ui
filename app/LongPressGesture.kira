@@ -54,37 +54,39 @@ public construct LongPressGestureLayer(
     // Runs the action once the press on the view has been held long enough
     // and near enough to where it began.
     function follow(borrow self, context: borrow BuildContext, key: Number) {
-        let slot = slotKey("kiraui.longpress.", key)
-        if !ambientStateHasView(slot) {
-            ambientStatePutView(copy slot, nativeUserData(nativeState(LongPressTrack {})))
-        }
-        var track = nativeRecover<LongPressTrack>(ambientStateGetView(slot))
-        if context.heldKey != key {
-            track.press = 0
-            track.done = false
-            return
-        }
-        let now = unixMillis()
-        if track.press != context.heldPress {
-            track.press = context.heldPress
-            track.began = now
-            track.start = copy context.heldPoint
-            track.done = false
-        }
-        if track.done { return }
-        let dx = context.heldPoint.x - track.start.x
-        let dy = context.heldPoint.y - track.start.y
-        if sqrt(dx * dx + dy * dy) > maximumDistance {
+        unsafe {
+            let slot = slotKey("kiraui.longpress.", key)
+            if !ambientStateHasView(slot) {
+                ambientStatePutView(copy slot, nativeUserData(nativeState(LongPressTrack {})))
+            }
+            var track = nativeRecover<LongPressTrack>(ambientStateGetView(slot))
+            if context.heldKey != key {
+                track.press = 0
+                track.done = false
+                return
+            }
+            let now = unixMillis()
+            if track.press != context.heldPress {
+                track.press = context.heldPress
+                track.began = now
+                track.start = copy context.heldPoint
+                track.done = false
+            }
+            if track.done { return }
+            let dx = context.heldPoint.x - track.start.x
+            let dy = context.heldPoint.y - track.start.y
+            if sqrt(dx * dx + dy * dy) > maximumDistance {
+                track.done = true
+                return
+            }
+            let left = minimumDuration - (now - track.began) / 1000
+            if left > 0 {
+                redrawAfter(left)
+                return
+            }
             track.done = true
-            return
+            action()
         }
-        let left = minimumDuration - (now - track.began) / 1000
-        if left > 0 {
-            redrawAfter(left)
-            return
-        }
-        track.done = true
-        action()
     }
 }
 

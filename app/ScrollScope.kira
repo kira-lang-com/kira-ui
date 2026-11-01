@@ -36,36 +36,40 @@ public function scrollScopeEnsure() {
 
 // A new build starts in the window's scope.
 public function scrollScopeReset() {
-    scrollScopeEnsure()
-    var current = nativeRecover<ScrollScope>(ambientStateGet(StateSlot.scrollScope))
-    current.scope = 0
-    current.built = 0
-    current.page = false
-    current.pageTaken = false
-    current.barInset = 0.0
-    current.search = .None
+    unsafe {
+        scrollScopeEnsure()
+        var current = nativeRecover<ScrollScope>(ambientStateGet(StateSlot.scrollScope))
+        current.scope = 0
+        current.built = 0
+        current.page = false
+        current.pageTaken = false
+        current.barInset = 0.0
+        current.search = .None
+    }
 }
 
 // A stack's page starts lowering in `scope`, under a bar `barInset` deep. What
 // was in effect comes back, to hand to the leave.
 public function scrollScopeEnter(scope: Number, barInset: Number) -> ScrollScope {
-    scrollScopeEnsure()
-    var current = nativeRecover<ScrollScope>(ambientStateGet(StateSlot.scrollScope))
-    let previous = ScrollScope {
-        scope: current.scope,
-        built: current.built,
-        page: current.page,
-        pageTaken: current.pageTaken,
-        barInset: current.barInset,
-        search: copy current.search
+    unsafe {
+        scrollScopeEnsure()
+        var current = nativeRecover<ScrollScope>(ambientStateGet(StateSlot.scrollScope))
+        let previous = ScrollScope {
+            scope: current.scope,
+            built: current.built,
+            page: current.page,
+            pageTaken: current.pageTaken,
+            barInset: current.barInset,
+            search: copy current.search
+        }
+        current.scope = scope
+        current.built = 0
+        current.page = true
+        current.pageTaken = false
+        current.barInset = barInset
+        current.search = .None
+        return previous
     }
-    current.scope = scope
-    current.built = 0
-    current.page = true
-    current.pageTaken = false
-    current.barInset = barInset
-    current.search = .None
-    return previous
 }
 
 // What floats over the window -- a popover, a full-screen cover -- lowers in
@@ -73,60 +77,70 @@ public function scrollScopeEnter(scope: Number, barInset: Number) -> ScrollScope
 // page's large title, and run under no bar. What was in effect comes back,
 // to hand to `scrollScopeLeave`.
 public function scrollScopeEnterFloating(scope: Number) -> ScrollScope {
-    let previous = scrollScopeEnter(scope, 0.0)
-    var current = nativeRecover<ScrollScope>(ambientStateGet(StateSlot.scrollScope))
-    current.page = false
-    return previous
+    unsafe {
+        let previous = scrollScopeEnter(scope, 0.0)
+        var current = nativeRecover<ScrollScope>(ambientStateGet(StateSlot.scrollScope))
+        current.page = false
+        return previous
+    }
 }
 
 // The page has lowered. Whether one of its scroll views claimed it.
 public function scrollScopeLeave(previous: ScrollScope) -> Bool {
-    scrollScopeEnsure()
-    var current = nativeRecover<ScrollScope>(ambientStateGet(StateSlot.scrollScope))
-    let taken = current.pageTaken
-    current.scope = previous.scope
-    current.built = previous.built
-    current.page = previous.page
-    current.pageTaken = previous.pageTaken
-    current.barInset = previous.barInset
-    current.search = copy previous.search
-    return taken
+    unsafe {
+        scrollScopeEnsure()
+        var current = nativeRecover<ScrollScope>(ambientStateGet(StateSlot.scrollScope))
+        let taken = current.pageTaken
+        current.scope = previous.scope
+        current.built = previous.built
+        current.page = previous.page
+        current.pageTaken = previous.pageTaken
+        current.barInset = previous.barInset
+        current.search = copy previous.search
+        return taken
+    }
 }
 
 // The next scroll view's identity in the scope being built.
 public function scrollIdentity() -> Number {
-    scrollScopeEnsure()
-    var current = nativeRecover<ScrollScope>(ambientStateGet(StateSlot.scrollScope))
-    current.built++
-    return 1000000000 + current.scope * 1000 + current.built
+    unsafe {
+        scrollScopeEnsure()
+        var current = nativeRecover<ScrollScope>(ambientStateGet(StateSlot.scrollScope))
+        current.built++
+        return 1000000000 + current.scope * 1000 + current.built
+    }
 }
 
 // The page, for the first scroll view on it; nothing for any other, nor for
 // one outside a page.
 public function scrollClaimPage() -> ScrollPage {
-    scrollScopeEnsure()
-    var current = nativeRecover<ScrollScope>(ambientStateGet(StateSlot.scrollScope))
-    if !current.page || current.pageTaken {
-        return ScrollPage {}
-    }
-    current.pageTaken = true
-    return ScrollPage {
-        title: toolbarColumnTitle(),
-        barInset: current.barInset,
-        search: copy current.search
+    unsafe {
+        scrollScopeEnsure()
+        var current = nativeRecover<ScrollScope>(ambientStateGet(StateSlot.scrollScope))
+        if !current.page || current.pageTaken {
+            return ScrollPage {}
+        }
+        current.pageTaken = true
+        return ScrollPage {
+            title: toolbarColumnTitle(),
+            barInset: current.barInset,
+            search: copy current.search
+        }
     }
 }
 
 // A view on the page being lowered asked for a search field the page sets in
 // its content. Whether there is such a page, still unclaimed, to set it.
 public function scrollPageSearch(search: WindowSearch) -> Bool {
-    scrollScopeEnsure()
-    var current = nativeRecover<ScrollScope>(ambientStateGet(StateSlot.scrollScope))
-    if !current.page || current.pageTaken {
-        return false
+    unsafe {
+        scrollScopeEnsure()
+        var current = nativeRecover<ScrollScope>(ambientStateGet(StateSlot.scrollScope))
+        if !current.page || current.pageTaken {
+            return false
+        }
+        current.search = .Some(move search)
+        return true
     }
-    current.search = .Some(move search)
-    return true
 }
 
 // --- Input -----------------------------------------------------------------------
@@ -172,99 +186,111 @@ public function scrollInputEnsure() {
 // Fingers come down over the scroll view under `target`, resisted past an end
 // by `resistance`.
 public function scrollDragBegin(target: Number, resistance: Number, time: Number = -1.0) {
-    scrollInputEnsure()
-    var input = nativeRecover<ScrollInput>(ambientStateGet(StateSlot.scrollInput))
-    input.target = target
-    input.began = target != 0
-    input.moved = false
-    input.ended = false
-    input.cancelled = false
-    input.travel = 0.0
-    input.resistance = resistance
-    input.wheel = 0.0
-    input.beganAt = time
-    input.reports = []
+    unsafe {
+        scrollInputEnsure()
+        var input = nativeRecover<ScrollInput>(ambientStateGet(StateSlot.scrollInput))
+        input.target = target
+        input.began = target != 0
+        input.moved = false
+        input.ended = false
+        input.cancelled = false
+        input.travel = 0.0
+        input.resistance = resistance
+        input.wheel = 0.0
+        input.beganAt = time
+        input.reports = []
+    }
 }
 
 // The fingers carried the content this far down, at `time` on the input's
 // clock where it says.
 public function scrollDragMove(distance: Number, time: Number = -1.0) {
-    scrollInputEnsure()
-    var input = nativeRecover<ScrollInput>(ambientStateGet(StateSlot.scrollInput))
-    if input.target == 0 {
-        return
+    unsafe {
+        scrollInputEnsure()
+        var input = nativeRecover<ScrollInput>(ambientStateGet(StateSlot.scrollInput))
+        if input.target == 0 {
+            return
+        }
+        input.travel = input.travel + distance
+        input.moved = true
+        input.reports.append(DragReport { travel: input.travel, time: time })
     }
-    input.travel = input.travel + distance
-    input.moved = true
-    input.reports.append(DragReport { travel: input.travel, time: time })
 }
 
 // The fingers lifted.
 public function scrollDragEnd() {
-    scrollInputEnsure()
-    var input = nativeRecover<ScrollInput>(ambientStateGet(StateSlot.scrollInput))
-    if input.target != 0 {
-        input.ended = true
+    unsafe {
+        scrollInputEnsure()
+        var input = nativeRecover<ScrollInput>(ambientStateGet(StateSlot.scrollInput))
+        if input.target != 0 {
+            input.ended = true
+        }
     }
 }
 
 // Something else took the fingers: the surface stops where it is, or goes
 // back inside an end it was pulled past, and throws nothing.
 public function scrollDragCancel() {
-    scrollInputEnsure()
-    var input = nativeRecover<ScrollInput>(ambientStateGet(StateSlot.scrollInput))
-    if input.target != 0 && !input.ended {
-        input.cancelled = true
+    unsafe {
+        scrollInputEnsure()
+        var input = nativeRecover<ScrollInput>(ambientStateGet(StateSlot.scrollInput))
+        if input.target != 0 && !input.ended {
+            input.cancelled = true
+        }
     }
 }
 
 // A wheel turned over the scroll view under `target`, asking it this far down
 // its content.
 public function scrollWheel(target: Number, distance: Number) {
-    scrollInputEnsure()
-    var input = nativeRecover<ScrollInput>(ambientStateGet(StateSlot.scrollInput))
-    if target == 0 {
-        return
+    unsafe {
+        scrollInputEnsure()
+        var input = nativeRecover<ScrollInput>(ambientStateGet(StateSlot.scrollInput))
+        if target == 0 {
+            return
+        }
+        if input.target != target {
+            input.began = false
+            input.moved = false
+            input.ended = false
+            input.cancelled = false
+            input.wheel = 0.0
+        }
+        input.target = target
+        input.wheel = input.wheel + distance
     }
-    if input.target != target {
-        input.began = false
-        input.moved = false
-        input.ended = false
-        input.cancelled = false
-        input.wheel = 0.0
-    }
-    input.target = target
-    input.wheel = input.wheel + distance
 }
 
 // What has happened to the scroll view under `key` since it was last built,
 // and nothing more from then on. A drag still under way stays its own.
 public function scrollTake(key: Number) -> ScrollInput {
-    scrollInputEnsure()
-    var input = nativeRecover<ScrollInput>(ambientStateGet(StateSlot.scrollInput))
-    if input.target != key {
-        return ScrollInput {}
+    unsafe {
+        scrollInputEnsure()
+        var input = nativeRecover<ScrollInput>(ambientStateGet(StateSlot.scrollInput))
+        if input.target != key {
+            return ScrollInput {}
+        }
+        let taken = ScrollInput {
+            target: input.target,
+            began: input.began,
+            moved: input.moved,
+            ended: input.ended,
+            cancelled: input.cancelled,
+            travel: input.travel,
+            resistance: input.resistance,
+            wheel: input.wheel,
+            beganAt: input.beganAt,
+            reports: copy input.reports
+        }
+        input.began = false
+        input.moved = false
+        input.reports = []
+        input.wheel = 0.0
+        if input.ended || input.cancelled {
+            input.target = 0
+            input.ended = false
+            input.cancelled = false
+        }
+        return taken
     }
-    let taken = ScrollInput {
-        target: input.target,
-        began: input.began,
-        moved: input.moved,
-        ended: input.ended,
-        cancelled: input.cancelled,
-        travel: input.travel,
-        resistance: input.resistance,
-        wheel: input.wheel,
-        beganAt: input.beganAt,
-        reports: copy input.reports
-    }
-    input.began = false
-    input.moved = false
-    input.reports = []
-    input.wheel = 0.0
-    if input.ended || input.cancelled {
-        input.target = 0
-        input.ended = false
-        input.cancelled = false
-    }
-    return taken
 }

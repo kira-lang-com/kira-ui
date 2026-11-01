@@ -180,20 +180,22 @@ public construct FullScreenCoverLayer(
 // press that opened it, kept from the frame it was opened in. None while it
 // is not out.
 function presentationAnchor(shown: Bool) -> Overlay? {
-    let slot = slotKey("kiraui.presentation.", tapSeqKey())
-    if !ambientStateHasView(slot) {
-        ambientStatePutView(copy slot, nativeUserData(nativeState(PresentedViewState {})))
+    unsafe {
+        let slot = slotKey("kiraui.presentation.", tapSeqKey())
+        if !ambientStateHasView(slot) {
+            ambientStatePutView(copy slot, nativeUserData(nativeState(PresentedViewState {})))
+        }
+        var state = nativeRecover<PresentedViewState>(ambientStateGetView(slot))
+        if !shown {
+            state.active = false
+            return .None
+        }
+        if !state.active {
+            state.anchor = pressAnchor()
+            state.active = true
+        }
+        return .Some(copy state.anchor)
     }
-    var state = nativeRecover<PresentedViewState>(ambientStateGetView(slot))
-    if !shown {
-        state.active = false
-        return .None
-    }
-    if !state.active {
-        state.anchor = pressAnchor()
-        state.active = true
-    }
-    return .Some(copy state.anchor)
 }
 
 // Where a popover's card and arrow stand in the window: the top-leading

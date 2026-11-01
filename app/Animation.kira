@@ -60,8 +60,10 @@ public function clockEnsure() {
 
 // The clock as it stands, to read.
 public function clockState() -> Clock {
-    clockEnsure()
-    return nativeRecover<Clock>(ambientStateGet(StateSlot.clock))
+    unsafe {
+        clockEnsure()
+        return nativeRecover<Clock>(ambientStateGet(StateSlot.clock))
+    }
 }
 
 // The shortest and longest frame a spring is advanced by.
@@ -82,15 +84,17 @@ public function clockCeiling() -> Number {
 // Records how long the frame took. The frame hook runs before the UI pass, so
 // what a build reads is this frame's duration and not the previous one's.
 public function clockTick(frame: borrow Ember.RenderFrame) {
-    clockEnsure()
-    var clock = nativeRecover<Clock>(ambientStateGet(StateSlot.clock))
-    if clock.slowdown <= 0 {
-        let requested = environmentNumber("KIRA_UI_SLOW_ANIMATIONS", 1)
-        clock.slowdown = requested > 1 ? requested : 1
+    unsafe {
+        clockEnsure()
+        var clock = nativeRecover<Clock>(ambientStateGet(StateSlot.clock))
+        if clock.slowdown <= 0 {
+            let requested = environmentNumber("KIRA_UI_SLOW_ANIMATIONS", 1)
+            clock.slowdown = requested > 1 ? requested : 1
+        }
+        let delta = min(max(foundationFrameDuration(frame), clockFloor()), clockCeiling())
+        clock.delta = delta / Number(clock.slowdown)
+        clock.now = clockTime(frame)
     }
-    let delta = min(max(foundationFrameDuration(frame), clockFloor()), clockCeiling())
-    clock.delta = delta / Number(clock.slowdown)
-    clock.now = clockTime(frame)
 }
 
 // The frame's time on the compositor's clock, in seconds.
@@ -107,20 +111,24 @@ public function clockNow() -> Number {
 // every build, beside the tap-sequence reset, so the flag describes the build
 // that is about to happen rather than accumulating across all of them.
 public function clockBeginFrame() {
-    clockEnsure()
-    var clock = nativeRecover<Clock>(ambientStateGet(StateSlot.clock))
-    clock.moving = false
-    clock.resizing = false
-    clock.wakeAt = 0.0
+    unsafe {
+        clockEnsure()
+        var clock = nativeRecover<Clock>(ambientStateGet(StateSlot.clock))
+        clock.moving = false
+        clock.resizing = false
+        clock.wakeAt = 0.0
+    }
 }
 
 // "Build again at `time`": said by a widget while it lowers, for a motion the
 // compositor carries until then. The earliest asked for wins.
 public function clockWakeAt(time: Number) {
-    clockEnsure()
-    var clock = nativeRecover<Clock>(ambientStateGet(StateSlot.clock))
-    if clock.wakeAt <= 0.0 || time < clock.wakeAt {
-        clock.wakeAt = time
+    unsafe {
+        clockEnsure()
+        var clock = nativeRecover<Clock>(ambientStateGet(StateSlot.clock))
+        if clock.wakeAt <= 0.0 || time < clock.wakeAt {
+            clock.wakeAt = time
+        }
     }
 }
 
@@ -133,10 +141,12 @@ public function clockWakeDue(now: Number) -> Bool {
 // "I am resizing the content this frame." Said by a widget while it lowers;
 // see `resizing`.
 public function clockResizing() {
-    clockEnsure()
-    var clock = nativeRecover<Clock>(ambientStateGet(StateSlot.clock))
-    clock.resizing = true
-    clock.moving = true
+    unsafe {
+        clockEnsure()
+        var clock = nativeRecover<Clock>(ambientStateGet(StateSlot.clock))
+        clock.resizing = true
+        clock.moving = true
+    }
 }
 
 // The frame delta a transition advances by.
@@ -147,9 +157,11 @@ public function clockDelta() -> Number {
 // "I advanced and I have not finished." Said by a widget while it lowers, which
 // is what keeps the frames coming until it has.
 public function clockStillMoving() {
-    clockEnsure()
-    var clock = nativeRecover<Clock>(ambientStateGet(StateSlot.clock))
-    clock.moving = true
+    unsafe {
+        clockEnsure()
+        var clock = nativeRecover<Clock>(ambientStateGet(StateSlot.clock))
+        clock.moving = true
+    }
 }
 
 // What an interactive app passes as `needsRebuild`.

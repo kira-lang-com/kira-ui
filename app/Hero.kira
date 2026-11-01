@@ -86,8 +86,10 @@ public function heroEnsure(id: Number) {
 
 // The state as it stands, to read.
 public function heroState(id: Number) -> Hero {
-    heroEnsure(id)
-    return nativeRecover<Hero>(ambientStateGetView(heroSlotKey(id)))
+    unsafe {
+        heroEnsure(id)
+        return nativeRecover<Hero>(ambientStateGetView(heroSlotKey(id)))
+    }
 }
 
 // The hit-region key a hero's view carries, so layout's record of where it came
@@ -110,71 +112,73 @@ public function heroKey(id: Number) -> Number {
 //   * placed, moved       -> begin a flight from where it was
 //   * flying              -> advance, and report the interpolated rectangle
 public function heroAdvance(id: Number, destination: borrow Rect) -> Rect {
-    heroEnsure(id)
-    var hero = nativeRecover<Hero>(ambientStateGetView(heroSlotKey(id)))
+    unsafe {
+        heroEnsure(id)
+        var hero = nativeRecover<Hero>(ambientStateGetView(heroSlotKey(id)))
 
-    if !hero.placed {
-        if destination.width <= 0.0 {
-            // Not laid out yet either. There is nothing to say about where it
-            // is, and the caller draws it in place.
-            return Rect {}
-        }
-        hero.fromX = destination.x
-        hero.fromY = destination.y
-        hero.fromW = destination.width
-        hero.fromH = destination.height
-        hero.currentW = destination.width
-        hero.currentH = destination.height
-        motionMovePlace(hero.move, destination.x, destination.y)
-        hero.placed = true
-        return Rect {
-            x: destination.x,
-            y: destination.y,
-            width: destination.width,
-            height: destination.height
-        }
-    }
-
-    // The destination moved: start, or redirect, a flight toward it.
-    if destination.width > 0.0 {
-        if destination.x != hero.fromX || destination.y != hero.fromY || destination.width != hero.fromW || destination.height != hero.fromH {
+        if !hero.placed {
+            if destination.width <= 0.0 {
+                // Not laid out yet either. There is nothing to say about where it
+                // is, and the caller draws it in place.
+                return Rect {}
+            }
             hero.fromX = destination.x
             hero.fromY = destination.y
             hero.fromW = destination.width
             hero.fromH = destination.height
-            motionMoveTo(
-                hero.move,
-                destination.x,
-                destination.y,
-                HeroMotion.curve,
-                prefersReducedMotion()
-            )
-            heroSizeTo(hero, destination.width, destination.height)
-            hero.flying = true
+            hero.currentW = destination.width
+            hero.currentH = destination.height
+            motionMovePlace(hero.move, destination.x, destination.y)
+            hero.placed = true
+            return Rect {
+                x: destination.x,
+                y: destination.y,
+                width: destination.width,
+                height: destination.height
+            }
         }
-    }
 
-    if !hero.flying {
+        // The destination moved: start, or redirect, a flight toward it.
+        if destination.width > 0.0 {
+            if destination.x != hero.fromX || destination.y != hero.fromY || destination.width != hero.fromW || destination.height != hero.fromH {
+                hero.fromX = destination.x
+                hero.fromY = destination.y
+                hero.fromW = destination.width
+                hero.fromH = destination.height
+                motionMoveTo(
+                    hero.move,
+                    destination.x,
+                    destination.y,
+                    HeroMotion.curve,
+                    prefersReducedMotion()
+                )
+                heroSizeTo(hero, destination.width, destination.height)
+                hero.flying = true
+            }
+        }
+
+        if !hero.flying {
+            return Rect {
+                x: hero.move.currentX,
+                y: hero.move.currentY,
+                width: hero.currentW,
+                height: hero.currentH
+            }
+        }
+
+        let stillMoving = motionMoveAdvance(hero.move, clockDelta())
+        let stillSizing = heroSizeAdvance(hero)
+        if stillMoving || stillSizing {
+            clockStillMoving()
+        } else {
+            hero.flying = false
+        }
         return Rect {
             x: hero.move.currentX,
             y: hero.move.currentY,
             width: hero.currentW,
             height: hero.currentH
         }
-    }
-
-    let stillMoving = motionMoveAdvance(hero.move, clockDelta())
-    let stillSizing = heroSizeAdvance(hero)
-    if stillMoving || stillSizing {
-        clockStillMoving()
-    } else {
-        hero.flying = false
-    }
-    return Rect {
-        x: hero.move.currentX,
-        y: hero.move.currentY,
-        width: hero.currentW,
-        height: hero.currentH
     }
 }
 

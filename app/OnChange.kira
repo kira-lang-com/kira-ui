@@ -16,23 +16,25 @@ struct ObservedValue<Value> {
 
 extend Widget {
     function onChange<Value>(of: Value, action: (Value, Value) -> Void) -> Any Widget {
-        let slot = slotKey("kiraui.change.", tapSeqKey())
-        if !ambientStateHasView(slot) {
-            ambientStatePutView(
-                copy slot,
-                nativeUserData(nativeState(ObservedValue<Value> { value: copy of }))
-            )
+        unsafe {
+            let slot = slotKey("kiraui.change.", tapSeqKey())
+            if !ambientStateHasView(slot) {
+                ambientStatePutView(
+                    copy slot,
+                    nativeUserData(nativeState(ObservedValue<Value> { value: copy of }))
+                )
+                return self
+            }
+            var observed = nativeRecover<ObservedValue<Value>>(ambientStateGetView(slot))
+            if observed.value != of {
+                let old = copy observed.value
+                observed.value = copy of
+                action(move old, move of)
+                // What the action changed was read before it ran, so the
+                // interface is described again at once to show it.
+                redrawAfter(0.0)
+            }
             return self
         }
-        var observed = nativeRecover<ObservedValue<Value>>(ambientStateGetView(slot))
-        if observed.value != of {
-            let old = copy observed.value
-            observed.value = copy of
-            action(move old, move of)
-            // What the action changed was read before it ran, so the
-            // interface is described again at once to show it.
-            redrawAfter(0.0)
-        }
-        return self
     }
 }

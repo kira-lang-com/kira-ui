@@ -357,131 +357,133 @@ public function textFieldDescription(
     context: borrow BuildContext,
     modifiers: borrow ModifierContext
 ) -> CALayerDescription {
-    let size = modifierTextSize(modifiers)
-    focusSync(key, context.focusedKey == key, modifiers.focus)
-    layerTextInputRegister(
-        key,
-        textFieldTypeFn(key, copy onChange),
-        textFieldCommandFn(key, copy onChange, move onSubmit),
-        textFieldEditFn(key, secure, move onChange)
-    )
-    let st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
-    // A field in a window behind keeps its place as the one that takes
-    // the keyboard, and draws no insertion point until the window is in
-    // front again, as a Mac's does.
-    let focused = context.focusedKey == key && windowActive()
-    // The text is in the ink around the field, dimmed while it is disabled.
-    var ink: PrimaryColor = modifiers.hasForegroundColor ? modifiers.foregroundColor : .Primary
-    if modifiers.disabled {
-        ink = .Tertiary
-    }
-    var runs: [CALayerDescription] = []
-    if st.codes.count == 0 {
-        if focused {
-            runs.append(textFieldCaret(modifiers))
+    unsafe {
+        let size = modifierTextSize(modifiers)
+        focusSync(key, context.focusedKey == key, modifiers.focus)
+        layerTextInputRegister(
+            key,
+            textFieldTypeFn(key, copy onChange),
+            textFieldCommandFn(key, copy onChange, move onSubmit),
+            textFieldEditFn(key, secure, move onChange)
+        )
+        let st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
+        // A field in a window behind keeps its place as the one that takes
+        // the keyboard, and draws no insertion point until the window is in
+        // front again, as a Mac's does.
+        let focused = context.focusedKey == key && windowActive()
+        // The text is in the ink around the field, dimmed while it is disabled.
+        var ink: PrimaryColor = modifiers.hasForegroundColor ? modifiers.foregroundColor : .Primary
+        if modifiers.disabled {
+            ink = .Tertiary
         }
-        runs.append(
-            textFieldRun(
-                move placeholder,
-                size,
-                TextFieldPart.placeholder,
-                .Tertiary,
-                context,
-                modifiers
-            )
-        )
-    } else if focused {
-        runs.append(
-            textFieldRun(
-                textFieldShown(st.codes, 0, st.caret, secure),
-                size,
-                TextFieldPart.lead,
-                ink,
-                context,
-                modifiers
-            )
-        )
-        runs.append(textFieldCaret(modifiers))
-        runs.append(
-            textFieldRun(
-                textFieldShown(st.codes, st.caret, st.codes.count, secure),
-                size,
-                TextFieldPart.trail,
-                ink,
-                context,
-                modifiers
-            )
-        )
-    } else {
-        runs.append(
-            textFieldRun(
-                textFieldShown(st.codes, 0, st.codes.count, secure),
-                size,
-                TextFieldPart.lead,
-                ink,
-                context,
-                modifiers
-            )
-        )
-    }
-    let bezeled = textFieldBezeled(modifiers)
-    let appearance = modifierAppearance(modifiers)
-    var fill = transparentFoundationColor()
-    var border = transparentFoundationColor()
-    if bezeled {
-        fill = modifierSurfaceFill(
-            foundationColor(themeAdaptiveColor(fieldBackground, appearance)),
-            modifiers
-        )
-        border = modifierColor(
-            foundationColor(themeAdaptiveColor(fieldBorder, appearance)),
-            modifiers
-        )
-    }
-    let radius = textFieldRadius(modifiers)
-    let field = resolvedControlSizeMetrics(modifiers)
-    let inset = bezeled ? field.fieldInset : 0.0
-    let alignment = textAlignmentUnit(modifiers.textAlignment)
-    layerActionRegister(
-        key,
-        textFieldPressFn(key, size, textFieldWeight(modifiers), inset, inset, alignment, secure)
-    )
-    // The runs stand in one row as wide as they are, set across the field
-    // where its alignment says.
-    let line = CALayerDescription {
-        layout: CALayoutIntent {
-            axis: .Row,
-            widthFill: false,
-            heightFill: false,
-            alignment: Point { x: 0.0, y: 0.5 }
-        },
-        sublayers: move runs
-    }
-    var layout = CALayoutIntent {
-        widthFill: true,
-        heightFill: false,
-        paddingLeading: inset,
-        paddingTrailing: inset,
-        expandsWidth: true,
-        alignment: Point { x: alignment, y: 0.5 }
-    }
-    if bezeled {
-        layout.fixedHeight = field.fieldHeight
-    }
-    return CALayerDescription {
-        layout: move layout,
-        hittable: !modifiers.disabled,
-        hitKey: key,
-        cornerRadius: radius,
-        clipsChildren: true,
-        content: .Solid(
-            CASolid {
-                fill: colorFromFoundation(textFieldColorWithOpacity(fill, modifiers.opacity)),
-                border: colorFromFoundation(textFieldColorWithOpacity(border, modifiers.opacity)),
-                borderWidth: bezeled ? fieldBorderWidth : 0.0,
-                cornerRadius: radius
+        var runs: [CALayerDescription] = []
+        if st.codes.count == 0 {
+            if focused {
+                runs.append(textFieldCaret(modifiers))
             }
-        ),
-        sublayers: [move line]
+            runs.append(
+                textFieldRun(
+                    move placeholder,
+                    size,
+                    TextFieldPart.placeholder,
+                    .Tertiary,
+                    context,
+                    modifiers
+                )
+            )
+        } else if focused {
+            runs.append(
+                textFieldRun(
+                    textFieldShown(st.codes, 0, st.caret, secure),
+                    size,
+                    TextFieldPart.lead,
+                    ink,
+                    context,
+                    modifiers
+                )
+            )
+            runs.append(textFieldCaret(modifiers))
+            runs.append(
+                textFieldRun(
+                    textFieldShown(st.codes, st.caret, st.codes.count, secure),
+                    size,
+                    TextFieldPart.trail,
+                    ink,
+                    context,
+                    modifiers
+                )
+            )
+        } else {
+            runs.append(
+                textFieldRun(
+                    textFieldShown(st.codes, 0, st.codes.count, secure),
+                    size,
+                    TextFieldPart.lead,
+                    ink,
+                    context,
+                    modifiers
+                )
+            )
+        }
+        let bezeled = textFieldBezeled(modifiers)
+        let appearance = modifierAppearance(modifiers)
+        var fill = transparentFoundationColor()
+        var border = transparentFoundationColor()
+        if bezeled {
+            fill = modifierSurfaceFill(
+                foundationColor(themeAdaptiveColor(fieldBackground, appearance)),
+                modifiers
+            )
+            border = modifierColor(
+                foundationColor(themeAdaptiveColor(fieldBorder, appearance)),
+                modifiers
+            )
+        }
+        let radius = textFieldRadius(modifiers)
+        let field = resolvedControlSizeMetrics(modifiers)
+        let inset = bezeled ? field.fieldInset : 0.0
+        let alignment = textAlignmentUnit(modifiers.textAlignment)
+        layerActionRegister(
+            key,
+            textFieldPressFn(key, size, textFieldWeight(modifiers), inset, inset, alignment, secure)
+        )
+        // The runs stand in one row as wide as they are, set across the field
+        // where its alignment says.
+        let line = CALayerDescription {
+            layout: CALayoutIntent {
+                axis: .Row,
+                widthFill: false,
+                heightFill: false,
+                alignment: Point { x: 0.0, y: 0.5 }
+            },
+            sublayers: move runs
+        }
+        var layout = CALayoutIntent {
+            widthFill: true,
+            heightFill: false,
+            paddingLeading: inset,
+            paddingTrailing: inset,
+            expandsWidth: true,
+            alignment: Point { x: alignment, y: 0.5 }
+        }
+        if bezeled {
+            layout.fixedHeight = field.fieldHeight
+        }
+        return CALayerDescription {
+            layout: move layout,
+            hittable: !modifiers.disabled,
+            hitKey: key,
+            cornerRadius: radius,
+            clipsChildren: true,
+            content: .Solid(
+                CASolid {
+                    fill: colorFromFoundation(textFieldColorWithOpacity(fill, modifiers.opacity)),
+                    border: colorFromFoundation(textFieldColorWithOpacity(border, modifiers.opacity)),
+                    borderWidth: bezeled ? fieldBorderWidth : 0.0,
+                    cornerRadius: radius
+                }
+            ),
+            sublayers: [move line]
+        }
     }
 }

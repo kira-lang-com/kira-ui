@@ -86,8 +86,10 @@ public function navigationTransitionEnsure() {
 
 // The transition as it stands, to read.
 public function navigationTransition() -> NavigationTransition {
-    navigationTransitionEnsure()
-    return nativeRecover<NavigationTransition>(ambientStateGet(StateSlot.navigationTransition))
+    unsafe {
+        navigationTransitionEnsure()
+        return nativeRecover<NavigationTransition>(ambientStateGet(StateSlot.navigationTransition))
+    }
 }
 
 // The front view starts `from` and the spring takes it to `to`, carrying the
@@ -178,11 +180,13 @@ public function navigationTransitionPush(
     before: [Any NavigationRoute],
     after: [Any NavigationRoute]
 ) {
-    navigationTransitionEnsure()
-    var state = nativeRecover<NavigationTransition>(ambientStateGet(StateSlot.navigationTransition))
-    state.front = move after
-    state.covered = move before
-    navigationTransitionSpring(state, 1.0, 0.0, 0.0)
+    unsafe {
+        navigationTransitionEnsure()
+        var state = nativeRecover<NavigationTransition>(ambientStateGet(StateSlot.navigationTransition))
+        state.front = move after
+        state.covered = move before
+        navigationTransitionSpring(state, 1.0, 0.0, 0.0)
+    }
 }
 
 // A pop: the view that was showing goes off the one under it.
@@ -190,31 +194,35 @@ public function navigationTransitionPop(
     before: [Any NavigationRoute],
     after: [Any NavigationRoute]
 ) {
-    navigationTransitionEnsure()
-    var state = nativeRecover<NavigationTransition>(ambientStateGet(StateSlot.navigationTransition))
-    // A push still coming in turns around where it is: both its pages are
-    // on screen, already moving, and the compositor retargets them there.
-    let turning = state.active
-    let now = clockNow()
-    let from = turning ? navigationTransitionLive(state, now) : 0.0
-    var velocity: Number = 0.0
-    if turning && state.started {
-        velocity = motionSpringSample(state.spring, now - state.startedAt).velocity
+    unsafe {
+        navigationTransitionEnsure()
+        var state = nativeRecover<NavigationTransition>(ambientStateGet(StateSlot.navigationTransition))
+        // A push still coming in turns around where it is: both its pages are
+        // on screen, already moving, and the compositor retargets them there.
+        let turning = state.active
+        let now = clockNow()
+        let from = turning ? navigationTransitionLive(state, now) : 0.0
+        var velocity: Number = 0.0
+        if turning && state.started {
+            velocity = motionSpringSample(state.spring, now - state.startedAt).velocity
+        }
+        state.front = move before
+        state.covered = move after
+        navigationTransitionSpring(state, from, 1.0, velocity)
     }
-    state.front = move before
-    state.covered = move after
-    navigationTransitionSpring(state, from, 1.0, velocity)
 }
 
 // The path was replaced outright, as choosing a sidebar's row does: whatever
 // was moving stops, and the new view is simply there.
 public function navigationTransitionCancel() {
-    navigationTransitionEnsure()
-    var state = nativeRecover<NavigationTransition>(ambientStateGet(StateSlot.navigationTransition))
-    state.active = false
-    state.dragging = false
-    state.tracking = false
-    state.heldBack = false
+    unsafe {
+        navigationTransitionEnsure()
+        var state = nativeRecover<NavigationTransition>(ambientStateGet(StateSlot.navigationTransition))
+        state.active = false
+        state.dragging = false
+        state.tracking = false
+        state.heldBack = false
+    }
 }
 
 // One build of the transition, as the stack lowers: the fingers' speed is
@@ -222,49 +230,51 @@ public function navigationTransitionCancel() {
 // where the motion ends, with a build asked for when the compositor will have
 // taken them there.
 public function navigationTransitionAdvance(context: borrow BuildContext) {
-    navigationTransitionEnsure()
-    var state = nativeRecover<NavigationTransition>(ambientStateGet(StateSlot.navigationTransition))
-    if state.advancedOn == context.frameCount {
-        return
-    }
-    state.advancedOn = context.frameCount
-    state.width = max(context.viewportWidth, 1.0)
-    let delta = clockDelta()
-    if delta > 0.0 {
-        state.velocity = state.velocity * 0.4 + (state.pending / delta) * 0.6
-    }
-    state.pending = 0.0
-    if !state.active {
-        return
-    }
-    if state.dragging {
-        state.shown = state.progress
-        return
-    }
-    let now = clockNow()
-    if !state.started {
-        state.started = true
-        state.startedAt = now
-        state.settlesAt = now + navigationSpringDuration(state.spring)
-    }
-    if now >= state.settlesAt {
-        state.active = false
-        state.started = false
-        state.progress = 0.0
-        state.shown = 0.0
-        state.landedOn = context.frameCount
-        if state.heldBack {
-            state.heldBack = false
-            navigationTransitionReleaseBack(state.rootDepth)
-            // The back it held starts a pop of its own, and this build has
-            // already advanced: the next one starts it.
-            clockStillMoving()
+    unsafe {
+        navigationTransitionEnsure()
+        var state = nativeRecover<NavigationTransition>(ambientStateGet(StateSlot.navigationTransition))
+        if state.advancedOn == context.frameCount {
+            return
         }
-        return
+        state.advancedOn = context.frameCount
+        state.width = max(context.viewportWidth, 1.0)
+        let delta = clockDelta()
+        if delta > 0.0 {
+            state.velocity = state.velocity * 0.4 + (state.pending / delta) * 0.6
+        }
+        state.pending = 0.0
+        if !state.active {
+            return
+        }
+        if state.dragging {
+            state.shown = state.progress
+            return
+        }
+        let now = clockNow()
+        if !state.started {
+            state.started = true
+            state.startedAt = now
+            state.settlesAt = now + navigationSpringDuration(state.spring)
+        }
+        if now >= state.settlesAt {
+            state.active = false
+            state.started = false
+            state.progress = 0.0
+            state.shown = 0.0
+            state.landedOn = context.frameCount
+            if state.heldBack {
+                state.heldBack = false
+                navigationTransitionReleaseBack(state.rootDepth)
+                // The back it held starts a pop of its own, and this build has
+                // already advanced: the next one starts it.
+                clockStillMoving()
+            }
+            return
+        }
+        state.progress = navigationTransitionLive(state, now)
+        state.shown = state.spring.spring.target
+        clockWakeAt(state.settlesAt)
     }
-    state.progress = navigationTransitionLive(state, now)
-    state.shown = state.spring.spring.target
-    clockWakeAt(state.settlesAt)
 }
 
 // Where a page coming on screen enters from: where the spring started, or
@@ -289,13 +299,15 @@ public function navigationGoingBack() -> Bool {
 // but goes back only from a view that has stopped: pressed mid-motion it waits
 // for the motion to end, so it never goes back from a view already leaving.
 public function navigationBack() {
-    navigationTransitionEnsure()
-    var state = nativeRecover<NavigationTransition>(ambientStateGet(StateSlot.navigationTransition))
-    if state.active {
-        state.heldBack = true
-        return
+    unsafe {
+        navigationTransitionEnsure()
+        var state = nativeRecover<NavigationTransition>(ambientStateGet(StateSlot.navigationTransition))
+        if state.active {
+            state.heldBack = true
+            return
+        }
+        navigationTransitionReleaseBack(state.rootDepth)
     }
-    navigationTransitionReleaseBack(state.rootDepth)
 }
 
 // A held press goes back once the motion ends -- if, where it ended, there is
@@ -310,16 +322,20 @@ public function navigationTransitionReleaseBack(rootDepth: Number) {
 
 // A stacked split view is sliding its detail over its sidebar, or has stopped.
 public function navigationSetSplitSlides(slides: Bool) {
-    navigationTransitionEnsure()
-    var state = nativeRecover<NavigationTransition>(ambientStateGet(StateSlot.navigationTransition))
-    state.splitSlides = slides
+    unsafe {
+        navigationTransitionEnsure()
+        var state = nativeRecover<NavigationTransition>(ambientStateGet(StateSlot.navigationTransition))
+        state.splitSlides = slides
+    }
 }
 
 // How deep the stack's root is in the path; see `rootDepth`.
 public function navigationSetRootDepth(depth: Number) {
-    navigationTransitionEnsure()
-    var state = nativeRecover<NavigationTransition>(ambientStateGet(StateSlot.navigationTransition))
-    state.rootDepth = depth
+    unsafe {
+        navigationTransitionEnsure()
+        var state = nativeRecover<NavigationTransition>(ambientStateGet(StateSlot.navigationTransition))
+        state.rootDepth = depth
+    }
 }
 
 public function navigationRootDepth() -> Number {
@@ -335,94 +351,100 @@ public function navigationRootDepth() -> Number {
 // view from there. A pop still moving has already gone back, so the fingers
 // go back again from the view it uncovered, and need not wait for it.
 public function navigationSwipeBegin(x: Number, y: Number, overControl: Bool) {
-    navigationTransitionEnsure()
-    var state = nativeRecover<NavigationTransition>(ambientStateGet(StateSlot.navigationTransition))
-    state.tracking = false
-    let depth = state.active && !navigationTransitionPopping(
-        state
-    ) ? state.front.count : navigationValues().count
-    if state.dragging || overControl || depth <= state.rootDepth {
-        return
+    unsafe {
+        navigationTransitionEnsure()
+        var state = nativeRecover<NavigationTransition>(ambientStateGet(StateSlot.navigationTransition))
+        state.tracking = false
+        let depth = state.active && !navigationTransitionPopping(
+            state
+        ) ? state.front.count : navigationValues().count
+        if state.dragging || overControl || depth <= state.rootDepth {
+            return
+        }
+        if x < toolbarNavigationWidth() {
+            return
+        }
+        state.tracking = true
+        state.travel = 0.0
+        state.drift = 0.0
+        state.lastX = x
+        state.lastY = y
+        state.velocity = 0.0
+        state.pending = 0.0
     }
-    if x < toolbarNavigationWidth() {
-        return
-    }
-    state.tracking = true
-    state.travel = 0.0
-    state.drift = 0.0
-    state.lastX = x
-    state.lastY = y
-    state.velocity = 0.0
-    state.pending = 0.0
 }
 
 // The fingers moved this far, toward the trailing edge when `across` is
 // positive. Whether anything is being swiped, so the caller knows the motion
 // was taken.
 public function navigationSwipeMove(across: Number, down: Number) -> Bool {
-    navigationTransitionEnsure()
-    var state = nativeRecover<NavigationTransition>(ambientStateGet(StateSlot.navigationTransition))
-    if state.dragging {
-        state.progress = min(max(state.progress + across / state.width, 0.0), 1.0)
-        state.pending = state.pending + across
+    unsafe {
+        navigationTransitionEnsure()
+        var state = nativeRecover<NavigationTransition>(ambientStateGet(StateSlot.navigationTransition))
+        if state.dragging {
+            state.progress = min(max(state.progress + across / state.width, 0.0), 1.0)
+            state.pending = state.pending + across
+            clockStillMoving()
+            return true
+        }
+        if !state.tracking {
+            return false
+        }
+        state.travel = state.travel + across
+        state.drift = state.drift + abs(down)
+        if abs(
+            state.travel
+        ) < navigationTransitionMetrics().swipeSlop && state.drift < navigationTransitionMetrics().swipeSlop {
+            return false
+        }
+        state.tracking = false
+        // Only a motion more across than down, and toward the trailing edge, is a
+        // swipe back; anything else belongs to whatever is under the fingers.
+        if state.travel <= state.drift {
+            return false
+        }
+        // The pop the fingers came down on is done: its view is gone at once and
+        // the swipe is a new one, from where the path now stands.
+        if navigationTransitionPopping(state) {
+            state.active = false
+            state.heldBack = false
+        }
+        // A motion the compositor is carrying is caught where it has the view.
+        if state.active {
+            state.progress = navigationTransitionLive(state, clockNow())
+            state.started = false
+        }
+        state.dragging = true
+        state.pending = state.travel
         clockStillMoving()
+        if state.active {
+            return true
+        }
+        let path = navigationValues()
+        var under: [Any NavigationRoute] = []
+        for index in 0..(path.count - 1) {
+            under.append(copy path[index])
+        }
+        state.front = move path
+        state.covered = move under
+        state.active = true
+        state.progress = 0.0
+        state.shown = 0.0
         return true
     }
-    if !state.tracking {
-        return false
-    }
-    state.travel = state.travel + across
-    state.drift = state.drift + abs(down)
-    if abs(
-        state.travel
-    ) < navigationTransitionMetrics().swipeSlop && state.drift < navigationTransitionMetrics().swipeSlop {
-        return false
-    }
-    state.tracking = false
-    // Only a motion more across than down, and toward the trailing edge, is a
-    // swipe back; anything else belongs to whatever is under the fingers.
-    if state.travel <= state.drift {
-        return false
-    }
-    // The pop the fingers came down on is done: its view is gone at once and
-    // the swipe is a new one, from where the path now stands.
-    if navigationTransitionPopping(state) {
-        state.active = false
-        state.heldBack = false
-    }
-    // A motion the compositor is carrying is caught where it has the view.
-    if state.active {
-        state.progress = navigationTransitionLive(state, clockNow())
-        state.started = false
-    }
-    state.dragging = true
-    state.pending = state.travel
-    clockStillMoving()
-    if state.active {
-        return true
-    }
-    let path = navigationValues()
-    var under: [Any NavigationRoute] = []
-    for index in 0..(path.count - 1) {
-        under.append(copy path[index])
-    }
-    state.front = move path
-    state.covered = move under
-    state.active = true
-    state.progress = 0.0
-    state.shown = 0.0
-    return true
 }
 
 // The same for a touch, which reports where it is rather than how far it went.
 public function navigationSwipeTouchMove(x: Number, y: Number) -> Bool {
-    navigationTransitionEnsure()
-    var state = nativeRecover<NavigationTransition>(ambientStateGet(StateSlot.navigationTransition))
-    let across = x - state.lastX
-    let down = y - state.lastY
-    state.lastX = x
-    state.lastY = y
-    return navigationSwipeMove(across, down)
+    unsafe {
+        navigationTransitionEnsure()
+        var state = nativeRecover<NavigationTransition>(ambientStateGet(StateSlot.navigationTransition))
+        let across = x - state.lastX
+        let down = y - state.lastY
+        state.lastX = x
+        state.lastY = y
+        return navigationSwipeMove(across, down)
+    }
 }
 
 // The fingers lifted. Past the commit fraction, or thrown faster than the
@@ -430,23 +452,25 @@ public function navigationSwipeTouchMove(x: Number, y: Number) -> Bool {
 // was -- which, for a pop the fingers caught, takes the path forward again.
 // A throw back toward the leading edge always settles.
 public function navigationSwipeEnd() {
-    navigationTransitionEnsure()
-    var state = nativeRecover<NavigationTransition>(ambientStateGet(StateSlot.navigationTransition))
-    state.tracking = false
-    if !state.dragging {
-        return
+    unsafe {
+        navigationTransitionEnsure()
+        var state = nativeRecover<NavigationTransition>(ambientStateGet(StateSlot.navigationTransition))
+        state.tracking = false
+        if !state.dragging {
+            return
+        }
+        let metrics = navigationTransitionMetrics()
+        let speed = state.velocity
+        let thrown = speed > metrics.commitVelocity
+        let held = state.progress > metrics.commitFraction && speed > -metrics.commitVelocity
+        let from = state.progress
+        let carried = speed / state.width
+        if thrown || held {
+            navigationStore(copy state.covered)
+            navigationTransitionSpring(state, from, 1.0, carried)
+            return
+        }
+        navigationStore(copy state.front)
+        navigationTransitionSpring(state, from, 0.0, carried)
     }
-    let metrics = navigationTransitionMetrics()
-    let speed = state.velocity
-    let thrown = speed > metrics.commitVelocity
-    let held = state.progress > metrics.commitFraction && speed > -metrics.commitVelocity
-    let from = state.progress
-    let carried = speed / state.width
-    if thrown || held {
-        navigationStore(copy state.covered)
-        navigationTransitionSpring(state, from, 1.0, carried)
-        return
-    }
-    navigationStore(copy state.front)
-    navigationTransitionSpring(state, from, 0.0, carried)
 }

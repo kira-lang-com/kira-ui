@@ -43,184 +43,186 @@ public construct ScrollView() extends Widget {
         context: borrow BuildContext,
         modifiers: borrow ModifierContext
     ) -> CALayerDescription {
-        let key = scrollIdentity()
-        let indicatorKey = tapSeqKey()
-        var page = scrollClaimPage()
-        // A presented search stands where the bar did, at the top of the
-        // screen, and the page runs on under it without its large title.
-        var presented = false
-        match page.search {
-            Some(search) -> {
-                if search.presented {
-                    presented = true
-                    page.title = ""
-                    page.barInset = context.systemSafeArea.top + searchFieldMetrics().height
+        unsafe {
+            let key = scrollIdentity()
+            let indicatorKey = tapSeqKey()
+            var page = scrollClaimPage()
+            // A presented search stands where the bar did, at the top of the
+            // screen, and the page runs on under it without its large title.
+            var presented = false
+            match page.search {
+                Some(search) -> {
+                    if search.presented {
+                        presented = true
+                        page.title = ""
+                        page.barInset = context.systemSafeArea.top + searchFieldMetrics().height
+                    }
+                }
+                None -> {}
+            }
+            let document = content.describe(context, modifierContextForChildren(modifiers))
+
+            // Recovered in place rather than through a helper: a recovered value
+            // handed back out of a function is a copy, and the motion would be lost.
+            let slot = scrollViewSlotKey(key)
+            if !ambientStateHasView(slot) {
+                ambientStatePutView(copy slot, nativeUserData(nativeState(ScrollViewState {})))
+            }
+            var scroll = nativeRecover<ScrollViewState>(ambientStateGetView(slot))
+            let bounds = MotionScrollBounds {
+                contentLength: scroll.contentLength,
+                viewportLength: scroll.viewportLength
+            }
+            let delta = clockDelta()
+            let metrics = scrollIndicatorMetrics()
+
+            // What the fingers and the wheel did to it since the last frame, in the
+            // order they did it.
+            let input = scrollTake(key)
+            if input.began {
+                motionScrollDragBegin(scroll.motion, 0.0, bounds, input.resistance, input.beganAt)
+            }
+            if input.moved {
+                for report in input.reports {
+                    motionScrollDragMove(scroll.motion, report.travel, bounds, report.time)
                 }
             }
-            None -> {}
-        }
-        let document = content.describe(context, modifierContextForChildren(modifiers))
-
-        // Recovered in place rather than through a helper: a recovered value
-        // handed back out of a function is a copy, and the motion would be lost.
-        let slot = scrollViewSlotKey(key)
-        if !ambientStateHasView(slot) {
-            ambientStatePutView(copy slot, nativeUserData(nativeState(ScrollViewState {})))
-        }
-        var scroll = nativeRecover<ScrollViewState>(ambientStateGetView(slot))
-        let bounds = MotionScrollBounds {
-            contentLength: scroll.contentLength,
-            viewportLength: scroll.viewportLength
-        }
-        let delta = clockDelta()
-        let metrics = scrollIndicatorMetrics()
-
-        // What the fingers and the wheel did to it since the last frame, in the
-        // order they did it.
-        let input = scrollTake(key)
-        if input.began {
-            motionScrollDragBegin(scroll.motion, 0.0, bounds, input.resistance, input.beganAt)
-        }
-        if input.moved {
-            for report in input.reports {
-                motionScrollDragMove(scroll.motion, report.travel, bounds, report.time)
+            if input.cancelled {
+                scroll.motion.velocity = 0.0
             }
-        }
-        if input.cancelled {
-            scroll.motion.velocity = 0.0
-        }
-        if input.ended || input.cancelled {
-            motionScrollDragEnd(scroll.motion, bounds, prefersReducedMotion())
-        }
-        if input.wheel != 0.0 {
-            motionScrollWheel(scroll.motion, input.wheel, bounds)
-        }
+            if input.ended || input.cancelled {
+                motionScrollDragEnd(scroll.motion, bounds, prefersReducedMotion())
+            }
+            if input.wheel != 0.0 {
+                motionScrollWheel(scroll.motion, input.wheel, bounds)
+            }
 
-        // Held, the bar scrubs: the content follows the pointer as far along
-        // its whole length as the pointer goes along the track the bar runs
-        // in, and let go it coasts on from however fast it was going.
-        let track = max(scroll.viewportLength - page.barInset, 0.0)
-        let length = scrollIndicatorLength(scroll.contentLength, track, metrics)
-        let scrubbing = context.heldControl == indicatorKey && indicatorKey != 0
-        if scrubbing && !scroll.scrubbing {
-            scroll.scrubFrom = scroll.motion.offset
-            scroll.scrubPointer = context.pointerY
-            motionScrollScrubBegin(scroll.motion)
-        }
-        if !scrubbing && scroll.scrubbing {
-            motionScrollScrubEnd(scroll.motion, bounds, prefersReducedMotion())
-        }
-        scroll.scrubbing = scrubbing
-        if scrubbing && track > length {
-            let reach = motionScrollMaxOffset(bounds) / (track - length)
-            motionScrollScrub(
-                scroll.motion,
-                scroll.scrubFrom + (context.pointerY - scroll.scrubPointer) * reach,
-                bounds
-            )
-        }
+            // Held, the bar scrubs: the content follows the pointer as far along
+            // its whole length as the pointer goes along the track the bar runs
+            // in, and let go it coasts on from however fast it was going.
+            let track = max(scroll.viewportLength - page.barInset, 0.0)
+            let length = scrollIndicatorLength(scroll.contentLength, track, metrics)
+            let scrubbing = context.heldControl == indicatorKey && indicatorKey != 0
+            if scrubbing && !scroll.scrubbing {
+                scroll.scrubFrom = scroll.motion.offset
+                scroll.scrubPointer = context.pointerY
+                motionScrollScrubBegin(scroll.motion)
+            }
+            if !scrubbing && scroll.scrubbing {
+                motionScrollScrubEnd(scroll.motion, bounds, prefersReducedMotion())
+            }
+            scroll.scrubbing = scrubbing
+            if scrubbing && track > length {
+                let reach = motionScrollMaxOffset(bounds) / (track - length)
+                motionScrollScrub(
+                    scroll.motion,
+                    scroll.scrubFrom + (context.pointerY - scroll.scrubPointer) * reach,
+                    bounds
+                )
+            }
 
-        // Content that shrank under a surface at rest leaves it where the
-        // content still reaches.
-        if scroll.motion.phase == .Idle {
-            scroll.motion.offset = motionScrollClamp(scroll.motion.offset, bounds)
-        }
-        let moving = motionScrollAdvance(scroll.motion, delta, bounds)
+            // Content that shrank under a surface at rest leaves it where the
+            // content still reaches.
+            if scroll.motion.phase == .Idle {
+                scroll.motion.offset = motionScrollClamp(scroll.motion.offset, bounds)
+            }
+            let moving = motionScrollAdvance(scroll.motion, delta, bounds)
 
-        // The bar shows while the surface moves or a pointer is on it, and a
-        // second after the last of either it fades.
-        let hovered = context.hoveredKey == indicatorKey && indicatorKey != 0
-        let scrollable = scroll.contentLength > scroll.viewportLength + 0.5
-        if moving || scrubbing || (hovered && scroll.opacity > 0.0) {
-            scroll.still = 0.0
-        } else {
-            scroll.still = scroll.still + delta
-        }
-        scroll.opacity = scrollable ? scrollIndicatorOpacity(scroll.still, metrics) : 0.0
-        let expanded = (hovered || scrubbing) && scroll.opacity > 0.0
-        let swelling = scrollIndicatorSwell(scroll, expanded, metrics, delta)
-        let offset = scroll.motion.offset
-        // The bar goes over to scrolled content all at once -- its edge effect
-        // in, and the large title out for the bar's own -- as soon as the
-        // content, or the large title leading it, meets the bar.
-        let reach = page.title.count > 0 ? largeTitleMetrics().topInset : 0.0
-        scroll.barFade = scrollFadeStep(scroll.barFade, page.barInset > 0.0 && offset > reach)
-        if moving || scroll.opacity > 0.0 || swelling || scrollFading(scroll.barFade) {
-            clockStillMoving()
-        }
-        let barShown = motionEase(.EaseInOut, scroll.barFade)
+            // The bar shows while the surface moves or a pointer is on it, and a
+            // second after the last of either it fades.
+            let hovered = context.hoveredKey == indicatorKey && indicatorKey != 0
+            let scrollable = scroll.contentLength > scroll.viewportLength + 0.5
+            if moving || scrubbing || (hovered && scroll.opacity > 0.0) {
+                scroll.still = 0.0
+            } else {
+                scroll.still = scroll.still + delta
+            }
+            scroll.opacity = scrollable ? scrollIndicatorOpacity(scroll.still, metrics) : 0.0
+            let expanded = (hovered || scrubbing) && scroll.opacity > 0.0
+            let swelling = scrollIndicatorSwell(scroll, expanded, metrics, delta)
+            let offset = scroll.motion.offset
+            // The bar goes over to scrolled content all at once -- its edge effect
+            // in, and the large title out for the bar's own -- as soon as the
+            // content, or the large title leading it, meets the bar.
+            let reach = page.title.count > 0 ? largeTitleMetrics().topInset : 0.0
+            scroll.barFade = scrollFadeStep(scroll.barFade, page.barInset > 0.0 && offset > reach)
+            if moving || scroll.opacity > 0.0 || swelling || scrollFading(scroll.barFade) {
+                clockStillMoving()
+            }
+            let barShown = motionEase(.EaseInOut, scroll.barFade)
 
-        let overshoot = motionScrollOvershoot(offset, bounds)
-        let thickness = scroll.thickness
-        let opacity = scroll.opacity
+            let overshoot = motionScrollOvershoot(offset, bounds)
+            let thickness = scroll.thickness
+            let opacity = scroll.opacity
 
-        var moved = move document
-        var bar: [CALayerDescription] = []
-        match page.search {
-            Some(search) -> {
-                if presented {
-                    bar.append(scrollSearchPresented(search, context, modifiers))
-                } else {
-                    moved = scrollSearchDrawn(move moved, search, context, modifiers)
+            var moved = move document
+            var bar: [CALayerDescription] = []
+            match page.search {
+                Some(search) -> {
+                    if presented {
+                        bar.append(scrollSearchPresented(search, context, modifiers))
+                    } else {
+                        moved = scrollSearchDrawn(move moved, search, context, modifiers)
+                    }
+                }
+                None -> {}
+            }
+            if page.title.count > 0 {
+                moved = scrollLargeTitled(
+                    move moved,
+                    copy page.title,
+                    barShown,
+                    page.search != .None,
+                    context,
+                    modifiers
+                )
+            }
+            if page.barInset > 0.0 {
+                moved = CALayerDescription {
+                    layout: CALayoutIntent {
+                        axis: .Column,
+                        heightFill: false,
+                        paddingTop: page.barInset
+                    },
+                    sublayers: [move moved]
                 }
             }
-            None -> {}
-        }
-        if page.title.count > 0 {
-            moved = scrollLargeTitled(
-                move moved,
-                copy page.title,
-                barShown,
-                page.search != .None,
-                context,
+            moved.layout.offset = Point { x: moved.layout.offset.x, y: moved.layout.offset.y - offset }
+            // The surface moves its content itself, every frame.
+            moved.disablesActions = true
+
+            var indicator = scrollIndicator(
+                indicatorKey,
+                thickness,
+                scrollIndicatorShownLength(length, overshoot, metrics),
+                page.barInset + scrollIndicatorPosition(
+                    offset,
+                    bounds,
+                    track,
+                    length,
+                    overshoot,
+                    metrics
+                ),
+                opacity,
                 modifiers
             )
-        }
-        if page.barInset > 0.0 {
-            moved = CALayerDescription {
-                layout: CALayoutIntent {
-                    axis: .Column,
-                    heightFill: false,
-                    paddingTop: page.barInset
-                },
+            var layers = [CALayerDescription {
+                hitKey: key,
+                scrollAxis: .Column,
+                clipsChildren: true,
                 sublayers: [move moved]
+            }]
+            if barShown > 0.0 {
+                layers.append(scrollEdgeEffect(page.barInset, barShown, modifiers))
             }
-        }
-        moved.layout.offset = Point { x: moved.layout.offset.x, y: moved.layout.offset.y - offset }
-        // The surface moves its content itself, every frame.
-        moved.disablesActions = true
-
-        var indicator = scrollIndicator(
-            indicatorKey,
-            thickness,
-            scrollIndicatorShownLength(length, overshoot, metrics),
-            page.barInset + scrollIndicatorPosition(
-                offset,
-                bounds,
-                track,
-                length,
-                overshoot,
-                metrics
-            ),
-            opacity,
-            modifiers
-        )
-        var layers = [CALayerDescription {
-            hitKey: key,
-            scrollAxis: .Column,
-            clipsChildren: true,
-            sublayers: [move moved]
-        }]
-        if barShown > 0.0 {
-            layers.append(scrollEdgeEffect(page.barInset, barShown, modifiers))
-        }
-        layers.append(move indicator)
-        for field in bar {
-            layers.append(field)
-        }
-        return CALayerDescription {
-            layout: CALayoutIntent { flex: 1, alignment: Point { x: 1.0, y: 0.0 } },
-            sublayers: move layers
+            layers.append(move indicator)
+            for field in bar {
+                layers.append(field)
+            }
+            return CALayerDescription {
+                layout: CALayoutIntent { flex: 1, alignment: Point { x: 1.0, y: 0.0 } },
+                sublayers: move layers
+            }
         }
     }
 }
@@ -389,12 +391,14 @@ public function scrollViewSlotKey(key: Number) -> ViewStateKey {
 // out and how long the window onto it is. The motion reads it on the next
 // frame.
 public function scrollMeasured(key: Number, contentLength: Number, viewportLength: Number) {
-    if !ambientStateHasView(scrollViewSlotKey(key)) {
-        return
+    unsafe {
+        if !ambientStateHasView(scrollViewSlotKey(key)) {
+            return
+        }
+        var scroll = nativeRecover<ScrollViewState>(ambientStateGetView(scrollViewSlotKey(key)))
+        scroll.contentLength = contentLength
+        scroll.viewportLength = viewportLength
     }
-    var scroll = nativeRecover<ScrollViewState>(ambientStateGetView(scrollViewSlotKey(key)))
-    scroll.contentLength = contentLength
-    scroll.viewportLength = viewportLength
 }
 
 // --- The scroll indicator ------------------------------------------------------

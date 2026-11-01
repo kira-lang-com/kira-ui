@@ -25,42 +25,50 @@ public function sidebarSelectionEnsure() {
 }
 
 public function sidebarSelectionState() -> SidebarSelectionState {
-    sidebarSelectionEnsure()
-    return nativeRecover<SidebarSelectionState>(ambientStateGet(StateSlot.sidebarSelection))
+    unsafe {
+        sidebarSelectionEnsure()
+        return nativeRecover<SidebarSelectionState>(ambientStateGet(StateSlot.sidebarSelection))
+    }
 }
 
 // The sidebar is about to be described: count its rows from the top.
 public function sidebarSelectionBegin() {
-    sidebarSelectionEnsure()
-    var state = nativeRecover<SidebarSelectionState>(ambientStateGet(StateSlot.sidebarSelection))
-    state.counting = true
-    state.ordinal = 0
-    state.selected = -1
+    unsafe {
+        sidebarSelectionEnsure()
+        var state = nativeRecover<SidebarSelectionState>(ambientStateGet(StateSlot.sidebarSelection))
+        state.counting = true
+        state.ordinal = 0
+        state.selected = -1
+    }
 }
 
 // A row of the sidebar, and whether it is the selected one.
 public function sidebarSelectionRow(selected: Bool) {
-    sidebarSelectionEnsure()
-    var state = nativeRecover<SidebarSelectionState>(ambientStateGet(StateSlot.sidebarSelection))
-    if !state.counting {
-        return
+    unsafe {
+        sidebarSelectionEnsure()
+        var state = nativeRecover<SidebarSelectionState>(ambientStateGet(StateSlot.sidebarSelection))
+        if !state.counting {
+            return
+        }
+        if selected && state.selected < 0 {
+            state.selected = state.ordinal
+        }
+        state.ordinal++
     }
-    if selected && state.selected < 0 {
-        state.selected = state.ordinal
-    }
-    state.ordinal++
 }
 
 // The sidebar has been described: settle which run of the detail it selects.
 public function sidebarSelectionEnd() {
-    sidebarSelectionEnsure()
-    var state = nativeRecover<SidebarSelectionState>(ambientStateGet(StateSlot.sidebarSelection))
-    state.counting = false
-    let generation = currentNavigationGeneration()
-    if state.selected != state.shown || generation != state.navigationGeneration {
-        state.run++
-        state.shown = state.selected
-        state.navigationGeneration = generation
+    unsafe {
+        sidebarSelectionEnsure()
+        var state = nativeRecover<SidebarSelectionState>(ambientStateGet(StateSlot.sidebarSelection))
+        state.counting = false
+        let generation = currentNavigationGeneration()
+        if state.selected != state.shown || generation != state.navigationGeneration {
+            state.run++
+            state.shown = state.selected
+            state.navigationGeneration = generation
+        }
     }
 }
 

@@ -73,23 +73,27 @@ struct TapBandEntry {
 // from the band around it and the place, and the times this build the same
 // band was entered before.
 function tapSeqEnterPlace(place: Number) -> TapBandEntry {
-    if !ambientStateHas(StateSlot.tapSequence) {
-        ambientStatePut(StateSlot.tapSequence, nativeUserData(nativeState(TapSeq {})))
+    unsafe {
+        if !ambientStateHas(StateSlot.tapSequence) {
+            ambientStatePut(StateSlot.tapSequence, nativeUserData(nativeState(TapSeq {})))
+        }
+        var seq = nativeRecover<TapSeq>(ambientStateGet(StateSlot.tapSequence))
+        let entry = TapBandEntry { band: seq.band, next: seq.next }
+        let mixed = (seq.band * 1000003 + place) % TapBands.bands
+        let name = String(mixed)
+        let times = try seq.bandsEntered.value(name) otherwise 0
+        seq.bandsEntered.set(copy name, times + 1)
+        seq.band = (mixed * 31 + times) % (TapBands.bands - 1) + 1
+        seq.next = 0
+        return entry
     }
-    var seq = nativeRecover<TapSeq>(ambientStateGet(StateSlot.tapSequence))
-    let entry = TapBandEntry { band: seq.band, next: seq.next }
-    let mixed = (seq.band * 1000003 + place) % TapBands.bands
-    let name = String(mixed)
-    let times = try seq.bandsEntered.value(name) otherwise 0
-    seq.bandsEntered.set(copy name, times + 1)
-    seq.band = (mixed * 31 + times) % (TapBands.bands - 1) + 1
-    seq.next = 0
-    return entry
 }
 
 // Goes back to the band and the place in it `entry` left.
 function tapSeqLeavePlace(entry: borrow TapBandEntry) {
-    var seq = nativeRecover<TapSeq>(ambientStateGet(StateSlot.tapSequence))
-    seq.band = entry.band
-    seq.next = entry.next
+    unsafe {
+        var seq = nativeRecover<TapSeq>(ambientStateGet(StateSlot.tapSequence))
+        seq.band = entry.band
+        seq.next = entry.next
+    }
 }

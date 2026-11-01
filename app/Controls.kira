@@ -561,70 +561,72 @@ public function sliderKnobLayers(
     held: Bool,
     modifiers: borrow ModifierContext
 ) -> [CALayerDescription] {
-    let metrics = sliderMetrics(modifiers.controlSize)
-    let slot = sliderKnobSlotKey(key)
-    if !ambientStateHasView(slot) {
-        ambientStatePutView(copy slot, nativeUserData(nativeState(SliderKnob {})))
-    }
-    var knob = nativeRecover<SliderKnob>(ambientStateGetView(slot))
-    let delta = clockDelta()
-    let x = context.heldPoint.x
-    if held != knob.held {
-        let curve = motionCurveFor(.Snappy, held ? 1.0 : 0.0, prefersReducedMotion())
-        knob.lift = motionSpringStart(move curve, knob.lifted, 0.0)
-        knob.held = held
+    unsafe {
+        let metrics = sliderMetrics(modifiers.controlSize)
+        let slot = sliderKnobSlotKey(key)
+        if !ambientStateHasView(slot) {
+            ambientStatePutView(copy slot, nativeUserData(nativeState(SliderKnob {})))
+        }
+        var knob = nativeRecover<SliderKnob>(ambientStateGetView(slot))
+        let delta = clockDelta()
+        let x = context.heldPoint.x
+        if held != knob.held {
+            let curve = motionCurveFor(.Snappy, held ? 1.0 : 0.0, prefersReducedMotion())
+            knob.lift = motionSpringStart(move curve, knob.lifted, 0.0)
+            knob.held = held
+            knob.lastX = x
+        }
+        let sample = motionSpringAdvance(knob.lift, delta)
+        knob.lifted = sample.value
+        var speed: Number = 0.0
+        if held && delta > 0.0 {
+            speed = abs(x - knob.lastX) / delta
+        }
         knob.lastX = x
-    }
-    let sample = motionSpringAdvance(knob.lift, delta)
-    knob.lifted = sample.value
-    var speed: Number = 0.0
-    if held && delta > 0.0 {
-        speed = abs(x - knob.lastX) / delta
-    }
-    knob.lastX = x
-    let reach = prefersReducedMotion() ? 0.0 : min(speed / 2000.0, 1.0) * 0.12
-    knob.stretch = knob.stretch + (reach - knob.stretch) * min(delta * 12.0, 1.0)
-    let settled = motionSpringSettled(knob.lift, sample, MotionSpringLimit.epsilon)
-    if !settled || knob.stretch > 0.001 {
-        clockStillMoving()
-    }
+        let reach = prefersReducedMotion() ? 0.0 : min(speed / 2000.0, 1.0) * 0.12
+        knob.stretch = knob.stretch + (reach - knob.stretch) * min(delta * 12.0, 1.0)
+        let settled = motionSpringSettled(knob.lift, sample, MotionSpringLimit.epsilon)
+        if !settled || knob.stretch > 0.001 {
+            clockStillMoving()
+        }
 
-    let t = knob.lifted
-    let width = (metrics.knobWidth + (metrics.heldKnobWidth - metrics.knobWidth) * t) * (
-        1.0 + knob.stretch
-    )
-    let height = (metrics.knobHeight + (metrics.heldKnobHeight - metrics.knobHeight) * t) * (
-        1.0 - knob.stretch * 0.6
-    )
-    var resting = restingKnobDescription(width, height, modifiers)
-    resting.opacity = clamp01(1.0 - t)
-    var layers = [resting]
-    if t > 0.001 {
-        var glass = liquidGlassDescription(
-            CALayoutIntent {
-                widthFill: false,
-                heightFill: false,
-                fixedWidth: width,
-                fixedHeight: height,
-                alignment: Point { x: 0.5, y: 0.5 }
-            },
-            height / 2.0,
-            .Capsule,
-            modifiers,
-            [],
-            .Clear
+        let t = knob.lifted
+        let width = (metrics.knobWidth + (metrics.heldKnobWidth - metrics.knobWidth) * t) * (
+            1.0 + knob.stretch
         )
-        var lens = liquidGlassContent(.Capsule, modifiers, .Clear)
-        lens.tint = colorFromFoundation(
-            modifierColor(
-                foundationColor(themeAdaptiveColor(sliderKnobGlass, modifierAppearance(modifiers))),
-                modifiers
+        let height = (metrics.knobHeight + (metrics.heldKnobHeight - metrics.knobHeight) * t) * (
+            1.0 - knob.stretch * 0.6
+        )
+        var resting = restingKnobDescription(width, height, modifiers)
+        resting.opacity = clamp01(1.0 - t)
+        var layers = [resting]
+        if t > 0.001 {
+            var glass = liquidGlassDescription(
+                CALayoutIntent {
+                    widthFill: false,
+                    heightFill: false,
+                    fixedWidth: width,
+                    fixedHeight: height,
+                    alignment: Point { x: 0.5, y: 0.5 }
+                },
+                height / 2.0,
+                .Capsule,
+                modifiers,
+                [],
+                .Clear
             )
-        )
-        glass.content = .Glass(move lens)
-        glass.opacity = clamp01(t)
-        glass.disablesActions = true
-        layers.append(glass)
+            var lens = liquidGlassContent(.Capsule, modifiers, .Clear)
+            lens.tint = colorFromFoundation(
+                modifierColor(
+                    foundationColor(themeAdaptiveColor(sliderKnobGlass, modifierAppearance(modifiers))),
+                    modifiers
+                )
+            )
+            glass.content = .Glass(move lens)
+            glass.opacity = clamp01(t)
+            glass.disablesActions = true
+            layers.append(glass)
+        }
+        return layers
     }
-    return layers
 }

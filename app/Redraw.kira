@@ -26,15 +26,17 @@ function redrawDeadlineEnsure() {
 // Describe the interface again `seconds` from now. The earliest of the
 // deadlines asked for stands.
 public function redrawAfter(seconds: Number) {
-    let previous = enterProcessScope()
-    redrawDeadlineEnsure()
-    var deadline = nativeRecover<RedrawDeadline>(ambientStateGet(StateSlot.redraw))
-    let at = unixMillis() + seconds * 1000
-    deadline.at = match deadline.at {
-        Some(asked) -> .Some(min(asked, at))
-        None -> .Some(at)
+    unsafe {
+        let previous = enterProcessScope()
+        redrawDeadlineEnsure()
+        var deadline = nativeRecover<RedrawDeadline>(ambientStateGet(StateSlot.redraw))
+        let at = unixMillis() + seconds * 1000
+        deadline.at = match deadline.at {
+            Some(asked) -> .Some(min(asked, at))
+            None -> .Some(at)
+        }
+        ambientScopeEnter(previous)
     }
-    ambientScopeEnter(previous)
 }
 
 // How long a host may wait before describing the interface again, in
@@ -42,25 +44,27 @@ public function redrawAfter(seconds: Number) {
 // sooner or none was asked. A deadline that has come is taken, and is a wait
 // of nothing.
 public function redrawWaitLimit(otherwise: Number?) -> Number? {
-    let previous = enterProcessScope()
-    redrawDeadlineEnsure()
-    var deadline = nativeRecover<RedrawDeadline>(ambientStateGet(StateSlot.redraw))
-    var limit = otherwise
-    match deadline.at {
-        Some(at) -> {
-            let left = at - unixMillis()
-            if left <= 0 {
-                deadline.at = .None
-                limit = .Some(0)
-            } else {
-                limit = match otherwise {
-                    Some(asked) -> .Some(min(asked, left))
-                    None -> .Some(left)
+    unsafe {
+        let previous = enterProcessScope()
+        redrawDeadlineEnsure()
+        var deadline = nativeRecover<RedrawDeadline>(ambientStateGet(StateSlot.redraw))
+        var limit = otherwise
+        match deadline.at {
+            Some(at) -> {
+                let left = at - unixMillis()
+                if left <= 0 {
+                    deadline.at = .None
+                    limit = .Some(0)
+                } else {
+                    limit = match otherwise {
+                        Some(asked) -> .Some(min(asked, left))
+                        None -> .Some(left)
+                    }
                 }
             }
+            None -> {}
         }
-        None -> {}
+        ambientScopeEnter(previous)
+        return limit
     }
-    ambientScopeEnter(previous)
-    return limit
 }

@@ -109,8 +109,10 @@ public function workspaceOpenEdges() -> [WorkspaceEdge] {
 }
 
 public function workspaceState() -> WorkspaceArrangement {
-    workspaceArrangementEnsure()
-    return nativeRecover<WorkspaceArrangement>(ambientStateGet(StateSlot.workspaceArrangement))
+    unsafe {
+        workspaceArrangementEnsure()
+        return nativeRecover<WorkspaceArrangement>(ambientStateGet(StateSlot.workspaceArrangement))
+    }
 }
 
 public function workspacePlacementIndex(
@@ -178,91 +180,103 @@ public function workspaceReselect(state: borrow mut WorkspaceArrangement, edge: 
 
 // Show a panel at the edge it is placed at, selected there, unfolding the edge.
 public function workspaceShow(panel: String) {
-    workspaceArrangementEnsure()
-    var state = nativeRecover<WorkspaceArrangement>(ambientStateGet(StateSlot.workspaceArrangement))
-    let index = workspacePlacementIndex(state, panel)
-    if index < 0 {
-        state.awaited = move panel
-        return
+    unsafe {
+        workspaceArrangementEnsure()
+        var state = nativeRecover<WorkspaceArrangement>(ambientStateGet(StateSlot.workspaceArrangement))
+        let index = workspacePlacementIndex(state, panel)
+        if index < 0 {
+            state.awaited = move panel
+            return
+        }
+        state.placements[index].shown = true
+        let edge = panelEdgeIndex(state.placements[index].edge)
+        state.edges[edge].selected = move panel
+        state.edges[edge].folded = false
     }
-    state.placements[index].shown = true
-    let edge = panelEdgeIndex(state.placements[index].edge)
-    state.edges[edge].selected = move panel
-    state.edges[edge].folded = false
 }
 
 // Take a panel out of the workspace. One declared at the center stays.
 public function workspaceHide(panel: String) {
-    workspaceArrangementEnsure()
-    var state = nativeRecover<WorkspaceArrangement>(ambientStateGet(StateSlot.workspaceArrangement))
-    let index = workspacePlacementIndex(state, panel)
-    if index < 0 || state.placements[index].pinned {
-        return
+    unsafe {
+        workspaceArrangementEnsure()
+        var state = nativeRecover<WorkspaceArrangement>(ambientStateGet(StateSlot.workspaceArrangement))
+        let index = workspacePlacementIndex(state, panel)
+        if index < 0 || state.placements[index].pinned {
+            return
+        }
+        state.placements[index].shown = false
+        workspaceReselect(state, state.placements[index].edge)
     }
-    state.placements[index].shown = false
-    workspaceReselect(state, state.placements[index].edge)
 }
 
 // Select a panel in its edge's strip.
 public function workspaceSelect(panel: String) {
-    workspaceArrangementEnsure()
-    var state = nativeRecover<WorkspaceArrangement>(ambientStateGet(StateSlot.workspaceArrangement))
-    let index = workspacePlacementIndex(state, panel)
-    if index < 0 {
-        return
+    unsafe {
+        workspaceArrangementEnsure()
+        var state = nativeRecover<WorkspaceArrangement>(ambientStateGet(StateSlot.workspaceArrangement))
+        let index = workspacePlacementIndex(state, panel)
+        if index < 0 {
+            return
+        }
+        state.edges[panelEdgeIndex(state.placements[index].edge)].selected = move panel
     }
-    state.edges[panelEdgeIndex(state.placements[index].edge)].selected = move panel
 }
 
 // Move a panel to an edge, as the last tab there and the one selected. A panel
 // declared at the center never leaves it, and a fixed center takes none.
 public function workspaceDock(panel: String, edge: borrow PanelEdge) {
-    workspaceArrangementEnsure()
-    var state = nativeRecover<WorkspaceArrangement>(ambientStateGet(StateSlot.workspaceArrangement))
-    let index = workspacePlacementIndex(state, panel)
-    if index < 0 || state.placements[index].pinned {
-        return
-    }
-    if edge == .Center && state.center == .Fixed {
-        return
-    }
-    let from = state.placements[index].edge
-    var moved = copy state.placements[index]
-    moved.edge = copy edge
-    moved.shown = true
-    var placements: [PanelPlacement] = []
-    for other in 0..state.placements.count {
-        if other != index {
-            placements.append(copy state.placements[other])
+    unsafe {
+        workspaceArrangementEnsure()
+        var state = nativeRecover<WorkspaceArrangement>(ambientStateGet(StateSlot.workspaceArrangement))
+        let index = workspacePlacementIndex(state, panel)
+        if index < 0 || state.placements[index].pinned {
+            return
         }
+        if edge == .Center && state.center == .Fixed {
+            return
+        }
+        let from = state.placements[index].edge
+        var moved = copy state.placements[index]
+        moved.edge = copy edge
+        moved.shown = true
+        var placements: [PanelPlacement] = []
+        for other in 0..state.placements.count {
+            if other != index {
+                placements.append(copy state.placements[other])
+            }
+        }
+        placements.append(move moved)
+        state.placements = move placements
+        workspaceReselect(state, from)
+        let to = panelEdgeIndex(edge)
+        state.edges[to].selected = move panel
+        state.edges[to].folded = false
     }
-    placements.append(move moved)
-    state.placements = move placements
-    workspaceReselect(state, from)
-    let to = panelEdgeIndex(edge)
-    state.edges[to].selected = move panel
-    state.edges[to].folded = false
 }
 
 // Fold an edge away, or bring it back.
 public function workspaceToggle(edge: borrow PanelEdge) {
-    if edge == .Center {
-        return
+    unsafe {
+        if edge == .Center {
+            return
+        }
+        workspaceArrangementEnsure()
+        var state = nativeRecover<WorkspaceArrangement>(ambientStateGet(StateSlot.workspaceArrangement))
+        let index = panelEdgeIndex(edge)
+        state.edges[index].folded = !state.edges[index].folded
     }
-    workspaceArrangementEnsure()
-    var state = nativeRecover<WorkspaceArrangement>(ambientStateGet(StateSlot.workspaceArrangement))
-    let index = panelEdgeIndex(edge)
-    state.edges[index].folded = !state.edges[index].folded
 }
 
 // Forget the arrangement: the next build lays the panels out where they were
 // declared.
 public function workspaceReset() {
-    workspaceArrangementEnsure()
-    var state = nativeRecover<WorkspaceArrangement>(ambientStateGet(StateSlot.workspaceArrangement))
-    var placements: [PanelPlacement] = []
-    state.placements = move placements
-    state.edges = workspaceOpenEdges()
+    unsafe {
+        workspaceArrangementEnsure()
+        var state = nativeRecover<WorkspaceArrangement>(ambientStateGet(StateSlot.workspaceArrangement))
+        var placements: [PanelPlacement] = []
+        state.placements = move placements
+        state.edges = workspaceOpenEdges()
+    }
 }
 
 // The application's handle on its workspace's arrangement, held beside the

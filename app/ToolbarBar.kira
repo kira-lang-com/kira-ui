@@ -49,16 +49,18 @@ public construct WindowBottomBar() extends Widget {
         context: borrow BuildContext,
         modifiers: borrow ModifierContext
     ) -> CALayerDescription {
-        toolbarSinkEnsure()
-        let sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
-        var bars = chromeTabBars(sink, context, modifierContextPresenting(modifiers, .Toolbar))
-        if bars.count == 0 {
-            match sink.search {
-                Some(search) -> bars.append(bottomSearchField(search, context, modifiers))
-                None -> {}
+        unsafe {
+            toolbarSinkEnsure()
+            let sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+            var bars = chromeTabBars(sink, context, modifierContextPresenting(modifiers, .Toolbar))
+            if bars.count == 0 {
+                match sink.search {
+                    Some(search) -> bars.append(bottomSearchField(search, context, modifiers))
+                    None -> {}
+                }
             }
+            return CALayerDescription { sublayers: move bars }
         }
-        return CALayerDescription { sublayers: move bars }
     }
 }
 
@@ -117,59 +119,61 @@ public construct WindowChrome() extends Widget {
         context: borrow BuildContext,
         modifiers: borrow ModifierContext
     ) -> CALayerDescription {
-        toolbarSinkEnsure()
-        var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
-        let metrics = windowChromeMetricsFor(context.viewportWidth)
-        sink.windowDragHeight = windowTopClearance() + metrics.toolbarHeight
-        let barModifiers = modifierContextPresenting(modifiers, .Toolbar)
-        // A presented page search has the band to itself.
-        if sink.searchPresented {
-            return CALayerDescription {
-                layout: CALayoutIntent { heightFill: false, fixedHeight: metrics.toolbarHeight }
+        unsafe {
+            toolbarSinkEnsure()
+            var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+            let metrics = windowChromeMetricsFor(context.viewportWidth)
+            sink.windowDragHeight = windowTopClearance() + metrics.toolbarHeight
+            let barModifiers = modifierContextPresenting(modifiers, .Toolbar)
+            // A presented page search has the band to itself.
+            if sink.searchPresented {
+                return CALayerDescription {
+                    layout: CALayoutIntent { heightFill: false, fixedHeight: metrics.toolbarHeight }
+                }
             }
-        }
 
-        var sections: [CALayerDescription] = []
-        var leading: [CALayerDescription] = []
-        if sink.hasNavigationColumn {
-            sections.append(sidebarSection(sink, metrics, context, barModifiers))
-        } else {
-            if windowControlsInToolbar() {
-                leading.append(windowControlsArea(metrics, context, barModifiers))
+            var sections: [CALayerDescription] = []
+            var leading: [CALayerDescription] = []
+            if sink.hasNavigationColumn {
+                sections.append(sidebarSection(sink, metrics, context, barModifiers))
+            } else {
+                if windowControlsInToolbar() {
+                    leading.append(windowControlsArea(metrics, context, barModifiers))
+                }
+                for group in toolbarGroups(sink.navigation, metrics, context, barModifiers) {
+                    leading.append(group)
+                }
+                if sink.sidebarToggle {
+                    leading.append(sidebarToggle(metrics, context, barModifiers))
+                }
             }
-            for group in toolbarGroups(sink.navigation, metrics, context, barModifiers) {
-                leading.append(group)
+            sections.append(documentSection(sink, move leading, metrics, context, barModifiers))
+            let band = CALayerDescription {
+                layout: CALayoutIntent {
+                    axis: .Row,
+                    heightFill: false,
+                    fixedHeight: metrics.toolbarHeight
+                },
+                sublayers: move sections
             }
-            if sink.sidebarToggle {
-                leading.append(sidebarToggle(metrics, context, barModifiers))
+            // A phone's tabs float at the foot of the window instead (`WindowBottomBar`).
+            if tabBarAtFoot(context) || sink.tabs.count == 0 && sink.covered.tabs.count == 0 {
+                return band
             }
-        }
-        sections.append(documentSection(sink, move leading, metrics, context, barModifiers))
-        let band = CALayerDescription {
-            layout: CALayoutIntent {
-                axis: .Row,
-                heightFill: false,
-                fixedHeight: metrics.toolbarHeight
-            },
-            sublayers: move sections
-        }
-        // A phone's tabs float at the foot of the window instead (`WindowBottomBar`).
-        if tabBarAtFoot(context) || sink.tabs.count == 0 && sink.covered.tabs.count == 0 {
-            return band
-        }
-        var layers: [CALayerDescription] = [band]
-        for bar in chromeTabBars(sink, context, barModifiers) {
-            layers.append(bar)
-        }
-        // The tabs stand in the items' row, at the band's top, with the gap
-        // under both.
-        return CALayerDescription {
-            layout: CALayoutIntent {
-                heightFill: false,
-                fixedHeight: metrics.toolbarHeight,
-                alignment: Point { x: 0.5, y: 0.0 }
-            },
-            sublayers: move layers
+            var layers: [CALayerDescription] = [band]
+            for bar in chromeTabBars(sink, context, barModifiers) {
+                layers.append(bar)
+            }
+            // The tabs stand in the items' row, at the band's top, with the gap
+            // under both.
+            return CALayerDescription {
+                layout: CALayoutIntent {
+                    heightFill: false,
+                    fixedHeight: metrics.toolbarHeight,
+                    alignment: Point { x: 0.5, y: 0.0 }
+                },
+                sublayers: move layers
+            }
         }
     }
 

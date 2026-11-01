@@ -19,33 +19,39 @@ function menuGroundEnsure() {
 
 // The menu whose button is pressed by `key` holds its glass in this build.
 function menuGroundTake(key: Number) {
-    menuGroundEnsure()
-    var table = nativeRecover<MenuGroundTable>(ambientStateGet(StateSlot.menuGround))
-    table.keys.append(key)
+    unsafe {
+        menuGroundEnsure()
+        var table = nativeRecover<MenuGroundTable>(ambientStateGet(StateSlot.menuGround))
+        table.keys.append(key)
+    }
 }
 
 // Whether `described`, what a glass holds, is a menu's button holding its
 // glass: the button itself or the button under modifiers that wrap it alone.
 function menuGroundTakenBy(described: borrow CALayerDescription) -> Bool {
-    menuGroundEnsure()
-    let table = nativeRecover<MenuGroundTable>(ambientStateGet(StateSlot.menuGround))
-    if table.keys.count == 0 { return false }
-    var layer = copy described
-    while true {
-        if layer.hitKey != 0 {
-            for key in table.keys {
-                if key == layer.hitKey { return true }
+    unsafe {
+        menuGroundEnsure()
+        let table = nativeRecover<MenuGroundTable>(ambientStateGet(StateSlot.menuGround))
+        if table.keys.count == 0 { return false }
+        var layer = copy described
+        while true {
+            if layer.hitKey != 0 {
+                for key in table.keys {
+                    if key == layer.hitKey { return true }
+                }
             }
+            if layer.sublayers.count != 1 { return false }
+            layer = copy layer.sublayers[0]
         }
-        if layer.sublayers.count != 1 { return false }
-        layer = copy layer.sublayers[0]
+        return false
     }
-    return false
 }
 
 // A new build holds none of the last one's.
 function menuGroundReset() {
-    menuGroundEnsure()
-    var table = nativeRecover<MenuGroundTable>(ambientStateGet(StateSlot.menuGround))
-    table.keys = []
+    unsafe {
+        menuGroundEnsure()
+        var table = nativeRecover<MenuGroundTable>(ambientStateGet(StateSlot.menuGround))
+        table.keys = []
+    }
 }

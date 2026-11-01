@@ -55,28 +55,34 @@ function windowBackdropEnsure() {
 
 // The host says whether it draws what is behind the window under its holes.
 public function windowBackdropAvailableSet(available: Bool) {
-    windowBackdropEnsure()
-    var state = nativeRecover<WindowBackdrop>(ambientStateGet(StateSlot.windowBackdrop))
-    state.available = available
+    unsafe {
+        windowBackdropEnsure()
+        var state = nativeRecover<WindowBackdrop>(ambientStateGet(StateSlot.windowBackdrop))
+        state.available = available
+    }
 }
 
 // Whether a sidebar shows what is behind the window this frame: on a
 // computer, in a window that draws its own frame, on a host that draws the
 // backdrop.
 public function windowBackdropShown() -> Bool {
-    windowBackdropEnsure()
-    let state = nativeRecover<WindowBackdrop>(ambientStateGet(StateSlot.windowBackdrop))
-    return state.available && interfaceMode() == .AdaptiveDesktop && windowDecorated()
+    unsafe {
+        windowBackdropEnsure()
+        let state = nativeRecover<WindowBackdrop>(ambientStateGet(StateSlot.windowBackdrop))
+        return state.available && interfaceMode() == .AdaptiveDesktop && windowDecorated()
+    }
 }
 
 // Forgets the last frame's sidebar, before the content lowers.
 function windowBackdropCollect() {
-    windowBackdropEnsure()
-    var state = nativeRecover<WindowBackdrop>(ambientStateGet(StateSlot.windowBackdrop))
-    var none: [CALayerDescription] = []
-    state.sidebar = move none
-    state.width = 0.0
-    state.height = 0.0
+    unsafe {
+        windowBackdropEnsure()
+        var state = nativeRecover<WindowBackdrop>(ambientStateGet(StateSlot.windowBackdrop))
+        var none: [CALayerDescription] = []
+        state.sidebar = move none
+        state.width = 0.0
+        state.height = 0.0
+    }
 }
 
 // The split view hands the window its sidebar: `sidebar` drawn from the
@@ -88,57 +94,65 @@ public function windowBackdropSidebar(
     height: Number,
     scheme: FoundationScheme
 ) {
-    windowBackdropEnsure()
-    var state = nativeRecover<WindowBackdrop>(ambientStateGet(StateSlot.windowBackdrop))
-    var held: [CALayerDescription] = [sidebar]
-    state.sidebar = move held
-    state.width = width
-    state.height = height
-    state.dark = scheme == .Dark
+    unsafe {
+        windowBackdropEnsure()
+        var state = nativeRecover<WindowBackdrop>(ambientStateGet(StateSlot.windowBackdrop))
+        var held: [CALayerDescription] = [sidebar]
+        state.sidebar = move held
+        state.width = width
+        state.height = height
+        state.dark = scheme == .Dark
+    }
 }
 
 // The strip the backdrop shows through this frame, in the window's points:
 // its width, zero when there is none, and its height.
 public function windowBackdropStrip() -> Size {
-    windowBackdropEnsure()
-    let state = nativeRecover<WindowBackdrop>(ambientStateGet(StateSlot.windowBackdrop))
-    return Size { width: state.width, height: state.height }
+    unsafe {
+        windowBackdropEnsure()
+        let state = nativeRecover<WindowBackdrop>(ambientStateGet(StateSlot.windowBackdrop))
+        return Size { width: state.width, height: state.height }
+    }
 }
 
 // Whether this frame's sidebar is drawn dark.
 public function windowBackdropDark() -> Bool {
-    windowBackdropEnsure()
-    let state = nativeRecover<WindowBackdrop>(ambientStateGet(StateSlot.windowBackdrop))
-    return state.dark
+    unsafe {
+        windowBackdropEnsure()
+        let state = nativeRecover<WindowBackdrop>(ambientStateGet(StateSlot.windowBackdrop))
+        return state.dark
+    }
 }
 
 // The cut and the sidebar over it, for the window to draw over its content.
 function windowBackdropLayers() -> [CALayerDescription] {
-    windowBackdropEnsure()
-    let state = nativeRecover<WindowBackdrop>(ambientStateGet(StateSlot.windowBackdrop))
-    var layers: [CALayerDescription] = []
-    if state.width <= 0.0 { return layers }
-    layers.append(
-        CALayerDescription {
-            disablesActions: true,
-            layout: CALayoutIntent {
-                widthFill: false,
-                heightFill: false,
-                fixedWidth: state.width,
-                fixedHeight: state.height
-            },
-            // The cut's color is the sidebar material the host lays in it,
-            // which the toolbar's glass over the hole takes for what is
-            // behind it.
-            content: .Solid(
-                CASolid { fill: windowBackdropTone(state.dark), blend: .DestinationOut }
-            )
+    unsafe {
+        windowBackdropEnsure()
+        let state = nativeRecover<WindowBackdrop>(ambientStateGet(StateSlot.windowBackdrop))
+        var layers: [CALayerDescription] = []
+        if state.width <= 0.0 { return layers }
+        layers.append(
+            CALayerDescription {
+                disablesActions: true,
+                layout: CALayoutIntent {
+                    widthFill: false,
+                    heightFill: false,
+                    fixedWidth: state.width,
+                    fixedHeight: state.height
+                },
+                // The cut's color is the sidebar material the host lays in it,
+                // which the toolbar's glass over the hole takes for what is
+                // behind it.
+                content: .Solid(
+                    CASolid { fill: windowBackdropTone(state.dark), blend: .DestinationOut }
+                )
+            }
+        )
+        for layer in state.sidebar {
+            layers.append(copy layer)
         }
-    )
-    for layer in state.sidebar {
-        layers.append(copy layer)
+        return layers
     }
-    return layers
 }
 
 // The tone the sidebar material reads as, opaque, as near as the window can
@@ -198,38 +212,44 @@ public function windowBackdropLiftGlass(
     described: borrow mut CALayerDescription,
     scale: Number = 1.0
 ) {
-    let shown = windowBackdropShown()
-    windowBackdropEnsure()
-    var state = nativeRecover<WindowBackdrop>(ambientStateGet(StateSlot.windowBackdrop))
-    var lifted: [WindowBackdropPiece] = []
-    if shown && state.width > 0.0 {
-        windowBackdropLiftIn(described, Point {}, state.sidebar.count, lifted)
-    }
-    state.glass = move lifted
-    if scale != 1.0 {
-        state.width *= scale
-        state.height *= scale
-        for index in 0..state.glass.count {
-            state.glass[index].x *= scale
-            state.glass[index].y *= scale
-            state.glass[index].width *= scale
-            state.glass[index].height *= scale
-            state.glass[index].corner *= scale
+    unsafe {
+        let shown = windowBackdropShown()
+        windowBackdropEnsure()
+        var state = nativeRecover<WindowBackdrop>(ambientStateGet(StateSlot.windowBackdrop))
+        var lifted: [WindowBackdropPiece] = []
+        if shown && state.width > 0.0 {
+            windowBackdropLiftIn(described, Point {}, state.sidebar.count, lifted)
+        }
+        state.glass = move lifted
+        if scale != 1.0 {
+            state.width *= scale
+            state.height *= scale
+            for index in 0..state.glass.count {
+                state.glass[index].x *= scale
+                state.glass[index].y *= scale
+                state.glass[index].width *= scale
+                state.glass[index].height *= scale
+                state.glass[index].corner *= scale
+            }
         }
     }
 }
 
 public function windowBackdropCount() -> Number {
-    windowBackdropEnsure()
-    let state = nativeRecover<WindowBackdrop>(ambientStateGet(StateSlot.windowBackdrop))
-    return state.glass.count + state.sidebar.count
+    unsafe {
+        windowBackdropEnsure()
+        let state = nativeRecover<WindowBackdrop>(ambientStateGet(StateSlot.windowBackdrop))
+        return state.glass.count + state.sidebar.count
+    }
 }
 
 // The glass lifted out of this frame, bottom first.
 public function windowBackdropPieces() -> [WindowBackdropPiece] {
-    windowBackdropEnsure()
-    let state = nativeRecover<WindowBackdrop>(ambientStateGet(StateSlot.windowBackdrop))
-    return copy state.glass
+    unsafe {
+        windowBackdropEnsure()
+        let state = nativeRecover<WindowBackdrop>(ambientStateGet(StateSlot.windowBackdrop))
+        return copy state.glass
+    }
 }
 
 // Finds the cut in `layer`, whose parent's top leading corner stands at

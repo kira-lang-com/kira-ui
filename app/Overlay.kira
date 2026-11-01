@@ -106,36 +106,44 @@ public function overlaySinkEnsure() {
 // Open collection for the frame about to be built, discarding the last one's.
 // The tree is rebuilt every frame and what floats above it is rebuilt with it.
 public function overlayCollect() {
-    overlaySinkEnsure()
-    var sink = nativeRecover<OverlaySink>(ambientStateGet(StateSlot.overlaySink))
-    var empty: [Overlay] = []
-    sink.overlays = move empty
-    sink.collecting = true
+    unsafe {
+        overlaySinkEnsure()
+        var sink = nativeRecover<OverlaySink>(ambientStateGet(StateSlot.overlaySink))
+        var empty: [Overlay] = []
+        sink.overlays = move empty
+        sink.collecting = true
+    }
 }
 
 public function overlayStopCollecting() {
-    overlaySinkEnsure()
-    var sink = nativeRecover<OverlaySink>(ambientStateGet(StateSlot.overlaySink))
-    sink.collecting = false
+    unsafe {
+        overlaySinkEnsure()
+        var sink = nativeRecover<OverlaySink>(ambientStateGet(StateSlot.overlaySink))
+        sink.collecting = false
+    }
 }
 
 // Hand a lowered view to the overlay layer, to be drawn over everything at the
 // given anchor.
 public function overlayPresent(overlay: Overlay) {
-    overlaySinkEnsure()
-    var sink = nativeRecover<OverlaySink>(ambientStateGet(StateSlot.overlaySink))
-    if !sink.collecting {
-        // Presented with no frame collecting: there is no root to hoist it to,
-        // so it is dropped rather than held for whichever frame is built next.
-        return
+    unsafe {
+        overlaySinkEnsure()
+        var sink = nativeRecover<OverlaySink>(ambientStateGet(StateSlot.overlaySink))
+        if !sink.collecting {
+            // Presented with no frame collecting: there is no root to hoist it to,
+            // so it is dropped rather than held for whichever frame is built next.
+            return
+        }
+        sink.overlays.append(move overlay)
     }
-    sink.overlays.append(move overlay)
 }
 
 public function overlaysThisFrame() -> [Overlay] {
-    overlaySinkEnsure()
-    let sink = nativeRecover<OverlaySink>(ambientStateGet(StateSlot.overlaySink))
-    return copy sink.overlays
+    unsafe {
+        overlaySinkEnsure()
+        let sink = nativeRecover<OverlaySink>(ambientStateGet(StateSlot.overlaySink))
+        return copy sink.overlays
+    }
 }
 
 // The anchor a control that is opening something should use: the bounds of the

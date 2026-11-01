@@ -59,9 +59,11 @@ public function menuEnsure() {
 
 // A submenu is out this frame.
 public function menuSubmenuOut(context: borrow BuildContext) {
-    menuEnsure()
-    var state = nativeRecover<MenuState>(ambientStateGet(StateSlot.menu))
-    state.outOn = context.frameCount
+    unsafe {
+        menuEnsure()
+        var state = nativeRecover<MenuState>(ambientStateGet(StateSlot.menu))
+        state.outOn = context.frameCount
+    }
 }
 
 // Whether a submenu is out this frame, as far as the menu built so far has
@@ -74,8 +76,10 @@ public function menuSubmenuIsOut(context: borrow BuildContext) -> Bool {
 
 // The state as it stands, to read.
 public function menuState() -> MenuState {
-    menuEnsure()
-    return nativeRecover<MenuState>(ambientStateGet(StateSlot.menu))
+    unsafe {
+        menuEnsure()
+        return nativeRecover<MenuState>(ambientStateGet(StateSlot.menu))
+    }
 }
 
 public function openMenuKey() -> Number {
@@ -112,102 +116,118 @@ public function menuRetarget(
 // already finished with. The action runs first: what it does is the point, and
 // the dismissal is what happens to the menu afterwards.
 public function menuChooseFn(action: () -> Void) -> () -> Void {
-    let chosen = action
-    let press: () -> Void = { in
-        chosen()
-        menuEnsure()
-        var state = nativeRecover<MenuState>(ambientStateGet(StateSlot.menu))
-        if state.openKey != 0 {
-            menuRevealRetarget(state.openKey, false)
-            state.openKey = 0
-            menuRecessionRetarget(state, false)
+    unsafe {
+        let chosen = action
+        let press: () -> Void = { in
+            unsafe {
+                chosen()
+                menuEnsure()
+                var state = nativeRecover<MenuState>(ambientStateGet(StateSlot.menu))
+                if state.openKey != 0 {
+                    menuRevealRetarget(state.openKey, false)
+                    state.openKey = 0
+                    menuRecessionRetarget(state, false)
+                }
+                if state.presentedKey != 0 {
+                    menuMorphRetarget(state.presentedKey, false)
+                    state.presentedKey = 0
+                }
+                menuBarSetOpen(-1)
+                return
+            }
         }
-        if state.presentedKey != 0 {
-            menuMorphRetarget(state.presentedKey, false)
-            state.presentedKey = 0
-        }
-        menuBarSetOpen(-1)
-        return
+        return press
     }
-    return press
 }
 
 // Presents a bar's menu under its button, or puts it away if it is the one
 // already out. Whatever other menu was out goes.
 public function presentMenuFn(key: Number) -> () -> Void {
-    let target = key
-    let press: () -> Void = { in
-        menuEnsure()
-        var state = nativeRecover<MenuState>(ambientStateGet(StateSlot.menu))
-        let presented = state.presentedKey
-        if presented != 0 {
-            menuMorphRetarget(presented, false)
-            state.presentedKey = 0
+    unsafe {
+        let target = key
+        let press: () -> Void = { in
+            unsafe {
+                menuEnsure()
+                var state = nativeRecover<MenuState>(ambientStateGet(StateSlot.menu))
+                let presented = state.presentedKey
+                if presented != 0 {
+                    menuMorphRetarget(presented, false)
+                    state.presentedKey = 0
+                }
+                if presented != target {
+                    state.presentedKey = target
+                    menuMorphRetarget(target, true)
+                }
+                return
+            }
         }
-        if presented != target {
-            state.presentedKey = target
-            menuMorphRetarget(target, true)
-        }
-        return
+        return press
     }
-    return press
 }
 
 // Puts away whichever bar menu is out: a press anywhere off its card.
 public function dismissMenuFn() -> () -> Void {
-    let press: () -> Void = { in
-        menuEnsure()
-        var state = nativeRecover<MenuState>(ambientStateGet(StateSlot.menu))
-        if state.presentedKey != 0 {
-            menuMorphRetarget(state.presentedKey, false)
-            state.presentedKey = 0
+    unsafe {
+        let press: () -> Void = { in
+            unsafe {
+                menuEnsure()
+                var state = nativeRecover<MenuState>(ambientStateGet(StateSlot.menu))
+                if state.presentedKey != 0 {
+                    menuMorphRetarget(state.presentedKey, false)
+                    state.presentedKey = 0
+                }
+                return
+            }
         }
-        return
+        return press
     }
-    return press
 }
 
 // Every menu out is put away at once, with no motion home: what it came out
 // of is gone, as when the path is replaced with one that starts elsewhere.
 // Its keys name controls of the new views now, which must not find it open.
 public function menuDismissAll() {
-    menuEnsure()
-    var state = nativeRecover<MenuState>(ambientStateGet(StateSlot.menu))
-    if state.openKey != 0 {
-        menuRevealPutAway(state.openKey)
-        state.openKey = 0
+    unsafe {
+        menuEnsure()
+        var state = nativeRecover<MenuState>(ambientStateGet(StateSlot.menu))
+        if state.openKey != 0 {
+            menuRevealPutAway(state.openKey)
+            state.openKey = 0
+        }
+        if state.presentedKey != 0 {
+            menuRevealPutAway(state.presentedKey)
+            state.presentedKey = 0
+        }
+        state.recede = MotionSpringState {}
+        state.receded = 0.0
+        state.shrink = MotionSpringState {}
+        state.shrunk = 0.0
+        state.holdRemaining = 0.0
+        state.pivoted = false
+        menuBarPutAway()
     }
-    if state.presentedKey != 0 {
-        menuRevealPutAway(state.presentedKey)
-        state.presentedKey = 0
-    }
-    state.recede = MotionSpringState {}
-    state.receded = 0.0
-    state.shrink = MotionSpringState {}
-    state.shrunk = 0.0
-    state.holdRemaining = 0.0
-    state.pivoted = false
-    menuBarPutAway()
 }
 
 public function menuRevealPutAway(key: Number) {
-    menuRevealEnsure(key)
-    var reveal = nativeRecover<MenuReveal>(ambientStateGetView(menuRevealSlotKey(key)))
-    reveal.progress = MotionSpringState {}
-    reveal.amount = 0.0
-    reveal.widthAmount = 0.0
-    reveal.height = MotionSpringState {}
-    reveal.heightAmount = 0.0
-    reveal.across = MotionSpringState {}
-    reveal.acrossAmount = 0.0
-    reveal.fall = MotionSpringState {}
-    reveal.fallen = 0.0
-    reveal.corner = MotionSpringState {}
-    reveal.cornered = 0.0
-    reveal.homeward = 0.0
-    reveal.rise = MotionSpringState {}
-    reveal.risen = 0.0
-    reveal.opening = false
+    unsafe {
+        menuRevealEnsure(key)
+        var reveal = nativeRecover<MenuReveal>(ambientStateGetView(menuRevealSlotKey(key)))
+        reveal.progress = MotionSpringState {}
+        reveal.amount = 0.0
+        reveal.widthAmount = 0.0
+        reveal.height = MotionSpringState {}
+        reveal.heightAmount = 0.0
+        reveal.across = MotionSpringState {}
+        reveal.acrossAmount = 0.0
+        reveal.fall = MotionSpringState {}
+        reveal.fallen = 0.0
+        reveal.corner = MotionSpringState {}
+        reveal.cornered = 0.0
+        reveal.homeward = 0.0
+        reveal.rise = MotionSpringState {}
+        reveal.risen = 0.0
+        reveal.opening = false
+    }
 }
 
 // Pressing a submenu's row opens it, or closes it if it is the one already
@@ -226,27 +246,29 @@ public function toggleMenuFn(key: Number) -> () -> Void {
 
 // Opens a submenu, or closes it if it is the one already open.
 public function menuToggle(target: Number) {
-    menuEnsure()
-    var state = nativeRecover<MenuState>(ambientStateGet(StateSlot.menu))
-    var opening = true
-    // Whichever was open is told to close, whatever happens next.
-    //
-    // `openKey` names one submenu, but each one's growth is its OWN spring —
-    // so a menu that lost the open slot without being retargeted keeps the
-    // value it had and its card stands there for good. Opening a second
-    // submenu left the first floating over the menu permanently, which is
-    // the whole of "panels everywhere": nothing ever told them to leave.
-    if state.openKey != 0 && state.openKey != target {
-        menuRevealRetarget(state.openKey, false)
+    unsafe {
+        menuEnsure()
+        var state = nativeRecover<MenuState>(ambientStateGet(StateSlot.menu))
+        var opening = true
+        // Whichever was open is told to close, whatever happens next.
+        //
+        // `openKey` names one submenu, but each one's growth is its OWN spring —
+        // so a menu that lost the open slot without being retargeted keeps the
+        // value it had and its card stands there for good. Opening a second
+        // submenu left the first floating over the menu permanently, which is
+        // the whole of "panels everywhere": nothing ever told them to leave.
+        if state.openKey != 0 && state.openKey != target {
+            menuRevealRetarget(state.openKey, false)
+        }
+        if state.openKey == target {
+            state.openKey = 0
+            opening = false
+        } else {
+            state.openKey = target
+        }
+        menuRecessionRetarget(state, opening)
+        menuRevealRetarget(target, opening)
     }
-    if state.openKey == target {
-        state.openKey = 0
-        opening = false
-    } else {
-        state.openKey = target
-    }
-    menuRecessionRetarget(state, opening)
-    menuRevealRetarget(target, opening)
 }
 
 // Where a held press is resting, as far as a submenu is concerned.
@@ -267,29 +289,31 @@ public enum MenuRest {
 // and comes back to do it again, and letting go where it rested does nothing
 // more.
 public function menuDwellAdvance(context: borrow BuildContext, key: Number, away: Number) {
-    var rest: MenuRest = .Away
-    if context.heldControl == key {
-        rest = .Header
-    } else if context.heldSlides && openMenuKey() == key && context.hoveredKey == away {
-        rest = .Behind
+    unsafe {
+        var rest: MenuRest = .Away
+        if context.heldControl == key {
+            rest = .Header
+        } else if context.heldSlides && openMenuKey() == key && context.hoveredKey == away {
+            rest = .Behind
+        }
+        menuRevealEnsure(key)
+        var reveal = nativeRecover<MenuReveal>(ambientStateGetView(menuRevealSlotKey(key)))
+        if rest != reveal.rest {
+            reveal.rest = move rest
+            reveal.dwell = 0.0
+            reveal.dwelt = false
+        }
+        if reveal.rest == .Away || reveal.dwelt {
+            return
+        }
+        reveal.dwell = reveal.dwell + clockDelta()
+        if reveal.dwell < menuSubmenuMetrics().dwell {
+            clockStillMoving()
+            return
+        }
+        reveal.dwelt = true
+        menuToggle(key)
     }
-    menuRevealEnsure(key)
-    var reveal = nativeRecover<MenuReveal>(ambientStateGetView(menuRevealSlotKey(key)))
-    if rest != reveal.rest {
-        reveal.rest = move rest
-        reveal.dwell = 0.0
-        reveal.dwelt = false
-    }
-    if reveal.rest == .Away || reveal.dwelt {
-        return
-    }
-    reveal.dwell = reveal.dwell + clockDelta()
-    if reveal.dwell < menuSubmenuMetrics().dwell {
-        clockStillMoving()
-        return
-    }
-    reveal.dwelt = true
-    menuToggle(key)
 }
 
 // Sends the menu behind a submenu back, or brings it forward. Its size eases
@@ -388,8 +412,10 @@ public function menuRevealEnsure(key: Number) {
 
 // The state as it stands, to read.
 public function menuRevealState(key: Number) -> MenuReveal {
-    menuRevealEnsure(key)
-    return nativeRecover<MenuReveal>(ambientStateGetView(menuRevealSlotKey(key)))
+    unsafe {
+        menuRevealEnsure(key)
+        return nativeRecover<MenuReveal>(ambientStateGetView(menuRevealSlotKey(key)))
+    }
 }
 
 // The rectangle this submenu hangs from, and the view slot to fill in.
@@ -404,32 +430,34 @@ public function menuAnchor(key: Number) -> Overlay {
 }
 
 public function menuRevealRetarget(key: Number, opening: Bool) {
-    menuRevealEnsure(key)
-    var reveal = nativeRecover<MenuReveal>(ambientStateGetView(menuRevealSlotKey(key)))
-    // The row's own bounds, recorded just before this handler ran — but only
-    // when the submenu is opening from FULLY CLOSED.
-    //
-    // The row is in two places depending on this value: in the menu when the
-    // card is shut, and inside the card when it is not. Re-opening while the
-    // card is still on its way out therefore records the row's position INSIDE
-    // the card, which is the anchor plus the card's padding — so the anchor
-    // moves by that much, the card opens lower, and the next re-open moves it
-    // again. Clicking open and shut quickly walks the panel down the screen.
-    //
-    // A submenu that is still visible already knows where it belongs. Only one
-    // that is completely gone has to ask.
-    if opening && reveal.amount <= 0.0 {
-        reveal.anchorX = pressBoundsX()
-        reveal.anchorY = pressBoundsY()
-        reveal.anchorW = pressBoundsW()
-        reveal.anchorH = pressBoundsH()
+    unsafe {
+        menuRevealEnsure(key)
+        var reveal = nativeRecover<MenuReveal>(ambientStateGetView(menuRevealSlotKey(key)))
+        // The row's own bounds, recorded just before this handler ran — but only
+        // when the submenu is opening from FULLY CLOSED.
+        //
+        // The row is in two places depending on this value: in the menu when the
+        // card is shut, and inside the card when it is not. Re-opening while the
+        // card is still on its way out therefore records the row's position INSIDE
+        // the card, which is the anchor plus the card's padding — so the anchor
+        // moves by that much, the card opens lower, and the next re-open moves it
+        // again. Clicking open and shut quickly walks the panel down the screen.
+        //
+        // A submenu that is still visible already knows where it belongs. Only one
+        // that is completely gone has to ask.
+        if opening && reveal.amount <= 0.0 {
+            reveal.anchorX = pressBoundsX()
+            reveal.anchorY = pressBoundsY()
+            reveal.anchorW = pressBoundsW()
+            reveal.anchorH = pressBoundsH()
+        }
+        reveal.opening = opening
+        menuRetarget(reveal.progress, opening ? 1.0 : 0.0, menuSubmenuSpring(opening))
+        menuRetarget(
+            reveal.rise,
+            opening ? 1.0 : 0.0,
+            menuSubmenuSpring(opening),
+            opening ? menuSubmenuMetrics().riseLaunch : 0.0
+        )
     }
-    reveal.opening = opening
-    menuRetarget(reveal.progress, opening ? 1.0 : 0.0, menuSubmenuSpring(opening))
-    menuRetarget(
-        reveal.rise,
-        opening ? 1.0 : 0.0,
-        menuSubmenuSpring(opening),
-        opening ? menuSubmenuMetrics().riseLaunch : 0.0
-    )
 }
