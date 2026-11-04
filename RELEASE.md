@@ -1,25 +1,16 @@
-# 26.10.4
+# 26.11.1
 
 **Project:** Kira UI  
-**Release week:** 2026-10-26 – 2026-11-01
+**Release week:** 2026-11-02 – 2026-11-08
 
 ## Highlights
 
-The first source release of Kira UI includes:
-
-- A declarative widget layer with composable views, modifiers, and GPU rendering.
-- Text, stacks, surfaces, cards, buttons, gradients, and navigation stack and split-view components.
-- Materials, layout modifiers, and example applications including the basic demo and theme showcase.
+Expanded explicit native interop safety boundaries in Kira UI.
 
 ## Changed
 
-- Audited and scoped raw-pointer, foreign-memory and native callback operations throughout view, input, accessibility, navigation, and rendering integrations.
-- Split the larger picker and toolbar implementations into `PickerViews.kira` and `ToolbarState.kira` while retaining their source-level APIs.
-
-## Breaking changes
-
-- Affected implementations and examples require a Kira compiler with `unsafe` statement support.
+- Scoped low-level operations in accessibility settings, appearance, links, tables, and table columns with the Kira unsafe constructs introduced previously.
 
 ## Known limitations
 
-- The KLF-hosted Kira frontend still needs matching `unsafe` parsing and enforcement.
+- This is an implementation-safety update; it is not a claim of a new widget or proven application-wide compatibility with the KLF-hosted frontend.
