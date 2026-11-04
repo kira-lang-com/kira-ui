@@ -1,19 +1,9 @@
 import Foundation
 
 // SwiftUI's `TableColumnContent`: one column of a `Table`, what its header
-// says and how it is laid out, and the cell it draws for a row.
-//
-// A column is written for the table's rows, `TableColumnContent<RowValue>`,
-// which is how `TableColumn("Name", value: \.name)` in a table of `Person`
-// knows its key path's root without being told. The family itself is one
-// existential over every column, so a row reaches a cell as `Any` and the
-// column reads it back as its own row type.
+// says and how it is laid out.
 public construct TableColumnContent {
-    // What the column's header says and how it is laid out.
     @Required function tableColumn() -> TableColumnSpec
-
-    // The cell the column draws for `row`, one of the table's rows.
-    @Required function tableCell(row: borrow Any) -> Any Widget
 }
 
 // How a column is laid out and what sorts it: its title, its width, how its
@@ -104,88 +94,72 @@ public construct TableColumn<RowValue>(
         return copy spec
     }
 
-    function tableCell(row: borrow Any) -> Any Widget {
-        if row is RowValue {
-            let value = row as RowValue
-            return cell(value)
-        }
-        return EmptyView()
+    function tableCell(row: borrow RowValue) -> Any Widget {
+        return cell(row)
     }
 }
 
-// A column laid out again by one of its modifiers, drawing its cells as it
-// did.
-public construct TableColumnLayout(spec: TableColumnSpec, base: Any TableColumnContent) extends TableColumnContent {
-    function tableColumn() -> TableColumnSpec {
-        return copy spec
-    }
-
-    function tableCell(row: borrow Any) -> Any Widget {
-        return base.tableCell(row)
-    }
-}
-
-extend TableColumnContent {
+extend TableColumn<RowValue> {
     // SwiftUI's `.width(_:)`: the column at one fixed width.
-    function width(width: Number) -> Any TableColumnContent {
-        let spec = tableColumn()
-        return TableColumnLayout(
+    function width(width: Number) -> TableColumn<RowValue> {
+        let spec = self.tableColumn()
+        return TableColumn<RowValue>(
             spec: TableColumnSpec {
                 title: spec.title, width: TableColumnWidth { fixed: .Some(width) }, alignment: spec.alignment,
                 customizationID: spec.customizationID, defaultVisibility: spec.defaultVisibility, comparator: spec.comparator
             },
-            base: self
+            cell: copy self.cell
         )
     }
 
     // SwiftUI's `.width(min:ideal:max:)`: the column takes its share of the
     // table's room within these, each left out when not stated.
-    function width(min: Number? = .None, ideal: Number? = .None, max: Number? = .None) -> Any TableColumnContent {
-        let spec = tableColumn()
-        return TableColumnLayout(
+    function width(min: Number? = .None, ideal: Number? = .None, max: Number? = .None) -> TableColumn<RowValue> {
+        let spec = self.tableColumn()
+        return TableColumn<RowValue>(
             spec: TableColumnSpec {
                 title: spec.title, width: TableColumnWidth { minimum: min, ideal: ideal, maximum: max }, alignment: spec.alignment,
                 customizationID: spec.customizationID, defaultVisibility: spec.defaultVisibility, comparator: spec.comparator
             },
-            base: self
+            cell: copy self.cell
         )
     }
 
     // SwiftUI's `.alignment(_:)`: where the column's cells set their content.
-    function alignment(alignment: TableColumnAlignment) -> Any TableColumnContent {
-        let spec = tableColumn()
-        return TableColumnLayout(
+    function alignment(alignment: TableColumnAlignment) -> TableColumn<RowValue> {
+        let spec = self.tableColumn()
+        return TableColumn<RowValue>(
             spec: TableColumnSpec {
                 title: spec.title, width: spec.width, alignment: alignment,
                 customizationID: spec.customizationID, defaultVisibility: spec.defaultVisibility, comparator: spec.comparator
             },
-            base: self
+            cell: copy self.cell
         )
     }
 
     // SwiftUI's `.customizationID(_:)`: the name the column is kept under
     // when its table's columns are customized.
-    function customizationID(id: String) -> Any TableColumnContent {
-        let spec = tableColumn()
-        return TableColumnLayout(
+    function customizationID(id: String) -> TableColumn<RowValue> {
+        let spec = self.tableColumn()
+        return TableColumn<RowValue>(
             spec: TableColumnSpec {
                 title: spec.title, width: spec.width, alignment: spec.alignment,
                 customizationID: id, defaultVisibility: spec.defaultVisibility, comparator: spec.comparator
             },
-            base: self
+            cell: copy self.cell
         )
     }
 
     // SwiftUI's `.defaultVisibility(_:)`: whether the column shows before its
     // table's columns are customized. A hidden one is left out.
-    function defaultVisibility(visibility: Visibility) -> Any TableColumnContent {
-        let spec = tableColumn()
-        return TableColumnLayout(
+    function defaultVisibility(visibility: Visibility) -> TableColumn<RowValue> {
+        let spec = self.tableColumn()
+        return TableColumn<RowValue>(
             spec: TableColumnSpec {
                 title: spec.title, width: spec.width, alignment: spec.alignment,
                 customizationID: spec.customizationID, defaultVisibility: visibility, comparator: spec.comparator
             },
-            base: self
+            cell: copy self.cell
         )
     }
 }
