@@ -102,8 +102,16 @@ public construct FillWidthLayer() extends Widget {
     }
 }
 
-public construct ScenePaddingLayer() extends Widget {
+// On iOS/macOS/tvOS the only supported public ScenePadding value is
+// `.minimum`. The alternative `.navigationBar` belongs to watchOS only.
+public enum ScenePadding {
+    Minimum
+}
+
+public construct ScenePaddingLayer(edges: EdgeSet = EdgeSet.all) extends Widget {
     let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
 
     function describe(
         context: borrow BuildContext,
@@ -111,7 +119,14 @@ public construct ScenePaddingLayer() extends Widget {
     ) -> CALayerDescription {
         let margin = resolvedContentMargin(modifiers)
         let described = content.describe(context, modifierContextInset(modifiers, margin))
-        return insetDescription(move described, margin)
+        let section = described.groupedSection
+        var padded = insetDescription(move described, margin)
+        if !edges.has(EdgeSet.top) { padded.layout.paddingTop = 0.0 }
+        if !edges.has(EdgeSet.bottom) { padded.layout.paddingBottom = 0.0 }
+        if !edges.has(EdgeSet.leading) { padded.layout.paddingLeading = 0.0 }
+        if !edges.has(EdgeSet.trailing) { padded.layout.paddingTrailing = 0.0 }
+        padded.groupedSection = section
+        return padded
     }
 }
 
@@ -223,6 +238,8 @@ public construct ThemeBorderLayer(border: ThemeBorder) extends Widget {
 public construct ForegroundColorLayer(color: PrimaryColor) extends Widget {
     let content: some Widget
 
+    function isSection() -> Bool { return content.isSection() }
+
     function describe(
         context: borrow BuildContext,
         modifiers: borrow ModifierContext
@@ -238,6 +255,8 @@ public construct ForegroundColorLayer(color: PrimaryColor) extends Widget {
 // background sits behind one view and not its descendants.
 public construct BackgroundColorLayer(color: PrimaryColor) extends Widget {
     let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
 
     // A wash behind the content: a filled layer carrying the content as its
     // sublayer.
@@ -281,7 +300,11 @@ public construct DisabledLayer(value: Bool) extends Widget {
     }
 }
 
-public construct FrameLayer(width: Number, height: Number) extends Widget {
+public construct FrameLayer(
+    width: Number,
+    height: Number,
+    alignment: StackAlignment = .Center
+) extends Widget {
     let content: some Widget
 
     function describe(
@@ -294,7 +317,7 @@ public construct FrameLayer(width: Number, height: Number) extends Widget {
                 heightFill: false,
                 fixedWidth: width,
                 fixedHeight: height,
-                alignment: Point { x: 0.5, y: 0.5 }
+                alignment: stackAlignmentUnitPoint(alignment)
             },
             sublayers: [content.describe(context, modifierContextForChildren(modifiers))]
         }
@@ -317,6 +340,8 @@ public construct ZIndexLayer(value: Number) extends Widget {
 public construct BackgroundLayer(fill: Any Widget) extends Widget {
     let content: some Widget
 
+    function isSection() -> Bool { return content.isSection() }
+
     // The fill is the surface the modifiers describe, drawn behind the content;
     // both share this layer's bounds, fill first so it sits underneath.
     function describe(
@@ -325,6 +350,11 @@ public construct BackgroundLayer(fill: Any Widget) extends Widget {
     ) -> CALayerDescription {
         let described = content.describe(context, modifierContextForChildren(modifiers))
         var behind = fill.describe(context, modifiers)
+        // Only a two-axis expanding view covers the page itself. Registering
+        // a card/row background here would wrongly tint the entire toolbar.
+        if described.layout.expandsWidth && described.layout.expandsHeight {
+            navigationRegisterPageBackground(behind)
+        }
         behind.layout.decorates = true
         return CALayerDescription {
             layout: surfaceFootprint(described.layout),
@@ -647,10 +677,20 @@ public construct SurfaceBorderLayer(color: RGBAColor, width: Number) extends Wid
 public construct ModifierDeltaLayer(delta: ModifierDelta) extends Widget {
     let content: some Widget
 
+    function isSection() -> Bool { return content.isSection() }
+
     function describe(
         context: borrow BuildContext,
         modifiers: borrow ModifierContext
     ) -> CALayerDescription {
+        // View modifier precedence is outermost-first, including explicit
+        // nil/false resets. The inner modifier is still structurally present
+        // but may not replace an already resolved value on the SAME view.
+        if (delta.hasLineHeight && modifiers.hasLineHeight)
+            || (delta.hasUnderline && modifiers.hasUnderline)
+            || (delta.hasStrikethrough && modifiers.hasStrikethrough) {
+            return content.describe(context, modifiers)
+        }
         return content.describe(context, modifierContextApply(modifiers, copy delta))
     }
 }

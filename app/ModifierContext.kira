@@ -148,6 +148,8 @@ public struct ModifierContext {
     // typography: a panel names it once and its rows, fields and switches follow.
     let controlSize: ControlSize = .Regular
     let hasControlSize: Bool = false
+    let dynamicType: DynamicTypeSelection = DynamicTypeSelection {}
+    let textScale: TextScale = .Default
     // How large a glyph is drawn relative to the size class around it.
     let imageScale: IconScale = .Medium
     let hasImageScale: Bool = false
@@ -160,6 +162,7 @@ public struct ModifierContext {
     // turns the row back on.
     let tint: PrimaryColor = .Accent
     let hasTint: Bool = false
+    let tintColor: RGBAColor? = .None
     // The corner a concentric shape takes where this view stands: the radius of
     // the container it is in, less how far that container holds it off its
     // edges. Zero is a square container, which the window's content area is.
@@ -174,19 +177,90 @@ public struct ModifierContext {
     let weightOverride: FontWeight = .Regular
     let hasWeightOverride: Bool = false
     let fontDesign: FontDesign = .Default
+    let fontWidth: FontWidth? = .None
+    // Unlike `.fontWeight`, this is an additive bold trait. An inner
+    // `.bold(false)` clears the trait without replacing the selected font.
+    let bold: Bool = false
     let textAlignment: TextAlignment = .Leading
     let lineLimit: Number = 0
+    let minimumScaleFactor: Number = 1.0
+    let baselineOffset: Number = 0.0
+    let hasTracking: Bool = false
+    let tracking: Number = 0.0
+    let hasKerning: Bool = false
+    let kerning: Number = 0.0
+    let allowsTightening: Bool = false
+    let truncationMode: TextTruncationMode = .Tail
+    let lineLimitMin: Number = 0
+    let lineLimitReservesSpace: Bool = false
     let lineSpacing: Number = 0.0
+    // These are explicit modifier boundaries, not inherited visual traits.
+    // An outer `.lineHeight(nil)`, `.underline(false)` or row-tint nil must
+    // defeat an inner declaration even though modifier bodies are lowered
+    // from the outside towards their content.
+    let hasLineHeight: Bool = false
+    let lineHeight: TextLineHeight? = .None
+    let hasUnderline: Bool = false
+    let underline: Bool = false
+    let underlinePattern: TextLinePattern = .Solid
+    let underlineInk: TextDecorationInk = .Inherit
+    let hasStrikethrough: Bool = false
+    let strikethrough: Bool = false
+    let strikethroughPattern: TextLinePattern = .Solid
+    let strikethroughInk: TextDecorationInk = .Inherit
     let buttonStyle: ButtonStyle = .Automatic
+    let buttonSizing: ButtonSizing = .Automatic
+    let buttonRepeatBehavior: ButtonRepeatBehavior = .Automatic
     let toggleStyle: Any ToggleStyle = DefaultToggleStyle {}
     let progressViewStyle: Any ProgressViewStyle = DefaultProgressViewStyle {}
     let menuStyle: MenuStyle = .Automatic
     let menuIndicator: Visibility = .Automatic
+    let menuActionDismissBehavior: MenuActionDismissBehavior = .Automatic
+    let menuOrder: MenuOrder = .Automatic
+    let insideScrollView: Bool = false
+    let navigationBackButtonHidden: Bool = false
+    let navigationLinkIndicatorVisibility: Visibility = .Automatic
+    let navigationBarTitleDisplayMode: NavigationBarTitleDisplayMode = .Automatic
+    let scrollIndicatorVisibility: Visibility = .Automatic
+    let scrollIndicatorAxes: ScrollIndicatorAxes = .All
+    // SwiftUI's `isScrollEnabled` environment is inherited by scroll views,
+    // including lists; a disabled ancestor cannot be re-enabled by a child.
+    let scrollEnabled: Bool = true
+    // The scroll viewport owns clipping, not the content or an outer frame.
+    let scrollClipDisabled: Bool = false
+    let scrollDismissesKeyboard: ScrollDismissesKeyboardMode = .Automatic
+    let scrollAnchors: ScrollAnchorPreferences = ScrollAnchorPreferences {}
+    let scrollEdgeEffects: ScrollEdgeEffectPreferences = ScrollEdgeEffectPreferences {}
+    let scrollPhaseHandlers: [ScrollPhaseChangeHandler] = []
+    let scrollGeometryObservers: [ScrollGeometryChangeHandler] = []
+    // Unlike a child-local hover effect, a parent's environment opt-out
+    // takes precedence over a descendant's `.hoverEffectDisabled(false)`.
+    let hasHoverEffectDisabled: Bool = false
+    let hoverEffectDisabled: Bool = false
+    let hasFocusEffectDisabled: Bool = false
+    let focusEffectDisabled: Bool = false
+    let defaultHoverEffect: HoverEffect? = .None
+    let hasListRowHoverEffect: Bool = false
+    let listRowHoverEffect: HoverEffect? = .None
+    let hasListRowHoverEffectDisabled: Bool = false
+    let listRowHoverEffectDisabled: Bool = false
+    // Each scrollable axis has its own inherited bounce mode. The current
+    // ScrollView consumes Vertical; future horizontal scrollers use Horizontal.
+    let scrollBounceVertical: ScrollBounceBehavior = .Automatic
+    let scrollBounceHorizontal: ScrollBounceBehavior = .Automatic
+    let scrollFlashEnabled: Bool = false
+    let scrollFlashGeneration: Number = 0.0
+    let formStyle: FormStyle = .Automatic
+    let scrollContentBackground: Visibility = .Automatic
+    let hasListRowBackground: Bool = false
+    let listRowBackground: RGBAColor = RGBAColor {}
     let pickerStyle: PickerStyle = .Automatic
+    let horizontalRadioGroupLayout: Bool = false
     let buttonBorderShape: ButtonBorderShape = .Automatic
     let hasOpacity: Bool = false
     let opacity: Number = 1.0
     let disabled: Bool = false
+    let redactionReasons: RedactionReasons = RedactionReasons.None
     // Every `.focused(...)` binding on the field, outermost first. Like
     // material, it stays with the view it was written on.
     let focus: [FocusBinding] = []
@@ -202,6 +276,22 @@ public struct ModifierContext {
     // theme: the split view states it for its sidebar column and `.listStyle`
     // restates it anywhere below.
     let listStyle: ListStyle = .Automatic
+    // Trait of a list row's icon, distinct from the environment tint used by
+    // switches, sliders and unrelated controls. Nil returns to the style's
+    // default; monochrome uses the label's inherited foreground ink.
+    let hasListItemTint: Bool = false
+    let listItemTint: ListItemTint? = .None
+    // Selection is a container interaction, separate from `disabled`: a
+    // selectable Picker/List row can refuse selection while unrelated
+    // buttons and gestures inside the same view remain interactive.
+    let selectionDisabled: Bool = false
+    let headerProminence: Prominence = .Standard
+    let listSectionSpacing: ListSectionSpacing = .Default
+    let listSectionSeparator: SectionSeparatorPreferences = SectionSeparatorPreferences {}
+    let listSectionMargins: ListSectionMargins = ListSectionMargins {}
+    let insidePlainList: Bool = false
+    let listRowSpacing: Number? = .None
+    let sliderThumbVisibility: Visibility = .Automatic
     // How a `Table` in this subtree is drawn, whether its rows alternate a
     // band, and whether its column headers show: environment values, as
     // SwiftUI's `.tableStyle`, `.alternatingRowBackgrounds` and
@@ -212,6 +302,10 @@ public struct ModifierContext {
     // Which halves of a `Label` show, an environment value like the list
     // style: `.labelStyle` states it and every label below it follows.
     let labelStyle: LabelStyle = .Automatic
+    let hasLabelIconToTitleSpacing: Bool = false
+    let labelIconToTitleSpacing: Number = 0.0
+    let hasLabelReservedIconWidth: Bool = false
+    let labelReservedIconWidth: Number = 0.0
     // Whether the controls here show their titles: `.labelsHidden()` keeps a
     // toggle or a picker to its control alone, its title left to the
     // accessibility label, as SwiftUI's does.
@@ -261,12 +355,20 @@ public function modifierContextApply(
         hasTypography: delta.hasTypography ? true : (delta.hasFont ? false : context.hasTypography),
         controlSize: delta.hasControlSize ? delta.controlSize : context.controlSize,
         hasControlSize: delta.hasControlSize ? true : context.hasControlSize,
+        dynamicType: resolvedDynamicTypeSelection(
+            context.dynamicType, copy delta.dynamicTypeSizeOverride,
+            copy delta.dynamicTypeSizeRange
+        ),
+        textScale: delta.hasTextScale ? delta.textScale : context.textScale,
         imageScale: delta.hasImageScale ? delta.imageScale : context.imageScale,
         hasImageScale: delta.hasImageScale ? true : context.hasImageScale,
         symbolVariant: delta.hasSymbolVariant ? delta.symbolVariant : context.symbolVariant,
         hasSymbolVariant: delta.hasSymbolVariant ? true : context.hasSymbolVariant,
         tint: delta.hasTint ? delta.tint : context.tint,
-        hasTint: delta.hasTint ? true : context.hasTint,
+        hasTint: delta.hasTint ? true : (delta.hasTintColor ? false : context.hasTint),
+        tintColor: delta.hasTintColor ? delta.tintColor : (
+            delta.hasTint ? .None : context.tintColor
+        ),
         containerCornerRadius: delta.containerCornerRadius.or(context.containerCornerRadius),
         containerGlass: delta.containerGlass.or(context.containerGlass),
         contentMargin: delta.hasContentMargin ? delta.contentMargin : context.contentMargin,
@@ -279,25 +381,153 @@ public function modifierContextApply(
             delta.hasFont ? false : context.hasWeightOverride
         ),
         fontDesign: delta.hasFontDesign ? delta.fontDesign : context.fontDesign,
+        fontWidth: delta.hasFontWidth ? copy delta.fontWidth : copy context.fontWidth,
+        bold: delta.hasBold ? delta.bold : context.bold,
         textAlignment: delta.hasTextAlignment ? delta.textAlignment : context.textAlignment,
         lineLimit: delta.hasLineLimit ? delta.lineLimit : context.lineLimit,
+        minimumScaleFactor: delta.hasMinimumScaleFactor
+            ? delta.minimumScaleFactor : context.minimumScaleFactor,
+        baselineOffset: delta.hasBaselineOffset
+            ? delta.baselineOffset : context.baselineOffset,
+        hasTracking: context.hasTracking || delta.hasTracking,
+        tracking: delta.hasTracking ? delta.tracking : context.tracking,
+        hasKerning: context.hasKerning || delta.hasKerning,
+        kerning: delta.hasKerning ? delta.kerning : context.kerning,
+        allowsTightening: delta.hasAllowsTightening
+            ? delta.allowsTightening : context.allowsTightening,
+        truncationMode: delta.hasTruncationMode ? delta.truncationMode : context.truncationMode,
+        lineLimitMin: delta.hasLineLimit ? delta.lineLimitMin : context.lineLimitMin,
+        lineLimitReservesSpace: delta.hasLineLimit ? delta.lineLimitReservesSpace : context.lineLimitReservesSpace,
         lineSpacing: delta.hasLineSpacing ? delta.lineSpacing : context.lineSpacing,
+        hasLineHeight: delta.hasLineHeight || context.hasLineHeight,
+        lineHeight: delta.hasLineHeight ? copy delta.lineHeight : copy context.lineHeight,
+        hasUnderline: delta.hasUnderline || context.hasUnderline,
+        underline: delta.hasUnderline ? delta.underline : context.underline,
+        underlinePattern: delta.hasUnderline ? delta.underlinePattern : context.underlinePattern,
+        underlineInk: delta.hasUnderline ? copy delta.underlineInk : copy context.underlineInk,
+        hasStrikethrough: delta.hasStrikethrough || context.hasStrikethrough,
+        strikethrough: delta.hasStrikethrough ? delta.strikethrough : context.strikethrough,
+        strikethroughPattern: delta.hasStrikethrough
+            ? delta.strikethroughPattern : context.strikethroughPattern,
+        strikethroughInk: delta.hasStrikethrough
+            ? copy delta.strikethroughInk : copy context.strikethroughInk,
         buttonStyle: delta.hasButtonStyle ? delta.buttonStyle : context.buttonStyle,
+        buttonSizing: delta.hasButtonSizing ? delta.buttonSizing : context.buttonSizing,
+        buttonRepeatBehavior: delta.hasButtonRepeatBehavior
+            ? delta.buttonRepeatBehavior : context.buttonRepeatBehavior,
         toggleStyle: delta.hasToggleStyle ? delta.toggleStyle : context.toggleStyle,
         progressViewStyle: delta.hasProgressViewStyle ? delta.progressViewStyle : context.progressViewStyle,
         menuStyle: delta.hasMenuStyle ? delta.menuStyle : context.menuStyle,
         menuIndicator: delta.hasMenuIndicator ? delta.menuIndicator : context.menuIndicator,
+        menuActionDismissBehavior: delta.hasMenuActionDismissBehavior
+            ? delta.menuActionDismissBehavior : context.menuActionDismissBehavior,
+        menuOrder: delta.hasMenuOrder ? delta.menuOrder : context.menuOrder,
+        insideScrollView: context.insideScrollView || delta.entersScrollContent,
+        navigationBackButtonHidden: delta.hasNavigationBackButtonHidden
+            ? delta.navigationBackButtonHidden : context.navigationBackButtonHidden,
+        navigationLinkIndicatorVisibility: delta.hasNavigationLinkIndicatorVisibility
+            ? delta.navigationLinkIndicatorVisibility : context.navigationLinkIndicatorVisibility,
+        navigationBarTitleDisplayMode: delta.hasNavigationBarTitleDisplayMode
+            ? delta.navigationBarTitleDisplayMode : context.navigationBarTitleDisplayMode,
+        scrollIndicatorVisibility: delta.hasScrollIndicators ? delta.scrollIndicatorVisibility : context.scrollIndicatorVisibility,
+        scrollIndicatorAxes: delta.hasScrollIndicators ? delta.scrollIndicatorAxes : context.scrollIndicatorAxes,
+        scrollEnabled: context.scrollEnabled && (
+            delta.hasScrollEnabled ? delta.scrollEnabled : true
+        ),
+        scrollClipDisabled: delta.hasScrollClipDisabled
+            ? delta.scrollClipDisabled : context.scrollClipDisabled,
+        scrollDismissesKeyboard: delta.hasScrollDismissesKeyboard
+            ? delta.scrollDismissesKeyboard : context.scrollDismissesKeyboard,
+        scrollAnchors: scrollAnchorPreferencesApply(
+            context.scrollAnchors, copy delta.scrollAnchorChange
+        ),
+        scrollEdgeEffects: scrollEdgeEffectsApply(
+            context.scrollEdgeEffects, copy delta.scrollEdgeEffectChange
+        ),
+        scrollPhaseHandlers: scrollPhaseHandlersAppending(
+            context.scrollPhaseHandlers, copy delta.onScrollPhaseChange
+        ),
+        scrollGeometryObservers: scrollGeometryObserversAppending(
+            context.scrollGeometryObservers, copy delta.onScrollGeometryChange
+        ),
+        hasHoverEffectDisabled: context.hasHoverEffectDisabled || delta.hasHoverEffectDisabled,
+        hoverEffectDisabled: context.hasHoverEffectDisabled
+            ? context.hoverEffectDisabled : (
+                delta.hasHoverEffectDisabled ? delta.hoverEffectDisabled : context.hoverEffectDisabled
+            ),
+        hasFocusEffectDisabled: context.hasFocusEffectDisabled || delta.hasFocusEffectDisabled,
+        focusEffectDisabled: context.hasFocusEffectDisabled
+            ? context.focusEffectDisabled : (
+                delta.hasFocusEffectDisabled ? delta.focusEffectDisabled : context.focusEffectDisabled
+            ),
+        defaultHoverEffect: match delta.defaultHoverEffect {
+            Some(value) -> .Some(value)
+            None -> copy context.defaultHoverEffect
+        },
+        hasListRowHoverEffect: context.hasListRowHoverEffect || delta.hasListRowHoverEffect,
+        listRowHoverEffect: delta.hasListRowHoverEffect
+            ? copy delta.listRowHoverEffect : copy context.listRowHoverEffect,
+        hasListRowHoverEffectDisabled: context.hasListRowHoverEffectDisabled
+            || delta.hasListRowHoverEffectDisabled,
+        listRowHoverEffectDisabled: context.hasListRowHoverEffectDisabled
+            ? context.listRowHoverEffectDisabled : (
+                delta.hasListRowHoverEffectDisabled
+                    ? delta.listRowHoverEffectDisabled : context.listRowHoverEffectDisabled
+            ),
+        scrollBounceVertical: delta.hasScrollBounceVertical
+            ? delta.scrollBounceVertical : context.scrollBounceVertical,
+        scrollBounceHorizontal: delta.hasScrollBounceHorizontal
+            ? delta.scrollBounceHorizontal : context.scrollBounceHorizontal,
+        scrollFlashEnabled: context.scrollFlashEnabled || delta.hasScrollFlash,
+        scrollFlashGeneration: context.scrollFlashGeneration + (
+            delta.hasScrollFlash ? delta.scrollFlashGeneration : 0.0
+        ),
+        formStyle: delta.hasFormStyle ? delta.formStyle : context.formStyle,
+        scrollContentBackground: delta.hasScrollContentBackground ? delta.scrollContentBackground : context.scrollContentBackground,
+        hasListRowBackground: delta.hasListRowBackground ? true : context.hasListRowBackground,
+        listRowBackground: delta.hasListRowBackground ? delta.listRowBackground : context.listRowBackground,
         pickerStyle: delta.hasPickerStyle ? delta.pickerStyle : context.pickerStyle,
+        horizontalRadioGroupLayout: context.horizontalRadioGroupLayout
+            || delta.horizontalRadioGroupLayout,
         buttonBorderShape: delta.hasButtonBorderShape ? delta.buttonBorderShape : context.buttonBorderShape,
         hasOpacity: delta.hasOpacity ? true : context.hasOpacity,
         opacity: context.opacity * (delta.hasOpacity ? delta.opacity : 1.0),
         disabled: context.disabled || delta.disabled,
+        redactionReasons: delta.resetRedaction
+            ? RedactionReasons.None
+            : context.redactionReasons.union(delta.redactionReasons),
         focus: delta.hasFocus ? withFocusBinding(context.focus, delta.focus) : context.focus,
         listStyle: delta.hasListStyle ? delta.listStyle : context.listStyle,
+        hasListItemTint: delta.hasListItemTint || context.hasListItemTint,
+        listItemTint: delta.hasListItemTint ? copy delta.listItemTint : copy context.listItemTint,
+        selectionDisabled: delta.hasSelectionDisabled
+            ? delta.selectionDisabled : context.selectionDisabled,
+        headerProminence: delta.hasHeaderProminence
+            ? delta.headerProminence : context.headerProminence,
+        listSectionSpacing: delta.hasListSectionSpacing
+            ? delta.listSectionSpacing : context.listSectionSpacing,
+        listSectionSeparator: mergedSectionSeparatorPreferences(
+            context.listSectionSeparator, delta.listSectionSeparator
+        ),
+        listSectionMargins: mergedListSectionMargins(
+            context.listSectionMargins, delta.listSectionMargins
+        ),
+        insidePlainList: context.insidePlainList || delta.entersPlainList,
+        listRowSpacing: delta.hasListRowSpacing ? delta.listRowSpacing : context.listRowSpacing,
+        sliderThumbVisibility: delta.hasSliderThumbVisibility
+            ? delta.sliderThumbVisibility : context.sliderThumbVisibility,
         tableStyle: delta.hasTableStyle ? delta.tableStyle : context.tableStyle,
         alternatingRowBackgrounds: delta.hasAlternatingRowBackgrounds ? delta.alternatingRowBackgrounds : context.alternatingRowBackgrounds,
         tableColumnHeaders: delta.hasTableColumnHeaders ? delta.tableColumnHeaders : context.tableColumnHeaders,
         labelStyle: delta.hasLabelStyle ? delta.labelStyle : context.labelStyle,
+        hasLabelIconToTitleSpacing: delta.hasLabelIconToTitleSpacing
+            || context.hasLabelIconToTitleSpacing,
+        labelIconToTitleSpacing: delta.hasLabelIconToTitleSpacing
+            ? delta.labelIconToTitleSpacing : context.labelIconToTitleSpacing,
+        hasLabelReservedIconWidth: delta.hasLabelReservedIconWidth
+            || context.hasLabelReservedIconWidth,
+        labelReservedIconWidth: delta.hasLabelReservedIconWidth
+            ? delta.labelReservedIconWidth : context.labelReservedIconWidth,
         labelsHidden: delta.hasLabelsHidden ? delta.labelsHidden : context.labelsHidden,
         stackAxis: delta.hasStackAxis ? delta.stackAxis : context.stackAxis,
         textFieldStyle: delta.hasTextFieldStyle ? delta.textFieldStyle : context.textFieldStyle,
@@ -350,12 +580,15 @@ public function modifierContextForOverlay(context: borrow ModifierContext) -> Mo
         hasTypography: inherited.hasTypography,
         controlSize: inherited.controlSize,
         hasControlSize: inherited.hasControlSize,
+        dynamicType: copy inherited.dynamicType,
+        textScale: inherited.textScale,
         imageScale: inherited.imageScale,
         hasImageScale: inherited.hasImageScale,
         symbolVariant: inherited.symbolVariant,
         hasSymbolVariant: inherited.hasSymbolVariant,
         tint: inherited.tint,
         hasTint: inherited.hasTint,
+        tintColor: inherited.tintColor,
         contentMargin: inherited.contentMargin,
         hasContentMargin: inherited.hasContentMargin,
         fontSize: inherited.fontSize,
@@ -364,26 +597,94 @@ public function modifierContextForOverlay(context: borrow ModifierContext) -> Mo
         weightOverride: inherited.weightOverride,
         hasWeightOverride: inherited.hasWeightOverride,
         fontDesign: inherited.fontDesign,
+        fontWidth: copy inherited.fontWidth,
+        bold: inherited.bold,
         textAlignment: inherited.textAlignment,
         lineLimit: inherited.lineLimit,
+        minimumScaleFactor: inherited.minimumScaleFactor,
+        baselineOffset: inherited.baselineOffset,
+        hasTracking: inherited.hasTracking,
+        tracking: inherited.tracking,
+        hasKerning: inherited.hasKerning,
+        kerning: inherited.kerning,
+        allowsTightening: inherited.allowsTightening,
+        truncationMode: inherited.truncationMode,
+        lineLimitMin: inherited.lineLimitMin,
+        lineLimitReservesSpace: inherited.lineLimitReservesSpace,
         lineSpacing: inherited.lineSpacing,
+        lineHeight: copy inherited.lineHeight,
+        underline: inherited.underline,
+        underlinePattern: inherited.underlinePattern,
+        underlineInk: copy inherited.underlineInk,
+        strikethrough: inherited.strikethrough,
+        strikethroughPattern: inherited.strikethroughPattern,
+        strikethroughInk: copy inherited.strikethroughInk,
         buttonStyle: inherited.buttonStyle,
+        buttonSizing: inherited.buttonSizing,
+        buttonRepeatBehavior: inherited.buttonRepeatBehavior,
         toggleStyle: inherited.toggleStyle,
         progressViewStyle: inherited.progressViewStyle,
         menuStyle: inherited.menuStyle,
         menuIndicator: inherited.menuIndicator,
+        menuActionDismissBehavior: inherited.menuActionDismissBehavior,
+        menuOrder: inherited.menuOrder,
+        insideScrollView: inherited.insideScrollView,
+        navigationBackButtonHidden: inherited.navigationBackButtonHidden,
+        navigationLinkIndicatorVisibility: inherited.navigationLinkIndicatorVisibility,
+        navigationBarTitleDisplayMode: inherited.navigationBarTitleDisplayMode,
+        scrollIndicatorVisibility: inherited.scrollIndicatorVisibility,
+        scrollIndicatorAxes: inherited.scrollIndicatorAxes,
+        scrollEnabled: inherited.scrollEnabled,
+        scrollClipDisabled: inherited.scrollClipDisabled,
+        scrollDismissesKeyboard: inherited.scrollDismissesKeyboard,
+        scrollAnchors: copy inherited.scrollAnchors,
+        scrollEdgeEffects: copy inherited.scrollEdgeEffects,
+        scrollPhaseHandlers: copy inherited.scrollPhaseHandlers,
+        scrollGeometryObservers: copy inherited.scrollGeometryObservers,
+        hasHoverEffectDisabled: inherited.hasHoverEffectDisabled,
+        hoverEffectDisabled: inherited.hoverEffectDisabled,
+        hasFocusEffectDisabled: inherited.hasFocusEffectDisabled,
+        focusEffectDisabled: inherited.focusEffectDisabled,
+        defaultHoverEffect: copy inherited.defaultHoverEffect,
+        hasListRowHoverEffect: inherited.hasListRowHoverEffect,
+        listRowHoverEffect: copy inherited.listRowHoverEffect,
+        hasListRowHoverEffectDisabled: inherited.hasListRowHoverEffectDisabled,
+        listRowHoverEffectDisabled: inherited.listRowHoverEffectDisabled,
+        scrollBounceVertical: inherited.scrollBounceVertical,
+        scrollBounceHorizontal: inherited.scrollBounceHorizontal,
+        scrollFlashEnabled: inherited.scrollFlashEnabled,
+        scrollFlashGeneration: inherited.scrollFlashGeneration,
+        formStyle: inherited.formStyle,
+        scrollContentBackground: inherited.scrollContentBackground,
+        hasListRowBackground: inherited.hasListRowBackground,
+        listRowBackground: inherited.listRowBackground,
         pickerStyle: inherited.pickerStyle,
+        horizontalRadioGroupLayout: inherited.horizontalRadioGroupLayout,
         buttonBorderShape: inherited.buttonBorderShape,
         // Full strength, whatever the presenter currently is.
         hasOpacity: false,
         opacity: 1.0,
         disabled: inherited.disabled,
+        redactionReasons: inherited.redactionReasons,
         focus: inherited.focus,
         listStyle: inherited.listStyle,
+        listItemTint: copy inherited.listItemTint,
+        selectionDisabled: inherited.selectionDisabled,
+        headerProminence: inherited.headerProminence,
+        listSectionSpacing: inherited.listSectionSpacing,
+        listSectionSeparator: copy inherited.listSectionSeparator,
+        listSectionMargins: copy inherited.listSectionMargins,
+        insidePlainList: inherited.insidePlainList,
+        listRowSpacing: inherited.listRowSpacing,
+        sliderThumbVisibility: inherited.sliderThumbVisibility,
         tableStyle: inherited.tableStyle,
         alternatingRowBackgrounds: inherited.alternatingRowBackgrounds,
         tableColumnHeaders: inherited.tableColumnHeaders,
         labelStyle: inherited.labelStyle,
+        hasLabelIconToTitleSpacing: inherited.hasLabelIconToTitleSpacing,
+        labelIconToTitleSpacing: inherited.labelIconToTitleSpacing,
+        hasLabelReservedIconWidth: inherited.hasLabelReservedIconWidth,
+        labelReservedIconWidth: inherited.labelReservedIconWidth,
         labelsHidden: inherited.labelsHidden,
         stackAxis: inherited.stackAxis,
         textFieldStyle: inherited.textFieldStyle,
@@ -426,12 +727,15 @@ public function modifierContextPresenting(
         hasTypography: inherited.hasTypography,
         controlSize: inherited.controlSize,
         hasControlSize: inherited.hasControlSize,
+        dynamicType: copy inherited.dynamicType,
+        textScale: inherited.textScale,
         imageScale: inherited.imageScale,
         hasImageScale: inherited.hasImageScale,
         symbolVariant: inherited.symbolVariant,
         hasSymbolVariant: inherited.hasSymbolVariant,
         tint: inherited.tint,
         hasTint: inherited.hasTint,
+        tintColor: inherited.tintColor,
         contentMargin: inherited.contentMargin,
         hasContentMargin: inherited.hasContentMargin,
         fontSize: inherited.fontSize,
@@ -440,25 +744,93 @@ public function modifierContextPresenting(
         weightOverride: inherited.weightOverride,
         hasWeightOverride: inherited.hasWeightOverride,
         fontDesign: inherited.fontDesign,
+        fontWidth: copy inherited.fontWidth,
+        bold: inherited.bold,
         textAlignment: inherited.textAlignment,
         lineLimit: inherited.lineLimit,
+        minimumScaleFactor: inherited.minimumScaleFactor,
+        baselineOffset: inherited.baselineOffset,
+        hasTracking: inherited.hasTracking,
+        tracking: inherited.tracking,
+        hasKerning: inherited.hasKerning,
+        kerning: inherited.kerning,
+        allowsTightening: inherited.allowsTightening,
+        truncationMode: inherited.truncationMode,
+        lineLimitMin: inherited.lineLimitMin,
+        lineLimitReservesSpace: inherited.lineLimitReservesSpace,
         lineSpacing: inherited.lineSpacing,
+        lineHeight: copy inherited.lineHeight,
+        underline: inherited.underline,
+        underlinePattern: inherited.underlinePattern,
+        underlineInk: copy inherited.underlineInk,
+        strikethrough: inherited.strikethrough,
+        strikethroughPattern: inherited.strikethroughPattern,
+        strikethroughInk: copy inherited.strikethroughInk,
         buttonStyle: presentation == .MenuRow ? ButtonStyle.Automatic : inherited.buttonStyle,
+        buttonSizing: inherited.buttonSizing,
+        buttonRepeatBehavior: inherited.buttonRepeatBehavior,
         toggleStyle: inherited.toggleStyle,
         progressViewStyle: inherited.progressViewStyle,
         menuStyle: inherited.menuStyle,
         menuIndicator: inherited.menuIndicator,
+        menuActionDismissBehavior: inherited.menuActionDismissBehavior,
+        menuOrder: inherited.menuOrder,
+        insideScrollView: inherited.insideScrollView,
+        navigationBackButtonHidden: inherited.navigationBackButtonHidden,
+        navigationLinkIndicatorVisibility: inherited.navigationLinkIndicatorVisibility,
+        navigationBarTitleDisplayMode: inherited.navigationBarTitleDisplayMode,
+        scrollIndicatorVisibility: inherited.scrollIndicatorVisibility,
+        scrollIndicatorAxes: inherited.scrollIndicatorAxes,
+        scrollEnabled: inherited.scrollEnabled,
+        scrollClipDisabled: inherited.scrollClipDisabled,
+        scrollDismissesKeyboard: inherited.scrollDismissesKeyboard,
+        scrollAnchors: copy inherited.scrollAnchors,
+        scrollEdgeEffects: copy inherited.scrollEdgeEffects,
+        scrollPhaseHandlers: copy inherited.scrollPhaseHandlers,
+        scrollGeometryObservers: copy inherited.scrollGeometryObservers,
+        hasHoverEffectDisabled: inherited.hasHoverEffectDisabled,
+        hoverEffectDisabled: inherited.hoverEffectDisabled,
+        hasFocusEffectDisabled: inherited.hasFocusEffectDisabled,
+        focusEffectDisabled: inherited.focusEffectDisabled,
+        defaultHoverEffect: copy inherited.defaultHoverEffect,
+        hasListRowHoverEffect: inherited.hasListRowHoverEffect,
+        listRowHoverEffect: copy inherited.listRowHoverEffect,
+        hasListRowHoverEffectDisabled: inherited.hasListRowHoverEffectDisabled,
+        listRowHoverEffectDisabled: inherited.listRowHoverEffectDisabled,
+        scrollBounceVertical: inherited.scrollBounceVertical,
+        scrollBounceHorizontal: inherited.scrollBounceHorizontal,
+        scrollFlashEnabled: inherited.scrollFlashEnabled,
+        scrollFlashGeneration: inherited.scrollFlashGeneration,
+        formStyle: inherited.formStyle,
+        scrollContentBackground: inherited.scrollContentBackground,
+        hasListRowBackground: inherited.hasListRowBackground,
+        listRowBackground: inherited.listRowBackground,
         pickerStyle: inherited.pickerStyle,
+        horizontalRadioGroupLayout: inherited.horizontalRadioGroupLayout,
         buttonBorderShape: inherited.buttonBorderShape,
         hasOpacity: inherited.hasOpacity,
         opacity: inherited.opacity,
         disabled: inherited.disabled,
+        redactionReasons: inherited.redactionReasons,
         focus: inherited.focus,
         listStyle: inherited.listStyle,
+        listItemTint: copy inherited.listItemTint,
+        selectionDisabled: inherited.selectionDisabled,
+        headerProminence: inherited.headerProminence,
+        listSectionSpacing: inherited.listSectionSpacing,
+        listSectionSeparator: copy inherited.listSectionSeparator,
+        listSectionMargins: copy inherited.listSectionMargins,
+        insidePlainList: inherited.insidePlainList,
+        listRowSpacing: inherited.listRowSpacing,
+        sliderThumbVisibility: inherited.sliderThumbVisibility,
         tableStyle: inherited.tableStyle,
         alternatingRowBackgrounds: inherited.alternatingRowBackgrounds,
         tableColumnHeaders: inherited.tableColumnHeaders,
         labelStyle: inherited.labelStyle,
+        hasLabelIconToTitleSpacing: inherited.hasLabelIconToTitleSpacing,
+        labelIconToTitleSpacing: inherited.labelIconToTitleSpacing,
+        hasLabelReservedIconWidth: inherited.hasLabelReservedIconWidth,
+        labelReservedIconWidth: inherited.labelReservedIconWidth,
         labelsHidden: inherited.labelsHidden,
         stackAxis: inherited.stackAxis,
         textFieldStyle: inherited.textFieldStyle,
@@ -521,12 +893,15 @@ public function modifierContextForChildren(context: borrow ModifierContext) -> M
         hasTypography: context.hasTypography,
         controlSize: context.controlSize,
         hasControlSize: context.hasControlSize,
+        dynamicType: copy context.dynamicType,
+        textScale: context.textScale,
         imageScale: context.imageScale,
         hasImageScale: context.hasImageScale,
         symbolVariant: context.symbolVariant,
         hasSymbolVariant: context.hasSymbolVariant,
         tint: context.tint,
         hasTint: context.hasTint,
+        tintColor: context.tintColor,
         containerCornerRadius: context.containerCornerRadius,
         containerGlass: copy context.containerGlass,
         contentMargin: context.contentMargin,
@@ -537,25 +912,93 @@ public function modifierContextForChildren(context: borrow ModifierContext) -> M
         weightOverride: context.weightOverride,
         hasWeightOverride: context.hasWeightOverride,
         fontDesign: context.fontDesign,
+        fontWidth: copy context.fontWidth,
+        bold: context.bold,
         textAlignment: context.textAlignment,
         lineLimit: context.lineLimit,
+        minimumScaleFactor: context.minimumScaleFactor,
+        baselineOffset: context.baselineOffset,
+        hasTracking: context.hasTracking,
+        tracking: context.tracking,
+        hasKerning: context.hasKerning,
+        kerning: context.kerning,
+        allowsTightening: context.allowsTightening,
+        truncationMode: context.truncationMode,
+        lineLimitMin: context.lineLimitMin,
+        lineLimitReservesSpace: context.lineLimitReservesSpace,
         lineSpacing: context.lineSpacing,
+        lineHeight: copy context.lineHeight,
+        underline: context.underline,
+        underlinePattern: context.underlinePattern,
+        underlineInk: copy context.underlineInk,
+        strikethrough: context.strikethrough,
+        strikethroughPattern: context.strikethroughPattern,
+        strikethroughInk: copy context.strikethroughInk,
         buttonStyle: context.buttonStyle,
+        buttonSizing: context.buttonSizing,
+        buttonRepeatBehavior: context.buttonRepeatBehavior,
         toggleStyle: context.toggleStyle,
         progressViewStyle: context.progressViewStyle,
         menuStyle: context.menuStyle,
         menuIndicator: context.menuIndicator,
+        menuActionDismissBehavior: context.menuActionDismissBehavior,
+        menuOrder: context.menuOrder,
+        insideScrollView: context.insideScrollView,
+        navigationBackButtonHidden: context.navigationBackButtonHidden,
+        navigationLinkIndicatorVisibility: context.navigationLinkIndicatorVisibility,
+        navigationBarTitleDisplayMode: context.navigationBarTitleDisplayMode,
+        scrollIndicatorVisibility: context.scrollIndicatorVisibility,
+        scrollIndicatorAxes: context.scrollIndicatorAxes,
+        scrollEnabled: context.scrollEnabled,
+        scrollClipDisabled: context.scrollClipDisabled,
+        scrollDismissesKeyboard: context.scrollDismissesKeyboard,
+        scrollAnchors: copy context.scrollAnchors,
+        scrollEdgeEffects: copy context.scrollEdgeEffects,
+        scrollPhaseHandlers: copy context.scrollPhaseHandlers,
+        scrollGeometryObservers: copy context.scrollGeometryObservers,
+        hasHoverEffectDisabled: context.hasHoverEffectDisabled,
+        hoverEffectDisabled: context.hoverEffectDisabled,
+        hasFocusEffectDisabled: context.hasFocusEffectDisabled,
+        focusEffectDisabled: context.focusEffectDisabled,
+        defaultHoverEffect: copy context.defaultHoverEffect,
+        hasListRowHoverEffect: context.hasListRowHoverEffect,
+        listRowHoverEffect: copy context.listRowHoverEffect,
+        hasListRowHoverEffectDisabled: context.hasListRowHoverEffectDisabled,
+        listRowHoverEffectDisabled: context.listRowHoverEffectDisabled,
+        scrollBounceVertical: context.scrollBounceVertical,
+        scrollBounceHorizontal: context.scrollBounceHorizontal,
+        scrollFlashEnabled: context.scrollFlashEnabled,
+        scrollFlashGeneration: context.scrollFlashGeneration,
+        formStyle: context.formStyle,
+        scrollContentBackground: context.scrollContentBackground,
+        hasListRowBackground: context.hasListRowBackground,
+        listRowBackground: context.listRowBackground,
         pickerStyle: context.pickerStyle,
+        horizontalRadioGroupLayout: context.horizontalRadioGroupLayout,
         buttonBorderShape: context.buttonBorderShape,
         hasOpacity: context.hasOpacity,
         opacity: context.opacity,
         disabled: context.disabled,
+        redactionReasons: context.redactionReasons,
         focus: [],
         listStyle: context.listStyle,
+        listItemTint: copy context.listItemTint,
+        selectionDisabled: context.selectionDisabled,
+        headerProminence: context.headerProminence,
+        listSectionSpacing: context.listSectionSpacing,
+        listSectionSeparator: copy context.listSectionSeparator,
+        listSectionMargins: copy context.listSectionMargins,
+        insidePlainList: context.insidePlainList,
+        listRowSpacing: context.listRowSpacing,
+        sliderThumbVisibility: context.sliderThumbVisibility,
         tableStyle: context.tableStyle,
         alternatingRowBackgrounds: context.alternatingRowBackgrounds,
         tableColumnHeaders: context.tableColumnHeaders,
         labelStyle: context.labelStyle,
+        hasLabelIconToTitleSpacing: context.hasLabelIconToTitleSpacing,
+        labelIconToTitleSpacing: context.labelIconToTitleSpacing,
+        hasLabelReservedIconWidth: context.hasLabelReservedIconWidth,
+        labelReservedIconWidth: context.labelReservedIconWidth,
         labelsHidden: context.labelsHidden,
         stackAxis: context.stackAxis,
         textFieldStyle: context.textFieldStyle,
@@ -594,12 +1037,15 @@ public function modifierContextForPresentation(context: borrow ModifierContext) 
         hasTypography: context.hasTypography,
         controlSize: context.controlSize,
         hasControlSize: context.hasControlSize,
+        dynamicType: copy context.dynamicType,
+        textScale: context.textScale,
         imageScale: context.imageScale,
         hasImageScale: context.hasImageScale,
         symbolVariant: context.symbolVariant,
         hasSymbolVariant: context.hasSymbolVariant,
         tint: context.tint,
         hasTint: context.hasTint,
+        tintColor: context.tintColor,
         containerCornerRadius: context.containerCornerRadius,
         containerGlass: copy context.containerGlass,
         contentMargin: context.contentMargin,
@@ -610,25 +1056,93 @@ public function modifierContextForPresentation(context: borrow ModifierContext) 
         weightOverride: context.weightOverride,
         hasWeightOverride: context.hasWeightOverride,
         fontDesign: context.fontDesign,
+        fontWidth: copy context.fontWidth,
+        bold: context.bold,
         textAlignment: context.textAlignment,
         lineLimit: context.lineLimit,
+        minimumScaleFactor: context.minimumScaleFactor,
+        baselineOffset: context.baselineOffset,
+        hasTracking: context.hasTracking,
+        tracking: context.tracking,
+        hasKerning: context.hasKerning,
+        kerning: context.kerning,
+        allowsTightening: context.allowsTightening,
+        truncationMode: context.truncationMode,
+        lineLimitMin: context.lineLimitMin,
+        lineLimitReservesSpace: context.lineLimitReservesSpace,
         lineSpacing: context.lineSpacing,
+        lineHeight: copy context.lineHeight,
+        underline: context.underline,
+        underlinePattern: context.underlinePattern,
+        underlineInk: copy context.underlineInk,
+        strikethrough: context.strikethrough,
+        strikethroughPattern: context.strikethroughPattern,
+        strikethroughInk: copy context.strikethroughInk,
         buttonStyle: context.buttonStyle,
+        buttonSizing: context.buttonSizing,
+        buttonRepeatBehavior: context.buttonRepeatBehavior,
         toggleStyle: context.toggleStyle,
         progressViewStyle: context.progressViewStyle,
         menuStyle: context.menuStyle,
         menuIndicator: context.menuIndicator,
+        menuActionDismissBehavior: context.menuActionDismissBehavior,
+        menuOrder: context.menuOrder,
+        insideScrollView: context.insideScrollView,
+        navigationBackButtonHidden: context.navigationBackButtonHidden,
+        navigationLinkIndicatorVisibility: context.navigationLinkIndicatorVisibility,
+        navigationBarTitleDisplayMode: context.navigationBarTitleDisplayMode,
+        scrollIndicatorVisibility: context.scrollIndicatorVisibility,
+        scrollIndicatorAxes: context.scrollIndicatorAxes,
+        scrollEnabled: context.scrollEnabled,
+        scrollClipDisabled: context.scrollClipDisabled,
+        scrollDismissesKeyboard: context.scrollDismissesKeyboard,
+        scrollAnchors: copy context.scrollAnchors,
+        scrollEdgeEffects: copy context.scrollEdgeEffects,
+        scrollPhaseHandlers: copy context.scrollPhaseHandlers,
+        scrollGeometryObservers: copy context.scrollGeometryObservers,
+        hasHoverEffectDisabled: context.hasHoverEffectDisabled,
+        hoverEffectDisabled: context.hoverEffectDisabled,
+        hasFocusEffectDisabled: context.hasFocusEffectDisabled,
+        focusEffectDisabled: context.focusEffectDisabled,
+        defaultHoverEffect: copy context.defaultHoverEffect,
+        hasListRowHoverEffect: context.hasListRowHoverEffect,
+        listRowHoverEffect: copy context.listRowHoverEffect,
+        hasListRowHoverEffectDisabled: context.hasListRowHoverEffectDisabled,
+        listRowHoverEffectDisabled: context.listRowHoverEffectDisabled,
+        scrollBounceVertical: context.scrollBounceVertical,
+        scrollBounceHorizontal: context.scrollBounceHorizontal,
+        scrollFlashEnabled: context.scrollFlashEnabled,
+        scrollFlashGeneration: context.scrollFlashGeneration,
+        formStyle: context.formStyle,
+        scrollContentBackground: context.scrollContentBackground,
+        hasListRowBackground: context.hasListRowBackground,
+        listRowBackground: context.listRowBackground,
         pickerStyle: context.pickerStyle,
+        horizontalRadioGroupLayout: context.horizontalRadioGroupLayout,
         buttonBorderShape: context.buttonBorderShape,
         hasOpacity: context.hasOpacity,
         opacity: context.opacity,
         disabled: context.disabled,
+        redactionReasons: context.redactionReasons,
         focus: [],
         listStyle: context.listStyle,
+        listItemTint: copy context.listItemTint,
+        selectionDisabled: context.selectionDisabled,
+        headerProminence: context.headerProminence,
+        listSectionSpacing: context.listSectionSpacing,
+        listSectionSeparator: copy context.listSectionSeparator,
+        listSectionMargins: copy context.listSectionMargins,
+        insidePlainList: context.insidePlainList,
+        listRowSpacing: context.listRowSpacing,
+        sliderThumbVisibility: context.sliderThumbVisibility,
         tableStyle: context.tableStyle,
         alternatingRowBackgrounds: context.alternatingRowBackgrounds,
         tableColumnHeaders: context.tableColumnHeaders,
         labelStyle: context.labelStyle,
+        hasLabelIconToTitleSpacing: context.hasLabelIconToTitleSpacing,
+        labelIconToTitleSpacing: context.labelIconToTitleSpacing,
+        hasLabelReservedIconWidth: context.hasLabelReservedIconWidth,
+        labelReservedIconWidth: context.labelReservedIconWidth,
         labelsHidden: context.labelsHidden,
         stackAxis: context.stackAxis,
         textFieldStyle: context.textFieldStyle,

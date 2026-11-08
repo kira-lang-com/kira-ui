@@ -104,11 +104,21 @@ extend Widget {
         }
     }
 
-    // SwiftUI's `.scenePadding()`: the column's own layout margin on every
-    // edge, with nothing painted behind. Content standing on a pane it does not
-    // own -- a sidebar's glass -- is held where the column holds everything.
-    function scenePadding() -> Any Widget {
-        return ScenePaddingLayer() {
+    // SwiftUI's `.scenePadding(_ edges: Edge.Set = .all)`.
+    function scenePadding(edges: EdgeSet = EdgeSet.all) -> Any Widget {
+        return ScenePaddingLayer(edges: edges) {
+            self
+        }
+    }
+
+    // SwiftUI's `.scenePadding(_ padding: ScenePadding, edges: Edge.Set = .all)`.
+    // The minimum scene margin is derived from the current column/window,
+    // never a fixed point value stored when constructing the modifier.
+    function scenePadding(
+        padding: ScenePadding,
+        edges: EdgeSet = EdgeSet.all
+    ) -> Any Widget {
+        return ScenePaddingLayer(edges: edges) {
             self
         }
     }
@@ -177,6 +187,15 @@ extend Widget {
         }
     }
 
+    // The SwiftUI overload accepting an optional design. No explicit design
+    // leaves the inherited font unchanged.
+    function fontDesign(design: FontDesign?) -> Any Widget {
+        return match design {
+            Some(value) -> self.fontDesign(value)
+            None -> self
+        }
+    }
+
     // SwiftUI's `.monospaced()`: the text in this subtree set in the
     // monospaced face.
     function monospaced() -> Any Widget {
@@ -201,6 +220,35 @@ extend Widget {
         return LineLimitLayer(count: count) {
             self
         }
+    }
+
+    // SwiftUI's optional, closed-range, partial-range and reserved-space
+    // overload family, using explicit bounds where Kira has no `...` literal.
+    // Kira currently promotes numeric literals into optionals during overload
+    // resolution, so the optional overload must carry an explicit label.
+    function lineLimitOptional(count: Number?) -> Any Widget {
+        return match count {
+            Some(limit) -> LineLimitLayer(count: limit) { self }
+            None -> LineLimitLayer(count: 0) { self }
+        }
+    }
+
+    function lineLimit(count: Number, reservesSpace: Bool) -> Any Widget {
+        return LineLimitRangeLayer(range: TextLineLimitRange {
+            min: reservesSpace ? max(count, 0) : 0,
+            max: max(count, 0),
+            reservesSpace: reservesSpace
+        }) { self }
+    }
+
+    function lineLimit(min: Number, max: Number) -> Any Widget {
+        return LineLimitRangeLayer(range: TextLineLimitRange {
+            min: max(min, 0), max: max(max, min)
+        }) { self }
+    }
+
+    function lineLimit(range: TextLineLimitRange) -> Any Widget {
+        return LineLimitRangeLayer(range: range) { self }
     }
 
     // SwiftUI's `.lineSpacing(_:)`: the room between the lines of the text

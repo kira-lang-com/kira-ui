@@ -225,19 +225,27 @@ public construct Section() extends Widget {
                     layers.append(sidebarRowCell(move row, modifiers))
                 }
             }
-            return CALayerDescription {
+            let margins = modifiers.listSectionMargins
+            var section = markListSectionMargins(CALayerDescription {
                 layout: CALayoutIntent {
                     axis: .Column,
                     heightFill: false,
-                    paddingTop: headed ? 0.0 : sidebarMetrics().selectionInset
+                    paddingTop: resolvedListRowInset(
+                        margins.top, headed ? 0.0 : sidebarMetrics().selectionInset
+                    ),
+                    paddingBottom: resolvedListRowInset(margins.bottom, 0.0),
+                    paddingLeading: resolvedListRowInset(margins.leading, 0.0),
+                    paddingTrailing: resolvedListRowInset(margins.trailing, 0.0)
                 },
                 sublayers: move layers
-            }
+            }, margins)
+            section.groupedSection = true
+            return section
         }
         // In an inset grouped list the section is a header over a card of rows
         // over a footer, laid out the list's way.
         if modifiers.controlPresentation == .InsetGrouped {
-            let headerFace = listMetrics().headerFont
+            let headerFace = resolvedSectionHeaderFont(modifiers)
             let footerFace = listMetrics().footerFont
             let headerLayer = headerView()
             .font(size: resolvedLength(headerFace.size), weight: headerFace.weight)
@@ -260,19 +268,48 @@ public construct Section() extends Widget {
                 let followed = rows.count + 1 < described.count
                 rows.append(insetGroupedRow(copy row, followed, context, modifiers))
             }
-            return insetGroupedSection(move rows, move headerLayer, move footerLayer, modifiers)
+            var section = insetGroupedSection(move rows, move headerLayer, move footerLayer, modifiers)
+            section.groupedSection = true
+            return markListSectionMargins(move section, modifiers.listSectionMargins)
         }
         // Anywhere else a section is SwiftUI's: it presents nothing of its own,
         // and its header, rows and footer stand one after another.
-        let section = VStack() {
-            headerView()
+        var described = CALayerDescription {}
+        if modifiers.insidePlainList {
+            // An ordinary VStack does not define selectable List rows, but a
+            // plain List's Section DOES. Lower its children as independent
+            // cells, allowing per-row insets and hover effects without making
+            // the header/footer themselves clickable or hover-highlighted.
+            described = VStack() {
+                headerView()
 
-            For(child in children) {
-                child
-            }
+                PlainListRows() {
+                    For(child in children) { child }
+                }
 
-            footer
+                footer
+            }.describe(context, modifiers)
+        } else {
+            described = VStack() {
+                headerView()
+
+                For(child in children) { child }
+
+                footer
+            }.describe(context, modifiers)
         }
-        return section.describe(context, modifiers)
+        let margins = modifiers.listSectionMargins
+        described.layout.paddingTop += resolvedListRowInset(margins.top, 0.0)
+        described.layout.paddingBottom += resolvedListRowInset(margins.bottom, 0.0)
+        described.layout.paddingLeading += resolvedListRowInset(margins.leading, 0.0)
+        described.layout.paddingTrailing += resolvedListRowInset(margins.trailing, 0.0)
+        var section = markListSectionMargins(
+            plainSectionWithSeparators(move described, modifiers), margins
+        )
+        // Sections are semantic containers in *every* list presentation, not
+        // only the inset-grouped style. Wrapping one in a focus/hover or
+        // presentation modifier must not demote its rows to independent cells.
+        section.groupedSection = true
+        return section
     }
 }

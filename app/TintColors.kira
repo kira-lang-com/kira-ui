@@ -1,0 +1,56 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's `tint(_ color: Color?)` is an environmental color, not a fixed
+// palette name. A caller may supply an absolute RGBA color, an adaptive
+// light/dark color, or nil to return to the default accent. Resolve adaptive
+// colors during description, after the window's preferred scheme is applied.
+public construct ColorTintLayer(color: RGBAColor?) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        return content.describe(
+            context,
+            modifierContextApply(modifiers, modifierDeltaTintColor(copy color))
+        )
+    }
+}
+
+public construct AdaptiveTintLayer(color: AdaptiveColor?) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let resolved: RGBAColor? = match color {
+            Some(adaptive) -> .Some(themeAdaptiveColor(adaptive, modifierAppearance(modifiers)))
+            None -> .None
+        }
+        return content.describe(
+            context,
+            modifierContextApply(modifiers, modifierDeltaTintColor(move resolved))
+        )
+    }
+}
+
+extend Widget {
+    function tint(value: RGBAColor) -> Any Widget {
+        return ColorTintLayer(color: .Some(value)) { self }
+    }
+
+    function tint(value: RGBAColor?) -> Any Widget {
+        return ColorTintLayer(color: value) { self }
+    }
+
+    function tint(value: AdaptiveColor) -> Any Widget {
+        return AdaptiveTintLayer(color: .Some(value)) { self }
+    }
+
+    function tint(value: AdaptiveColor?) -> Any Widget {
+        return AdaptiveTintLayer(color: value) { self }
+    }
+}

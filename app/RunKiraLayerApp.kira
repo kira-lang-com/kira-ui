@@ -31,7 +31,15 @@ public struct KiraLayerAppState {
     var compositor: Compositor = Compositor {}
     var frameCount: Number = 0
     var ui: FoundationUiContext = FoundationUiContext {}
+    // Hover subscriptions, independent of the ordinary pressed/hovered
+    // control key. A pointer may be inside nested hoverable views at once.
+    var hoverRegionKeys: [Number] = []
+    var continuousHoverRegions: [CAHoverRegion] = []
+    var pointerInsideWindow: Bool = false
+    var pointerVisibility: Visibility = .Automatic
     var transparent: Bool = false
+    // Mac host owns a true behind-window backdrop below the Metal UI.
+    var nativeBackdrop: Bool = false
     // The interactive surface the held press landed on -- its layer, and the
     // key that layer answers under now -- where it landed in the window and in
     // the surface's own coordinates, and the surface's size. The pointer's
@@ -43,6 +51,9 @@ public struct KiraLayerAppState {
     var pressLocal: Point = Point {}
     var pressSize: Size = Size {}
     var pressOnControl: Bool = false
+    // Retain the physical down target while sliding changes pressedKey.
+    // Close/dismiss controls accept this original hit only, never a glide.
+    var pressOriginControl: Number = 0
     var pressSlides: Bool = false
     // The surface the held control is in, which the press's platter slides
     // within; the pull may have gone on to another card's bare glass since.
@@ -51,6 +62,11 @@ public struct KiraLayerAppState {
     var pressSerial: Number = 0
     // The pressed control's box as the press found it.
     var pressBounds: Rect = Rect {}
+    // The last viewport clicked owns keyboard navigation. A held viewport
+    // pointer remains captured beyond its bounds until mouse-up.
+    var viewportFocusKey: Number = 0
+    var viewportCapturedKey: Number = 0
+    var viewportRect: Rect = Rect {}
     // The control the last press went down on and when, in seconds, for
     // telling a double-click from two clicks.
     var lastClickKey: Number = 0
@@ -79,7 +95,9 @@ public struct KiraLayerAppState {
 // person would.
 public function kiraLayerHandleEvent(state: borrow mut KiraLayerAppState, event: borrow AppEvent) {
     kiraLayerNoteEvent(state, event.kind)
-    if event.kind == .PointerMoved || event.kind == .PointerDown || event.kind == .PointerUp {
+    if modifierInputSetState(event.modifiers) { state.ui.eventCount++ }
+    if event.kind == .PointerMoved || event.kind == .PointerDown
+        || event.kind == .PointerUp || event.kind == .PointerExited {
         // The keys held with it, and on a press which button: a right press,
         // or a Control-press on a Mac, is a secondary click.
         state.ui.modShift = event.modifiers.shift
@@ -91,16 +109,76 @@ public function kiraLayerHandleEvent(state: borrow mut KiraLayerAppState, event:
             kiraLayerCountClick(state, event.pointerX, event.pointerY, event.timestamp)
         }
         kiraLayerDispatch(state, event.pointerX, event.pointerY, event.kind)
+        if event.kind != .PointerExited {
+            kiraLayerViewportPointer(state, event)
+        }
     }
-    if event.kind == .TextInput || event.kind == .KeyDown {
+    if event.kind == .TextInput || event.kind == .KeyDown || event.kind == .KeyUp {
         kiraLayerDispatchKeyboard(state, event)
+        if state.ui.focusedKey == 0 && state.viewportFocusKey != 0 {
+            let rect = state.viewportRect
+            let extent = Size {
+                width: rect.width / interfaceScale(),
+                height: rect.height / interfaceScale()
+            }
+            let point = Point { x: 0, y: 0 }
+            layerViewportDispatch(state.viewportFocusKey, copy event, move point, move extent)
+        }
     }
     if event.kind == .Scroll {
-        kiraLayerDispatchScroll(state, event)
+        if !kiraLayerViewportScroll(state, event) {
+            kiraLayerDispatchScroll(state, event)
+        }
     }
     if event.kind == .TouchesBegan || event.kind == .TouchesMoved || event.kind == .TouchesEnded || event.kind == .TouchesCancelled {
         kiraLayerDispatchTouch(state, event)
     }
+}
+
+public function kiraLayerViewportPointer(
+    state: borrow mut KiraLayerAppState,
+    event: borrow AppEvent
+) {
+    let hit = state.compositor.tree.hitTestTree(event.pointerX, event.pointerY)
+    if event.kind == .PointerDown {
+        state.viewportCapturedKey = 0
+        state.viewportFocusKey = 0
+        if hit.hit && layerViewportHas(hit.hitKey) {
+            state.viewportCapturedKey = hit.hitKey
+            state.viewportFocusKey = hit.hitKey
+            state.viewportRect = Rect {
+                x: hit.boundsX, y: hit.boundsY,
+                width: hit.boundsWidth, height: hit.boundsHeight
+            }
+        }
+    }
+    let key = state.viewportCapturedKey
+    if key != 0 {
+        let rect = state.viewportRect
+        let scale = interfaceScale()
+        let point = Point {
+            x: (event.pointerX - rect.x) / scale,
+            y: (event.pointerY - rect.y) / scale
+        }
+        let extent = Size { width: rect.width / scale, height: rect.height / scale }
+        let ignored = layerViewportDispatch(key, copy event, move point, move extent)
+    }
+    if event.kind == .PointerUp { state.viewportCapturedKey = 0 }
+}
+
+public function kiraLayerViewportScroll(
+    state: borrow KiraLayerAppState,
+    event: borrow AppEvent
+) -> Bool {
+    let hit = state.compositor.tree.hitTestTree(event.pointerX, event.pointerY)
+    if !hit.hit || !layerViewportHas(hit.hitKey) { return false }
+    let scale = interfaceScale()
+    return layerViewportDispatch(
+        hit.hitKey,
+        copy event,
+        Point { x: (event.pointerX - hit.boundsX) / scale, y: (event.pointerY - hit.boundsY) / scale },
+        Size { width: hit.boundsWidth / scale, height: hit.boundsHeight / scale }
+    )
 }
 
 public function kiraLayerViewport(
@@ -142,21 +220,28 @@ public function kiraLayerDispatch(
 ) {
     state.ui.pointerX = x
     state.ui.pointerY = y
+    state.pointerInsideWindow = kind != .PointerExited
     // A pointer that left the window is over nothing in it, wherever it was
     // last seen.
     let hit = kind == .PointerExited ? CAHitResult {} : state.compositor.tree.hitTestTree(x, y)
     let hoveredBefore = state.ui.hoveredKey
+    let hoverRegionChanged = kiraLayerUpdateHoverRegions(state, hit.hoverKeys)
+    let pointerVisibilityChanged = kiraLayerUpdatePointerVisibility(state, hit.hoverKeys)
+    let continuousHoverChanged = kiraLayerUpdateContinuousHover(state, hit.hoverRegions)
     state.ui.hoveredKey = hit.hit ? hit.hitKey : 0
     state.compositor.tree.setHovered(hit.hit ? hit.layer : Layers.none)
     if kind == .PointerDown {
         state.ui.pressedKey = state.ui.hoveredKey
+        state.pressOriginControl = state.ui.pressedKey
         state.compositor.tree.setPressed(hit.hit ? hit.layer : Layers.none)
         kiraLayerHoldSurface(state, hit, x, y)
         state.pressSlides = hit.surfaceSlides
         state.pressedPanelLayer = hit.surfaceLayer
         // A press focuses the field it lands on, and anywhere else ends the
         // editing, as a tap outside a field does.
-        kiraLayerFocus(state, layerTextInputAccepts(state.ui.hoveredKey) ? state.ui.hoveredKey : 0)
+        let inputFocus = layerTextInputAccepts(state.ui.hoveredKey)
+            ? state.ui.hoveredKey : hit.focusKey
+        kiraLayerFocus(state, inputFocus)
         // Where the control stood when it was pressed, before a press could
         // move or grow it.
         state.pressBounds = Rect {
@@ -179,8 +264,10 @@ public function kiraLayerDispatch(
     if kind == .PointerMoved && state.pressSlides {
         let onControl = hit.hit && hit.hitKey != hit.surfaceKey
         let crossed = hit.surfaceSlides && hit.surfaceLayer != state.pressSurfaceLayer
-        if onControl && hit.surfaceSlides && hit.hitKey != state.ui.pressedKey {
-            state.ui.pressedKey = hit.hitKey
+        let landing = workspaceSliderLandingKey(state.pressOriginControl, hit.hitKey)
+        if onControl && hit.surfaceSlides && landing != state.ui.pressedKey
+            && (!layerActionRequiresDirectPress(hit.hitKey) || landing != hit.hitKey) {
+            state.ui.pressedKey = landing
             if hit.surfaceLayer == state.pressedPanelLayer {
                 state.compositor.tree.slidePress(hit.layer)
             } else {
@@ -202,14 +289,25 @@ public function kiraLayerDispatch(
         }
     }
     if kind == .PointerUp {
-        let released = state.ui.pressedKey
+        let original = state.pressOriginControl
+        let hover = state.pressSlides
+            ? workspaceSliderLandingKey(original, state.ui.hoveredKey)
+            : state.ui.hoveredKey
+        // On a Workspace lens, pointer-up is authoritative: the tab being
+        // released over wins even if a clipped/animated lens copy retained the
+        // previously pressed layer through the last KCA reconciliation.
+        let released = state.pressSlides && hit.surfaceSlides && hover != 0
+            && hit.hit && hit.hitKey != hit.surfaceKey
+            ? hover
+            : workspaceSliderLandingKey(original, state.ui.pressedKey)
         state.ui.pressedKey = 0
+        state.pressOriginControl = 0
         state.compositor.tree.setPressed(Layers.none)
         state.pressSurfaceLayer = Layers.none
         state.pressSurface = 0
         state.pressSlides = false
         state.pressedPanelLayer = Layers.none
-        if released != 0 && released == state.ui.hoveredKey {
+        if released != 0 && released == hover {
             state.ui.clickedKey = released
             // Where the control is, for an action that opens something from it.
             foundationWritePressBounds(state.ui, state.pressBounds)
@@ -218,18 +316,99 @@ public function kiraLayerDispatch(
             // secondary click.
             if state.ui.pressButton == 2 {
                 layerSecondaryActionInvoke(released)
-            } else {
-                layerActionInvoke(released)
+            } else if !buttonRepeatConsumed(released, state.pressSerial) {
+                layerActionInvokeFromPress(released, original)
             }
         }
     }
     // A pointer that only passes over the window changes nothing drawn until
     // it crosses onto another control or carries a press with it.
     let held = state.ui.pressedKey != 0 || state.pressSurface != 0
-    if kind != .PointerMoved || state.ui.hoveredKey != hoveredBefore || held {
+    if kind != .PointerMoved || state.ui.hoveredKey != hoveredBefore
+        || hoverRegionChanged || pointerVisibilityChanged
+        || continuousHoverChanged || held {
         state.ui.eventCount++
     }
     foundationWriteInputSnapshot(state.ui)
+}
+
+// A pointer can cover more than one nested hover observer. Notify leaves
+// before entrances (a move off one control and onto another), preserve the
+// declaration's individual closure identity and never synthesize a press.
+public function hoverRegionsContain(keys: borrow [Number], key: Number) -> Bool {
+    for existing in keys {
+        if existing == key { return true }
+    }
+    return false
+}
+
+public function kiraLayerUpdateHoverRegions(
+    state: borrow mut KiraLayerAppState,
+    next: borrow [Number]
+) -> Bool {
+    var changed = false
+    for key in state.hoverRegionKeys {
+        if !hoverRegionsContain(next, key) {
+            layerHoverChanged(key, false)
+            changed = true
+        }
+    }
+    for key in next {
+        if !hoverRegionsContain(state.hoverRegionKeys, key) {
+            layerHoverChanged(key, true)
+            changed = true
+        }
+    }
+    state.hoverRegionKeys = copy next
+    return changed
+}
+
+public function hoverRegionByKey(
+    regions: borrow [CAHoverRegion],
+    key: Number
+) -> CAHoverRegion? {
+    for region in regions {
+        if region.key == key { return .Some(copy region) }
+    }
+    return .None
+}
+
+// Report active phase on entry and whenever the pointer's local position
+// actually changes; report Ended once on exit. Nested observers have their
+// own local coordinate spaces, so a transformed child doesn't inherit its
+// parent's point or receive the wrong motion delta.
+public function kiraLayerUpdateContinuousHover(
+    state: borrow mut KiraLayerAppState,
+    next: borrow [CAHoverRegion]
+) -> Bool {
+    var changed = false
+    for previous in state.continuousHoverRegions {
+        match hoverRegionByKey(next, previous.key) {
+            None -> {
+                layerContinuousHoverChanged(previous.key, false, previous)
+                changed = true
+            }
+            Some(value) -> {}
+        }
+    }
+    for region in next {
+        var shouldSend = true
+        match hoverRegionByKey(state.continuousHoverRegions, region.key) {
+            Some(previous) -> {
+                shouldSend = previous.localX != region.localX
+                    || previous.localY != region.localY
+                    || previous.globalX != region.globalX
+                    || previous.globalY != region.globalY
+            }
+            None -> {}
+        }
+        if shouldSend {
+            layerContinuousHoverChanged(region.key, true, region)
+            changed = true
+        }
+    }
+    state.continuousHoverRegions = copy next
+    return changed
 }
 
 // How many presses in quick succession the one going down at (x, y) ends: the
@@ -293,6 +472,10 @@ public function kiraLayerDispatchKeyboard(
     state: borrow mut KiraLayerAppState,
     event: borrow AppEvent
 ) {
+    // Release events update the platform's held-key state, but must never
+    // execute an editing command a second time. In particular an arrow key
+    // used to move the insertion point used to fire on both down and up.
+    if event.kind == .KeyUp { return }
     let focused = state.ui.focusedKey
     // A focused field takes Select All, Copy, Cut and Paste before any
     // shortcut, as a Mac's field answers them before the Edit menu.
@@ -308,10 +491,60 @@ public function kiraLayerDispatchKeyboard(
         }
     }
     if event.kind == .KeyDown {
-        let pressed = shortcutPerform(event.key, event.modifiers, focused != 0)
+        let pressed = shortcutPerform(
+            event.key, event.modifiers, focused != 0, event.keyRepeat
+        )
         if pressed || (event.key == .Escape && menuBarDismiss()) {
             state.ui.eventCount++
             return
+        }
+        if event.key == .Tab && !event.modifiers.control
+            && !event.modifiers.alt && !event.modifiers.superKey {
+            let target = layerFocusableNextKey(focused, event.modifiers.shift)
+            if target != 0 {
+                kiraLayerFocus(state, target)
+                return
+            }
+        }
+        // A focused activation-style control may invoke its own underlying
+        // Button action through Space, but editing views retain their keys.
+        if event.key == .Space && !event.keyRepeat && !event.modifiers.control
+            && !event.modifiers.alt && !event.modifiers.superKey
+            && !layerTextInputAccepts(focused) && layerFocusableActivate(focused) {
+            state.ui.eventCount++
+            return
+        }
+        if event.key == .Escape && layerKeyboardCommandDispatch(
+            focused, .Exit
+        ) {
+            state.ui.eventCount++
+            return
+        }
+        // Editing fields own their arrow keys and Delete by default. A
+        // focus-scoped command only handles these keys for a non-text editor,
+        // and never overrides a system Command/Control/Option shortcut.
+        if focused != 0 && !layerTextInputAccepts(focused)
+            && !event.modifiers.control && !event.modifiers.alt
+            && !event.modifiers.superKey {
+            match layerKeyboardCommandMoveForKey(event.key) {
+                Some(direction) -> {
+                    if layerKeyboardCommandDispatch(focused, .Move, direction) {
+                        state.ui.eventCount++
+                        return
+                    }
+                }
+                None -> {}
+            }
+            if (event.key == .Backspace || event.key == .Delete)
+                && layerKeyboardCommandDispatch(focused, .Delete) {
+                state.ui.eventCount++
+                return
+            }
+            if event.key == .Space && !event.keyRepeat
+                && layerKeyboardCommandDispatch(focused, .PlayPause) {
+                state.ui.eventCount++
+                return
+            }
         }
     }
     if focused == 0 {
@@ -322,7 +555,7 @@ public function kiraLayerDispatchKeyboard(
     } else if event.key == .Escape {
         kiraLayerFocus(state, 0)
     } else {
-        layerTextInputCommand(focused, event.key)
+        layerTextInputCommand(focused, event.key, copy event.modifiers)
     }
     state.ui.eventCount++
     foundationWriteInputSnapshot(state.ui)
@@ -334,13 +567,16 @@ public function kiraLayerDispatchKeyboard(
 // and a swipe starts only off the controls. Once the fingers are swiping back,
 // the scroll view lets them go. A wheel reports no phases: its notches step
 // the scroll view under the pointer.
-public function kiraLayerDispatchScroll(state: borrow KiraLayerAppState, event: borrow AppEvent) {
+public function kiraLayerDispatchScroll(state: borrow mut KiraLayerAppState, event: borrow AppEvent) {
     let scale = interfaceScale()
     let logicalX = event.pointerX / scale
     let logicalY = event.pointerY / scale
     if !event.scrollPrecise {
         let hit = state.compositor.tree.hitTestTree(event.pointerX, event.pointerY)
         scrollWheel(hit.scrollKey, -event.scrollY / scale * ScrollWheel.line)
+        if state.ui.focusedKey != 0 && scrollShouldDismissKeyboard(hit.scrollKey, false) {
+            kiraLayerFocus(state, 0)
+        }
         return
     }
     if event.scrollMomentum != .None {
@@ -350,6 +586,9 @@ public function kiraLayerDispatchScroll(state: borrow KiraLayerAppState, event: 
         let hit = state.compositor.tree.hitTestTree(event.pointerX, event.pointerY)
         navigationSwipeBegin(logicalX, logicalY, hit.hit)
         scrollDragBegin(hit.scrollKey, MotionDecay.rubberBandConstantTrackpad, event.timestamp)
+        if state.ui.focusedKey != 0 && scrollShouldDismissKeyboard(hit.scrollKey, false) {
+            kiraLayerFocus(state, 0)
+        }
     }
     if event.scrollPhase == .Began || event.scrollPhase == .Changed {
         // The deltas follow the fingers under natural scrolling and run
@@ -361,6 +600,10 @@ public function kiraLayerDispatchScroll(state: borrow KiraLayerAppState, event: 
             scrollDragCancel()
         } else {
             scrollDragMove(down, event.timestamp)
+            if state.ui.focusedKey != 0 && down != 0.0
+                && scrollShouldDismissKeyboard(scrollDragTarget(), true) {
+                kiraLayerFocus(state, 0)
+            }
         }
     }
     if event.scrollPhase == .Ended || event.scrollPhase == .Cancelled {
@@ -406,6 +649,7 @@ public function kiraLayerHeldContext(
     context.heldSize = state.pressSize
     context.heldOnControl = state.pressOnControl
     context.heldControl = state.ui.pressedKey
+    context.heldStartedControl = state.pressOriginControl
     context.heldSlides = state.pressSlides
     context.heldPress = state.pressSerial
     context.heldOrigin = Point {
@@ -471,7 +715,14 @@ public function kiraLayerDispatchTouch(
             state.pressSlides = false
             foundationWriteInputSnapshot(state.ui)
         }
-        if state.touchScrolling { scrollDragMove(scrollDistance, event.timestamp) }
+        if state.touchScrolling {
+            scrollDragMove(scrollDistance, event.timestamp)
+            if state.ui.focusedKey != 0 && scrollShouldDismissKeyboard(
+                state.touchScrollTarget, true
+            ) {
+                kiraLayerFocus(state, 0)
+            }
+        }
         state.touchPosition = Point { x: logicalX, y: logicalY }
         return
     }

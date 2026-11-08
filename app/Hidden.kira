@@ -1,0 +1,32 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's `.hidden()` preserves the view's full measured layout footprint
+// but excludes its drawing, hit regions, and accessibility descendants. This
+// is not `EmptyView`: parents must still measure the hidden content.
+public construct HiddenLayer() extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var described = content.describe(context, modifierContextForChildren(modifiers))
+        described.opacity = 0.0
+        // Accessibility walks descriptions independently of compositor
+        // opacity. Keep a hidden marker so an accessibility modifier OUTSIDE
+        // `.hidden()` cannot accidentally recreate a visible accessible node.
+        described.accessibilityClear()
+        described.accessibilityElementOf(AccessibilityNode { hidden: true })
+        return described
+    }
+}
+
+extend Widget {
+    // SwiftUI's sole View `hidden()` overload (no Boolean argument).
+    function hidden() -> Any Widget {
+        return HiddenLayer { self }
+    }
+}

@@ -1,0 +1,143 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function redactionReasonsFormAnAdditiveOptionSet() {
+    let none = RedactionReasons.None
+    expect!(none.isEmpty())
+    let loading = RedactionReasons.Placeholder
+    let protected = RedactionReasons.Privacy
+    let invalidated = RedactionReasons.Invalidated
+    expect!(!loading.isEmpty())
+    let together = loading.union(protected).union(invalidated)
+    expect!(together.contains(loading))
+    expect!(together.contains(protected))
+    expect!(together.contains(invalidated))
+    expect!(together.raw == 7.0)
+}
+
+@Test
+function redactedReasonsInheritAndUnredactedClearsTheEntireSet() {
+    let base = ModifierContext {}
+    expect!(!redactionIsActive(base))
+    let placeholder = modifierContextApply(
+        base, modifierDeltaRedacted(RedactionReasons.Placeholder)
+    )
+    expect!(redactionIsActive(placeholder))
+    let combined = modifierContextApply(
+        placeholder, modifierDeltaRedacted(RedactionReasons.Privacy)
+    )
+    expect!(combined.redactionReasons.contains(RedactionReasons.Placeholder))
+    expect!(combined.redactionReasons.contains(RedactionReasons.Privacy))
+    expect!(modifierContextForChildren(combined).redactionReasons.raw == 3.0)
+    let clear = modifierContextApply(combined, modifierDeltaUnredacted())
+    expect!(!redactionIsActive(clear))
+    expect!(!redactionIsActive(modifierContextForChildren(clear)))
+    let nested = modifierContextApply(
+        clear, modifierDeltaRedacted(RedactionReasons.Invalidated)
+    )
+    expect!(nested.redactionReasons.contains(RedactionReasons.Invalidated))
+}
+
+@Test
+function redactionPreservesTextMeasurementsAndSuppressesRenderedGlyphs() {
+    let sentence = "Private account data"
+    let normal = describedLayer(Text(sentence))
+    let redacted = describedLayer(
+        Text(sentence).redacted(reason: RedactionReasons.Placeholder)
+    )
+    expect!(redacted.layout.intrinsicWidth == normal.layout.intrinsicWidth)
+    expect!(redacted.layout.intrinsicHeight == normal.layout.intrinsicHeight)
+    match innermostLayer(normal).content {
+        Text(run) -> expect!(!run.redacted)
+        else -> expect!(false)
+    }
+    match innermostLayer(redacted).content {
+        Text(run) -> {
+            expect!(run.redacted)
+            expect!(run.content == sentence)
+            expect!(run.wraps)
+        }
+        else -> expect!(false)
+    }
+}
+
+@Test
+function redactedMultilineTextKeepsItsLayoutAndLineLimit() {
+    let multiline = "First row with enough words to wrap\nSecond row of important data"
+    let normal = describedLayer(Text(multiline).lineLimit(2))
+    let masked = describedLayer(
+        Text(multiline).lineLimit(2).redacted(reason: RedactionReasons.Privacy)
+    )
+    let width = 140.0
+    expect!(normal.contentSize(width).height == masked.contentSize(width).height)
+    expect!(normal.contentSize(width).width == masked.contentSize(width).width)
+    match innermostLayer(masked).content {
+        Text(run) -> {
+            expect!(run.redacted)
+            expect!(run.lineLimit == 2.0)
+        }
+        else -> expect!(false)
+    }
+}
+
+@Test
+function unredactedRendersRealTextInsideAPlaceholderAncestor() {
+    let masked = describedLayer(
+        VStack {
+            Text("First secret")
+            Text("Readable title").unredacted()
+        }.redacted(reason: RedactionReasons.Placeholder)
+    )
+    expect!(describedContainsText(masked, "First secret"))
+    expect!(describedContainsText(masked, "Readable title"))
+    // Each leaf carries its own decision; a child reset does not clear its
+    // sibling or the ancestor's applied redaction reasons.
+    let parent = modifierContextApply(
+        ModifierContext {}, modifierDeltaRedacted(RedactionReasons.Placeholder)
+    )
+    let first = Text("First secret").describe(
+        buildContext(FoundationUiContext {}), parent
+    )
+    let visible = Text("Readable title").unredacted().describe(
+        buildContext(FoundationUiContext {}), parent
+    )
+    match first.content {
+        Text(run) -> expect!(run.redacted)
+        else -> expect!(false)
+    }
+    match innermostLayer(visible).content {
+        Text(run) -> expect!(!run.redacted)
+        else -> expect!(false)
+    }
+}
+
+@Test
+function bitmapAndTextureImagesBecomePlaceholderSurfaces() {
+    let ordinary = describedLayer(ImageFile(path: "Resources/Images/example.png"))
+    let redacted = describedLayer(
+        ImageFile(path: "Resources/Images/example.png")
+            .redacted(reason: RedactionReasons.Placeholder)
+    )
+    match ordinary.content {
+        Texture(image) -> {}
+        else -> expect!(false)
+    }
+    match redacted.content {
+        Solid(solid) -> {
+            expect!(solid.fill.a > 0.0)
+            expect!(solid.cornerRadius > 0.0)
+        }
+        else -> expect!(false)
+    }
+}
+
+@Test
+function redactionModifiersPreserveSectionGrouping() {
+    let section = Section {
+        Text("Placeholder")
+    }.redacted(reason: RedactionReasons.Placeholder)
+        .unredacted()
+    expect!(section.isSection())
+}

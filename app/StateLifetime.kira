@@ -23,6 +23,43 @@ struct StatePresence {
     var scopes: Map<String, KeptScope> = Map()
     // The scopes recording the keys being marked, innermost last.
     var recording: [StateRecording] = []
+    // View-identity-bound lifecycle subscriptions. A view that is retained by
+    // a covered navigation page or inactive tab keeps its subscription alive;
+    // a key removed by the sweep runs its disappearance callback exactly once.
+    var lifecycle: Map<String, LifecycleSubscription> = Map()
+    // The ambient view log deliberately records keys only while a container
+    // is retaining a scope. Lifecycle presence must track ordinary builds as
+    // well, including top-level views outside any navigation/tab container.
+    var lifecycleSeen: Map<String, Number> = Map()
+}
+
+struct LifecycleSubscription {
+    let onDisappear: () -> Void
+}
+
+struct LifecycleStateMarker {}
+
+// A modifier's own stable view key joins the same touched view-state log as
+// @State and keyed control state. This guarantees that `stateScopeRetain`
+// keeps lifecycle callbacks for a page kept alive but not described.
+public function lifecycleViewRegister(
+    key: ViewStateKey,
+    onAppear: () -> Void,
+    onDisappear: () -> Void
+) {
+    unsafe {
+        let initial = !ambientStateHasView(key)
+        if initial {
+            ambientStatePutView(copy key, nativeUserData(nativeState(LifecycleStateMarker {})))
+        }
+        ambientStateTouchView(copy key)
+        var presence = nativeRecover<StatePresence>(statePresenceSlot())
+        presence.lifecycle.set(copy key.name, LifecycleSubscription {
+            onDisappear: move onDisappear
+        })
+        presence.lifecycleSeen.set(copy key.name, presence.build)
+        if initial { onAppear() }
+    }
 }
 
 public struct StateLifetimeCounts {
@@ -123,6 +160,20 @@ function stateBuildSweep() {
         for entry in presence.scopes.entries() {
             if entry.value.build != build { presence.scopes.remove(entry.key) }
         }
+        // The view log is intentionally empty outside a scope recording.
+        // Consult the actual build-local lifecycle marks instead, so ordinary
+        // root views do not disappear immediately after they were described.
+        var removed: [String] = []
+        for entry in presence.lifecycle.entries() {
+            if presence.lifecycleSeen.value(entry.key) != .Some(build) {
+                entry.value.onDisappear()
+                removed.append(copy entry.key)
+            }
+        }
+        for key in removed {
+            presence.lifecycle.remove(copy key)
+            presence.lifecycleSeen.remove(key)
+        }
         ambientStateBuildEnd()
     }
 }
@@ -178,6 +229,9 @@ public function stateScopeRetain(scope: borrow String) {
         let kept = try presence.scopes.value(scope) otherwise return
         for key in kept.keys {
             ambientStateTouchView(ViewStateKey { name: copy key })
+            if presence.lifecycle.contains(key) {
+                presence.lifecycleSeen.set(copy key, build)
+            }
         }
         presence.scopes.set(copy scope, KeptScope { keys: copy kept.keys, build: build })
     }

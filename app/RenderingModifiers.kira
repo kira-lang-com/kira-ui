@@ -1,0 +1,57 @@
+import Foundation
+import KCoreAnimation
+
+// Modifiers that are *layer contracts*, independent of the control rendering
+// underneath them. These compose over the measured child and participate in
+// retained-layer drawing and input rather than replacing the child's content.
+public construct HitTestingLayer(enabled: Bool) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let described = content.describe(context, modifierContextForChildren(modifiers))
+        return CALayerDescription {
+            groupedSection: described.groupedSection,
+            layout: surfaceFootprint(described.layout),
+            allowsHitTesting: enabled,
+            sublayers: [described]
+        }
+    }
+}
+
+// Isolate children into a single composited surface before blending with what
+// is outside it, instead of blending each child separately into the backdrop.
+public construct CompositingGroupLayer() extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let described = content.describe(context, modifierContextForChildren(modifiers))
+        return CALayerDescription {
+            groupedSection: described.groupedSection,
+            layout: surfaceFootprint(described.layout),
+            renderTarget: true,
+            sublayers: [described]
+        }
+    }
+}
+
+extend Widget {
+    // SwiftUI: `.allowsHitTesting(_ enabled: Bool)`.
+    function allowsHitTesting(enabled: Bool) -> Any Widget {
+        return HitTestingLayer(enabled: enabled) { self }
+    }
+
+    // SwiftUI: `.compositingGroup()`.
+    function compositingGroup() -> Any Widget {
+        return CompositingGroupLayer { self }
+    }
+}

@@ -88,10 +88,83 @@ NavigationSplitView(path = path) {
 }
 ```
 
+For a persistent primary rail, add an optional `rail:` child. It renders
+**before** the sidebar and detail on split-width windows, and stays visible
+when the sidebar is toggled off:
+
+```kira
+NavigationSplitView(path = path) {
+    WorkspaceSidebar()
+    .navigationSplitViewColumnWidth(width = 320.0)
+} rail: {
+    WorkspaceRail()
+    .navigationSplitViewColumnWidth(width = 72.0)
+} detail: {
+    WorkspaceDetail(path = path)
+}
+```
+
+The unnamed block intentionally stays `sidebar`: Kira constructs have one
+fixed first child slot, so interpreting that block as `rail` when `sidebar:`
+also appears would break existing navigation calls. Rail width is independent
+of sidebar width. On compact stack layouts the rail is omitted, retaining the
+original sidebar root and path; applications should keep primary navigation
+accessible within that root.
+
 `NavigationSplitView` automatically collapses to one column below the compact
 width threshold. It keeps the leading column on Tablet, PC, and TV. The path is
 unchanged by resize, rotation, or collapse, so the same app can move between a
 phone stack and a desktop split view without losing navigation state.
+
+To request a specific sidebar width, apply the SwiftUI-shaped modifier to the
+sidebar view, not to the split container:
+
+```kira
+NavigationSplitView(path = navigationPath) {
+    WorkspaceSidebar()
+    .navigationSplitViewColumnWidth(width: 320)
+} detail: {
+    NavigationStack(path = navigationPath) {
+        WorkspaceHome()
+    }
+}
+```
+
+There are two overloads: a fixed preferred `width:`, or `min:`, `ideal:` and
+`max:` constraints. The resolved width is shared by the sidebar's glass, the
+navigation transitions, the detail's safe area and the window's unified toolbar.
+The detail canvas occupies the whole window *beneath* the sidebar; only the
+content is inset. `NavigationSplitView` is the right choice when you want this
+under-glass navigation and the platform sidebar toggle.
+When the split collapses to a compact navigation stack, the width preference
+does not constrain its full-screen sidebar root page.
+
+### Custom full-height sidebar shells
+
+Some applications use their own side-by-side `HStack`, not
+`NavigationSplitView`, to keep sidebar selection independent from a detail
+view's navigation path. The window toolbar still needs to know which part of
+its top band belongs above the sidebar. Mark the **framed** sidebar as the
+window's leading navigation column:
+
+```kira
+HStack(spacing = .None) {
+    WorkspaceSidebar()
+    .frame(width: 320)
+    .navigationSidebarColumn()
+
+    WorkspaceDetail()
+}
+```
+
+`navigationSidebarColumn()` measures its content, restores the detail column
+before the next sibling lowers, and splits the **single window toolbar** along
+that measured boundary. A nested `NavigationStack` in `WorkspaceDetail` keeps
+its title, search, and actions over the detail, not the sidebar. The custom
+sidebar extends behind the window controls; the marker does not add a sidebar
+toggle, change navigation paths, or turn a window with no toolbar items into a
+toolbar window. For the normal adaptive sidebar behavior, prefer
+`NavigationSplitView` instead.
 
 ## Complex layered example
 

@@ -1,0 +1,54 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function hitTestingExclusionKeepsLayoutAndAccessibility() {
+    let blocked = describedLayer(Button(title: "Activate", action: { in })
+        .allowsHitTesting(enabled: false))
+    let restored = describedLayer(Button(title: "Activate", action: { in })
+        .allowsHitTesting(enabled: true))
+    expect!(blocked.sublayers.count == 1)
+    expect!(!blocked.allowsHitTesting)
+    expect!(restored.allowsHitTesting)
+    expect!(describedContainsText(blocked, "Activate"))
+    expect!(accessibilityElementsForTest(
+        Button(title: "Activate", action: { in }).allowsHitTesting(enabled: false),
+        300.0, 100.0
+    ).count > 0)
+}
+
+@Test
+function hitTestingExclusionPrunesRealCompositorTraversal() {
+    var enabled = describedLayer(
+        Rectangle().frame(width: 100.0, height: 50.0, alignment: .Center)
+            .onTapGesture(action: { in })
+    )
+    layOutLayerTree(enabled, 100.0, 50.0)
+    var normalTree = layerTree()
+    normalTree.reconcileImmediate(enabled)
+    expect!(normalTree.hitTestTree(50.0, 25.0).hit)
+
+    var disabled = describedLayer(
+        Rectangle().frame(width: 100.0, height: 50.0, alignment: .Center)
+            .onTapGesture(action: { in }).allowsHitTesting(enabled: false)
+    )
+    layOutLayerTree(disabled, 100.0, 50.0)
+    var blockedTree = layerTree()
+    blockedTree.reconcileImmediate(disabled)
+    expect!(!blockedTree.hitTestTree(50.0, 25.0).hit)
+}
+
+@Test
+function compositingGroupCreatesARealRenderTarget() {
+    let grouped = describedLayer(
+        HStack {
+            Text("One")
+            Text("Two")
+        }.compositingGroup()
+    )
+    expect!(grouped.renderTarget)
+    expect!(grouped.sublayers.count == 1)
+    expect!(describedContainsText(grouped, "One"))
+    expect!(describedContainsText(grouped, "Two"))
+}

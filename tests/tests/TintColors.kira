@@ -1,0 +1,65 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function customTintColorIsUsedByAccentAndControls() {
+    let brand = RGBAColor { r: 0.741, g: 0.365, b: 0.227, a: 1.0 }
+    let modifiers = modifierContextApply(
+        ModifierContext {}, modifierDeltaTintColor(.Some(copy brand))
+    )
+    let ink = modifierPrimaryColor(.Accent, modifiers)
+    let track = controlActiveColor(modifiers)
+    expect!(abs(ink.r - 0.741) < 0.001)
+    expect!(abs(ink.g - 0.365) < 0.001)
+    expect!(abs(ink.b - 0.227) < 0.001)
+    expect!(abs(track.r - 0.741) < 0.001)
+    expect!(abs(track.g - 0.365) < 0.001)
+    expect!(tabBarTinted(modifiers))
+
+    // A semantic tint deeper in the tree supersedes an inherited explicit
+    // custom color, and `.tint(nil)` clears the inherited color.
+    let semantic = modifierContextApply(modifiers, modifierDeltaTint(.Blue))
+    match semantic.tintColor {
+        Some(_) -> expect!(false)
+        None -> {}
+    }
+    expect!(semantic.hasTint)
+    let cleared = modifierContextApply(modifiers, modifierDeltaTintColor(.None))
+    match cleared.tintColor {
+        Some(_) -> expect!(false)
+        None -> {}
+    }
+    expect!(!cleared.hasTint)
+}
+
+@Test
+function adaptiveTintFollowsTheSchemeWhileItsOverloadsCompile() {
+    let color = RGBAColor { r: 0.7, g: 0.3, b: 0.2, a: 1.0 }
+    let adaptive = AdaptiveColor {
+        light: copy color,
+        dark: RGBAColor { r: 0.9, g: 0.5, b: 0.3, a: 1.0 }
+    }
+    let optionalColor: RGBAColor? = .Some(copy color)
+    let optionalAdaptive: AdaptiveColor? = .Some(copy adaptive)
+    describedLayer(Text("Color").tint(value = copy color))
+    describedLayer(Text("Optional color").tint(value = optionalColor))
+    describedLayer(Text("Adaptive color").tint(value = copy adaptive))
+    describedLayer(Text("Optional adaptive").tint(value = optionalAdaptive))
+    let light = themeAdaptiveColor(adaptive, .Light)
+    let dark = themeAdaptiveColor(adaptive, .Dark)
+    expect!(abs(light.r - 0.7) < 0.001)
+    expect!(abs(dark.r - 0.9) < 0.001)
+}
+
+@Test
+function prominentButtonUsesReadableContrastInBothColorSchemes() {
+    let lightAccent = foundationColor(RGBAColor {
+        r: 0.741, g: 0.365, b: 0.227, a: 1.0
+    })
+    let darkAccent = foundationColor(RGBAColor {
+        r: 0.851, g: 0.467, b: 0.341, a: 1.0
+    })
+    expect!(prominentButtonInk(lightAccent) == PrimaryColor.White)
+    expect!(prominentButtonInk(darkAccent) == PrimaryColor.Black)
+}

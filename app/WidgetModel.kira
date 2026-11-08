@@ -64,9 +64,11 @@ public construct Widget {
         return ""
     }
 
-    // Whether this widget is a `Section`, which a grouped list sets as one:
-    // the rows standing outside every section are grouped in sections of
-    // their own.
+    // Whether this widget is a `Section`, which a grouped list sets as one.
+    // Concrete Views without a Section body are ordinary rows. A composed
+    // custom View's actual Section identity is preserved by its rendered
+    // layer's groupedSection marker; a Widget protocol method cannot read
+    // a `body` property that many explicitly described leaf widgets omit.
     function isSection() -> Bool {
         return false
     }
@@ -153,6 +155,12 @@ public function modifierPrimaryColor(
     let tokens = modifierTokens(modifiers)
     // SwiftUI's `.tint` is the accent of everything under it, so `.Accent`
     // names the tint wherever one was set.
+    if color == .Accent {
+        match modifiers.tintColor {
+            Some(actualColor) -> return foundationColor(copy actualColor)
+            None -> {}
+        }
+    }
     if color == .Accent && modifiers.hasTint && modifiers.tint != .Accent {
         return foundationColor(primaryColorAsColor(modifiers.tint, tokens))
     }

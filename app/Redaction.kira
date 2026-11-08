@@ -1,0 +1,71 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI RedactionReasons is an additive set. The three public reasons can
+// coexist, while `.unredacted()` clears the inherited set for its subtree.
+public distinct RedactionReasons = Number
+
+public namespace RedactionReasons {
+    let None: RedactionReasons = RedactionReasons(0)
+    let Placeholder: RedactionReasons = RedactionReasons(1)
+    let Privacy: RedactionReasons = RedactionReasons(2)
+    let Invalidated: RedactionReasons = RedactionReasons(4)
+}
+
+extend RedactionReasons {
+    function union(other: RedactionReasons) -> RedactionReasons {
+        return RedactionReasons(self.raw | other.raw)
+    }
+
+    function contains(other: RedactionReasons) -> Bool {
+        return (self.raw & other.raw) == other.raw
+    }
+
+    function isEmpty() -> Bool { return self.raw == 0 }
+}
+
+public function modifierDeltaRedacted(reasons: RedactionReasons) -> ModifierDelta {
+    return ModifierDelta { redactionReasons: reasons }
+}
+
+public function modifierDeltaUnredacted() -> ModifierDelta {
+    return ModifierDelta { resetRedaction: true }
+}
+
+public function redactionIsActive(modifiers: borrow ModifierContext) -> Bool {
+    return !modifiers.redactionReasons.isEmpty()
+}
+
+// A theme-adaptive fill. Glyphs and image-file content are never sent to the
+// renderer when the view is redacted. The original measurement survives so
+// skeletons don't cause List rows and stacks to jump while loading.
+public function redactionPlaceholderColor(modifiers: borrow ModifierContext) -> CAColor {
+    let color = modifierColor(modifierPrimaryColor(.Secondary, modifiers), modifiers)
+    return CAColor { r: color.r, g: color.g, b: color.b, a: 0.24 }
+}
+
+// Text, raster images and SVG symbols all consume this same inherited
+// environment. The renderer draws actual masked text bars per measured line;
+// raster images use a full bounds fill; vector icons keep their silhouette.
+public function redactionPlaceholderDescription(
+    modifiers: borrow ModifierContext
+) -> CALayerDescription {
+    return CALayerDescription {
+        content: .Solid(CASolid {
+            fill: redactionPlaceholderColor(modifiers),
+            cornerRadius: 5.0
+        })
+    }
+}
+
+extend Widget {
+    // SwiftUI: `.redacted(reason: RedactionReasons)`.
+    function redacted(reason: RedactionReasons) -> Any Widget {
+        return ModifierDeltaLayer(delta: modifierDeltaRedacted(reason)) { self }
+    }
+
+    // SwiftUI: `.unredacted()`.
+    function unredacted() -> Any Widget {
+        return ModifierDeltaLayer(delta: modifierDeltaUnredacted()) { self }
+    }
+}
