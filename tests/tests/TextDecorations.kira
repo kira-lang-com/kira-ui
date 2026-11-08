@@ -1,0 +1,156 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function underlineAndStrikethroughAreNativeTextRunDecorations() {
+    let plain = describedLayer(Text("Important announcement"))
+    let decorated = describedLayer(
+        Text("Important announcement")
+            .underline(pattern: .DashDot)
+            .strikethrough(pattern: .Dot)
+    )
+    expect!(decorated.layout.intrinsicWidth == plain.layout.intrinsicWidth)
+    expect!(decorated.layout.intrinsicHeight == plain.layout.intrinsicHeight)
+    match innermostLayer(plain).content {
+        Text(run) -> {
+            expect!(!run.underline)
+            expect!(!run.strikethrough)
+        }
+        else -> expect!(false)
+    }
+    match innermostLayer(decorated).content {
+        Text(run) -> {
+            expect!(run.underline)
+            expect!(run.strikethrough)
+            expect!(run.underlinePattern == CATextDecorationPattern.DashDot)
+            expect!(run.strikethroughPattern == CATextDecorationPattern.Dot)
+            expect!(run.content == "Important announcement")
+        }
+        else -> expect!(false)
+    }
+}
+
+@Test
+function textDecorationPatternsDrawInsideTheShapedRunWidth() {
+    let width = 43.0
+    let thickness = 1.2
+    let solid = foundationTextDecorationSegments(width, thickness, .Solid)
+    expect!(solid.count == 1)
+    expect!(solid[0].length == width)
+    expect!(solid[0].offset == 0.0)
+    let dotted = foundationTextDecorationSegments(width, thickness, .Dot)
+    let dashed = foundationTextDecorationSegments(width, thickness, .Dash)
+    let dashDot = foundationTextDecorationSegments(width, thickness, .DashDot)
+    let dashDotDot = foundationTextDecorationSegments(width, thickness, .DashDotDot)
+    expect!(dotted.count > dashed.count)
+    expect!(dotted.count > 1)
+    expect!(dashDot.count > 2)
+    expect!(dashDotDot.count > 3)
+    expect!(dashDot[0].length > dashDot[1].length)
+    expect!(dashDotDot[0].length > dashDotDot[1].length)
+    expect!(dashDotDot[1].length == dashDotDot[2].length)
+    for segment in dashDotDot {
+        expect!(segment.length > 0.0)
+        expect!(segment.offset >= 0.0)
+        expect!(segment.offset + segment.length <= width + 0.001)
+    }
+}
+
+@Test
+function explicitDecorationColorDoesNotReplaceTheTextInk() {
+    let line = RGBAColor { r: 0.95, g: 0.2, b: 0.15, a: 1.0 }
+    let marked = describedLayer(
+        Text("In review")
+            .foregroundColor(.Blue)
+            .underline(color: .Some(line))
+            .strikethrough(color: PrimaryColor.Red)
+    )
+    match innermostLayer(marked).content {
+        Text(run) -> {
+            expect!(run.underline)
+            expect!(run.strikethrough)
+            match run.underlineColor {
+                Some(color) -> {
+                    expect!(abs(color.r - 0.95) < 0.01)
+                    expect!(abs(color.g - 0.2) < 0.01)
+                }
+                None -> expect!(false)
+            }
+            match run.strikethroughColor {
+                Some(color) -> expect!(color.a > 0.0)
+                None -> expect!(false)
+            }
+        }
+        else -> expect!(false)
+    }
+}
+
+@Test
+function inheritedDecorationsCanBeDisabledOrRestatedIndependently() {
+    let outer = modifierContextApply(
+        ModifierContext {}, modifierDeltaUnderline(true, .Dash, .Inherit)
+    )
+    expect!(outer.underline)
+    expect!(modifierContextForChildren(outer).underline)
+    let disabled = modifierContextApply(
+        outer, modifierDeltaUnderline(false, .Solid, .Inherit)
+    )
+    expect!(!disabled.underline)
+    let restated = modifierContextApply(
+        disabled, modifierDeltaUnderline(true, .Dot, .Inherit)
+    )
+    expect!(restated.underline)
+    expect!(restated.underlinePattern == TextLinePattern.Dot)
+    let both = modifierContextApply(
+        outer, modifierDeltaStrikethrough(true, .DashDotDot, .Inherit)
+    )
+    expect!(both.underline)
+    expect!(both.strikethrough)
+    expect!(both.underlinePattern == TextLinePattern.Dash)
+    expect!(both.strikethroughPattern == TextLinePattern.DashDotDot)
+}
+
+@Test
+function textDecorationsFollowWrappedAndLimitedRuns() {
+    let wrapped = describedLayer(
+        Text("A long explanation that will take more than one text line")
+            .lineLimit(2)
+            .underline(pattern: .Dash)
+            .strikethrough(pattern: .DashDotDot)
+    )
+    match innermostLayer(wrapped).content {
+        Text(run) -> {
+            expect!(run.wraps)
+            expect!(run.lineLimit == 2.0)
+            expect!(run.underline)
+            expect!(run.strikethrough)
+        }
+        else -> expect!(false)
+    }
+    expect!(foundationTextDecorationBaseline(true, 19.0)
+        > foundationTextDecorationBaseline(false, 19.0))
+}
+
+@Test
+function textDecorationOverloadsPreserveSectionGroupingAndFalseSuppressesPaint() {
+    let section = Section {
+        Text("Row")
+    }.underline().strikethrough()
+    expect!(section.isSection())
+
+    let reset = describedLayer(
+        Text("Not marked")
+            .underline(pattern: .Dash)
+            .underline(isActive: false)
+            .strikethrough()
+            .strikethrough(isActive: false)
+    )
+    match innermostLayer(reset).content {
+        Text(run) -> {
+            expect!(!run.underline)
+            expect!(!run.strikethrough)
+        }
+        else -> expect!(false)
+    }
+}

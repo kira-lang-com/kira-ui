@@ -40,6 +40,13 @@ public construct IgnoresSafeAreaLayer(regions: SafeAreaRegions, edges: EdgeSet) 
         inner.safeArea.bottom = inner.safeArea.bottom - insets.bottom
         inner.safeArea.trailing = inner.safeArea.trailing - insets.trailing
         let described = content.describe(inner, modifiers)
+        // SwiftUI's full-bleed color under a SettingsPage or a grouped Form
+        // also colors the scene's navigation canvas, not just the safe-area
+        // content rectangle. Ignore keyboard-only requests above.
+        if edges.has(EdgeSet.top) && edges.has(EdgeSet.bottom)
+            && edges.has(EdgeSet.leading) && edges.has(EdgeSet.trailing) {
+            navigationRegisterPageBackground(described)
+        }
         return CALayerDescription {
             layout: surfaceFootprint(described.layout),
             sizedContentKey: sizedContentKey(

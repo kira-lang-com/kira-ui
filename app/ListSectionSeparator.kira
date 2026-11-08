@@ -1,0 +1,163 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's section separator belongs to the LIST presentation boundary of a
+// Section (header, all rows, footer), not to each row. Split visibility and
+// tint by upper and lower edge. Presence bits let `.Automatic` or explicit
+// nil tint restore the list style instead of turning a hairline invisible.
+public struct SectionSeparatorPreferences {
+    var hasTop: Bool = false
+    var top: Bool? = .None
+    var hasBottom: Bool = false
+    var bottom: Bool? = .None
+    var hasTopTint: Bool = false
+    var topTint: CAColor? = .None
+    var hasBottomTint: Bool = false
+    var bottomTint: CAColor? = .None
+}
+
+public function mergedSectionSeparatorPreferences(
+    outer: borrow SectionSeparatorPreferences,
+    inner: borrow SectionSeparatorPreferences
+) -> SectionSeparatorPreferences {
+    return SectionSeparatorPreferences {
+        hasTop: outer.hasTop || inner.hasTop,
+        top: inner.hasTop ? inner.top : outer.top,
+        hasBottom: outer.hasBottom || inner.hasBottom,
+        bottom: inner.hasBottom ? inner.bottom : outer.bottom,
+        hasTopTint: outer.hasTopTint || inner.hasTopTint,
+        topTint: inner.hasTopTint ? inner.topTint : outer.topTint,
+        hasBottomTint: outer.hasBottomTint || inner.hasBottomTint,
+        bottomTint: inner.hasBottomTint ? inner.bottomTint : outer.bottomTint
+    }
+}
+
+public function modifierDeltaListSectionSeparator(
+    visibility: Visibility,
+    edges: VerticalEdgeSet
+) -> ModifierDelta {
+    let requested = listRowSeparatorPreference(visibility)
+    return ModifierDelta {
+        listSectionSeparator: SectionSeparatorPreferences {
+            hasTop: verticalEdgesContainTop(edges),
+            top: requested,
+            hasBottom: verticalEdgesContainBottom(edges),
+            bottom: requested
+        }
+    }
+}
+
+public function modifierDeltaListSectionSeparatorTint(
+    color: CAColor?,
+    edges: VerticalEdgeSet
+) -> ModifierDelta {
+    return ModifierDelta {
+        listSectionSeparator: SectionSeparatorPreferences {
+            hasTopTint: verticalEdgesContainTop(edges),
+            topTint: color,
+            hasBottomTint: verticalEdgesContainBottom(edges),
+            bottomTint: color
+        }
+    }
+}
+
+// A one-device-pixel-equivalent line follows the list's adaptive separator
+// palette and uses the real measured Section width. It has no hit key and does
+// not intercept taps on the section's row content.
+public function plainSectionSeparatorLine(
+    tint: CAColor?,
+    modifiers: borrow ModifierContext
+) -> CALayerDescription {
+    let standard = colorFromFoundation(modifierColor(
+        foundationColor(themeAdaptiveColor(listSeparator, modifierAppearance(modifiers))),
+        modifiers
+    ))
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            widthFill: true,
+            heightFill: false,
+            fixedHeight: listMetrics().separatorThickness
+        },
+        content: .Solid(CASolid { fill: resolvedRowSeparatorColor(copy tint, move standard) })
+    }
+}
+
+// Resolve only when a Section is actually inside a plain List. A standalone
+// `Section` is just content in a VStack; giving it a visible section separator
+// does not draw an unrelated line outside a list. The style still arbitrates
+// whether it supports the boundary (sidebar and inset-grouped do not here).
+public function plainSectionWithSeparators(
+    section: CALayerDescription,
+    modifiers: borrow ModifierContext
+) -> CALayerDescription {
+    if !modifiers.insidePlainList { return section }
+    let preference = modifiers.listSectionSeparator
+    let top = listRowSeparatorShows(preference.top, false)
+    let bottom = listRowSeparatorShows(preference.bottom, false)
+    if !top && !bottom { return section }
+    var layers: [CALayerDescription] = []
+    if top { layers.append(plainSectionSeparatorLine(copy preference.topTint, modifiers)) }
+    layers.append(move section)
+    if bottom { layers.append(plainSectionSeparatorLine(copy preference.bottomTint, modifiers)) }
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            axis: .Column,
+            heightFill: false,
+            spacing: 0.0
+        },
+        sublayers: move layers
+    }
+}
+
+// Semantic tint resolves against the current theme at the modifier's site,
+// not once at API construction (so dark/light or user theme changes apply).
+public construct SectionSeparatorSemanticTint(
+    color: PrimaryColor,
+    edges: VerticalEdgeSet
+) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let actual = colorFromFoundation(modifierPrimaryColor(color, modifiers))
+        return content.describe(context, modifierContextApply(
+            modifiers,
+            modifierDeltaListSectionSeparatorTint(.Some(actual), edges)
+        ))
+    }
+}
+
+extend Widget {
+    function listSectionSeparator(
+        visibility: Visibility,
+        edges: VerticalEdgeSet = .All
+    ) -> Any Widget {
+        return ModifierDeltaLayer(delta: modifierDeltaListSectionSeparator(visibility, edges)) {
+            self
+        }
+    }
+
+    function listSectionSeparatorTint(
+        color: RGBAColor?,
+        edges: VerticalEdgeSet = .All
+    ) -> Any Widget {
+        let resolved: CAColor? = match color {
+            Some(value) -> .Some(colorFromFoundation(foundationColor(move value)))
+            None -> .None
+        }
+        return ModifierDeltaLayer(
+            delta: modifierDeltaListSectionSeparatorTint(move resolved, edges)
+        ) { self }
+    }
+
+    function listSectionSeparatorTint(
+        color: PrimaryColor,
+        edges: VerticalEdgeSet = .All
+    ) -> Any Widget {
+        return SectionSeparatorSemanticTint(color: color, edges: edges) { self }
+    }
+}

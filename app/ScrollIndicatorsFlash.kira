@@ -1,0 +1,86 @@
+import Foundation
+import KCoreAnimation
+
+// The observed value is owned by the modifier's view identity. The first
+// appearance records a trigger without flashing; subsequent unequal values
+// advance the version seen by descendant scroll surfaces.
+public struct ScrollFlashObservation<Value> {
+    var value: Value
+    var generation: Number = 0.0
+}
+
+public function advanceScrollFlash<Value>(
+    observation: borrow mut ScrollFlashObservation<Value>,
+    value: Value
+) -> Number {
+    if observation.value != value {
+        observation.value = move value
+        observation.generation = observation.generation + 1.0
+    }
+    return observation.generation
+}
+
+// `onAppear` has a distinct contract: an appearance sends one flash request
+// per identity, including when a scroll view is first inserted into an
+// already-present ancestor using the same inherited generation.
+public construct ScrollIndicatorsFlashOnAppear(enabled: Bool) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        return content.describe(
+            context,
+            modifierContextApply(modifiers, ModifierDelta {
+                hasScrollFlash: enabled,
+                scrollFlashGeneration: enabled ? 1.0 : 0.0
+            })
+        )
+    }
+}
+
+public construct ScrollIndicatorsFlashTrigger<Value>(value: Value) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        unsafe {
+            let slot = slotKey("kiraui.scroll.flash.", tapSeqKey())
+            if !ambientStateHasView(slot) {
+                ambientStatePutView(copy slot, nativeUserData(nativeState(
+                    ScrollFlashObservation<Value> { value: copy value }
+                )))
+            }
+            var observed = nativeRecover<ScrollFlashObservation<Value>>(
+                ambientStateGetView(slot)
+            )
+            let generation = advanceScrollFlash(observed, copy value)
+            return content.describe(
+                context,
+                modifierContextApply(modifiers, ModifierDelta {
+                    hasScrollFlash: true,
+                    scrollFlashGeneration: generation
+                })
+            )
+        }
+    }
+}
+
+extend Widget {
+    // SwiftUI: `.scrollIndicatorsFlash(onAppear: Bool)`.
+    function scrollIndicatorsFlash(onAppear: Bool) -> Any Widget {
+        return ScrollIndicatorsFlashOnAppear(enabled: onAppear) { self }
+    }
+
+    // SwiftUI: `.scrollIndicatorsFlash(trigger: some Equatable)`.
+    function scrollIndicatorsFlash<Value>(trigger: Value) -> Any Widget {
+        return ScrollIndicatorsFlashTrigger<Value>(value: move trigger) { self }
+    }
+}

@@ -1,0 +1,59 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function menuActionDismissBehaviorCoversAllDocumentedCases() {
+    expect!(menuActionDismisses(.Automatic))
+    expect!(menuActionDismisses(.Enabled))
+    expect!(!menuActionDismisses(.Disabled))
+    // SwiftUI's automatic policy depends on the receiving control. Buttons
+    // dismiss by default; an adjustable control may supply false as its norm.
+    expect!(!menuActionDismisses(.Automatic, automaticDefault: false))
+    expect!(menuActionDismisses(.Enabled, automaticDefault: false))
+    expect!(!menuActionDismisses(.Disabled, automaticDefault: true))
+}
+
+@Test
+function menuActionDismissBehaviorIsInheritedAndOverridable() {
+    let outer = modifierContextApply(
+        ModifierContext {}, modifierDeltaMenuActionDismissBehavior(.Disabled)
+    )
+    expect!(outer.menuActionDismissBehavior == MenuActionDismissBehavior.Disabled)
+    expect!(modifierContextForChildren(outer).menuActionDismissBehavior == MenuActionDismissBehavior.Disabled)
+    let presenting = modifierContextPresenting(outer, .MenuRow)
+    expect!(!menuActionDismisses(presenting.menuActionDismissBehavior))
+    let inner = modifierContextApply(
+        presenting, modifierDeltaMenuActionDismissBehavior(.Enabled)
+    )
+    expect!(menuActionDismisses(inner.menuActionDismissBehavior))
+}
+
+@Test
+function menuActionDismissBehaviorPreservesMenuButtonAndSectionStructure() {
+    let button = describedLayer(
+        Button(title: "Increase", action: { in })
+            .menuActionDismissBehavior(behavior: .Disabled)
+    )
+    expect!(describedContainsText(button, "Increase"))
+    let section = Section() {
+        Text("Option")
+    }.menuActionDismissBehavior(behavior: .Enabled)
+    expect!(section.isSection())
+}
+
+@Test
+function disabledMenuChooseFnKeepsTheActualPresentedMenuState() {
+    unsafe {
+        menuEnsure()
+        var state = nativeRecover<MenuState>(ambientStateGet(StateSlot.menu))
+        let original = state.presentedKey
+        // The menu host already has one item presented. A disabled dismiss
+        // action must not mutate its key, close its panel, or retarget a spring.
+        state.presentedKey = 9027.0
+        let action = menuChooseFn({ in }, dismiss: false)
+        action()
+        expect!(menuState().presentedKey == 9027.0)
+        state.presentedKey = original
+    }
+}

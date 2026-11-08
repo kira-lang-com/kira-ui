@@ -1,0 +1,126 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// SwiftUI's `frame(maxWidth: 760).frame(maxWidth: .infinity)` is two frames:
+// the outer fills the proposal, while the inner fills up to 760 and stays
+// centered. A bare width cap or a stand-in HStack with Spacers cannot promise
+// the same layout when the parent's width changes.
+function laidOutFlexibleFrames(width: Number) -> CALayerDescription {
+    var described = describedLayer(
+        Rectangle()
+        .frame(width: 100.0, height: 30.0)
+        .frame(maxWidth: 760.0)
+        .frame(maxWidth: FrameLimit.Infinity)
+    )
+    layOutLayerTree(described, width, 250.0)
+    return described
+}
+
+@Test
+function nestedFlexibleFramesCenterTheReadableColumnAtWideWidths() {
+    let outer = laidOutFlexibleFrames(1100.0)
+    let readable = outer.sublayers[0]
+    let content = readable.sublayers[0]
+    expect!(outer.size.width == 1100.0)
+    expect!(readable.size.width == 760.0)
+    expect!(readable.position.x == 170.0)
+    expect!(content.size.width == 100.0)
+    expect!(content.position.x == 330.0)
+}
+
+@Test
+function nestedFlexibleFramesUseAllAvailableWidthWhenNarrow() {
+    let outer = laidOutFlexibleFrames(540.0)
+    let readable = outer.sublayers[0]
+    expect!(outer.size.width == 540.0)
+    expect!(readable.size.width == 540.0)
+    expect!(readable.position.x == 0.0)
+    expect!(readable.sublayers[0].position.x == 220.0)
+}
+
+@Test
+function flexibleFramesApplyMinMaxAndCrossAxisAlignment() {
+    var described = describedLayer(
+        Rectangle()
+        .frame(width: 80.0, height: 20.0)
+        .frame(minWidth: 120.0, maxWidth: 240.0, minHeight: 30.0, maxHeight: 50.0,
+            alignment: .BottomTrailing)
+    )
+    layOutLayerTree(described, 500.0, 90.0)
+    expect!(described.size.width == 240.0)
+    expect!(described.size.height == 50.0)
+    expect!(described.sublayers[0].position.x == 160.0)
+    expect!(described.sublayers[0].position.y == 30.0)
+}
+
+@Test
+function fixedFramesSupportPartialDimensionsAndAlignment() {
+    var described = describedLayer(
+        Rectangle().frame(width: 20.0, height: 10.0)
+        .frame(width: 100.0, alignment: .Trailing)
+    )
+    layOutLayerTree(described, 200.0, 50.0)
+    expect!(described.size.width == 100.0)
+    expect!(described.sublayers[0].position.x == 80.0)
+}
+
+// Centering is a property of the complete tree, not a rounded displacement
+// repeated at each frame. Four half-point ties used to move this 19pt view
+// 24pt from the left edge of a 63pt rail, rather than its correct 22pt.
+@Test
+function nestedCenteredFramesDoNotAccumulatePixelRounding() {
+    var described = describedLayer(
+        Rectangle().frame(width: 19.0, height: 19.0)
+        .frame(width: 30.0)
+        .frame(width: 41.0)
+        .frame(width: 52.0)
+        .frame(width: 63.0)
+    )
+    layOutLayerTree(described, 63.0, 80.0)
+    let a = described.sublayers[0]
+    let b = a.sublayers[0]
+    let c = b.sublayers[0]
+    let d = c.sublayers[0]
+    let actualX = a.position.x + b.position.x + c.position.x + d.position.x
+    expect!(actualX == 22.0)
+    expect!(actualX + d.size.width / 2.0 == described.size.width / 2.0)
+}
+
+@Test
+function flexibleFrameCanExpandBothDimensionsInOneModifier() {
+    var described = describedLayer(
+        Rectangle().frame(width: 100.0, height: 30.0)
+        .frame(maxWidth: FrameLimit.Infinity, maxHeight: FrameLimit.Infinity)
+    )
+    layOutLayerTree(described, 800.0, 600.0)
+    expect!(described.size.width == 800.0)
+    expect!(described.size.height == 600.0)
+    expect!(described.sublayers[0].position.x == 350.0)
+    expect!(described.sublayers[0].position.y == 285.0)
+}
+
+// A large-title menu is one SwiftUI flexible frame, with a full-width outer
+// box but a leading-aligned intrinsically sized control. Two independent
+// `.frame`/`.minHeight` wrappers have different proposal and hit geometry.
+@Test
+function infiniteWidthAndMinimumHeightShareOneLeadingAlignedFrame() {
+    var described = describedLayer(
+        Text(content: "HarmonyAI")
+        .typography(.title)
+        .fontWeight(.Bold)
+        .fontDesign(.Serif)
+        .frame(maxWidth: FrameLimit.Infinity, minHeight: 44.0,
+            alignment: .Leading)
+    )
+    layOutLayerTree(described, 320.0, 96.0)
+    expect!(described.size.width == 320.0)
+    expect!(described.size.height >= 44.0)
+    expect!(described.sublayers.count == 1)
+    expect!(described.sublayers[0].position.x == 0.0)
+    let caption = textRunOf(described.sublayers[0])
+    expect!(caption.content == "HarmonyAI")
+    expect!(caption.weight == 700.0)
+    expect!(caption.design == CAFontDesign.Serif)
+    expect!(caption.size == typographyImplementation(.title, ModifierContext {}).size)
+}

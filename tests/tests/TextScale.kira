@@ -1,0 +1,91 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function textScaleSecondaryChangesActualTextGlyphMetricsNotTheirContent() {
+    let ordinary = describedLayer(Text("PX"))
+    let secondary = describedLayer(Text("PX").textScale(scale: .Secondary))
+    match innermostLayer(ordinary).content {
+        Text(normalRun) -> match innermostLayer(secondary).content {
+            Text(smallRun) -> {
+                expect!(smallRun.size < normalRun.size)
+                expect!(smallRun.size > 0.0)
+                expect!(smallRun.content == normalRun.content)
+                expect!(smallRun.color.r == normalRun.color.r)
+                expect!(smallRun.color.g == normalRun.color.g)
+                expect!(smallRun.color.b == normalRun.color.b)
+            }
+            else -> expect!(false)
+        }
+        else -> expect!(false)
+    }
+    expect!(secondary.layout.intrinsicWidth < ordinary.layout.intrinsicWidth)
+    expect!(secondary.layout.intrinsicHeight <= ordinary.layout.intrinsicHeight)
+}
+
+@Test
+function textScaleDefaultResetsInheritedScale() {
+    let regular = ModifierContext {}
+    expect!(regular.textScale == TextScale.Default)
+    expect!(resolvedTextScale(regular) == 1.0)
+    let smaller = modifierContextApply(regular, modifierDeltaTextScale(.Secondary, true))
+    expect!(smaller.textScale == TextScale.Secondary)
+    expect!(resolvedTextScale(smaller) < 1.0)
+    expect!(modifierContextForChildren(smaller).textScale == TextScale.Secondary)
+
+    let returned = modifierContextApply(smaller, modifierDeltaTextScale(.Default, true))
+    expect!(resolvedTextScale(returned) == 1.0)
+}
+
+@Test
+function disabledTextScaleDoesNotClearAncestorPreference() {
+    let smaller = modifierContextApply(
+        ModifierContext {}, modifierDeltaTextScale(.Secondary, true)
+    )
+    let unchanged = modifierContextApply(
+        smaller, modifierDeltaTextScale(.Default, false)
+    )
+    expect!(unchanged.textScale == TextScale.Secondary)
+    let nested = describedLayer(
+        VStack {
+            Text("Secondary")
+            Text("Also secondary").textScale(scale: .Default, isEnabled: false)
+        }.textScale(scale: .Secondary)
+    )
+    expect!(describedContainsText(nested, "Secondary"))
+    expect!(describedContainsText(nested, "Also secondary"))
+}
+
+@Test
+function secondaryTextScaleComposesWithDynamicTypeAndExplicitFont() {
+    let large = modifierContextApply(
+        ModifierContext {}, modifierDeltaDynamicTypeSize(.Accessibility1)
+    )
+    let scaled = modifierContextApply(large, modifierDeltaTextScale(.Secondary, true))
+    let explicit = modifierContextApply(scaled, modifierDeltaFont(27.0, .Bold))
+    expect!(modifierTextSize(explicit) > 27.0)
+    expect!(resolvedTextScale(explicit) < 1.0)
+    let inTheme = describedLayer(
+        Text("Footnote")
+            .font(size: resolvedLength(27.0), weight: .Bold)
+            .dynamicTypeSize(size: .Accessibility1)
+            .textScale(scale: .Secondary)
+    )
+    match innermostLayer(inTheme).content {
+        Text(run) -> {
+            expect!(run.size > 27.0)
+            expect!(run.content == "Footnote")
+        }
+        else -> expect!(false)
+    }
+}
+
+@Test
+function textScaleIsInheritedBySectionContentWithoutChangingSectionIdentity() {
+    let section = Section {
+        Text("Section row").textScale(scale: .Secondary)
+    }.textScale(scale: .Secondary)
+    expect!(section.isSection())
+    expect!(describedContainsText(describedLayer(move section), "Section row"))
+}

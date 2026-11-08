@@ -1,0 +1,124 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's three public styles. The native scroll compositor has a hard
+// glass boundary plus a soft, progressively faded glass treatment; neither
+// changes the scrolling content's measured bounds or input hit regions.
+public enum ScrollEdgeEffectStyle {
+    Automatic
+    Hard
+    Soft
+}
+
+public struct ScrollEdgeEffectPolicy {
+    var style: ScrollEdgeEffectStyle? = .None
+    var hidden: Bool = false
+}
+
+public struct ScrollEdgeEffectPreferences {
+    var top: ScrollEdgeEffectPolicy = ScrollEdgeEffectPolicy {}
+    var bottom: ScrollEdgeEffectPolicy = ScrollEdgeEffectPolicy {}
+    var leading: ScrollEdgeEffectPolicy = ScrollEdgeEffectPolicy {}
+    var trailing: ScrollEdgeEffectPolicy = ScrollEdgeEffectPolicy {}
+}
+
+public struct ScrollEdgeEffectChange {
+    let edges: EdgeSet = EdgeSet.all
+    let hasStyle: Bool = false
+    let style: ScrollEdgeEffectStyle? = .None
+    let hasHidden: Bool = false
+    let hidden: Bool = false
+}
+
+public function scrollEdgeEffectPolicyApply(
+    previous: borrow ScrollEdgeEffectPolicy,
+    change: borrow ScrollEdgeEffectChange
+) -> ScrollEdgeEffectPolicy {
+    return ScrollEdgeEffectPolicy {
+        style: change.hasStyle ? copy change.style : copy previous.style,
+        hidden: change.hasHidden ? change.hidden : previous.hidden
+    }
+}
+
+public function scrollEdgeEffectsApply(
+    previous: borrow ScrollEdgeEffectPreferences,
+    change: ScrollEdgeEffectChange?
+) -> ScrollEdgeEffectPreferences {
+    return match change {
+        None -> copy previous
+        Some(request) -> ScrollEdgeEffectPreferences {
+            top: request.edges.has(EdgeSet.top)
+                ? scrollEdgeEffectPolicyApply(previous.top, request)
+                : copy previous.top,
+            bottom: request.edges.has(EdgeSet.bottom)
+                ? scrollEdgeEffectPolicyApply(previous.bottom, request)
+                : copy previous.bottom,
+            leading: request.edges.has(EdgeSet.leading)
+                ? scrollEdgeEffectPolicyApply(previous.leading, request)
+                : copy previous.leading,
+            trailing: request.edges.has(EdgeSet.trailing)
+                ? scrollEdgeEffectPolicyApply(previous.trailing, request)
+                : copy previous.trailing
+        }
+    }
+}
+
+public function modifierDeltaScrollEdgeEffectStyle(
+    style: ScrollEdgeEffectStyle?, edges: EdgeSet
+) -> ModifierDelta {
+    return ModifierDelta {
+        scrollEdgeEffectChange: .Some(ScrollEdgeEffectChange {
+            edges: edges, hasStyle: true, style: move style
+        })
+    }
+}
+
+public function modifierDeltaScrollEdgeEffectHidden(
+    hidden: Bool = true, edges: EdgeSet = EdgeSet.all
+) -> ModifierDelta {
+    return ModifierDelta {
+        scrollEdgeEffectChange: .Some(ScrollEdgeEffectChange {
+            edges: edges, hasHidden: true, hidden: hidden
+        })
+    }
+}
+
+public function resolvedScrollEdgeEffectStyle(policy: borrow ScrollEdgeEffectPolicy)
+    -> ScrollEdgeEffectStyle {
+    return match policy.style {
+        Some(style) -> style
+        None -> .Automatic
+    }
+}
+
+public function scrollTopEdgeEffectShows(modifiers: borrow ModifierContext) -> Bool {
+    return !modifiers.scrollEdgeEffects.top.hidden
+}
+
+extend Widget {
+    // SwiftUI: `.scrollEdgeEffectStyle(_ style: ScrollEdgeEffectStyle?,
+    //                                   for edges: Edge.Set)`.
+    function scrollEdgeEffectStyle(
+        style: ScrollEdgeEffectStyle?, forEdges: EdgeSet
+    ) -> Any Widget {
+        return ModifierDeltaLayer(delta: modifierDeltaScrollEdgeEffectStyle(
+            move style, forEdges
+        )) { self }
+    }
+
+    function scrollEdgeEffectStyle(
+        style: ScrollEdgeEffectStyle, forEdges: EdgeSet
+    ) -> Any Widget {
+        return self.scrollEdgeEffectStyle(style: .Some(style), forEdges: forEdges)
+    }
+
+    // SwiftUI: `.scrollEdgeEffectHidden(_ hidden: Bool = true,
+    //                                    for edges: Edge.Set = .all)`.
+    function scrollEdgeEffectHidden(
+        hidden: Bool = true, forEdges: EdgeSet = EdgeSet.all
+    ) -> Any Widget {
+        return ModifierDeltaLayer(delta: modifierDeltaScrollEdgeEffectHidden(
+            hidden, forEdges
+        )) { self }
+    }
+}

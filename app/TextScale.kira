@@ -1,0 +1,39 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI Text.Scale has two public built-in values. Secondary is a semantic
+// smaller text variant of the same base font; it is not a different foreground
+// ink and must work in scripts without small-caps letter forms.
+public enum TextScale {
+    Default
+    Secondary
+}
+
+public function resolvedTextScale(modifiers: borrow ModifierContext) -> Number {
+    if modifiers.textScale == .Default { return 1.0 }
+    // The type scale belongs to the active theme. Use its subheadline/body
+    // relationship rather than hardcoding a device-dependent point size. As
+    // Dynamic Type changes, both source styles scale together, keeping the
+    // logical role smaller regardless of language or font design.
+    let body = modifierTypography(modifiers, .body).size
+    let secondary = modifierTypography(modifiers, .subheadline).size
+    if body <= 0.0 { return 1.0 }
+    return clamp(secondary / body, 0.6, 1.0)
+}
+
+public function modifierDeltaTextScale(scale: TextScale, isEnabled: Bool) -> ModifierDelta {
+    return ModifierDelta {
+        hasTextScale: isEnabled,
+        textScale: scale
+    }
+}
+
+extend Widget {
+    // SwiftUI: `.textScale(_ scale: Text.Scale, isEnabled: Bool = true)`.
+    // Passing false leaves the ancestor's text scale unchanged.
+    function textScale(scale: TextScale, isEnabled: Bool = true) -> Any Widget {
+        return ModifierDeltaLayer(
+            delta: modifierDeltaTextScale(scale, isEnabled)
+        ) { self }
+    }
+}

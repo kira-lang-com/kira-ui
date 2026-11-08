@@ -1,0 +1,72 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's background-interaction policy for a modal sheet. The host owns
+// the actual backdrop hit region: disabling interaction intercepts presses
+// outside the card; enabling it allows the original page's controls to remain
+// hittable while the sheet and its own content remain independently live.
+public enum PresentationBackgroundInteraction {
+    Automatic
+    Enabled
+    Disabled
+    EnabledUpThrough(PresentationDetent)
+}
+
+public function presentationBackgroundInteractionKind(
+    interaction: PresentationBackgroundInteraction
+) -> Number {
+    return match interaction {
+        Automatic -> 0.0
+        Enabled -> 1.0
+        Disabled -> 2.0
+        EnabledUpThrough(detent) -> 3.0
+    }
+}
+
+public function presentationBackgroundReceivesInput(
+    options: borrow PresentationPreferences,
+    selectedHeight: Number
+) -> Bool {
+    return match options.backgroundInteraction {
+        1.0 -> true
+        3.0 -> selectedHeight <= options.backgroundInteractiveThroughHeight + 0.5
+        else -> false
+    }
+}
+
+public construct PresentationBackgroundInteractionLayer(
+    interaction: PresentationBackgroundInteraction
+) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var described = content.describe(context, modifiers)
+        described.hasPresentationBackgroundInteraction = true
+        described.presentationBackgroundInteraction = presentationBackgroundInteractionKind(
+            interaction
+        )
+        described.presentationBackgroundInteractiveThroughHeight = match interaction {
+            EnabledUpThrough(detent) -> presentationDetentHeight(
+                copy detent, presentationMaximumDetentHeight(context)
+            )
+            Automatic -> 0.0
+            Enabled -> 0.0
+            Disabled -> 0.0
+        }
+        return described
+    }
+}
+
+extend Widget {
+    // SwiftUI: `.presentationBackgroundInteraction(_ interaction:)`.
+    function presentationBackgroundInteraction(
+        interaction: PresentationBackgroundInteraction
+    ) -> Any Widget {
+        return PresentationBackgroundInteractionLayer(interaction: interaction) { self }
+    }
+}

@@ -1,0 +1,70 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function documentBlockKindsHaveCompleteNativeMenuDescriptors() {
+    let kinds = documentBlockKinds()
+    expect!(kinds.count == 10)
+    for kind in kinds {
+        expect!(documentBlockTitle(kind).count > 0)
+        expect!(documentBlockSymbol(kind) != Symbol.None)
+    }
+    expect!(documentBlockTitle(.Heading1) == "Heading 1")
+    expect!(documentBlockTitle(.ToDo) == "To-do list")
+}
+
+@Test
+function documentSlashCommandsAreExplicitAndDoNotChangeOrdinaryProse() {
+    match documentBlockSlashKind("/h1") {
+        Some(kind) -> expect!(kind == DocumentBlockKind.Heading1)
+        None -> expect!(false)
+    }
+    match documentBlockSlashKind("/todo") {
+        Some(kind) -> expect!(kind == DocumentBlockKind.ToDo)
+        None -> expect!(false)
+    }
+    match documentBlockSlashKind("/code") {
+        Some(kind) -> expect!(kind == DocumentBlockKind.Code)
+        None -> expect!(false)
+    }
+    expect!(documentBlockSlashKind("/h1 hello").isNone())
+    expect!(documentBlockSlashKind("/unknown").isNone())
+}
+
+@Test
+function numberedBlocksResetAcrossNonNumberedBlocks() {
+    let blocks = [
+        DocumentBlock { id: "first", kind: .Numbered },
+        DocumentBlock { id: "second", kind: .Numbered },
+        DocumentBlock { id: "paragraph", kind: .Paragraph },
+        DocumentBlock { id: "third", kind: .Numbered }
+    ]
+    expect!(documentBlockNumber(blocks, "first") == 1)
+    expect!(documentBlockNumber(blocks, "second") == 2)
+    expect!(documentBlockNumber(blocks, "third") == 1)
+}
+
+@Test
+function blockEditorRendersMixedEditableNativeControls() {
+    let blocks = [
+        DocumentBlock { id: "heading", kind: .Heading1, text: "Project" },
+        DocumentBlock { id: "text", kind: .Paragraph, text: "First steps" },
+        DocumentBlock { id: "todo", kind: .ToDo, text: "Plan", checked: true },
+        DocumentBlock { id: "code", kind: .Code, text: "let x = 2" }
+    ]
+    let view = BlockEditor(
+        blocks: blocks,
+        text: { id in return unboundText("") },
+        onInsert: { after, kind in return },
+        onConvert: { id, kind in return },
+        onToggle: { id in return },
+        onMove: { id, direction in return },
+        onDelete: { id in return }
+    )
+    var described = describedLayer(move view)
+    layOutLayerTree(described, 700.0, 700.0)
+    expect!(described.size.width == 700.0)
+    expect!(described.size.height > 60.0)
+    expect!(described.sublayers.count > 0)
+}

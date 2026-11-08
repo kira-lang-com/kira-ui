@@ -1,0 +1,125 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+function firstListIconTint(view: borrow CALayerDescription) -> CAColor? {
+    match view.content {
+        Icon(icon) -> return .Some(icon.tint)
+        else -> {}
+    }
+    for child in view.sublayers {
+        let found = firstListIconTint(child)
+        match found {
+            Some(value) -> return .Some(value)
+            None -> {}
+        }
+    }
+    return .None
+}
+
+function firstListTitleTint(view: borrow CALayerDescription) -> CAColor? {
+    match view.content {
+        Text(run) -> return .Some(run.color)
+        else -> {}
+    }
+    for child in view.sublayers {
+        let found = firstListTitleTint(child)
+        match found {
+            Some(value) -> return .Some(value)
+            None -> {}
+        }
+    }
+    return .None
+}
+
+@Test
+function fixedListItemTintColorsOnlyTheSidebarLabelIcon() {
+    let context = buildContext(FoundationUiContext {})
+    let sidebar = modifierContextPresenting(ModifierContext {}, .SidebarCell)
+    let regular = Label(title: "Projects", systemImage: .Folder).describe(context, sidebar)
+    let red = RGBAColor { r: 0.85, g: 0.14, b: 0.28, a: 1.0 }
+    let tinted = Label(title: "Projects", systemImage: .Folder)
+        .listItemTint(color: .Some(red)).describe(context, sidebar)
+    match firstListIconTint(tinted) {
+        Some(color) -> {
+            expect!(color.r == 0.85)
+            expect!(color.g == 0.14)
+            expect!(color.b == 0.28)
+        }
+        None -> expect!(false)
+    }
+    match firstListTitleTint(regular) {
+        Some(before) -> match firstListTitleTint(tinted) {
+            Some(after) -> {
+                expect!(before.r == after.r)
+                expect!(before.g == after.g)
+                expect!(before.b == after.b)
+            }
+            None -> expect!(false)
+        }
+        None -> expect!(false)
+    }
+}
+
+@Test
+function listItemTintPoliciesAndNilAreDistinct() {
+    let context = buildContext(FoundationUiContext {})
+    let sidebar = modifierContextPresenting(ModifierContext {}, .SidebarCell)
+    let fixed = Label(title: "Fixed", systemImage: .Folder)
+        .listItemTint(value: .Some(.Fixed(RGBAColor {
+            r: 0.1, g: 0.5, b: 0.9, a: 1.0
+        }))).describe(context, sidebar)
+    let preferred = Label(title: "Preferred", systemImage: .Folder)
+        .listItemTint(value: .Some(.Preferred(RGBAColor {
+            r: 0.1, g: 0.5, b: 0.9, a: 1.0
+        }))).describe(context, sidebar)
+    match firstListIconTint(fixed) {
+        Some(color) -> expect!(color.g == 0.5)
+        None -> expect!(false)
+    }
+    match firstListIconTint(preferred) {
+        Some(color) -> expect!(color.g == 0.5)
+        None -> expect!(false)
+    }
+    let monochrome = Label(title: "Neutral", systemImage: .Folder)
+        .listItemTint(value: .Some(.Monochrome)).describe(context, sidebar)
+    match firstListIconTint(monochrome) {
+        Some(iconColor) -> match firstListTitleTint(monochrome) {
+            Some(titleColor) -> {
+                expect!(iconColor.r == titleColor.r)
+                expect!(iconColor.g == titleColor.g)
+                expect!(iconColor.b == titleColor.b)
+            }
+            None -> expect!(false)
+        }
+        None -> expect!(false)
+    }
+    let defaultIcon = Label(title: "Default", systemImage: .Folder).describe(context, sidebar)
+    let reset = Label(title: "Default", systemImage: .Folder)
+        .listItemTint(color: .Some(RGBAColor { r: 0.3, g: 0.1, b: 0.9 }))
+        .listItemTint(value: .None).describe(context, sidebar)
+    match firstListIconTint(defaultIcon) {
+        Some(normal) -> match firstListIconTint(reset) {
+            Some(actual) -> {
+                expect!(normal.r == actual.r)
+                expect!(normal.g == actual.g)
+                expect!(normal.b == actual.b)
+            }
+            None -> expect!(false)
+        }
+        None -> expect!(false)
+    }
+}
+
+@Test
+function listItemTintAcceptsThemeSemanticColors() {
+    let context = buildContext(FoundationUiContext {})
+    let sidebar = modifierContextPresenting(ModifierContext {}, .SidebarCell)
+    let label = Label(title: "Warn", systemImage: .Folder)
+        .listItemTint(color: .Danger).describe(context, sidebar)
+    expect!(describedContainsText(label, "Warn"))
+    match firstListIconTint(label) {
+        Some(color) -> expect!(color.a > 0.0)
+        None -> expect!(false)
+    }
+}

@@ -1,0 +1,44 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function layoutPriorityGivesHigherPriorityTextFirstOpportunityToFit() {
+    var first = describedLayer(
+        HStack(spacing: .None, alignment: .Top) {
+            Text("A long title that needs a whole line").layoutPriority(value: 2.0)
+            Text("A long title that needs a whole line")
+        }
+    )
+    layOutLayerTree(first, 160.0, 130.0)
+    var second = describedLayer(
+        HStack(spacing: .None, alignment: .Top) {
+            Text("A long title that needs a whole line")
+            Text("A long title that needs a whole line").layoutPriority(value: 2.0)
+        }
+    )
+    layOutLayerTree(second, 160.0, 130.0)
+    expect!(first.sublayers[0].size.width >= first.sublayers[1].size.width)
+    expect!(second.sublayers[1].size.width >= second.sublayers[0].size.width)
+    expect!(first.sublayers[0].layout.layoutPriority == 2.0)
+    expect!(second.sublayers[1].layout.layoutPriority == 2.0)
+}
+
+@Test
+function layoutPriorityDoesNotReorderOrExpandUnconstrainedRow() {
+    var row = describedLayer(HStack(spacing: .None, alignment: .Top) {
+        Text("First").layoutPriority(value: 10.0)
+        Text("Second")
+    })
+    layOutLayerTree(row, 800.0, 80.0)
+    log info("layout priority unconstrained row diagnostic",
+        firstWidth: row.sublayers[0].size.width,
+        secondX: row.sublayers[1].position.x,
+        firstX: row.sublayers[0].position.x,
+        rowWidth: row.size.width)
+    expect!(row.sublayers[0].position.x == 0.0)
+    // Positions are snapped to backing pixels after the entire row is
+    // laid out, whereas intrinsic text widths remain fractional. A half-pixel
+    // discrepancy is not overlap or a reordered layout.
+    expect!(row.sublayers[1].position.x + 0.51 >= row.sublayers[0].size.width)
+}

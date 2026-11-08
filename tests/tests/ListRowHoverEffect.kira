@@ -1,0 +1,191 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+function containsListHoverRegion(view: borrow CALayerDescription) -> Bool {
+    if view.hoverKey != 0 { return true }
+    for child in view.sublayers {
+        if containsListHoverRegion(child) { return true }
+    }
+    return false
+}
+
+@Test
+function listRowHoverPreferenceCanOverrideTheListEnvironment() {
+    let inherited = modifierContextApply(
+        ModifierContext {}, modifierDeltaListRowHoverEffect(.Some(.Lift))
+    )
+    expect!(inherited.hasListRowHoverEffect)
+    match modifierContextForChildren(inherited).listRowHoverEffect {
+        Some(Lift) -> {}
+        else -> expect!(false)
+    }
+    let highlighted = modifierContextApply(
+        inherited, modifierDeltaListRowHoverEffect(.Some(.Highlight))
+    )
+    match highlighted.listRowHoverEffect {
+        Some(Highlight) -> {}
+        else -> expect!(false)
+    }
+    let reset = modifierContextApply(highlighted, modifierDeltaListRowHoverEffect(.None))
+    expect!(reset.hasListRowHoverEffect)
+    match reset.listRowHoverEffect {
+        None -> {}
+        else -> expect!(false)
+    }
+}
+
+@Test
+function groupedListRowHoverEffectUsesWholeMeasuredRow() {
+    layerActionsReset()
+    tapSeqReset()
+    let context = buildContext(FoundationUiContext {})
+    let modifiers = modifierContextPresenting(ModifierContext {}, .InsetGrouped)
+    let row = describedLayer(Text("Row").listRowHoverEffect(effect: .Some(.Highlight)))
+    let grouped = insetGroupedRow(move row, false, context, modifiers)
+    expect!(grouped.hoverKey != 0)
+    expect!(!grouped.hittable)
+    expect!(grouped.sublayers.count == 1)
+    expect!(grouped.sublayers[0].layout.paddingLeading == listRowInset(modifiers))
+    expect!(describedContainsText(grouped, "Row"))
+    layerHoverChanged(grouped.hoverKey, true)
+    tapSeqReset()
+    let changed = insetGroupedRow(
+        describedLayer(Text("Row").listRowHoverEffect(effect: .Some(.Highlight))),
+        false, context, modifiers
+    )
+    match changed.content {
+        Solid(solid) -> expect!(solid.fill.a > 0.0)
+        else -> expect!(false)
+    }
+    layerHoverChanged(changed.hoverKey, false)
+}
+
+@Test
+function explicitNilAndDisabledRowEffectsPreserveClickAndOtherHoverObservers() {
+    let context = buildContext(FoundationUiContext {})
+    let modifiers = modifierContextPresenting(ModifierContext {}, .InsetGrouped)
+    let row = describedLayer(
+        Button(title: "Choose", action: { in })
+            .listRowHoverEffect(effect: .Some(.Lift))
+            .listRowHoverEffectDisabled()
+            .onHover(action: { inside in })
+    )
+    let grouped = insetGroupedRow(move row, false, context, modifiers)
+    expect!(grouped.hoverKey == 0.0)
+    expect!(grouped.hittable)
+    expect!(containsListHoverRegion(grouped))
+
+    let reset = describedLayer(
+        Text("No override")
+            .listRowHoverEffect(effect: .Some(.Lift))
+            .listRowHoverEffect(effect: .None)
+    )
+    let untouched = insetGroupedRow(move reset, false, context, modifiers)
+    expect!(untouched.hoverKey == 0.0)
+    expect!(describedContainsText(untouched, "No override"))
+}
+
+@Test
+function sidebarRowHoverEffectUsesItsFullCellNotOnlyTheLabel() {
+    layerActionsReset()
+    tapSeqReset()
+    let modifiers = modifierContextPresenting(ModifierContext {}, .SidebarCell)
+    let described = describedLayer(
+        SidebarRow(selected: false, action: { in }) {
+            Text("Sidebar")
+        }.listRowHoverEffect(effect: .Some(.Lift))
+    )
+    let cell = sidebarRowCell(move described, modifiers)
+    expect!(cell.hoverKey != 0.0)
+    expect!(describedContainsText(cell, "Sidebar"))
+    layerHoverChanged(cell.hoverKey, true)
+    tapSeqReset()
+    let hovered = sidebarRowCell(
+        describedLayer(SidebarRow(selected: false, action: { in }) {
+            Text("Sidebar")
+        }.listRowHoverEffect(effect: .Some(.Lift))), modifiers
+    )
+    expect!(hovered.sublayers[0].scaleX > 1.0)
+    layerHoverChanged(hovered.hoverKey, false)
+}
+
+@Test
+function listRowHoverModifiersPreserveSectionIdentity() {
+    let section = Section {
+        Text("Row")
+    }.listRowHoverEffect(effect: .Some(.Automatic)).listRowHoverEffectDisabled(false)
+    expect!(section.isSection())
+}
+
+@Test
+function plainListRowsReceiveTheirOwnHoverEffectNotAWholeListOverlay() {
+    layerActionsReset()
+    tapSeqReset()
+    let context = buildContext(FoundationUiContext {})
+    let rows = PlainListRows() {
+        Text("Hovered row").listRowHoverEffect(effect: .Some(.Highlight))
+        Text("Normal row")
+    }.describe(context, ModifierContext {})
+    expect!(rows.sublayers.count == 2)
+    expect!(rows.sublayers[0].hoverKey != 0)
+    expect!(rows.sublayers[1].hoverKey == 0)
+    expect!(describedContainsText(rows.sublayers[0], "Hovered row"))
+    expect!(describedContainsText(rows.sublayers[1], "Normal row"))
+
+    let wholeList = describedLayer(List() {
+        Text("First").listRowHoverEffect(effect: .Some(.Lift))
+        Text("Second")
+    }.listStyle(style: .Plain))
+    expect!(containsListHoverRegion(wholeList))
+}
+
+@Test
+function listWideHoverPolicyAppliesToPlainLooseRowsButNotSectionWrapper() {
+    let context = buildContext(FoundationUiContext {})
+    let modifiers = modifierContextApply(
+        ModifierContext {}, modifierDeltaListRowHoverEffect(.Some(.Highlight))
+    )
+    let rows = PlainListRows() {
+        Text("First")
+        Text("Second")
+    }.describe(context, modifiers)
+    expect!(rows.sublayers.count == 2)
+    expect!(rows.sublayers[0].hoverKey != 0)
+    expect!(rows.sublayers[1].hoverKey != 0)
+    expect!(rows.hoverKey == 0)
+}
+
+@Test
+function plainListSectionAppliesHoverPerRowNotToHeaderAndFooter() {
+    let content = describedLayer(List() {
+        Section() {
+            Text("First").listRowHoverEffect(effect: .Some(.Lift))
+            Text("Second")
+        } header: {
+            Text("Group")
+        } footer: {
+            Text("Footnote")
+        }
+    }.listStyle(style: .Plain))
+    expect!(describedContainsText(content, "Group"))
+    expect!(describedContainsText(content, "Footnote"))
+    expect!(containsListHoverRegion(content))
+
+    let context = buildContext(FoundationUiContext {})
+    let plain = modifierContextApply(ModifierContext {}, ModifierDelta {
+        entersPlainList: true
+    })
+    let section = Section() {
+        Text("First").listRowHoverEffect(effect: .Some(.Highlight))
+        Text("Second")
+    } header: {
+        Text("Header")
+    } footer: {
+        Text("Footer")
+    }.describe(context, plain)
+    // The section's row group, not the section or its header/footer,
+    // contains the hover region. Non-hovered sibling rows stay untouched.
+    expect!(section.hoverKey == 0)
+    expect!(containsListHoverRegion(section))
+}

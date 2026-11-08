@@ -1,0 +1,132 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function dynamicTypeSizeContainsEveryPublicSizeAndOrderedAccessibilityCases() {
+    expect!(dynamicTypeSizeIndex(.XSmall) == 0.0)
+    expect!(dynamicTypeSizeIndex(.Small) == 1.0)
+    expect!(dynamicTypeSizeIndex(.Medium) == 2.0)
+    expect!(dynamicTypeSizeIndex(.Large) == 3.0)
+    expect!(dynamicTypeSizeIndex(.XLarge) == 4.0)
+    expect!(dynamicTypeSizeIndex(.XXLarge) == 5.0)
+    expect!(dynamicTypeSizeIndex(.XXXLarge) == 6.0)
+    expect!(dynamicTypeSizeIndex(.Accessibility1) == 7.0)
+    expect!(dynamicTypeSizeIndex(.Accessibility2) == 8.0)
+    expect!(dynamicTypeSizeIndex(.Accessibility3) == 9.0)
+    expect!(dynamicTypeSizeIndex(.Accessibility4) == 10.0)
+    expect!(dynamicTypeSizeIndex(.Accessibility5) == 11.0)
+    expect!(!dynamicTypeIsAccessibilitySize(.XXXLarge))
+    expect!(dynamicTypeIsAccessibilitySize(.Accessibility1))
+    expect!(dynamicTypeIsAccessibilitySize(.Accessibility5))
+}
+
+@Test
+function dynamicTypeTextActuallyScalesGlyphsAndTheirIntrinsicMeasurement() {
+    let ordinary = describedLayer(Text("Adaptive title"))
+    let enlarged = describedLayer(
+        Text("Adaptive title").dynamicTypeSize(size: .Accessibility2)
+    )
+    let small = describedLayer(Text("Adaptive title").dynamicTypeSize(size: .Small))
+    match innermostLayer(ordinary).content {
+        Text(original) -> match innermostLayer(enlarged).content {
+            Text(larger) -> match innermostLayer(small).content {
+                Text(smaller) -> {
+                    expect!(larger.size > original.size)
+                    expect!(smaller.size < original.size)
+                    expect!(abs(larger.size / original.size - 33.0 / 17.0) < 0.001)
+                    expect!(abs(smaller.size / original.size - 15.0 / 17.0) < 0.001)
+                }
+                else -> expect!(false)
+            }
+            else -> expect!(false)
+        }
+        else -> expect!(false)
+    }
+    expect!(enlarged.layout.intrinsicWidth > ordinary.layout.intrinsicWidth)
+    expect!(enlarged.layout.intrinsicHeight > ordinary.layout.intrinsicHeight)
+}
+
+@Test
+function dynamicTypeExplicitFontAndThemeTypographyShareTheSameScale() {
+    let regular = ModifierContext {}
+    let expanded = modifierContextApply(
+        regular, modifierDeltaDynamicTypeSize(.XXXLarge)
+    )
+    let control = modifierContextApply(expanded, modifierDeltaControlSize(.Large))
+    let explicit = modifierContextApply(expanded, modifierDeltaFont(21.0, .Regular))
+    expect!(modifierTextSize(explicit) == 21.0 * 23.0 / 17.0)
+    expect!(modifierTextSize(expanded) > modifierTextSize(regular))
+    let expectedControlRatio = resolvedControlSizeMetrics(control).fontSize
+        / resolvedControlSizeMetrics(expanded).fontSize
+    expect!(abs(modifierTextSize(control) / modifierTextSize(expanded)
+        - expectedControlRatio) < 0.001)
+    expect!(modifierTextWeight(expanded) == modifierTextWeight(regular))
+}
+
+@Test
+function dynamicTypeRangesClampAndIntersectExactlyAsSwiftUIExamples() {
+    let all = ModifierContext {}
+    let atLeastXLarge = DynamicTypeSizeRange { minimum: .Some(.XLarge) }
+    let atMostXXLarge = DynamicTypeSizeRange { maximum: .Some(.XXLarge) }
+    let minimum = modifierContextApply(
+        all, modifierDeltaDynamicTypeSizeRange(copy atLeastXLarge)
+    )
+    let intersected = modifierContextApply(
+        minimum, modifierDeltaDynamicTypeSizeRange(copy atMostXXLarge)
+    )
+    expect!(intersected.dynamicType.size == DynamicTypeSize.XLarge)
+    expect!(dynamicTypeRangeLowest(intersected.dynamicType.limits) == 4.0)
+    expect!(dynamicTypeRangeHighest(intersected.dynamicType.limits) == 5.0)
+
+    // Outer range limits an exact size chosen by its descendant.
+    let rangeThenSize = modifierContextApply(
+        modifierContextApply(all, modifierDeltaDynamicTypeSizeRange(copy atMostXXLarge)),
+        modifierDeltaDynamicTypeSize(.Accessibility4)
+    )
+    expect!(rangeThenSize.dynamicType.size == DynamicTypeSize.XXLarge)
+
+    // Conversely, an outer exact size wins over a descendant's range.
+    let sizeThenRange = modifierContextApply(
+        modifierContextApply(all, modifierDeltaDynamicTypeSize(.Accessibility4)),
+        modifierDeltaDynamicTypeSizeRange(copy atMostXXLarge)
+    )
+    expect!(sizeThenRange.dynamicType.size == DynamicTypeSize.Accessibility4)
+}
+
+@Test
+function dynamicTypeExclusiveUpperRangeAndNestedReset() {
+    let exclusive = DynamicTypeSizeRange {
+        minimum: .Some(.Small),
+        maximum: .Some(.XLarge),
+        upperExclusive: true
+    }
+    expect!(dynamicTypeRangeLowest(exclusive) == 1.0)
+    expect!(dynamicTypeRangeHighest(exclusive) == 3.0)
+    expect!(dynamicTypeClamped(.Accessibility2, exclusive) == DynamicTypeSize.Large)
+
+    let limited = modifierContextApply(
+        ModifierContext {}, modifierDeltaDynamicTypeSizeRange(copy exclusive)
+    )
+    let inner = modifierContextApply(limited, modifierDeltaDynamicTypeSize(.Accessibility2))
+    expect!(inner.dynamicType.size == DynamicTypeSize.Large)
+    expect!(modifierContextForChildren(inner).dynamicType.size == DynamicTypeSize.Large)
+}
+
+@Test
+function dynamicTypeSizeAPIsComposeWithExistingViewModifiers() {
+    let view = Text("Range")
+        .dynamicTypeSize(size: .Accessibility2)
+        .dynamicTypeSize(range: DynamicTypeSizeRange {
+            minimum: .Some(.Large), maximum: .Some(.XLarge)
+        })
+    let described = describedLayer(move view)
+    match innermostLayer(described).content {
+        Text(run) -> expect!(run.size > 0.0)
+        else -> expect!(false)
+    }
+    let section = Section {
+        Text("Row")
+    }.dynamicTypeSize(size: .Accessibility3)
+    expect!(section.isSection())
+}

@@ -1,0 +1,33 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function listRowSpacingIsInheritedAndCanResetToDefault() {
+    let normal = ModifierContext {}
+    let spaced = modifierContextApply(normal, modifierDeltaListRowSpacing(.Some(12.0)))
+    expect!(resolvedListRowSpacing(spaced) == 12.0)
+    expect!(resolvedListRowSpacing(modifierContextForChildren(spaced)) == 12.0)
+    let reset = modifierContextApply(spaced, modifierDeltaListRowSpacing(.None))
+    expect!(resolvedListRowSpacing(reset) == 0.0)
+    let negative = modifierContextApply(normal, modifierDeltaListRowSpacing(.Some(-3.0)))
+    expect!(resolvedListRowSpacing(negative) == 0.0)
+}
+
+@Test
+function listRowSpacingAppliesToPlainAndGroupedLists() {
+    let plain = describedLayer(
+        List() {
+            Text("First")
+            Text("Second")
+        }.listStyle(style: .Plain).listRowSpacing(spacing: .Some(13.0))
+    )
+    expect!(describedContainsText(plain, "Second"))
+    let grouped = describedLayer(
+        List() {
+            Text("First")
+            Text("Second")
+        }.listRowSpacing(spacing: .Some(13.0))
+    )
+    expect!(describedContainsText(grouped, "First"))
+}

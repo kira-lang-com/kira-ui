@@ -1,0 +1,183 @@
+import Foundation
+import Ember
+import KiraUI
+import KCoreAnimation
+
+struct ModifierKeyObservations {
+    var calls: Number = 0.0
+    var priorShift: Bool = false
+    var newShift: Bool = false
+    var priorOption: Bool = false
+    var newOption: Bool = false
+}
+
+@Test
+function eventModifierMasksPreserveIndependentSimultaneousKeys() {
+    let incoming = eventModifiersFromInput(ModifierState {
+        shift: true, alt: true, superKey: true
+    })
+    expect!(incoming.shift)
+    expect!(incoming.option)
+    expect!(incoming.command)
+    expect!(!incoming.control)
+    expect!(eventModifiersContain(incoming, EventModifiers {
+        shift: true, option: true
+    }))
+    expect!(!eventModifiersContain(incoming, EventModifierMasks.control))
+    let filtered = eventModifiersFiltered(incoming, EventModifierMasks.shift)
+    expect!(filtered.shift)
+    expect!(!filtered.option)
+    expect!(!filtered.command)
+}
+
+@Test
+function modifierKeysAlternateActuallySwapsRenderedContent() {
+    modifierInputSetState(ModifierState {})
+    let ordinary = describedLayer(
+        Text("Ordinary")
+            .modifierKeyAlternate(
+                required: EventModifierMasks.option,
+                alternate: Text("Option held")
+            )
+    )
+    expect!(describedContainsText(ordinary, "Ordinary"))
+    expect!(!describedContainsText(ordinary, "Option held"))
+
+    modifierInputSetState(ModifierState { alt: true })
+    let alternate = describedLayer(
+        Text("Ordinary")
+            .modifierKeyAlternate(
+                required: EventModifierMasks.option,
+                alternate: Text("Option held")
+            )
+    )
+    expect!(describedContainsText(alternate, "Option held"))
+    expect!(!describedContainsText(alternate, "Ordinary"))
+    modifierInputSetState(ModifierState {})
+}
+
+@Test
+function modifierKeyObservationUsesMaskedChangesAndStableViewIdentity() {
+    unsafe {
+        let record = nativeUserData(nativeState(ModifierKeyObservations {}))
+        modifierInputSetState(ModifierState {})
+        tapSeqReset()
+        var first = stateBuildBegin()
+        describedLayer(Text("Observed").onModifierKeysChanged(
+            mask: EventModifierMasks.shift,
+            initial: true,
+            action: { old, next in
+                unsafe {
+                    var counter = nativeRecover<ModifierKeyObservations>(record)
+                    counter.calls++
+                    counter.priorShift = old.shift
+                    counter.newShift = next.shift
+                }
+            }
+        ))
+        first.finish()
+        expect!(nativeRecover<ModifierKeyObservations>(record).calls == 1.0)
+
+        // Option is outside the requested mask; rebuilding may not report it.
+        modifierInputSetState(ModifierState { alt: true })
+        tapSeqReset()
+        var ignored = stateBuildBegin()
+        describedLayer(Text("Observed").onModifierKeysChanged(
+            mask: EventModifierMasks.shift,
+            initial: true,
+            action: { old, next in
+                unsafe {
+                    var counter = nativeRecover<ModifierKeyObservations>(record)
+                    counter.calls++
+                }
+            }
+        ))
+        ignored.finish()
+        expect!(nativeRecover<ModifierKeyObservations>(record).calls == 1.0)
+
+        modifierInputSetState(ModifierState { shift: true, alt: true })
+        tapSeqReset()
+        var changed = stateBuildBegin()
+        describedLayer(Text("Observed").onModifierKeysChanged(
+            mask: EventModifierMasks.shift,
+            initial: true,
+            action: { old, next in
+                unsafe {
+                    var counter = nativeRecover<ModifierKeyObservations>(record)
+                    counter.calls++
+                    counter.priorShift = old.shift
+                    counter.newShift = next.shift
+                }
+            }
+        ))
+        changed.finish()
+        expect!(nativeRecover<ModifierKeyObservations>(record).calls == 2.0)
+        expect!(!nativeRecover<ModifierKeyObservations>(record).priorShift)
+        expect!(nativeRecover<ModifierKeyObservations>(record).newShift)
+        modifierInputSetState(ModifierState {})
+        var cleared = stateBuildBegin()
+        cleared.finish()
+    }
+}
+
+@Test
+function modifierKeyObservationInitialFalseWaitsForARealChange() {
+    unsafe {
+        let record = nativeUserData(nativeState(ModifierKeyObservations {}))
+        modifierInputSetState(ModifierState {})
+        tapSeqReset()
+        var first = stateBuildBegin()
+        describedLayer(Text("Observed").onModifierKeysChanged(
+            mask: EventModifierMasks.option,
+            initial: false,
+            action: { old, next in
+                unsafe {
+                    var counter = nativeRecover<ModifierKeyObservations>(record)
+                    counter.calls++
+                    counter.priorOption = old.option
+                    counter.newOption = next.option
+                }
+            }
+        ))
+        first.finish()
+        expect!(nativeRecover<ModifierKeyObservations>(record).calls == 0.0)
+        modifierInputSetState(ModifierState { alt: true })
+        tapSeqReset()
+        var changed = stateBuildBegin()
+        describedLayer(Text("Observed").onModifierKeysChanged(
+            mask: EventModifierMasks.option,
+            initial: false,
+            action: { old, next in
+                unsafe {
+                    var counter = nativeRecover<ModifierKeyObservations>(record)
+                    counter.calls++
+                    counter.priorOption = old.option
+                    counter.newOption = next.option
+                }
+            }
+        ))
+        changed.finish()
+        expect!(nativeRecover<ModifierKeyObservations>(record).calls == 1.0)
+        expect!(!nativeRecover<ModifierKeyObservations>(record).priorOption)
+        expect!(nativeRecover<ModifierKeyObservations>(record).newOption)
+        modifierInputSetState(ModifierState {})
+        var cleared = stateBuildBegin()
+        cleared.finish()
+    }
+}
+
+@Test
+function windowInputUpdatesModifierSnapshotWithoutPressingAnyControls() {
+    var state = KiraLayerAppState {}
+    modifierInputSetState(ModifierState {})
+    kiraLayerHandleEvent(state, AppEvent {
+        kind: .KeyDown, key: .LeftShift,
+        modifiers: ModifierState { shift: true }
+    })
+    expect!(modifierInputCurrent().shift)
+    kiraLayerHandleEvent(state, AppEvent {
+        kind: .KeyUp, key: .LeftShift,
+        modifiers: ModifierState {}
+    })
+    expect!(!modifierInputCurrent().shift)
+}

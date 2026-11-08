@@ -1,0 +1,185 @@
+import Foundation
+import KCoreAnimation
+
+// A sheet's embedded scroll views have two possible gesture owners: their
+// content or the surrounding resizable presentation. The compositor keeps
+// the original hit target unchanged. The native scroll input router chooses
+// the owner once the finger's travel direction is known, using real measured
+// content/viewport lengths and the selected detent.
+public struct PresentationScrollRoute {
+    var scrollKey: Number = 0.0
+    var sheetKey: Number = 0.0
+    var interaction: Number = 0.0
+    var selectedHeight: Number = 0.0
+    var detentHeights: [Number] = []
+    var selectionKey: Number = 0.0
+    var contentOffset: Number = 0.0
+    var maxContentOffset: Number = 0.0
+}
+
+public struct PresentationScrollRouter {
+    var routes: [PresentationScrollRoute] = []
+    var target: Number = 0.0
+    var resizes: Bool = false
+    var accumulatedTravel: Number = 0.0
+}
+
+public function presentationScrollRouterSlot() -> ViewStateKey {
+    return slotKey("kiraui.presentation.scroll-router.", 0.0)
+}
+
+public function presentationScrollRouterEnsure() {
+    unsafe {
+        let slot = presentationScrollRouterSlot()
+        if !ambientStateHasView(slot) {
+            ambientStatePutView(copy slot, nativeUserData(nativeState(
+                PresentationScrollRouter {}
+            )))
+        }
+    }
+}
+
+// The overlay collector calls this at the start of every view description.
+// Only current, onscreen sheets may intercept a fresh gesture. Do not reset
+// the held target/travel: touch streams can cross several frame descriptions.
+public function presentationScrollRoutesReset() {
+    unsafe {
+        presentationScrollRouterEnsure()
+        var router = nativeRecover<PresentationScrollRouter>(
+            ambientStateGetView(presentationScrollRouterSlot())
+        )
+        router.routes = []
+    }
+}
+
+public function presentationScrollRouteRegisterTree(
+    described: borrow CALayerDescription,
+    sheetKey: Number,
+    options: borrow PresentationPreferences,
+    selectedHeight: Number
+) {
+    if !options.hasDetents || options.detentHeights.count < 2 { return }
+    if described.scrollAxis != .None && described.hitKey != 0.0 {
+        unsafe {
+            let slot = scrollViewSlotKey(described.hitKey)
+            if ambientStateHasView(slot) {
+                let scroll = nativeRecover<ScrollViewState>(ambientStateGetView(slot))
+                presentationScrollRouterEnsure()
+                var router = nativeRecover<PresentationScrollRouter>(
+                    ambientStateGetView(presentationScrollRouterSlot())
+                )
+                router.routes.append(PresentationScrollRoute {
+                    scrollKey: described.hitKey,
+                    sheetKey: sheetKey,
+                    interaction: options.contentInteraction,
+                    selectedHeight: selectedHeight,
+                    detentHeights: copy options.detentHeights,
+                    selectionKey: options.selectionKey,
+                    contentOffset: scroll.motion.offset,
+                    maxContentOffset: max(scroll.contentLength - scroll.viewportLength, 0.0)
+                })
+            }
+        }
+    }
+    for child in described.sublayers {
+        presentationScrollRouteRegisterTree(child, sheetKey, options, selectedHeight)
+    }
+}
+
+public function presentationScrollRouteCanResize(
+    route: borrow PresentationScrollRoute,
+    travel: Number
+) -> Bool {
+    if travel == 0.0 || route.detentHeights.count < 2 { return false }
+    let minimum = presentationDetentSmallest(route.detentHeights)
+    var maximum = minimum
+    for detent in route.detentHeights { maximum = max(maximum, detent) }
+    let up = travel < 0.0
+    if up && route.selectedHeight >= maximum - 0.5 { return false }
+    if !up && route.selectedHeight <= minimum + 0.5 { return false }
+    // Scrolls-first gives content priority until a real edge is reached.
+    // Automatic and Resizes give a resizable presentation first claim.
+    if route.interaction == 1.0 {
+        if up && route.contentOffset < route.maxContentOffset - 0.5 { return false }
+        if !up && route.contentOffset > 0.5 { return false }
+    }
+    return true
+}
+
+public function presentationScrollDragBegin(target: Number) {
+    unsafe {
+        presentationScrollRouterEnsure()
+        var router = nativeRecover<PresentationScrollRouter>(
+            ambientStateGetView(presentationScrollRouterSlot())
+        )
+        router.target = target
+        router.resizes = false
+        router.accumulatedTravel = 0.0
+    }
+}
+
+// Return true only after this drag belongs to the sheet. Once a drag has
+// crossed over to resizing, keep it there until release; switching repeatedly
+// would cause both the scroll content and the presentation to move.
+public function presentationScrollDragMove(travel: Number) -> Bool {
+    unsafe {
+        presentationScrollRouterEnsure()
+        var router = nativeRecover<PresentationScrollRouter>(
+            ambientStateGetView(presentationScrollRouterSlot())
+        )
+        if router.target == 0.0 { return false }
+        if router.resizes {
+            router.accumulatedTravel += travel
+            return true
+        }
+        for route in router.routes {
+            if route.scrollKey != router.target { continue }
+            if !presentationScrollRouteCanResize(route, travel) { return false }
+            router.resizes = true
+            router.accumulatedTravel += travel
+            return true
+        }
+        return false
+    }
+}
+
+public function presentationScrollDragEnd() -> Bool {
+    unsafe {
+        presentationScrollRouterEnsure()
+        var router = nativeRecover<PresentationScrollRouter>(
+            ambientStateGetView(presentationScrollRouterSlot())
+        )
+        let target = router.target
+        let resizing = router.resizes
+        let travel = router.accumulatedTravel
+        router.target = 0.0
+        router.resizes = false
+        router.accumulatedTravel = 0.0
+        if !resizing { return false }
+        for route in router.routes {
+            if route.scrollKey == target {
+                let choices = PresentationPreferences {
+                    hasDetents: true,
+                    detentHeights: copy route.detentHeights,
+                    selectedHeight: route.selectedHeight,
+                    selectionKey: route.selectionKey
+                }
+                presentationSheetDetentDragEnded(route.sheetKey, choices, travel)
+                return true
+            }
+        }
+        return false
+    }
+}
+
+public function presentationScrollDragCancel() {
+    unsafe {
+        presentationScrollRouterEnsure()
+        var router = nativeRecover<PresentationScrollRouter>(
+            ambientStateGetView(presentationScrollRouterSlot())
+        )
+        router.target = 0.0
+        router.resizes = false
+        router.accumulatedTravel = 0.0
+    }
+}

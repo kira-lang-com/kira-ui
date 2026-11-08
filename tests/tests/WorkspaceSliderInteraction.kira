@@ -1,0 +1,427 @@
+import Foundation
+import Ember
+import KiraUI
+import KCoreAnimation
+
+struct SliderClickRecord {
+    var tabs: Number = 0
+    var closes: Number = 0
+}
+
+function sliderTextCount(layer: borrow CALayerDescription, title: borrow String) -> Number {
+    var count = 0
+    match layer.content {
+        Text(text) -> {
+            if text.content == title { count++ }
+        }
+        else -> {}
+    }
+    for child in layer.sublayers {
+        count += sliderTextCount(child, title)
+    }
+    return count
+}
+
+function sliderAllTextImmediate(layer: borrow CALayerDescription) -> Bool {
+    match layer.content {
+        Text(t) -> { if !layer.disablesActions { return false } }
+        else -> {}
+    }
+    for child in layer.sublayers {
+        if !sliderAllTextImmediate(child) { return false }
+    }
+    return true
+}
+
+@Test
+function workspaceSliderKeepsFullTitlesAndAlwaysVisibleClose() {
+    let context = buildContext(FoundationUiContext {})
+    let modifiers = ModifierContext {}
+    let declaration = PanelDeclaration {
+        panel: "Inspector",
+        title: "Inspector",
+        systemImage: .SliderHorizontal3
+    }
+    for selected in [false, true] {
+        let face = workspaceTabFace(declaration, selected, context, modifiers)
+        expect!(sliderTextCount(face, "Inspector") > 0)
+        expect!(sliderAllTextImmediate(face))
+
+        // The X is not gated by selection or hover: one and only one
+        // explicit close target is always present on a closable tab.
+        var tab = workspaceTab(declaration, 1, selected, true, false, context, modifiers)
+        expect!(tab.sublayers.count == 2)
+        expect!(tab.sublayers[1].hitKey == workspaceCloseKey(1))
+        expect!(layerActionRequiresDirectPress(workspaceCloseKey(1)))
+        expect!(sliderTextCount(tab, "Inspector") > 0)
+        expect!(sliderAllTextImmediate(tab))
+
+        // The close glyph is centered in the normal toolbar-sized hit area.
+        // Its default inner 13pt inset is already the desired visual gap;
+        // do not add the label's 11pt end inset or the 9pt group gap to it.
+        expect!(tab.layout.paddingLeading == windowChromeMetrics().labelInset)
+        expect!(tab.layout.paddingTrailing == 0)
+        expect!(tab.layout.spacing == 0)
+        expect!(tab.sublayers[0].layout.paddingTrailing == 0)
+        expect!(tab.sublayers[1].layout.minWidth == windowChromeMetrics().itemWidth)
+        tab.layoutTree(500.0, windowChromeMetrics().itemHeight)
+        let gap = tab.sublayers[1].position.x - (
+            tab.sublayers[0].position.x + tab.sublayers[0].size.width
+        )
+        expect!(abs(gap) <= 0.51)
+        let leftGap = tab.sublayers[0].position.x
+        let visualCloseGap = gap + tab.sublayers[1].sublayers[0].position.x
+        log info("workspace tab visual spacing diagnostic", selected: selected,
+            faceWidth: tab.sublayers[0].size.width,
+            titleGap: gap, leftGap: leftGap,
+            iconInset: tab.sublayers[1].sublayers[0].position.x,
+            visualCloseGap: visualCloseGap,
+            iconWidth: tab.sublayers[1].sublayers[0].size.width)
+        // The measured left margin and title-to-X gap are now both close to
+        // one toolbar inset (rather than three added insets).
+        expect!(abs(visualCloseGap - leftGap) <= 2.51)
+    }
+}
+
+@Test
+function slidingPressAcrossCloseCannotDismissPanel() {
+    unsafe {
+        let record = nativeState(SliderClickRecord {})
+        let ptr = nativeUserData(record)
+        layerActionsReset()
+        let tabKey = 705101
+        let closeKey = 705102
+        layerActionRegister(tabKey, { in
+            unsafe {
+                var clicks = nativeRecover<SliderClickRecord>(ptr)
+                clicks.tabs++
+            }
+        })
+        layerActionRegisterDirectPress(closeKey, { in
+            unsafe {
+                var clicks = nativeRecover<SliderClickRecord>(ptr)
+                clicks.closes++
+            }
+        })
+        var slide = CALayerDescription {
+            interactive: true,
+            slidesPress: true,
+            hitKey: 705100,
+            layout: CALayoutIntent { axis: .Row, widthFill: false, heightFill: false },
+            sublayers: [
+                CALayerDescription {
+                    hittable: true, hitKey: tabKey,
+                    layout: CALayoutIntent { fixedWidth: 80, fixedHeight: 32 }
+                },
+                CALayerDescription {
+                    hittable: true, hitKey: closeKey,
+                    layout: CALayoutIntent { fixedWidth: 32, fixedHeight: 32 }
+                }
+            ]
+        }
+        slide.layoutTree(200, 32)
+        var runner = KiraLayerAppState {}
+        runner.compositor.tree.reconcileImmediate(slide)
+        kiraLayerHandleEvent(runner, AppEvent {
+            kind: .PointerDown, pointerButton: .Left, pointerX: 40, pointerY: 16
+        })
+        expect!(runner.pressOriginControl == tabKey)
+        kiraLayerHandleEvent(runner, AppEvent {
+            kind: .PointerMoved, pointerX: 96, pointerY: 16
+        })
+        expect!(runner.ui.hoveredKey == closeKey)
+        expect!(runner.ui.pressedKey == tabKey)
+        kiraLayerHandleEvent(runner, AppEvent {
+            kind: .PointerUp, pointerButton: .Left, pointerX: 96, pointerY: 16
+        })
+        expect!(nativeRecover<SliderClickRecord>(ptr).closes == 0)
+
+        // An explicit down/up on that very same X closes exactly once.
+        kiraLayerHandleEvent(runner, AppEvent {
+            kind: .PointerDown, pointerButton: .Left, pointerX: 96, pointerY: 16
+        })
+        expect!(runner.pressOriginControl == closeKey)
+        kiraLayerHandleEvent(runner, AppEvent {
+            kind: .PointerUp, pointerButton: .Left, pointerX: 96, pointerY: 16
+        })
+        expect!(nativeRecover<SliderClickRecord>(ptr).closes == 1)
+        expect!(runner.pressOriginControl == 0)
+    }
+}
+
+@Test
+function workspaceStripUsesStableLensKeyForEveryPanelSelection() {
+    let declaration = PanelDeclaration {
+        panel: "Inspector", title: "Inspector", systemImage: .SliderHorizontal3
+    }
+    let context = buildContext(FoundationUiContext {})
+    let modifiers = ModifierContext {}
+    var arrangement = WorkspaceArrangement {}
+    let first = workspaceStrip(
+        arrangement, .Trailing, ["Inspector"], [declaration], "Inspector", context, modifiers
+    )
+    let second = workspaceStrip(
+        arrangement, .Trailing, ["Inspector"], [declaration], "", context, modifiers
+    )
+    // Layout: strip → tab capsule → bar → interactive glass surface.
+    expect!(first.sublayers[0].sublayers[0].hitKey == workspaceStripGlassKey(.Trailing))
+    expect!(second.sublayers[0].sublayers[0].hitKey == workspaceStripGlassKey(.Trailing))
+}
+
+@Test
+function kcaDoesNotImplicitlyAnimateWorkspaceTabLabels() {
+    let context = buildContext(FoundationUiContext {})
+    let modifiers = ModifierContext {}
+    let declaration = PanelDeclaration {
+        panel: "Inspector", title: "Inspector", systemImage: .SliderHorizontal3
+    }
+    var initial = workspaceTab(declaration, 0, false, true, false, context, modifiers)
+    initial.key = 724001
+    initial.layoutTree(500, windowChromeMetrics().itemHeight)
+    var tree = layerTree()
+    tree.reconcileImmediate(initial)
+
+    // The selected tab is allowed a heavier ink and an updated title. Its
+    // text/glyph boxes must never take the compositor's default ease-out:
+    // the only spring belongs to the separate Liquid Glass lens.
+    var active = workspaceTab(declaration, 0, true, true, false, context, modifiers)
+    active.key = 724001
+    active.layoutTree(500, windowChromeMetrics().itemHeight)
+    tree.reconcile(active)
+    tree.advance(0.05)
+    expect!(!tree.moving)
+
+    let renamed = PanelDeclaration {
+        panel: "Inspector", title: "Properties", systemImage: .SliderHorizontal3
+    }
+    var updated = workspaceTab(renamed, 0, true, true, false, context, modifiers)
+    updated.key = 724001
+    updated.layoutTree(500, windowChromeMetrics().itemHeight)
+    tree.reconcile(updated)
+    tree.advance(0.05)
+    expect!(!tree.moving)
+    expect!(sliderTextCount(updated, "Properties") > 0)
+}
+
+// Exercise the *real* tab-bar/lens hierarchy, not a flat synthetic hit row.
+// The landing tab must own pointer-up even after KCA has reconciled a held
+// lens and the row has been copied into its punchout and lifted content.
+@Test
+function workspaceLensSlideCommitsTheDestinationTabOnRelease() {
+    unsafe {
+        let record = nativeState(SliderClickRecord {})
+        let ptr = nativeUserData(record)
+        let firstKey = 728101
+        let secondKey = 728103
+        let barKey = 728100
+        let metrics = windowChromeMetrics()
+        let tabs = [
+            CALayerDescription {
+                key: 1, hittable: true, hitKey: firstKey,
+                layout: CALayoutIntent {
+                    fixedWidth: 138, fixedHeight: metrics.itemHeight,
+                    guide: guideTag(TabBarSelection())
+                }
+            },
+            CALayerDescription {
+                key: 2, hittable: true, hitKey: secondKey,
+                layout: CALayoutIntent {
+                    fixedWidth: 140, fixedHeight: metrics.itemHeight,
+                    guide: guideTag(TabBarTab())
+                }
+            }
+        ]
+        let context = buildContext(FoundationUiContext {})
+        let modifiers = ModifierContext {}
+        var described = tabBarCapsuleSized(
+            copy tabs, context, modifiers,
+            metrics.itemHeight, metrics.itemHeight, 0, metrics.groupInset,
+            barKey, true, true
+        )
+        described.layoutTree(450, metrics.itemHeight)
+        var runner = KiraLayerAppState {}
+        runner.compositor.tree.reconcileImmediate(described)
+        var first = -1
+        var second = -1
+        let middle = metrics.itemHeight * 0.5
+        for x in 0..350 {
+            let hit = runner.compositor.tree.hitTestTree(Number(x), middle)
+            if hit.hitKey == firstKey { first = Number(x) }
+            if hit.hitKey == secondKey { second = Number(x) }
+        }
+        expect!(first > 0)
+        expect!(second > first)
+        layerActionsReset()
+        layerActionRegister(firstKey, { in
+            unsafe {
+                var clicks = nativeRecover<SliderClickRecord>(ptr)
+                clicks.tabs++
+            }
+        })
+        layerActionRegister(secondKey, { in
+            unsafe {
+                var clicks = nativeRecover<SliderClickRecord>(ptr)
+                clicks.closes++
+            }
+        })
+        kiraLayerHandleEvent(runner, AppEvent {
+            kind: .PointerDown, pointerButton: .Left,
+            pointerX: first, pointerY: middle
+        })
+        expect!(runner.pressSlides)
+        expect!(runner.ui.pressedKey == firstKey)
+        var heldContext = buildContext(FoundationUiContext {})
+        kiraLayerHeldContext(runner, heldContext)
+        var lifted = tabBarCapsuleSized(
+            copy tabs, heldContext, modifiers,
+            metrics.itemHeight, metrics.itemHeight, 0, metrics.groupInset,
+            barKey, true, true
+        )
+        lifted.layoutTree(450, metrics.itemHeight)
+        runner.compositor.tree.reconcileImmediate(lifted)
+        kiraLayerHandleEvent(runner, AppEvent {
+            kind: .PointerMoved, pointerX: second, pointerY: middle
+        })
+        expect!(runner.ui.pressedKey == secondKey)
+        kiraLayerHandleEvent(runner, AppEvent {
+            kind: .PointerUp, pointerButton: .Left,
+            pointerX: second, pointerY: middle
+        })
+        let result = nativeRecover<SliderClickRecord>(ptr)
+        expect!(result.tabs == 0)
+        expect!(result.closes == 1)
+    }
+}
+
+@Test
+function realWorkspaceSliderSelectsThePanelUnderItsRelease() {
+    unsafe {
+        workspaceArrangementEnsure()
+        var arrangement = nativeRecover<WorkspaceArrangement>(ambientStateGet(StateSlot.workspaceArrangement))
+        arrangement.edges = workspaceOpenEdges()
+        arrangement.declared = ["Inspector", "Outliner"]
+        arrangement.placements = [
+            PanelPlacement { panel: "Inspector", edge: .Trailing },
+            PanelPlacement { panel: "Outliner", edge: .Trailing }
+        ]
+        arrangement.edges[panelEdgeIndex(.Trailing)].selected = "Inspector"
+        let panels = [
+            PanelDeclaration {
+                panel: "Inspector", title: "Inspector", systemImage: .SliderHorizontal3
+            },
+            PanelDeclaration {
+                panel: "Outliner", title: "Outliner", systemImage: .SquareStack3dUp
+            }
+        ]
+        let shown = ["Inspector", "Outliner"]
+        let metrics = windowChromeMetrics()
+        let y = workspaceStripInset() + metrics.itemHeight / 2.0
+        let context = buildContext(FoundationUiContext {})
+        let modifiers = ModifierContext {}
+        layerActionsReset()
+        var initial = workspaceStrip(
+            arrangement, .Trailing, shown, panels, "Inspector", context, modifiers
+        )
+        initial.layoutTree(650, metrics.itemHeight + workspaceStripInset() * 2.0)
+        var runner = KiraLayerAppState {}
+        runner.compositor.tree.reconcileImmediate(initial)
+        var firstMin = 10000
+        var firstMax = 0
+        var secondMin = 10000
+        var secondMax = 0
+        for x in 0..580 {
+            let hit = runner.compositor.tree.hitTestTree(Number(x), y)
+            if hit.hitKey == workspaceTabKey(0) {
+                firstMin = min(firstMin, x)
+                firstMax = max(firstMax, x)
+            }
+            if hit.hitKey == workspaceTabKey(1) {
+                secondMin = min(secondMin, x)
+                secondMax = max(secondMax, x)
+            }
+        }
+        expect!(firstMax > firstMin)
+        expect!(secondMax > secondMin)
+        let first = (firstMin + firstMax) / 2.0
+        let second = (secondMin + secondMax) / 2.0
+        kiraLayerHandleEvent(runner, AppEvent {
+            kind: .PointerDown, pointerButton: .Left, pointerX: first, pointerY: y
+        })
+        expect!(runner.pressSlides)
+        let held = FoundationUiContext {
+            pointerX: first, pointerY: y,
+            pressedKey: runner.ui.pressedKey,
+            hoveredKey: runner.ui.hoveredKey
+        }
+        var heldContext = buildContext(held)
+        kiraLayerHeldContext(runner, heldContext)
+        workspaceDragAdvance(heldContext, Point {}, Size { width: 650, height: 450 })
+        layerActionsReset()
+        var lifted = workspaceStrip(
+            workspaceState(), .Trailing, shown, panels, "Inspector", heldContext, modifiers
+        )
+        lifted.layoutTree(650, metrics.itemHeight + workspaceStripInset() * 2.0)
+        runner.compositor.tree.reconcileImmediate(lifted)
+        kiraLayerHandleEvent(runner, AppEvent {
+            kind: .PointerMoved, pointerX: second, pointerY: y
+        })
+        expect!(runner.ui.pressedKey == workspaceTabKey(1))
+        kiraLayerHandleEvent(runner, AppEvent {
+            kind: .PointerUp, pointerButton: .Left, pointerX: second, pointerY: y
+        })
+        expect!(workspaceIsSelected("Outliner"))
+
+        // The destination includes an always-visible X. Sliding onto that
+        // end of a tab must still LAND on Outliner; it must not close it or
+        // snap back to Inspector. Direct pointer-down on X is tested above.
+        var releasedContext = buildContext(FoundationUiContext {})
+        kiraLayerHeldContext(runner, releasedContext)
+        workspaceDragAdvance(releasedContext, Point {}, Size { width: 650, height: 450 })
+        workspaceSelect("Inspector")
+        layerActionsReset()
+        var again = workspaceStrip(
+            workspaceState(), .Trailing, shown, panels, "Inspector", context, modifiers
+        )
+        again.layoutTree(650, metrics.itemHeight + workspaceStripInset() * 2.0)
+        runner.compositor.tree.reconcileImmediate(again)
+        var closeMin = 10000
+        var closeMax = 0
+        for x in 0..580 {
+            let target = runner.compositor.tree.hitTestTree(Number(x), y)
+            if target.hitKey == workspaceCloseKey(1) {
+                closeMin = min(closeMin, x)
+                closeMax = max(closeMax, x)
+            }
+        }
+        expect!(closeMax > closeMin)
+        let closeX = (closeMin + closeMax) / 2.0
+        kiraLayerHandleEvent(runner, AppEvent {
+            kind: .PointerDown, pointerButton: .Left, pointerX: first, pointerY: y
+        })
+        expect!(runner.pressOriginControl == workspaceTabKey(0))
+        let nextHeld = FoundationUiContext {
+            pointerX: first, pointerY: y,
+            pressedKey: runner.ui.pressedKey,
+            hoveredKey: runner.ui.hoveredKey
+        }
+        var nextContext = buildContext(nextHeld)
+        kiraLayerHeldContext(runner, nextContext)
+        workspaceDragAdvance(nextContext, Point {}, Size { width: 650, height: 450 })
+        layerActionsReset()
+        var secondLift = workspaceStrip(
+            workspaceState(), .Trailing, shown, panels, "Inspector", nextContext, modifiers
+        )
+        secondLift.layoutTree(650, metrics.itemHeight + workspaceStripInset() * 2.0)
+        runner.compositor.tree.reconcileImmediate(secondLift)
+        kiraLayerHandleEvent(runner, AppEvent {
+            kind: .PointerMoved, pointerX: closeX, pointerY: y
+        })
+        expect!(runner.ui.hoveredKey == workspaceCloseKey(1))
+        expect!(runner.ui.pressedKey == workspaceTabKey(1))
+        kiraLayerHandleEvent(runner, AppEvent {
+            kind: .PointerUp, pointerButton: .Left, pointerX: closeX, pointerY: y
+        })
+        expect!(workspaceIsSelected("Outliner"))
+        expect!(workspacePanelsAt(workspaceState(), .Trailing).count == 2)
+    }
+}

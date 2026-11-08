@@ -1,0 +1,517 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// The original first unnamed child is still a sidebar. A named rail adds a
+// separate leading column without changing the document's full-width canvas.
+@Test
+function railAddsWidthBeforeSidebarWithoutChangingTheDetailCanvas() {
+    setInterfaceMode(.AdaptiveDesktop)
+    windowDecorationSet(false)
+    windowBackdropAvailableSet(true, toolbar: true)
+    let window = NavigationSplitView {
+        Rectangle().navigationSplitViewColumnWidth(width: 320.0)
+    } rail: {
+        Rectangle().navigationSplitViewColumnWidth(width: 72.0)
+    } detail: {
+        NavigationStack { Text("Document") }
+    }
+    let viewport = Size { width: 1100.0, height: 720.0 }
+    let context = buildContext(FoundationUiContext { viewport: copy viewport })
+    var drawn = windowFrame(move window, "Rail geometry", move context, viewport)
+    expect!(toolbarNavigationWidth() == 392.0)
+    layOutLayerTree(drawn, 1100.0, 720.0)
+    let surface = drawn.sublayers[0]
+    // The detail remains full-width under the native material; the rail and
+    // sidebar live above it in the shared window-hosted chrome, not inside
+    // the detail's scroll subtree.
+    expect!(surface.sublayers[0].position.x == 0.0)
+    expect!(surface.sublayers[0].size.width == 1100.0)
+    expect!(windowBackdropStrip().width == 392.0)
+    // The window host may wrap the lifted rail+sidebar in a placement layer.
+    // Assert the two column extents without depending on wrapper depth.
+    // Native material, below-toolbar tint and ONE detail corner precede the
+    // lifted rail/sidebar, which must retain the same column widths.
+    let hosted = surface.sublayers[7]
+    log info("native hosted rail diagnostics",
+        hostedWidth: hosted.layout.fixedWidth,
+        hostedChildren: hosted.sublayers.count,
+        hostChildWidth: hosted.sublayers.count > 0
+            ? hosted.sublayers[0].layout.fixedWidth : -1.0)
+    expect!(nativeRailContainsFixedWidth(hosted, 72.0))
+    expect!(nativeRailContainsFixedWidth(hosted, 320.0))
+    windowBackdropAvailableSet(false)
+    windowDecorationSet(false)
+    setInterfaceMode(hostInterfaceMode())
+}
+
+function nativeRailContainsFixedWidth(layer: borrow CALayerDescription, width: Number) -> Bool {
+    if abs(layer.layout.fixedWidth - width) < 0.5 { return true }
+    for child in layer.sublayers {
+        if nativeRailContainsFixedWidth(child, width) { return true }
+    }
+    return false
+}
+
+@Test
+function railDoesNotChangeUnlabelledTwoColumnSplit() {
+    toolbarCollect()
+    let window = NavigationSplitView {
+        Rectangle().navigationSplitViewColumnWidth(width: 320.0)
+    } detail: {
+        Text("Document")
+    }
+    let drawn = describedLayerInWideWindow(move window)
+    expect!(toolbarNavigationWidth() == 320.0)
+    expect!(drawn.sublayers[1].sublayers.count == 2)
+    toolbarStopCollecting()
+}
+
+@Test
+function railKeepsLegacyContentSlotAvailable() {
+    setInterfaceMode(.AdaptiveDesktop)
+    windowDecorationSet(false)
+    windowBackdropAvailableSet(true, toolbar: true)
+    let window = NavigationSplitView {
+        Rectangle().navigationSplitViewColumnWidth(width: 320.0)
+    } content: {
+        Text("Middle column").frame(width: 200.0)
+    } rail: {
+        Rectangle().navigationSplitViewColumnWidth(width: 72.0)
+    } detail: {
+        Text("Document")
+    }
+    let viewport = Size { width: 1100.0, height: 720.0 }
+    let context = buildContext(FoundationUiContext { viewport: copy viewport })
+    let drawn = windowFrame(move window, "Rail and content", move context, viewport)
+    expect!(toolbarNavigationWidth() == 392.0)
+    expect!(windowBackdropStrip().width == 392.0)
+    expect!(describedContainsText(drawn, "Middle column"))
+    windowBackdropAvailableSet(false)
+    windowDecorationSet(false)
+    setInterfaceMode(hostInterfaceMode())
+}
+
+@Test
+function railStaysWhenSidebarVisibilityIsDetailOnly() {
+    setInterfaceMode(.AdaptiveDesktop)
+    windowDecorationSet(false)
+    windowBackdropAvailableSet(true, toolbar: true)
+    let window = NavigationSplitView(columnVisibility: .DetailOnly) {
+        Rectangle().navigationSplitViewColumnWidth(width: 320.0)
+    } rail: {
+        Rectangle().navigationSplitViewColumnWidth(width: 72.0)
+    } detail: {
+        Text("Document")
+    }
+    let viewport = Size { width: 1100.0, height: 720.0 }
+    let context = buildContext(FoundationUiContext { viewport: copy viewport })
+    let drawn = windowFrame(move window, "Rail only", move context, viewport)
+    expect!(toolbarNavigationWidth() == 72.0)
+    expect!(windowBackdropStrip().width == 72.0)
+    // The leading material hosts only the rail when the sidebar slides away.
+    // With no sidebar tint, the single content-corner repair is three layers.
+    let columns = drawn.sublayers[0].sublayers[6].sublayers[0]
+    expect!(columns.sublayers.count == 1)
+    windowBackdropAvailableSet(false)
+    windowDecorationSet(false)
+    setInterfaceMode(hostInterfaceMode())
+}
+
+@Test
+function railIsOmittedOnCompactStackWithoutReplacingSidebarRoot() {
+    toolbarCollect()
+    let context = buildContext(FoundationUiContext {
+        viewport: Size { width: 390.0, height: 844.0 }
+    })
+    let window = NavigationSplitView {
+        Text("Sidebar root")
+    } rail: {
+        Text("Rail content")
+    } detail: {
+        Text("Document")
+    }
+    let drawn = window.describe(context, ModifierContext {})
+    expect!(navigationContainsTitle(drawn, "Sidebar root"))
+    expect!(!navigationContainsTitle(drawn, "Rail content"))
+    toolbarStopCollecting()
+}
+
+// A sidebar List hosted beside a permanent rail must keep its visible
+// SwiftUI Button hit areas in window coordinates. The detail can change
+// without the sidebar's input targets sliding beneath the glass column.
+@Test
+function railSidebarListButtonsRemainHittableInWindowCoordinates() {
+    setInterfaceMode(.AdaptiveDesktop)
+    windowDecorationSet(false)
+    windowBackdropAvailableSet(true, toolbar: true)
+    let window = NavigationSplitView {
+        List {
+            Section {
+                Button(action: { in }) {
+                    Label(title: "New channel", systemImage: .Plus)
+                }
+            }
+            Section {
+                Text("Channels")
+            }
+        }
+        .navigationTitle("Aven")
+        .navigationSplitViewColumnWidth(width: 320.0)
+    } rail: {
+        Rectangle().frame(width: 64.0)
+            .navigationSplitViewColumnWidth(width: 64.0)
+    } detail: {
+        NavigationStack {
+            Text("Choose a channel")
+        }
+    }
+    let viewport = Size { width: 1280.0, height: 820.0 }
+    let context = buildContext(FoundationUiContext { viewport: copy viewport })
+    var described = windowFrame(move window, "Aven", move context, viewport)
+    layOutLayerTree(described, 1280.0, 820.0)
+    var tree = layerTree()
+    tree.reconcileImmediate(described)
+    var hits: Number = 0
+    for y in 75..220 {
+        if tree.hitTestTree(110.0, Number(y)).hit { hits += 1 }
+    }
+    expect!(hits > 0)
+    windowBackdropAvailableSet(false)
+    windowDecorationSet(false)
+    setInterfaceMode(hostInterfaceMode())
+}
+
+// The window owns one shared navigation material. Its top and leading tiles
+// have the same recipe and meet edge-to-edge without painting one another.
+@Test
+function railAndUnifiedToolbarShareOneTranslucentMaterial() {
+    setInterfaceMode(.AdaptiveDesktop)
+    windowDecorationSet(true)
+    windowBackdropAvailableSet(false)
+    let window = NavigationSplitView {
+        List { Text("All chats").font(size: resolvedLength(14.0)) }
+        .navigationTitle("Workspace")
+        .navigationSplitViewColumnWidth(width: 300.0)
+    } rail: {
+        NavigationRail {
+            NavigationRailItem(
+                title: "Home", systemImage: .House,
+                selected: true, action: { in }
+            )
+            NavigationRailItem(
+                title: "Chats", systemImage: .BubbleLeft,
+                action: { in }
+            )
+        } bottom: {
+            Icon(symbol: .PersonCircle).font(size: resolvedLength(20.0))
+        }
+    } detail: {
+        NavigationStack {
+            ScrollView { Text("Body").font(size: resolvedLength(14.0)) }
+            .navigationTitle("Page")
+        }
+    }
+    let viewport = Size { width: 1100.0, height: 720.0 }
+    let context = buildContext(FoundationUiContext { viewport: copy viewport })
+    var described = windowFrame(move window, "Chrome", move context, viewport)
+    layOutLayerTree(described, 1100.0, 720.0)
+    let frame = described.sublayers[0]
+    // Body, top glass, leading glass, sidebar tone, lifted pane contents,
+    // toolbar, edge. The rail remains clear beneath its own controls.
+    expect!(frame.sublayers.count == 7)
+    let top = frame.sublayers[1]
+    let leading = frame.sublayers[2]
+    expect!(top.size.width == 1100.0)
+    expect!(leading.size.width == 364.0)
+    expect!(top.size.height > 0.0)
+    expect!(leading.position.y == top.size.height)
+    expect!(top.size.height + leading.size.height == 720.0)
+    match top.content {
+        Glass(a) -> match leading.content {
+            Glass(b) -> {
+                expect!(a.blur == b.blur)
+                expect!(a.tint.r == b.tint.r)
+                expect!(a.tint.g == b.tint.g)
+                expect!(a.tint.b == b.tint.b)
+                expect!(a.tint.a == b.tint.a)
+            }
+            else -> expect!(false)
+        }
+        else -> expect!(false)
+    }
+    match frame.sublayers[3].content {
+        Solid(shade) -> {
+            expect!(shade.fill.a > 0.0 && shade.fill.a < 1.0)
+            expect!(shade.cornerRadius == 0.0)
+        }
+        else -> expect!(false)
+    }
+    expect!(frame.sublayers[3].layout.offset.x == 64.0)
+    expect!(frame.sublayers[3].layout.offset.y == windowBarTop(1100.0))
+    match frame.sublayers[4].content {
+        Empty -> expect!(true)
+        else -> expect!(false)
+    }
+    match frame.sublayers[5].content {
+        Empty -> expect!(true)
+        else -> expect!(false)
+    }
+    expect!(windowBackdropStrip().width == 0.0)
+    windowDecorationSet(false)
+    setInterfaceMode(hostInterfaceMode())
+}
+
+@Test
+function nativeBackdropIncludesRailAndSidebarAsOneTransparentStrip() {
+    setInterfaceMode(.AdaptiveDesktop)
+    windowDecorationSet(true)
+    windowBackdropAvailableSet(true)
+    let window = NavigationSplitView {
+        List { Text("Pages").font(size: resolvedLength(14.0)) }
+        .navigationSplitViewColumnWidth(width: 300.0)
+    } rail: {
+        NavigationRail {
+            NavigationRailItem(title: "Home", systemImage: .House, action: { in })
+        }
+    } detail: {
+        NavigationStack {
+            Text("Document").font(size: resolvedLength(14.0))
+        }
+    }
+    let viewport = Size { width: 1100.0, height: 720.0 }
+    let context = buildContext(FoundationUiContext { viewport: copy viewport })
+    let drawn = windowFrame(move window, "Chrome", move context, viewport)
+    let frame = drawn.sublayers[0]
+    let strip = windowBackdropStrip()
+    expect!(strip.width == 364.0)
+    expect!(windowBackdropCount() == 1)
+    // MosaicDisplay supplies the leading native material, not a full-window
+    // material. Keep the portable KiraUI toolbar glass above its native strip.
+    expect!(frame.sublayers.count == 7)
+    match frame.sublayers[1].content {
+        Glass(_) -> expect!(true)
+        else -> expect!(false)
+    }
+    match frame.sublayers[2].content {
+        Solid(s) -> expect!(s.blend == CABlendMode.DestinationOut)
+        else -> expect!(false)
+    }
+    windowBackdropAvailableSet(false)
+    windowDecorationSet(false)
+    setInterfaceMode(hostInterfaceMode())
+}
+
+// A standalone AppKit window draws its window frame natively. It must still
+// expose the real material under the KiraUI navigation cut; requiring KiraUI
+// itself to draw window decorations disabled the native effect in Harmony.
+@Test
+function nativeAppKitWindowBackdropDoesNotRequireCustomWindowFrame() {
+    setInterfaceMode(.AdaptiveDesktop)
+    windowDecorationSet(false)
+    windowBackdropAvailableSet(true, toolbar: true)
+    expect!(windowBackdropShown())
+    let window = NavigationSplitView {
+        List { Text("Pages").font(size: resolvedLength(14.0)) }
+        .navigationSplitViewColumnWidth(width: 300.0)
+    } rail: {
+        NavigationRail {
+            NavigationRailItem(title: "Alight", systemImage: .DocText, action: { in })
+        }
+    } detail: {
+        NavigationStack { Text("Editor").font(size: resolvedLength(14.0)) }
+    }
+    let viewport = Size { width: 1100.0, height: 720.0 }
+    let context = buildContext(FoundationUiContext { viewport: copy viewport })
+    let drawn = windowFrame(move window, "Harmony", move context, viewport)
+    let surface = drawn.sublayers[0]
+    expect!(windowBackdropStrip().width == 364.0)
+    // AppKit owns the outer window. The split has ONE detail top-leading
+    // corner at the toolbar boundary, not four rounded pane edges.
+    // Body, toolbar cut, leading cut, below-toolbar tint, corner cut, corner
+    // tint, corner canvas, lifted sidebar contents, toolbar.
+    expect!(surface.sublayers.count == 9)
+    match surface.sublayers[1].content {
+        Solid(s) -> expect!(s.blend == CABlendMode.DestinationOut)
+        else -> expect!(false)
+    }
+    match surface.sublayers[2].content {
+        Solid(s) -> expect!(s.blend == CABlendMode.DestinationOut)
+        else -> expect!(false)
+    }
+    expect!(surface.sublayers[3].layout.offset.x == 64.0)
+    expect!(surface.sublayers[3].layout.fixedWidth == 300.0)
+    let top = windowBarTop(1100.0)
+    expect!(surface.sublayers[3].layout.offset.y == top)
+    expect!(surface.sublayers[3].layout.fixedHeight == 720.0 - top)
+    match surface.sublayers[3].content {
+        Solid(shade) -> {
+            expect!(shade.fill.a > 0.0 && shade.fill.a < 1.0)
+            expect!(shade.fill.r < foundationSidebarTint(
+                .Light, .Active
+            ).lower.color.r)
+            expect!(shade.cornerRadius == 0.0)
+        }
+        else -> expect!(false)
+    }
+    let radius = windowChromeMetrics().cornerRadius
+    expect!(surface.sublayers[4].layout.offset.x == 364.0)
+    expect!(surface.sublayers[4].layout.offset.y == top)
+    expect!(surface.sublayers[4].layout.fixedWidth == radius)
+    match surface.sublayers[4].content {
+        Solid(cut) -> expect!(cut.blend == CABlendMode.DestinationOut)
+        else -> expect!(false)
+    }
+    expect!(surface.sublayers[5].layout.offset.x == 364.0)
+    expect!(surface.sublayers[5].layout.offset.y == top)
+    match surface.sublayers[5].content {
+        Solid(shade) -> expect!(shade.cornerRadius == 0.0)
+        else -> expect!(false)
+    }
+    expect!(nativeContentCornerAt(surface.sublayers[6], 364.0, top, radius))
+    windowBackdropAvailableSet(false)
+    expect!(!windowBackdropShown())
+    setInterfaceMode(hostInterfaceMode())
+}
+
+// The content receives exactly one painted top-leading corner at the real
+// toolbar/sidebar intersection. The sidebar/rail aren't rounded wrappers.
+@Test
+function nativeNavigationHasOnlyTheContentTopLeadingCorner() {
+    setInterfaceMode(.AdaptiveDesktop)
+    windowDecorationSet(false)
+    windowBackdropAvailableSet(true, toolbar: true)
+    let window = NavigationSplitView {
+        List { Text("Projects") }
+        .navigationSplitViewColumnWidth(width: 300.0)
+    } rail: {
+        NavigationRail {
+            NavigationRailItem(title: "Home", systemImage: .House, action: { in })
+        }
+    } detail: {
+        NavigationStack { Text("Document") }
+    }
+    let viewport = Size { width: 1100.0, height: 720.0 }
+    let context = buildContext(FoundationUiContext { viewport: copy viewport })
+    let drawn = windowFrame(move window, "Document", move context, viewport)
+    let frame = drawn.sublayers[0]
+    let radius = windowChromeMetrics().cornerRadius
+    expect!(frame.sublayers.count == 9)
+    expect!(frame.sublayers[0].cornerRadius == 0.0)
+    expect!(frame.sublayers[7].cornerRadius == 0.0)
+    expect!(nativeContentCornerAt(
+        frame.sublayers[6], 364.0, windowBarTop(1100.0), radius
+    ))
+    windowBackdropAvailableSet(false)
+    windowDecorationSet(false)
+    setInterfaceMode(hostInterfaceMode())
+}
+
+function nativeContentCornerAt(
+    layer: borrow CALayerDescription, x: Number, y: Number, radius: Number
+) -> Bool {
+    if layer.layout.offset.x != x || layer.layout.offset.y != y
+        || layer.layout.fixedWidth != radius || layer.layout.fixedHeight != radius
+        || !layer.clipsChildren || layer.sublayers.count != 1 {
+        return false
+    }
+    let child = layer.sublayers[0]
+    if child.layout.fixedWidth != radius * 2.0 || child.layout.fixedHeight != radius * 2.0 {
+        return false
+    }
+    return match child.content {
+        Solid(s) -> s.cornerRadius == radius && s.shapeKind ==
+            WindowShape.continuous + ClipCorner.squareStride * (
+                ClipCorner.topTrailing + ClipCorner.bottomLeading + ClipCorner.bottomTrailing
+            )
+        else -> false
+    }
+}
+
+@Test
+function nativeNavigationPaneCornerRadiusCanBeOverridden() {
+    setInterfaceMode(.AdaptiveDesktop)
+    windowDecorationSet(false)
+    windowBackdropAvailableSet(true, toolbar: true)
+    let window = NavigationSplitView(paneCornerRadius: .Some(19.0)) {
+        List { Text("Aven") }.navigationSplitViewColumnWidth(width: 300.0)
+    } rail: {
+        NavigationRail { Text("A") }
+    } detail: {
+        NavigationStack { Text("Messages") }
+    }
+    let viewport = Size { width: 1100.0, height: 720.0 }
+    let context = buildContext(FoundationUiContext { viewport: copy viewport })
+    let drawn = windowFrame(move window, "Messages", move context, viewport)
+    let frame = drawn.sublayers[0]
+    expect!(nativeContentCornerAt(
+        frame.sublayers[6], 364.0, windowBarTop(1100.0), 19.0
+    ))
+    match frame.sublayers[3].content {
+        Solid(s) -> expect!(s.cornerRadius == 0.0)
+        else -> expect!(false)
+    }
+    windowBackdropAvailableSet(false)
+    windowDecorationSet(false)
+    setInterfaceMode(hostInterfaceMode())
+}
+
+@Test
+function borderlessRailStillDrawsUnifiedTranslucentChrome() {
+    setInterfaceMode(.AdaptiveDesktop)
+    windowDecorationSet(false)
+    windowBackdropAvailableSet(false)
+    let window = NavigationSplitView {
+        Text("Sidebar").font(size: resolvedLength(14.0))
+    } rail: {
+        NavigationRail {
+            NavigationRailItem(title: "Home", systemImage: .House, action: { in })
+        }
+    } detail: {
+        NavigationStack {
+            Text("Document").font(size: resolvedLength(14.0))
+        }
+    }
+    let viewport = Size { width: 1100.0, height: 720.0 }
+    let context = buildContext(FoundationUiContext { viewport: copy viewport })
+    let drawn = windowFrame(move window, "Chrome", move context, viewport)
+    let frame = drawn.sublayers[0]
+    expect!(frame.sublayers.count == 6)
+    match frame.sublayers[1].content {
+        Glass(_) -> expect!(true)
+        else -> expect!(false)
+    }
+    match frame.sublayers[2].content {
+        Glass(_) -> expect!(true)
+        else -> expect!(false)
+    }
+    match frame.sublayers[3].content {
+        Solid(shade) -> expect!(shade.fill.a > 0.0 && shade.fill.a < 1.0)
+        else -> expect!(false)
+    }
+    setInterfaceMode(hostInterfaceMode())
+}
+
+@Test
+function legacySplitToolbarRemainsUnpaintedWithoutRail() {
+    setInterfaceMode(.AdaptiveDesktop)
+    toolbarCollect()
+    let window = NavigationSplitView {
+        List { Text("Folders").font(size: resolvedLength(14.0)) }
+        .navigationTitle("Folders")
+    } detail: {
+        NavigationStack {
+            Text("Document")
+            .font(size: resolvedLength(14.0))
+            .navigationTitle("Document")
+        }
+    }
+    describedLayerInWideWindow(move window)
+    let chrome = describedLayerInWideWindow(WindowChrome())
+    match chrome.content {
+        Empty -> expect!(true)
+        else -> expect!(false)
+    }
+    toolbarStopCollecting()
+    setInterfaceMode(hostInterfaceMode())
+}

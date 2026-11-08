@@ -1,0 +1,205 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+struct ContentSwipeSelection {
+    var selected: PresentationDetent = .Medium
+    var changes: Number = 0.0
+}
+
+@Test
+function contentInteractionHasAllThreePoliciesAndResolvesFromPresentedContent() {
+    expect!(presentationContentInteractionCode(.Automatic) == 0.0)
+    expect!(presentationContentInteractionCode(.Scrolls) == 1.0)
+    expect!(presentationContentInteractionCode(.Resizes) == 2.0)
+    let options = presentationPreferences(describedLayer(
+        Text("Scrollable sheet").presentationContentInteraction(behavior: .Scrolls)
+    ))
+    expect!(options.hasContentInteraction)
+    expect!(options.contentInteraction == 1.0)
+    let overrides = presentationPreferences(describedLayer(
+        Text("Sheet")
+            .presentationContentInteraction(behavior: .Scrolls)
+            .frame(width: 220.0, height: 95.0)
+            .presentationContentInteraction(behavior: .Resizes)
+    ))
+    expect!(overrides.contentInteraction == 2.0)
+}
+
+@Test
+function resizingFirstOwnsGestureWhenAnotherDetentIsReachable() {
+    let medium = PresentationScrollRoute {
+        selectedHeight: 350.0,
+        detentHeights: [350.0, 700.0],
+        interaction: 2.0,
+        contentOffset: 250.0,
+        maxContentOffset: 500.0
+    }
+    expect!(presentationScrollRouteCanResize(medium, -120.0))
+    expect!(!presentationScrollRouteCanResize(medium, 120.0))
+
+    let large = PresentationScrollRoute {
+        selectedHeight: 700.0,
+        detentHeights: [350.0, 700.0],
+        interaction: 0.0,
+        contentOffset: 200.0,
+        maxContentOffset: 500.0
+    }
+    expect!(!presentationScrollRouteCanResize(large, -120.0))
+    expect!(presentationScrollRouteCanResize(large, 120.0))
+    expect!(!presentationScrollRouteCanResize(large, 0.0))
+}
+
+@Test
+function scrollingFirstOnlyResizesAtTheActualContentEdge() {
+    let halfway = PresentationScrollRoute {
+        selectedHeight: 350.0,
+        detentHeights: [350.0, 700.0],
+        interaction: 1.0,
+        contentOffset: 240.0,
+        maxContentOffset: 600.0
+    }
+    expect!(!presentationScrollRouteCanResize(halfway, -70.0))
+
+    let bottom = PresentationScrollRoute {
+        selectedHeight: 350.0,
+        detentHeights: [350.0, 700.0],
+        interaction: 1.0,
+        contentOffset: 600.0,
+        maxContentOffset: 600.0
+    }
+    expect!(presentationScrollRouteCanResize(bottom, -70.0))
+    let largeNotAtTop = PresentationScrollRoute {
+        selectedHeight: 700.0,
+        detentHeights: [350.0, 700.0],
+        interaction: 1.0,
+        contentOffset: 245.0,
+        maxContentOffset: 600.0
+    }
+    expect!(!presentationScrollRouteCanResize(largeNotAtTop, 70.0))
+    let largeAtTop = PresentationScrollRoute {
+        selectedHeight: 700.0,
+        detentHeights: [350.0, 700.0],
+        interaction: 1.0,
+        contentOffset: 0.0,
+        maxContentOffset: 600.0
+    }
+    expect!(presentationScrollRouteCanResize(largeAtTop, 70.0))
+}
+
+@Test
+function actualSheetScrollGestureResizesAndUpdatesDetentSelectionBinding() {
+    unsafe {
+        let record = nativeUserData(nativeState(ContentSwipeSelection {}))
+        let selected = Binding<PresentationDetent> {
+            get: { in
+                unsafe { return copy nativeRecover<ContentSwipeSelection>(record).selected }
+            },
+            set: { value in
+                unsafe {
+                    var state = nativeRecover<ContentSwipeSelection>(record)
+                    state.selected = move value
+                    state.changes++
+                }
+            }
+        }
+        let shown = Binding<Bool> {
+            get: { in return true }, set: { shown in }
+        }
+        layerActionsReset()
+        overlayCollect()
+        tapSeqReset()
+        absorb describedLayerInWideWindow(Text("Page").sheet(isPresented: shown) {
+            ScrollView {
+                VStack {
+                    Text("First")
+                    Text("Many lines follow")
+                    Text("Last")
+                }
+            }
+            .presentationDetents(detents: [.Medium, .Large], selection: selected)
+            .presentationContentInteraction(behavior: .Resizes)
+        })
+        let router = nativeRecover<PresentationScrollRouter>(
+            ambientStateGetView(presentationScrollRouterSlot())
+        )
+        expect!(router.routes.count == 1)
+        let scrollKey = router.routes[0].scrollKey
+        expect!(scrollKey != 0.0)
+        expect!(router.routes[0].interaction == 2.0)
+
+        scrollDragBegin(scrollKey, 0.55)
+        scrollDragMove(-10000.0)
+        expect!(scrollDragTarget() == scrollKey)
+        scrollDragEnd()
+        expect!(nativeRecover<ContentSwipeSelection>(record).selected
+            == PresentationDetent.Large)
+        expect!(nativeRecover<ContentSwipeSelection>(record).changes == 1.0)
+        overlayStopCollecting()
+    }
+}
+
+@Test
+function nonResizableScrollsKeepTheirNormalInputStreamAndCancellation() {
+    presentationScrollRoutesReset()
+    let target = 93851.0
+    scrollDragBegin(target, 0.55)
+    scrollDragMove(-50.0)
+    expect!(scrollDragTarget() == target)
+    let input = scrollTake(target)
+    expect!(input.began)
+    expect!(input.moved)
+    expect!(input.reports.count == 1)
+    scrollDragCancel()
+    expect!(scrollDragTarget() == target)
+    let cancelled = scrollTake(target)
+    expect!(cancelled.cancelled)
+    expect!(scrollDragTarget() == 0.0)
+}
+
+@Test
+function heldGestureKeepsItsSheetOwnerAcrossRerenderedRouteTable() {
+    unsafe {
+        presentationScrollRoutesReset()
+        presentationScrollRouterEnsure()
+        var router = nativeRecover<PresentationScrollRouter>(
+            ambientStateGetView(presentationScrollRouterSlot())
+        )
+        router.routes.append(PresentationScrollRoute {
+            scrollKey: 93861.0,
+            sheetKey: 93862.0,
+            selectedHeight: 320.0,
+            detentHeights: [320.0, 640.0],
+            interaction: 2.0
+        })
+        presentationScrollDragBegin(93861.0)
+        expect!(presentationScrollDragMove(-80.0))
+        expect!(router.resizes)
+        presentationScrollRoutesReset()
+        expect!(router.resizes)
+        router.routes.append(PresentationScrollRoute {
+            scrollKey: 93861.0,
+            sheetKey: 93862.0,
+            selectedHeight: 320.0,
+            detentHeights: [320.0, 640.0],
+            interaction: 2.0
+        })
+        expect!(presentationScrollDragMove(-70.0))
+        expect!(router.accumulatedTravel == -150.0)
+        presentationScrollDragCancel()
+        expect!(!router.resizes)
+        expect!(router.target == 0.0)
+        expect!(router.accumulatedTravel == 0.0)
+    }
+}
+
+@Test
+function presentationContentInteractionDoesNotChangeSectionIdentity() {
+    let section = Section {
+        Text("Sheet settings")
+    }.presentationContentInteraction(behavior: .Automatic)
+    expect!(section.isSection())
+    let prefs = presentationPreferences(describedLayer(move section))
+    expect!(prefs.hasContentInteraction)
+    expect!(prefs.contentInteraction == 0.0)
+}

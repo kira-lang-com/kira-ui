@@ -1,0 +1,108 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+import KiraLayout
+
+function listContainsInsetRow(
+    view: borrow CALayerDescription,
+    wanted: borrow String,
+    leading: Number
+) -> Bool {
+    if view.layout.paddingLeading == leading && describedContainsText(view, wanted) {
+        return true
+    }
+    for child in view.sublayers {
+        if listContainsInsetRow(child, wanted, leading) { return true }
+    }
+    return false
+}
+
+@Test
+function listRowInsetsOnlyReplacesTheNamedEdges() {
+    let row = describedLayer(
+        Text("Flavor")
+            .listRowInsets(insets: .Some(EdgeInsets {
+                top: 4.0, leading: 22.0, bottom: 6.0, trailing: 10.0
+            }))
+            .listRowInsets(edges: EdgeSet.leading, length: .Some(35.0))
+    )
+    let overrides = listRowInsetOverrides(row)
+    expect!(overrides.hasTop && overrides.hasLeading)
+    expect!(overrides.hasBottom && overrides.hasTrailing)
+    expect!(resolvedListRowInset(overrides.top, 0.0) == 4.0)
+    expect!(resolvedListRowInset(overrides.leading, 0.0) == 35.0)
+    expect!(resolvedListRowInset(overrides.bottom, 0.0) == 6.0)
+    expect!(resolvedListRowInset(overrides.trailing, 0.0) == 10.0)
+}
+
+@Test
+function listRowInsetsNilResetsOnlyTheSelectedEdges() {
+    let row = describedLayer(
+        Text("Flavor")
+            .listRowInsets(insets: .Some(EdgeInsets {
+                top: 2.0, leading: 4.0, bottom: 6.0, trailing: 8.0
+            }))
+            .listRowInsets(edges: EdgeSet.vertical, length: .None)
+    )
+    let overrides = listRowInsetOverrides(row)
+    expect!(resolvedListRowInset(overrides.top, 77.0) == 77.0)
+    expect!(resolvedListRowInset(overrides.bottom, 77.0) == 77.0)
+    expect!(resolvedListRowInset(overrides.leading, 0.0) == 4.0)
+    expect!(resolvedListRowInset(overrides.trailing, 0.0) == 8.0)
+    let reset = describedLayer(
+        Text("Flavor").listRowInsets(length: .Some(20.0)).listRowInsets(insets: .None)
+    )
+    expect!(resolvedListRowInset(listRowInsetOverrides(reset).leading, 16.0) == 16.0)
+}
+
+@Test
+function groupedRowInsetsControlRealContentPlacement() {
+    let context = buildContext(FoundationUiContext {})
+    let modifiers = modifierContextPresenting(ModifierContext {}, .InsetGrouped)
+    let row = describedLayer(Text("Flavor").listRowInsets(
+        insets: .Some(EdgeInsets {
+            top: 3.0, leading: 29.0, bottom: 5.0, trailing: 7.0
+        })
+    ))
+    let grouped = insetGroupedRow(move row, false, context, modifiers)
+    expect!(grouped.layout.paddingLeading == 29.0)
+    expect!(grouped.layout.paddingTrailing == 7.0)
+    expect!(grouped.sublayers[0].layout.paddingTop == 3.0)
+    expect!(grouped.sublayers[0].layout.paddingBottom == 5.0)
+    expect!(describedContainsText(grouped, "Flavor"))
+}
+
+@Test
+function plainRowsUseOneInsetsWrapperInsteadOfStackingOverrides() {
+    let row = describedLayer(
+        Text("Plain")
+            .listRowInsets(edges: EdgeSet.leading, length: .Some(9.0))
+            .listRowInsets(edges: EdgeSet.leading, length: .Some(25.0))
+    )
+    let placed = listRowsWithInsets(move row)
+    expect!(placed.layout.paddingLeading == 25.0)
+    expect!(placed.sublayers.count == 1)
+    expect!(placed.sublayers[0].sublayers.count == 0)
+}
+
+@Test
+function plainListConsumesTheRowInsetsInsideItsScrollViewport() {
+    let list = describedLayer(List() {
+        Text("Flavor").listRowInsets(edges: EdgeSet.leading, length: .Some(24.0))
+        Text("Default")
+    }.listStyle(style: .Plain))
+    expect!(listContainsInsetRow(list, "Flavor", 24.0))
+    expect!(describedContainsText(list, "Default"))
+}
+
+@Test
+function sidebarRowInsetsApplyInsideTheSelectionCell() {
+    let row = describedLayer(
+        Text("Sidebar").listRowInsets(edges: EdgeSet.leading, length: .Some(40.0))
+    )
+    let modifiers = modifierContextPresenting(ModifierContext {}, .SidebarCell)
+    let cell = sidebarRowCell(move row, modifiers)
+    let actualLeading = cell.layout.paddingLeading + cell.sublayers[0].layout.paddingLeading
+    expect!(actualLeading == 40.0)
+    expect!(describedContainsText(cell, "Sidebar"))
+}

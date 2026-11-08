@@ -1,0 +1,184 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's twelve Dynamic Type categories, in their documented order.
+// The default Large category is the reference size for KiraUI's theme fonts.
+public enum DynamicTypeSize {
+    XSmall
+    Small
+    Medium
+    Large
+    XLarge
+    XXLarge
+    XXXLarge
+    Accessibility1
+    Accessibility2
+    Accessibility3
+    Accessibility4
+    Accessibility5
+}
+
+public function dynamicTypeSizeIndex(size: DynamicTypeSize) -> Number {
+    return match size {
+        XSmall -> 0.0
+        Small -> 1.0
+        Medium -> 2.0
+        Large -> 3.0
+        XLarge -> 4.0
+        XXLarge -> 5.0
+        XXXLarge -> 6.0
+        Accessibility1 -> 7.0
+        Accessibility2 -> 8.0
+        Accessibility3 -> 9.0
+        Accessibility4 -> 10.0
+        Accessibility5 -> 11.0
+    }
+}
+
+public function dynamicTypeSizeAt(index: Number) -> DynamicTypeSize {
+    if index <= 0 { return .XSmall }
+    if index <= 1 { return .Small }
+    if index <= 2 { return .Medium }
+    if index <= 3 { return .Large }
+    if index <= 4 { return .XLarge }
+    if index <= 5 { return .XXLarge }
+    if index <= 6 { return .XXXLarge }
+    if index <= 7 { return .Accessibility1 }
+    if index <= 8 { return .Accessibility2 }
+    if index <= 9 { return .Accessibility3 }
+    if index <= 10 { return .Accessibility4 }
+    return .Accessibility5
+}
+
+public function dynamicTypeIsAccessibilitySize(size: DynamicTypeSize) -> Bool {
+    return dynamicTypeSizeIndex(size) >= 7.0
+}
+
+// The semantic Body text size curve (points) at each public Apple content-size
+// category, relative to Large's 17 pt. A font's existing theme weight and
+// proportions are preserved, while measured text and line heights scale.
+// Apple has additional per-text-style nonlinear curves; they remain an
+// explicit host typography parity task, not hidden in control geometry.
+public function dynamicTypeScale(size: DynamicTypeSize) -> Number {
+    return match size {
+        XSmall -> 14.0 / 17.0
+        Small -> 15.0 / 17.0
+        Medium -> 16.0 / 17.0
+        Large -> 1.0
+        XLarge -> 19.0 / 17.0
+        XXLarge -> 21.0 / 17.0
+        XXXLarge -> 23.0 / 17.0
+        Accessibility1 -> 28.0 / 17.0
+        Accessibility2 -> 33.0 / 17.0
+        Accessibility3 -> 40.0 / 17.0
+        Accessibility4 -> 47.0 / 17.0
+        Accessibility5 -> 53.0 / 17.0
+    }
+}
+
+// A RangeExpression over DynamicTypeSize is represented natively by its
+// optional endpoints; upperExclusive provides Swift's `..<` spelling. A nil
+// endpoint means a partial range (`...large` or `small...`).
+public struct DynamicTypeSizeRange {
+    let minimum: DynamicTypeSize? = .None
+    let maximum: DynamicTypeSize? = .None
+    let upperExclusive: Bool = false
+}
+
+public function dynamicTypeRangeLowest(range: borrow DynamicTypeSizeRange) -> Number {
+    return match range.minimum {
+        Some(size) -> dynamicTypeSizeIndex(size)
+        None -> 0.0
+    }
+}
+
+public function dynamicTypeRangeHighest(range: borrow DynamicTypeSizeRange) -> Number {
+    let bound = match range.maximum {
+        Some(size) -> dynamicTypeSizeIndex(size)
+        None -> 11.0
+    }
+    return max(0.0, bound - (range.upperExclusive ? 1.0 : 0.0))
+}
+
+public function dynamicTypeRangeIntersection(
+    current: borrow DynamicTypeSizeRange,
+    change: borrow DynamicTypeSizeRange
+) -> DynamicTypeSizeRange {
+    // Store the effective inclusive bounds: a later exact size can then be
+    // compared against their intersection, regardless of modifier nesting.
+    let lowest = max(dynamicTypeRangeLowest(current), dynamicTypeRangeLowest(change))
+    let highest = max(lowest, min(dynamicTypeRangeHighest(current), dynamicTypeRangeHighest(change)))
+    return DynamicTypeSizeRange {
+        minimum: .Some(dynamicTypeSizeAt(lowest)),
+        maximum: .Some(dynamicTypeSizeAt(highest))
+    }
+}
+
+public function dynamicTypeClamped(
+    size: DynamicTypeSize,
+    limits: borrow DynamicTypeSizeRange
+) -> DynamicTypeSize {
+    return dynamicTypeSizeAt(max(
+        dynamicTypeRangeLowest(limits),
+        min(dynamicTypeSizeIndex(size), dynamicTypeRangeHighest(limits))
+    ))
+}
+
+public struct DynamicTypeSelection {
+    let size: DynamicTypeSize = .Large
+    // An exact size from an outer modifier remains authoritative when an
+    // inner modifier only supplies a range. An inner exact value can restate
+    // it, subject to any outer range already applied.
+    let hasExactSize: Bool = false
+    let limits: DynamicTypeSizeRange = DynamicTypeSizeRange {}
+}
+
+public function resolvedDynamicTypeSelection(
+    inherited: borrow DynamicTypeSelection,
+    exact: DynamicTypeSize?,
+    range: DynamicTypeSizeRange?
+) -> DynamicTypeSelection {
+    match exact {
+        Some(value) -> return DynamicTypeSelection {
+            size: dynamicTypeClamped(value, inherited.limits),
+            hasExactSize: true,
+            limits: copy inherited.limits
+        }
+        None -> {}
+    }
+    match range {
+        Some(limits) -> {
+            if inherited.hasExactSize { return copy inherited }
+            let combined = dynamicTypeRangeIntersection(inherited.limits, limits)
+            return DynamicTypeSelection {
+                size: dynamicTypeClamped(inherited.size, combined),
+                hasExactSize: false,
+                limits: move combined
+            }
+        }
+        None -> return copy inherited
+    }
+}
+
+public function modifierDeltaDynamicTypeSize(size: DynamicTypeSize) -> ModifierDelta {
+    return ModifierDelta { dynamicTypeSizeOverride: .Some(size) }
+}
+
+public function modifierDeltaDynamicTypeSizeRange(
+    range: DynamicTypeSizeRange
+) -> ModifierDelta {
+    return ModifierDelta { dynamicTypeSizeRange: .Some(move range) }
+}
+
+extend Widget {
+    // SwiftUI: `.dynamicTypeSize(_ size: DynamicTypeSize)`.
+    function dynamicTypeSize(size: DynamicTypeSize) -> Any Widget {
+        return ModifierDeltaLayer(delta: modifierDeltaDynamicTypeSize(size)) { self }
+    }
+
+    // SwiftUI's RangeExpression overload, expressed through a native
+    // DynamicTypeSizeRange until Kira has generic enum-bounded range syntax.
+    function dynamicTypeSize(range: DynamicTypeSizeRange) -> Any Widget {
+        return ModifierDeltaLayer(delta: modifierDeltaDynamicTypeSizeRange(move range)) { self }
+    }
+}

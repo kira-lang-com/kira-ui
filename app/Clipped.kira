@@ -1,0 +1,32 @@
+import Foundation
+import KCoreAnimation
+
+// Clips descendants to the view's measured rectangular bounds. This is not
+// a rendering-only offset, and the clipping rectangle follows the layer's
+// layout, scale and transform in KCoreAnimation.
+public construct ClippedLayer() extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let described = content.describe(context, modifierContextForChildren(modifiers))
+        return CALayerDescription {
+            groupedSection: described.groupedSection,
+            layout: surfaceFootprint(described.layout),
+            clipsChildren: true,
+            sublayers: [described]
+        }
+    }
+}
+
+extend Widget {
+    // SwiftUI: `.clipped()`; the explicit `antialiased:` overload needs
+    // selectable rectangular-clip edge coverage in the shader backend.
+    function clipped() -> Any Widget {
+        return ClippedLayer { self }
+    }
+}

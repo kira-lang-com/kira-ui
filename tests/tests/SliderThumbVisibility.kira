@@ -1,0 +1,33 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function sliderThumbVisibilityPreservesSliderInteractionAndTrack() {
+    let normal = describedLayer(Slider(value: 0.5))
+    let hidden = describedLayer(
+        Slider(value: 0.5).sliderThumbVisibility(visibility: .Hidden)
+    )
+    let visible = describedLayer(
+        Slider(value: 0.5).sliderThumbVisibility(visibility: .Visible)
+    )
+    expect!(normal.interactive)
+    expect!(hidden.interactive)
+    expect!(hidden.hitKey != 0)
+    expect!(hidden.sublayers.count == 2)
+    expect!(hidden.sublayers[0].sublayers.count == normal.sublayers[0].sublayers.count)
+    expect!(hidden.sublayers[1].sublayers[0].sublayers.count == 0)
+    expect!(visible.sublayers[1].sublayers[0].sublayers.count > 0)
+}
+
+@Test
+function sliderThumbVisibilityInheritsAndSupportsAllCases() {
+    let parent = modifierContextApply(
+        ModifierContext {}, modifierDeltaSliderThumbVisibility(.Hidden)
+    )
+    expect!(modifierContextForChildren(parent).sliderThumbVisibility == Visibility.Hidden)
+    let restored = modifierContextApply(
+        parent, modifierDeltaSliderThumbVisibility(.Automatic)
+    )
+    expect!(restored.sliderThumbVisibility == Visibility.Automatic)
+}

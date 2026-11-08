@@ -1,0 +1,33 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's Text.TruncationMode. This is a text-shaping choice, not a clip
+// mask: each line is truncated during its measured breaking before the batch
+// rasterizer sees it. The same mode travels into the compositor CAText run.
+public enum TextTruncationMode {
+    Head
+    Middle
+    Tail
+}
+
+public function coreTruncationMode(mode: TextTruncationMode) -> CATextTruncationMode {
+    return match mode {
+        Head -> .Head
+        Middle -> .Middle
+        Tail -> .Tail
+    }
+}
+
+public function modifierDeltaTruncationMode(mode: TextTruncationMode) -> ModifierDelta {
+    return ModifierDelta {
+        hasTruncationMode: true,
+        truncationMode: mode
+    }
+}
+
+extend Widget {
+    // SwiftUI: `.truncationMode(_ mode: Text.TruncationMode)`.
+    function truncationMode(mode: TextTruncationMode) -> Any Widget {
+        return ModifierDeltaLayer(delta: modifierDeltaTruncationMode(mode)) { self }
+    }
+}

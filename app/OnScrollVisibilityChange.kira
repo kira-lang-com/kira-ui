@@ -1,0 +1,94 @@
+import Foundation
+import KiraLayout
+import KCoreAnimation
+
+// SwiftUI's onScrollVisibilityChange measures actual viewport intersection,
+// not `.opacity` and not the scroll offset of an unrelated scroll surface.
+// Observe after the layout and scroll-offset passes so the callback follows
+// content as it enters/exits the visible scroll clip, even in a nested scroll.
+public struct ObservedScrollVisibility {
+    var visible: Bool
+}
+
+public function scrollVisibilityObservationSlot(key: Number) -> ViewStateKey {
+    return slotKey("kiraui.scroll.visibility.", key)
+}
+
+public function scrollVisibilityObserve(
+    key: Number,
+    visible: Bool,
+    action: (Bool) -> Void
+) -> Bool {
+    unsafe {
+        let slot = scrollVisibilityObservationSlot(key)
+        if !ambientStateHasView(slot) {
+            ambientStatePutView(copy slot, nativeUserData(nativeState(
+                ObservedScrollVisibility { visible: visible }
+            )))
+            action(visible)
+            return true
+        }
+        var observed = nativeRecover<ObservedScrollVisibility>(ambientStateGetView(slot))
+        if observed.visible == visible { return false }
+        observed.visible = visible
+        action(visible)
+        return true
+    }
+}
+
+public function scrollVisibilityIntersection(a: borrow Rect, b: borrow Rect) -> Rect {
+    let x = max(a.x, b.x)
+    let y = max(a.y, b.y)
+    return Rect {
+        x: x, y: y,
+        width: max(0.0, min(a.x + a.width, b.x + b.width) - x),
+        height: max(0.0, min(a.y + a.height, b.y + b.height) - y)
+    }
+}
+
+public function scrollVisibilityFraction(
+    frame: borrow Rect,
+    viewport: borrow Rect
+) -> Number {
+    let area = max(frame.width, 0.0) * max(frame.height, 0.0)
+    if area <= 0.0 { return 0.0 }
+    let visible = scrollVisibilityIntersection(frame, viewport)
+    return clamp(visible.width * visible.height / area, 0.0, 1.0)
+}
+
+public construct ScrollVisibilityObservationLayer(
+    threshold: Number = 0.5,
+    action: (Bool) -> Void
+) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let key = tapSeqKey()
+        layerScrollVisibilityRegister(key, threshold, action)
+        let described = content.describe(context, modifiers)
+        let section = described.groupedSection
+        return CALayerDescription {
+            scrollVisibilityKey: key,
+            layout: surfaceFootprint(described.layout),
+            groupedSection: section,
+            sublayers: [move described]
+        }
+    }
+}
+
+extend Widget {
+    // SwiftUI: `.onScrollVisibilityChange(threshold: Double = 0.5, action:)`.
+    function onScrollVisibilityChange(
+        threshold: Number = 0.5,
+        action: (Bool) -> Void
+    ) -> Any Widget {
+        return ScrollVisibilityObservationLayer(
+            threshold: threshold, action: action
+        ) { self }
+    }
+}

@@ -1,0 +1,121 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function tighteningUsesOnlyAsMuchClusterSpacingReductionAsTheLineNeeds() {
+    let content = "MAVQ"
+    let normal = foundationTextRunWidth(
+        content: content, size: 18.0, weight: 400.0
+    )
+    let offered = normal - 1.5
+    let adjusted = foundationTextTightenedSpacing(
+        content, 18.0, 400.0, offered, .Default, 1.0,
+        0.0, false, true
+    )
+    expect!(adjusted < 0.0)
+    expect!(adjusted > -18.0 * 0.04)
+    let fitted = foundationTextRunWidth(
+        content: content, size: 18.0, weight: 400.0,
+        spacing: adjusted, trailingSpacing: false
+    )
+    expect!(fitted <= offered + 1.0)
+    expect!(fitted > offered - 1.0)
+}
+
+@Test
+function tighteningDoesNotAlterAlreadyFittingTextOrUnlimitedParagraphs() {
+    let content = "Fits"
+    let enough = foundationTextRunWidth(
+        content: content, size: 18.0, weight: 400.0
+    ) + 10.0
+    expect!(foundationTextTightenedSpacing(
+        content, 18.0, 400.0, enough, .Default,
+        1.0, 0.0, false, true
+    ) == 0.0)
+    expect!(foundationTextTightenedSpacing(
+        content, 18.0, 400.0, 21.0, .Default,
+        0.0, 0.0, false, true
+    ) == 0.0)
+    expect!(foundationTextTightenedSpacing(
+        content, 18.0, 400.0, 21.0, .Default,
+        1.0, 0.0, false, false
+    ) == 0.0)
+}
+
+@Test
+function tighteningAtLimitContinuesToTruncationWhenNecessary() {
+    let word = "Supercalifragilisticexpialidocious"
+    let tighter = foundationTextTightenedSpacing(
+        word, 20.0, 400.0, 40.0, .Default,
+        1.0, 0.0, false, true
+    )
+    expect!(abs(tighter + 0.8) < 0.001)
+    let clipped = foundationTextLines(
+        word, 20.0, 400.0, 40.0, .Default,
+        1.0, .Tail, tighter, false
+    )
+    expect!(clipped.count == 1)
+    expect!(clipped[0] != word)
+    let scalars = foundationStringToCodepoints(clipped[0])
+    expect!(scalars[scalars.count - 1] == 8230)
+}
+
+@Test
+function allowsTighteningIsAnInheritedBoolAndExplicitFalseClearsIt() {
+    let normal = ModifierContext {}
+    expect!(!normal.allowsTightening)
+    let yes = modifierContextApply(normal, modifierDeltaAllowsTightening(true))
+    expect!(yes.allowsTightening)
+    expect!(modifierContextForChildren(yes).allowsTightening)
+    let no = modifierContextApply(yes, modifierDeltaAllowsTightening(false))
+    expect!(!no.allowsTightening)
+}
+
+@Test
+function allowsTighteningChangesTheActualTextLayoutAndRetainedRun() {
+    let content = "MAVQ"
+    let normal = describedLayer(Text(content).lineLimit(1))
+    let tightened = describedLayer(
+        Text(content).lineLimit(1).allowsTightening(enabled: true)
+    )
+    match innermostLayer(tightened).content {
+        Text(run) -> {
+            expect!(run.allowsTightening)
+            expect!(run.content == content)
+        }
+        else -> expect!(false)
+    }
+    let desired = normal.layout.intrinsicWidth - 1.0
+    let ordinary = normal.contentSize(desired)
+    let narrowed = tightened.contentSize(desired)
+    // The ordinary one-line run may truncate to fewer glyphs, leaving LESS
+    // ink than the tightened full run. Tightening promises to fit the offered
+    // width while preserving the source, not to be narrower than an ellipsis.
+    expect!(narrowed.width <= desired + 0.5)
+    expect!(narrowed.height <= ordinary.height)
+}
+
+@Test
+function allowsTighteningComposesWithSpacingAndFontFitting() {
+    let text = Text("A very long control title")
+        .font(size: resolvedLength(19.0))
+        .lineLimit(1)
+        .tracking(value: 2.0)
+        .minimumScaleFactor(factor: 0.6)
+        .allowsTightening(enabled: true)
+    let described = describedLayer(move text)
+    match innermostLayer(described).content {
+        Text(run) -> {
+            expect!(run.allowsTightening)
+            expect!(run.letterSpacing == 2.0)
+            expect!(run.trackingSpacing)
+            expect!(run.minimumScaleFactor == 0.6)
+        }
+        else -> expect!(false)
+    }
+    let section = Section {
+        Text("Item")
+    }.allowsTightening(enabled: true)
+    expect!(section.isSection())
+}

@@ -1,0 +1,91 @@
+import Foundation
+import KCoreAnimation
+
+// Radio-group layout is a preference *of the Picker* and does not turn every
+// other VStack, inline picker or segmented control in the subtree horizontal.
+// SwiftUI only provides a no-argument enabling form.
+public function modifierDeltaHorizontalRadioGroupLayout() -> ModifierDelta {
+    return ModifierDelta { horizontalRadioGroupLayout: true }
+}
+
+extend Widget {
+    // SwiftUI: `.horizontalRadioGroupLayout()`.
+    function horizontalRadioGroupLayout() -> Any Widget {
+        return ModifierDeltaLayer(
+            delta: modifierDeltaHorizontalRadioGroupLayout()
+        ) { self }
+    }
+}
+
+// Radio buttons reuse the control-size catalog's checkbox diameter and label
+// gap; they stay aligned with other single-choice controls in the same form.
+// Only the circular border and its selected center differ from the checkbox.
+public construct PickerRadioMark(selected: Bool) extends Widget {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let metrics = checkboxMetrics(modifiers.controlSize)
+        let pigment = controlActiveColor(modifiers)
+        var dots: [CALayerDescription] = []
+        if selected {
+            dots.append(CALayerDescription {
+                layout: CALayoutIntent {
+                    widthFill: false,
+                    heightFill: false,
+                    fixedWidth: metrics.size * 0.46,
+                    fixedHeight: metrics.size * 0.46
+                },
+                cornerRadius: metrics.size * 0.23,
+                content: .Solid(CASolid {
+                    fill: colorFromFoundation(copy pigment),
+                    cornerRadius: metrics.size * 0.23,
+                    shapeKind: 1
+                })
+            })
+        }
+        let border = selected ? pigment : foundationColor(
+            themeAdaptiveColor(switchOff, modifierAppearance(modifiers))
+        )
+        return CALayerDescription {
+            layout: CALayoutIntent {
+                widthFill: false,
+                heightFill: false,
+                fixedWidth: metrics.size,
+                fixedHeight: metrics.size,
+                alignment: Point { x: 0.5, y: 0.5 }
+            },
+            cornerRadius: metrics.size * 0.5,
+            content: .Solid(CASolid {
+                fill: CAColor { a: 0.0 },
+                border: colorFromFoundation(modifierColor(move border, modifiers)),
+                borderWidth: 1.0,
+                cornerRadius: metrics.size * 0.5,
+                shapeKind: 1
+            }),
+            sublayers: move dots
+        }
+    }
+}
+
+// TagEntry owns selection and dispatch, so radio buttons never need a parallel
+// state store. Rebuilding after the binding changes paints the selected dot in
+// the correct control and advertises its selected trait to assistive tools.
+public function pickerRadio(
+    entry: TagEntry,
+    content: borrow Any Widget,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext
+) -> CALayerDescription {
+    let metrics = checkboxMetrics(modifiers.controlSize)
+    let row = HStack(spacing: .Length(metrics.spacing), alignment: .Center) {
+        PickerRadioMark(selected: entry.selected)
+        content
+    }
+    .hugWidth()
+    .onClick(entry.select)
+    .accessibilityElement(children: .Combine)
+    .accessibilityAddTraits(pickerOptionTraits(entry.selected))
+    .disabled(modifiers.selectionDisabled)
+    return row.describe(context, modifiers)
+}

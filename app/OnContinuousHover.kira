@@ -1,0 +1,53 @@
+import Foundation
+import KiraLayout
+import KCoreAnimation
+
+// SwiftUI's HoverPhase. Active carries the position in the space requested
+// by the receiving modifier; Ended carries no stale point.
+public enum HoverPhase {
+    Active(Point)
+    Ended
+}
+
+public function layerNoopHoverPhase(phase: HoverPhase) {}
+
+public enum HoverCoordinateSpace {
+    Local
+    Global
+}
+
+public construct ContinuousHoverObservationLayer(
+    space: HoverCoordinateSpace,
+    action: (HoverPhase) -> Void
+) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let key = tapSeqKey()
+        layerContinuousHoverRegister(key, space, action)
+        var described = content.describe(context, modifiers)
+        let section = described.groupedSection
+        return CALayerDescription {
+            hoverKey: key,
+            layout: surfaceFootprint(described.layout),
+            groupedSection: section,
+            sublayers: [move described]
+        }
+    }
+}
+
+extend Widget {
+    // KiraUI supports the public local and global coordinate spaces; Apple's
+    // named custom coordinate-space protocol also needs a named-space registry.
+    function onContinuousHover(
+        coordinateSpace: HoverCoordinateSpace = .Local,
+        action: (HoverPhase) -> Void
+    ) -> Any Widget {
+        return ContinuousHoverObservationLayer(space: coordinateSpace, action: action) { self }
+    }
+}

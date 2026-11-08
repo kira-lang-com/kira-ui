@@ -1,0 +1,204 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI `.sheet(isPresented:content:)` — an iPadOS form sheet over the
+// entire window, *not* an inline child of the button or a macOS NSPanel.
+// In a wide canvas the sheet is centered; on a compact canvas it becomes a
+// bottom-presented card. It uses the existing KiraUI window theme and input
+// infrastructure, so the app does not invent its own chrome or modal style.
+namespace SheetMetrics {
+    let width: Number = 600.0
+    let height: Number = 660.0
+    let pageWidth: Number = 760.0
+    let pageHeight: Number = 900.0
+    let wideInset: Number = 40.0
+    let compactInset: Number = 8.0
+    let corner: Number = 28.0
+}
+
+public construct SheetLayer(isPresented: Binding<Bool>, sheetContent: Any Widget) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var underneath = content.describe(context, modifiers)
+        if !isPresented.get() { return underneath }
+
+        let wide = context.viewportWidth >= 640.0
+        let horizontalInset = wide ? SheetMetrics.wideInset : SheetMetrics.compactInset
+        let availableWidth = max(1.0, context.viewportWidth - horizontalInset * 2.0)
+        let availableHeight = max(1.0,
+            context.viewportHeight - (wide ? 70.0 : context.safeArea.top + 12.0))
+        let defaultWidth = min(SheetMetrics.width, availableWidth)
+        let defaultHeight = min(SheetMetrics.height,
+            context.viewportHeight - (wide ? 70.0 : context.safeArea.top + 12.0))
+
+        let band = tapSeqEnterOverlay()
+        let sheetKey = tapSeqKey()
+        let scope = scrollScopeEnterFloating(presentationScrollScope)
+        let sheetModifiers = modifierContextForOverlay(modifiers)
+        let raw = sheetContent.describe(context, sheetModifiers)
+        let options = presentationPreferences(raw)
+        let presentedAs = presentationResolvedKind(
+            .Sheet, presentationCompactSizeClassForHost(context), options
+        )
+        if presentedAs == .FullScreenCover {
+            // The sheet's child has already described once and recorded its
+            // actions and state. Adapt the host, not the child: a new cover
+            // reads the same retained description and original Binding.
+            let unused = scrollScopeLeave(move scope)
+            tapSeqLeaveOverlay(band)
+            let adapter = FullScreenCoverLayer(
+                isPresented: isPresented,
+                cover: DescribedPresentationContent(layer: copy raw)
+            ) { EmptyView() }
+            let dismissed = adapter.describe(context, modifiers)
+            presentationHideAccessibility(underneath)
+            return underneath
+        }
+        if presentedAs == .Popover {
+            let unused = scrollScopeLeave(move scope)
+            tapSeqLeaveOverlay(band)
+            let adapter = PopoverLayer(
+                isPresented: isPresented,
+                arrowEdge: .Top,
+                popover: DescribedPresentationContent(layer: copy raw)
+            ) { EmptyView() }
+            let dismissed = adapter.describe(context, modifiers)
+            return underneath
+        }
+        let sizing = presentationSizedCard(
+            sheetKey,
+            options,
+            Size { width: defaultWidth, height: defaultHeight },
+            Size { width: availableWidth, height: availableHeight }
+        )
+        let width = sizing.width
+        let x = presentationSheetHorizontalOrigin(
+            width, context.viewportWidth, horizontalInset, options.placement
+        )
+        let corner = resolvedPresentationCornerRadius(options, SheetMetrics.corner)
+        let maximum = presentationMaximumDetentHeight(context)
+        // A caller-specified set of detents owns the sheet's vertical extent;
+        // presentationSizing still governs the width, but cannot invent a
+        // height outside those explicitly permitted by the selection Binding.
+        let height = options.hasDetents
+            ? min(presentationSheetDetentHeight(sheetKey, options, sizing.height), maximum)
+            : min(sizing.height, maximum)
+        let backgroundInteractive = presentationBackgroundReceivesInput(options, height)
+        presentationScrollRouteRegisterTree(raw, sheetKey, options, height)
+        let y = wide ? (context.viewportHeight - height) / 2.0
+            : context.viewportHeight - height
+        // Inset the native card's background at the same radius as its clip.
+        // Reusing the described body guarantees actions and stateful views are
+        // lowered exactly once, even while presented preferences change.
+        var card = CALayerDescription {}
+        match presentationBackgroundLayer(options) {
+            Some(customBackground) -> {
+                card = DescribedPresentationContent(layer: move raw)
+                    .background(DescribedPresentationContent(layer: customBackground))
+                    .themeBorder(.Subtle)
+                    .describe(context, sheetModifiers)
+            }
+            None -> {
+                card = DescribedPresentationContent(layer: move raw)
+                    .background(RoundedRectangle(cornerRadius: corner, style: .Continuous))
+                    .backgroundStyle(.Window)
+                    .themeBorder(.Subtle)
+                    .describe(context, sheetModifiers)
+            }
+        }
+        let claimed = scrollScopeLeave(move scope)
+
+        let backdrop = tapSeqKey()
+        let shown = isPresented
+        layerActionRegister(backdrop, { in
+            if !options.interactiveDismissDisabled { shown.set(false) }
+            return
+        })
+        // The modal scrim intercepts events in all uncovered areas. The
+        // surface's own interactive children remain the nearest hit targets.
+        overlayPresent(Overlay {
+            anchorX: 0.0,
+            anchorY: 0.0,
+            anchorW: context.viewportWidth,
+            z: OverlayLevel.surface,
+            content: CALayerDescription {
+                content: .Solid(CASolid {
+                    // The background is still visibly dimmed when allowed
+                    // to interact; only its hit region becomes transparent.
+                    fill: CAColor { a: backgroundInteractive ? 0.12 : 0.26 }
+                }),
+                hittable: !backgroundInteractive,
+                hitKey: backgroundInteractive ? 0.0 : backdrop,
+                layout: CALayoutIntent {
+                    fixedWidth: context.viewportWidth,
+                    fixedHeight: context.viewportHeight
+                }
+            }
+        })
+
+        card.layout.widthFill = false
+        card.layout.heightFill = false
+        card.layout.fixedWidth = width
+        card.layout.fixedHeight = height
+        card.cornerRadius = corner
+        card.clipsChildren = true
+        card.shadow = CAShadow {
+            color: CAColor { a: 0.24 }, radius: 22.0,
+            offset: Point { y: 8.0 }
+        }
+        if presentationDragIndicatorShows(options) {
+            // The grabber draws as its own actual short rounded rectangle,
+            // inside a taller gesture surface. A release chooses the nearest
+            // permitted detent and updates either the caller's selection
+            // Binding or this sheet's retained local detent state.
+            let grabberInk = RGBAColor { r: 0.46, g: 0.46, b: 0.49, a: 0.64 }
+            var grabber = CALayerDescription {}
+            if options.hasDetents && options.detentHeights.count > 1 {
+                let chosen = copy options
+                grabber = RoundedRectangle(cornerRadius: 3.0)
+                    .fill(copy grabberInk)
+                    .frame(width: 38.0, height: 5.0)
+                    .frame(width: 92.0, height: 32.0)
+                    .gesture(DragGesture(minimumDistance: 6.0).onEnded({ value in
+                        presentationSheetDetentDragEnded(
+                            sheetKey, chosen, value.predictedEndTranslation.height
+                        )
+                    }))
+                    .describe(context, sheetModifiers)
+            } else {
+                grabber = RoundedRectangle(cornerRadius: 3.0)
+                    .fill(copy grabberInk)
+                    .frame(width: 38.0, height: 5.0)
+                    .frame(width: 92.0, height: 32.0)
+                    .describe(context, sheetModifiers)
+            }
+            grabber.layout.offset = Point {
+                x: (width - 92.0) / 2.0,
+                y: 0.0
+            }
+            card.sublayers.append(move grabber)
+        }
+        tapSeqLeaveOverlay(band)
+        overlayPresent(Overlay {
+            anchorX: x,
+            anchorY: y,
+            z: OverlayLevel.submenu,
+            content: move card
+        })
+        // An interactive sheet keeps the presenting page reachable by
+        // assistive technology as well as by pointer. A modal sheet continues
+        // to hide those elements until it is dismissed.
+        if !backgroundInteractive { presentationHideAccessibility(underneath) }
+        return underneath
+    }
+}
+
+extend Widget {
+    function sheet(isPresented: Binding<Bool>, content: some Widget) -> Any Widget {
+        return SheetLayer(isPresented: isPresented, sheetContent: content) { self }
+    }
+}

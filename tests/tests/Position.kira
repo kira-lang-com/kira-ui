@@ -1,0 +1,45 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function positionUsesProposedSizeAndPlacesChildCenter() {
+    var placed = describedLayer(
+        Text("Point").position(x: 68.0, y: 47.0)
+    )
+    layOutLayerTree(placed, 300.0, 160.0)
+    let child = placed.sublayers[0]
+    expect!(placed.size.width == 300.0)
+    expect!(placed.size.height == 160.0)
+    expect!(abs(child.position.x + child.size.width / 2.0 - 68.0) <= 0.6)
+    expect!(abs(child.position.y + child.size.height / 2.0 - 47.0) <= 0.6)
+}
+
+@Test
+function positionPointAndXYOverloadsHaveMatchingLayout() {
+    var point = describedLayer(Text("Position").position(
+        point: Point { x: 100.0, y: 60.0 }
+    ))
+    var xy = describedLayer(Text("Position").position(x: 100.0, y: 60.0))
+    layOutLayerTree(point, 240.0, 130.0)
+    layOutLayerTree(xy, 240.0, 130.0)
+    expect!(point.sublayers[0].position.x == xy.sublayers[0].position.x)
+    expect!(point.sublayers[0].position.y == xy.sublayers[0].position.y)
+    var zero = describedLayer(Text("Position").position())
+    layOutLayerTree(zero, 240.0, 130.0)
+    expect!(zero.size.width == 240.0)
+    expect!(zero.size.height == 130.0)
+}
+
+@Test
+function positionedGesturesUseThePlacedHitRegion() {
+    var described = describedLayer(
+        Rectangle().frame(width: 60.0, height: 30.0)
+            .onTapGesture(action: { in }).position(x: 170.0, y: 90.0)
+    )
+    layOutLayerTree(described, 240.0, 160.0)
+    var compositorTree = layerTree()
+    compositorTree.reconcileImmediate(described)
+    expect!(compositorTree.hitTestTree(170.0, 90.0).hit)
+    expect!(!compositorTree.hitTestTree(15.0, 15.0).hit)
+}

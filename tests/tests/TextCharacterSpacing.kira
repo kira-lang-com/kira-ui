@@ -1,0 +1,139 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function trackingIncludesTrailingSpacingButKerningOnlySeparatesGlyphClusters() {
+    let natural = foundationTextRunWidth(
+        content: "MAV", size: 19.0, weight: 400.0
+    )
+    let kerned = foundationTextRunWidth(
+        content: "MAV", size: 19.0, weight: 400.0,
+        spacing: 2.5, trailingSpacing: false
+    )
+    let tracked = foundationTextRunWidth(
+        content: "MAV", size: 19.0, weight: 400.0,
+        spacing: 2.5, trailingSpacing: true
+    )
+    expect!(abs(kerned - natural - 5.0) < 0.1)
+    expect!(abs(tracked - natural - 7.5) < 0.1)
+    expect!(tracked > kerned)
+
+    let single = foundationTextRunWidth(
+        content: "Q", size: 19.0, weight: 400.0
+    )
+    let kernedSingle = foundationTextRunWidth(
+        content: "Q", size: 19.0, weight: 400.0,
+        spacing: 4.0, trailingSpacing: false
+    )
+    let trackedSingle = foundationTextRunWidth(
+        content: "Q", size: 19.0, weight: 400.0,
+        spacing: 4.0, trailingSpacing: true
+    )
+    expect!(abs(kernedSingle - single) < 0.1)
+    expect!(abs(trackedSingle - single - 4.0) < 0.1)
+}
+
+@Test
+function glyphClusterBasedSpacingDoesNotSplitCombinedShapedGlyphs() {
+    // A letter with a combining acute accent is one OpenType cluster, even
+    // though its UTF-8 text has multiple Unicode scalars. Its mark must stay
+    // attached when spacing is applied to the following letter.
+    let composed = "éx"
+    let natural = foundationTextRunWidth(
+        content: composed, size: 20.0, weight: 400.0
+    )
+    let spaced = foundationTextRunWidth(
+        content: composed, size: 20.0, weight: 400.0,
+        spacing: 2.0, trailingSpacing: false
+    )
+    expect!(spaced >= natural)
+    expect!(spaced - natural <= 4.1)
+}
+
+@Test
+function trackingAlwaysTakesPrecedenceOverKerningAndCanBeZero() {
+    let base = ModifierContext {}
+    let kerned = modifierContextApply(base, modifierDeltaKerning(3.0))
+    expect!(textCharacterSpacing(kerned) == 3.0)
+    expect!(!textUsesTracking(kerned))
+
+    let both = modifierContextApply(kerned, modifierDeltaTracking(1.0))
+    expect!(textCharacterSpacing(both) == 1.0)
+    expect!(textUsesTracking(both))
+    let reversed = modifierContextApply(
+        modifierContextApply(base, modifierDeltaTracking(1.0)),
+        modifierDeltaKerning(3.0)
+    )
+    expect!(textCharacterSpacing(reversed) == 1.0)
+    expect!(textUsesTracking(reversed))
+    let zeroed = modifierContextApply(kerned, modifierDeltaTracking(0.0))
+    expect!(textCharacterSpacing(zeroed) == 0.0)
+    expect!(textUsesTracking(zeroed))
+}
+
+@Test
+function characterSpacingChangesActualTextIntrinsicLayoutAndRun() {
+    let base = describedLayer(Text("MAV"))
+    let tracked = describedLayer(Text("MAV").tracking(value: 5.0))
+    let kerned = describedLayer(Text("MAV").kerning(value: 5.0))
+    expect!(tracked.layout.intrinsicWidth > kerned.layout.intrinsicWidth)
+    expect!(kerned.layout.intrinsicWidth > base.layout.intrinsicWidth)
+    match innermostLayer(tracked).content {
+        Text(run) -> {
+            expect!(run.letterSpacing == 5.0)
+            expect!(run.trackingSpacing)
+            expect!(run.content == "MAV")
+        }
+        else -> expect!(false)
+    }
+    match innermostLayer(kerned).content {
+        Text(run) -> {
+            expect!(run.letterSpacing == 5.0)
+            expect!(!run.trackingSpacing)
+        }
+        else -> expect!(false)
+    }
+}
+
+@Test
+function characterSpacingParticipatesInLineWrappingAndEllipsis() {
+    let sample = "First part second part third part"
+    let natural = foundationTextWrappedSize(
+        sample, 16.0, 400.0, 110.0, .Default, 2
+    )
+    let spaced = foundationTextWrappedSize(
+        sample, 16.0, 400.0, 110.0, .Default, 2,
+        spacing: 4.0, trailingSpacing: true
+    )
+    expect!(spaced.width <= 111.0)
+    expect!(natural.height == spaced.height)
+    let words = foundationTextLines(
+        sample, 16.0, 400.0, 110.0, .Default, 2, .Tail, 4.0, true
+    )
+    expect!(words.count == 2)
+    let tail = foundationStringToCodepoints(words[1])
+    expect!(tail[tail.count - 1] == 8230)
+    expect!(foundationTextRunWidth(
+        content: words[1], size: 16.0, weight: 400.0,
+        spacing: 4.0, trailingSpacing: true
+    ) <= 111.0)
+}
+
+@Test
+function spacingInheritsThroughSectionsAndCombinesWithDynamicType() {
+    let parent = modifierContextApply(
+        ModifierContext {}, modifierDeltaTracking(1.6)
+    )
+    expect!(modifierContextForChildren(parent).hasTracking)
+    expect!(modifierContextForChildren(parent).tracking == 1.6)
+    let adaptive = modifierContextApply(
+        parent, modifierDeltaDynamicTypeSize(.Accessibility1)
+    )
+    expect!(textCharacterSpacing(adaptive) == 1.6)
+    let section = Section {
+        Text("Row").tracking(value: 2.0)
+    }
+    .kerning(value: 1.0)
+    expect!(section.isSection())
+}

@@ -1,0 +1,112 @@
+import Foundation
+import Ember
+import KiraUI
+import KCoreAnimation
+
+struct ViewportEventRecord {
+    var received: Number = 0
+    var x: Number = -1
+    var width: Number = -1
+    var button: PointerButton = .None
+    var kind: AppEventKind = .None
+    var key: Key = .None
+}
+
+// The editor texture participates in the same real retained hit tree as
+// ordinary controls, but receives the native input instead of a button click.
+@Test
+function interactiveViewportDispatchesPointerButtonAndLocalCoordinates() {
+    unsafe {
+        let observed = nativeState(ViewportEventRecord {})
+        let data = nativeUserData(observed)
+        layerActionsReset()
+        tapSeqReset()
+        let view = InteractiveTextureViewport(
+            key: 481901,
+            texture: TextureHandle(12),
+            onEvent: { event, point, extent in
+                unsafe {
+                    var record = nativeRecover<ViewportEventRecord>(data)
+                    record.received++
+                    record.x = point.x
+                    record.width = extent.width
+                    record.button = event.pointerButton
+                    record.kind = event.kind
+                    record.key = event.key
+                }
+            }
+        )
+        let context = buildContext(FoundationUiContext {})
+        var description = view.describe(context, ModifierContext {})
+        expect!(description.hittable)
+        expect!(description.hitKey == 481901)
+        expect!(layerViewportHas(description.hitKey))
+        description.layoutTree(800, 600)
+        var runner = KiraLayerAppState {}
+        runner.compositor.tree.reconcileImmediate(description)
+        kiraLayerHandleEvent(runner, AppEvent {
+            kind: .PointerDown,
+            pointerButton: .Right,
+            pointerX: 240,
+            pointerY: 180
+        })
+        let recorded = nativeRecover<ViewportEventRecord>(data)
+        expect!(recorded.received == 1)
+        let isRight = match recorded.button {
+            Right -> true
+            else -> false
+        }
+        expect!(isRight)
+        expect!(abs(recorded.x - 240) < 0.01)
+        expect!(abs(recorded.width - 800) < 0.01)
+
+        // Dragging continues after the cursor leaves the texture rectangle.
+        kiraLayerHandleEvent(runner, AppEvent {
+            kind: .PointerMoved,
+            pointerX: 880,
+            pointerY: 620
+        })
+        expect!(runner.viewportCapturedKey == 481901)
+        let moved = nativeRecover<ViewportEventRecord>(data)
+        expect!(moved.received == 2)
+        expect!(moved.x > 800)
+
+        // The keyboard belongs to the last clicked viewport while no text
+        // field is focused, even when the pointer is outside its bounds.
+        kiraLayerHandleEvent(runner, AppEvent { kind: .KeyDown, key: .W })
+        let keyDown = nativeRecover<ViewportEventRecord>(data)
+        expect!(keyDown.received == 3)
+        let gotW = match keyDown.key {
+            W -> true
+            else -> false
+        }
+        expect!(gotW)
+        kiraLayerHandleEvent(runner, AppEvent { kind: .KeyUp, key: .W })
+        let keyUp = nativeRecover<ViewportEventRecord>(data)
+        expect!(keyUp.received == 4)
+
+        kiraLayerHandleEvent(runner, AppEvent {
+            kind: .PointerUp,
+            pointerButton: .Right,
+            pointerX: 880,
+            pointerY: 620
+        })
+        let released = nativeRecover<ViewportEventRecord>(data)
+        expect!(released.received == 5)
+
+        // The next wheel turn hits the viewport only while hovered.
+        kiraLayerHandleEvent(runner, AppEvent {
+            kind: .Scroll,
+            pointerX: 400,
+            pointerY: 300,
+            scrollY: -3
+        })
+        let scrolled = nativeRecover<ViewportEventRecord>(data)
+        expect!(scrolled.received == 6)
+        let gotScroll = match scrolled.kind {
+            Scroll -> true
+            else -> false
+        }
+        expect!(gotScroll)
+    }
+}

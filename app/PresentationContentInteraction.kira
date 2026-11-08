@@ -1,0 +1,49 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's three swipe-priority choices. Resizes/Automatic give a sheet with
+// multiple detents first claim on a vertical content drag while a larger or
+// smaller detent exists; Scrolls routes the same drag to embedded ScrollView
+// until its actual measured offset reaches a content edge.
+public enum PresentationContentInteraction {
+    Automatic
+    Scrolls
+    Resizes
+}
+
+public function presentationContentInteractionCode(
+    behavior: PresentationContentInteraction
+) -> Number {
+    return match behavior {
+        Automatic -> 0.0
+        Scrolls -> 1.0
+        Resizes -> 2.0
+    }
+}
+
+public construct PresentationContentInteractionLayer(
+    behavior: PresentationContentInteraction
+) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var rendered = content.describe(context, modifiers)
+        rendered.hasPresentationContentInteraction = true
+        rendered.presentationContentInteraction = presentationContentInteractionCode(behavior)
+        return rendered
+    }
+}
+
+extend Widget {
+    // SwiftUI: `.presentationContentInteraction(_ behavior:)`.
+    function presentationContentInteraction(
+        behavior: PresentationContentInteraction
+    ) -> Any Widget {
+        return PresentationContentInteractionLayer(behavior: behavior) { self }
+    }
+}

@@ -1,0 +1,57 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function boldPreservesTheSelectedFontAndSupportsBooleanOverride() {
+    let ordinary = describedLayer(Text("Label"))
+    let strong = describedLayer(Text("Label").bold())
+    let explicit = describedLayer(Text("Label").bold(isActive: true))
+    let disabled = describedLayer(Text("Label").bold(isActive: false))
+    match ordinary.content {
+        Text(run) -> {
+            match strong.content {
+                Text(emphasized) -> {
+                    expect!(emphasized.weight >= 700.0)
+                    expect!(emphasized.size == run.size)
+                }
+                else -> expect!(false)
+            }
+            match disabled.content {
+                Text(reset) -> expect!(reset.weight == run.weight)
+                else -> expect!(false)
+            }
+        }
+        else -> expect!(false)
+    }
+    match explicit.content {
+        Text(run) -> expect!(run.weight >= 700.0)
+        else -> expect!(false)
+    }
+}
+
+@Test
+function nestedBoldFalseClearsOnlyTheTrait() {
+    let context = modifierContextApply(ModifierContext {}, modifierDeltaBold(true))
+    expect!(modifierTextWeight(context) >= 700.0)
+    let reset = modifierContextApply(context, modifierDeltaBold(false))
+    expect!(modifierTextWeight(reset) == modifierTextWeight(ModifierContext {}))
+    expect!(!modifierContextForChildren(reset).bold)
+    let explicitWeight = modifierContextApply(reset, modifierDeltaFontWeight(.SemiBold))
+    expect!(modifierTextWeight(explicitWeight) == foundationFontWeight(.SemiBold))
+}
+
+@Test
+function labelsVisibilityUsesInheritedControlLabelVisibility() {
+    let hidden = modifierContextApply(
+        ModifierContext {}, modifierDeltaLabelsHidden(true)
+    )
+    let shown = modifierContextApply(hidden, modifierDeltaLabelsHidden(false))
+    expect!(modifierContextForChildren(hidden).labelsHidden)
+    expect!(!modifierContextForChildren(shown).labelsHidden)
+    let label = describedLayer(
+        Label(title: "Files", systemImage: .Folder)
+            .labelsVisibility(visibility: .Hidden)
+    )
+    expect!(label.sublayers.count > 0)
+}

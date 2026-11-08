@@ -1,0 +1,188 @@
+import Foundation
+import KiraLayout
+import KCoreAnimation
+
+// A list-row inset belongs to a *row*, not to the inherited padding of the
+// row's children. Store edge-specific overrides on the row description until
+// its List/Section consumes them during measurement and placement.
+public construct ListRowInsetsLayer(edges: EdgeSet, insets: EdgeInsets?) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var described = content.describe(context, modifiers)
+        let top: Number? = match insets {
+            Some(value) -> .Some(value.top)
+            None -> .None
+        }
+        let leading: Number? = match insets {
+            Some(value) -> .Some(value.leading)
+            None -> .None
+        }
+        let bottom: Number? = match insets {
+            Some(value) -> .Some(value.bottom)
+            None -> .None
+        }
+        let trailing: Number? = match insets {
+            Some(value) -> .Some(value.trailing)
+            None -> .None
+        }
+        if edges.has(EdgeSet.top) {
+            described.layout.hasListRowInsetTop = true
+            described.layout.listRowInsetTop = top
+        }
+        if edges.has(EdgeSet.leading) {
+            described.layout.hasListRowInsetLeading = true
+            described.layout.listRowInsetLeading = leading
+        }
+        if edges.has(EdgeSet.bottom) {
+            described.layout.hasListRowInsetBottom = true
+            described.layout.listRowInsetBottom = bottom
+        }
+        if edges.has(EdgeSet.trailing) {
+            described.layout.hasListRowInsetTrailing = true
+            described.layout.listRowInsetTrailing = trailing
+        }
+        return described
+    }
+}
+
+// Describes the effective row overrides found through single-child layers,
+// including an outer `.onTapGesture` or `.frame`. The outermost declaration on
+// each edge wins, without destroying a different edge set by an inner view.
+public struct ListRowInsetOverrides {
+    var hasTop: Bool = false
+    var top: Number? = .None
+    var hasLeading: Bool = false
+    var leading: Number? = .None
+    var hasBottom: Bool = false
+    var bottom: Number? = .None
+    var hasTrailing: Bool = false
+    var trailing: Number? = .None
+
+    function any() -> Bool {
+        return hasTop || hasLeading || hasBottom || hasTrailing
+    }
+}
+
+public function listRowInsetOverrides(view: borrow CALayerDescription) -> ListRowInsetOverrides {
+    let intent = view.layout
+    var result = ListRowInsetOverrides {
+        hasTop: intent.hasListRowInsetTop,
+        top: intent.listRowInsetTop,
+        hasLeading: intent.hasListRowInsetLeading,
+        leading: intent.listRowInsetLeading,
+        hasBottom: intent.hasListRowInsetBottom,
+        bottom: intent.listRowInsetBottom,
+        hasTrailing: intent.hasListRowInsetTrailing,
+        trailing: intent.listRowInsetTrailing
+    }
+    if view.sublayers.count == 1 {
+        let child = listRowInsetOverrides(view.sublayers[0])
+        if !result.hasTop {
+            result.hasTop = child.hasTop
+            result.top = child.top
+        }
+        if !result.hasLeading {
+            result.hasLeading = child.hasLeading
+            result.leading = child.leading
+        }
+        if !result.hasBottom {
+            result.hasBottom = child.hasBottom
+            result.bottom = child.bottom
+        }
+        if !result.hasTrailing {
+            result.hasTrailing = child.hasTrailing
+            result.trailing = child.trailing
+        }
+    }
+    return result
+}
+
+public function resolvedListRowInset(value: Number?, fallback: Number) -> Number {
+    return match value {
+        Some(length) -> length
+        None -> fallback
+    }
+}
+
+// Once a styled Section has consumed a row's metadata, the list must not
+// interpret it again when processing plain/sidebar rows around that Section.
+public function listRowInsetsConsumed(root: CALayerDescription) -> CALayerDescription {
+    var view = root
+    view.layout.hasListRowInsetTop = false
+    view.layout.hasListRowInsetLeading = false
+    view.layout.hasListRowInsetBottom = false
+    view.layout.hasListRowInsetTrailing = false
+    for i in 0..view.sublayers.count {
+        view.sublayers[i] = listRowInsetsConsumed(copy view.sublayers[i])
+    }
+    return view
+}
+
+// The plain/sidebar list has no grouped cell box. Apply row insets to the
+// annotated subtree after all modifiers and ForEach rows have been described,
+// avoiding nested padding when several `.listRowInsets` calls target one row.
+public function listRowsWithInsets(root: CALayerDescription) -> CALayerDescription {
+    var view = root
+    // Only this node's annotations name a row. Walking through an unannotated
+    // single-child viewport here would incorrectly pad the *whole list* when
+    // it contains one row; traversal below will find the annotated cell.
+    let intent = view.layout
+    let annotated = ListRowInsetOverrides {
+        hasTop: intent.hasListRowInsetTop,
+        top: intent.listRowInsetTop,
+        hasLeading: intent.hasListRowInsetLeading,
+        leading: intent.listRowInsetLeading,
+        hasBottom: intent.hasListRowInsetBottom,
+        bottom: intent.listRowInsetBottom,
+        hasTrailing: intent.hasListRowInsetTrailing,
+        trailing: intent.listRowInsetTrailing
+    }
+    if annotated.any() {
+        return CALayerDescription {
+            layout: CALayoutIntent {
+                widthFill: view.layout.widthFill,
+                heightFill: view.layout.heightFill,
+                flex: view.layout.flex,
+                expandsWidth: view.layout.expandsWidth,
+                expandsHeight: view.layout.expandsHeight,
+                layoutPriority: view.layout.layoutPriority,
+                paddingTop: resolvedListRowInset(annotated.top, 0.0),
+                paddingLeading: resolvedListRowInset(annotated.leading, 0.0),
+                paddingBottom: resolvedListRowInset(annotated.bottom, 0.0),
+                paddingTrailing: resolvedListRowInset(annotated.trailing, 0.0)
+            },
+            groupedSection: view.groupedSection,
+            sublayers: [move view]
+        }
+    }
+    for i in 0..view.sublayers.count {
+        view.sublayers[i] = listRowsWithInsets(copy view.sublayers[i])
+    }
+    return view
+}
+
+extend Widget {
+    // SwiftUI: `.listRowInsets(_ insets: EdgeInsets?)`.
+    function listRowInsets(insets: EdgeInsets?) -> Any Widget {
+        return ListRowInsetsLayer(edges: EdgeSet.all, insets: move insets) { self }
+    }
+
+    // SwiftUI: `.listRowInsets(_ edges: Edge.Set = .all, _ length: CGFloat?)`.
+    function listRowInsets(edges: EdgeSet, length: Number?) -> Any Widget {
+        let insets: EdgeInsets? = match length {
+            Some(value) -> .Some(uniformInsets(value))
+            None -> .None
+        }
+        return ListRowInsetsLayer(edges: edges, insets: move insets) { self }
+    }
+
+    function listRowInsets(length: Number?) -> Any Widget {
+        return self.listRowInsets(edges: EdgeSet.all, length: move length)
+    }
+}

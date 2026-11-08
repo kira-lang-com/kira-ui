@@ -1,0 +1,182 @@
+import Foundation
+import Ember
+import KCoreAnimation
+
+// SwiftUI EventModifiers, represented as independent keys so more than one
+// modifier can be pressed simultaneously. These belong to the input window,
+// not the mouse's hit region or the control owning keyboard focus.
+public struct EventModifiers {
+    let shift: Bool = false
+    let control: Bool = false
+    let option: Bool = false
+    let command: Bool = false
+}
+
+public namespace EventModifierMasks {
+    let all: EventModifiers = EventModifiers {
+        shift: true, control: true, option: true, command: true
+    }
+    let shift: EventModifiers = EventModifiers { shift: true }
+    let control: EventModifiers = EventModifiers { control: true }
+    let option: EventModifiers = EventModifiers { option: true }
+    let command: EventModifiers = EventModifiers { command: true }
+}
+
+public function eventModifiersFromInput(modifiers: borrow ModifierState) -> EventModifiers {
+    return EventModifiers {
+        shift: modifiers.shift,
+        control: modifiers.control,
+        option: modifiers.alt,
+        command: modifiers.superKey
+    }
+}
+
+public function eventModifiersFiltered(
+    actual: borrow EventModifiers,
+    mask: borrow EventModifiers
+) -> EventModifiers {
+    return EventModifiers {
+        shift: actual.shift && mask.shift,
+        control: actual.control && mask.control,
+        option: actual.option && mask.option,
+        command: actual.command && mask.command
+    }
+}
+
+public function eventModifiersEqual(
+    a: borrow EventModifiers,
+    b: borrow EventModifiers
+) -> Bool {
+    return a.shift == b.shift && a.control == b.control
+        && a.option == b.option && a.command == b.command
+}
+
+public function eventModifiersContain(
+    actual: borrow EventModifiers,
+    required: borrow EventModifiers
+) -> Bool {
+    return (!required.shift || actual.shift)
+        && (!required.control || actual.control)
+        && (!required.option || actual.option)
+        && (!required.command || actual.command)
+}
+
+public struct ModifierInputSnapshot {
+    var current: EventModifiers = EventModifiers {}
+}
+
+public namespace ModifierInputState {
+    let key: PersistentStateKey = PersistentStateKey {
+        name: "kiraui.modifier-keys"
+    }
+}
+
+public function modifierInputCurrent() -> EventModifiers {
+    unsafe {
+        if !ambientStateHas(ModifierInputState.key) {
+            ambientStatePut(
+                ModifierInputState.key,
+                nativeUserData(nativeState(ModifierInputSnapshot {}))
+            )
+        }
+        let state = nativeRecover<ModifierInputSnapshot>(ambientStateGet(ModifierInputState.key))
+        return copy state.current
+    }
+}
+
+// The retained runner calls this for every keyboard/pointer event BEFORE its
+// rebuild decision. Modifier changes trigger a new description even when the
+// key is not a shortcut and no control has focus, allowing modifierKeyAlternate
+// to swap branches immediately.
+public function modifierInputSetState(input: borrow ModifierState) -> Bool {
+    unsafe {
+        let actual = eventModifiersFromInput(input)
+        modifierInputCurrent()
+        var state = nativeRecover<ModifierInputSnapshot>(ambientStateGet(ModifierInputState.key))
+        if eventModifiersEqual(state.current, actual) { return false }
+        state.current = move actual
+        return true
+    }
+}
+
+public struct ObservedModifierKeys {
+    var value: EventModifiers = EventModifiers {}
+}
+
+public construct ModifierKeysChangedLayer(
+    mask: EventModifiers,
+    initial: Bool,
+    action: (EventModifiers, EventModifiers) -> Void
+) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        unsafe {
+            let slot = slotKey("kiraui.modifier-observation.", tapSeqKey())
+            let current = eventModifiersFiltered(modifierInputCurrent(), mask)
+            if !ambientStateHasView(slot) {
+                ambientStatePutView(copy slot, nativeUserData(nativeState(
+                    ObservedModifierKeys { value: copy current }
+                )))
+                if initial { action(EventModifiers {}, copy current) }
+            } else {
+                var observation = nativeRecover<ObservedModifierKeys>(ambientStateGetView(slot))
+                if !eventModifiersEqual(observation.value, current) {
+                    let previous = copy observation.value
+                    observation.value = copy current
+                    action(move previous, copy current)
+                }
+            }
+        }
+        return content.describe(context, modifiers)
+    }
+}
+
+public construct ModifierKeyAlternateLayer(
+    required: EventModifiers,
+    alternate: Any Widget
+) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        if eventModifiersContain(modifierInputCurrent(), required) {
+            return alternate.describe(context, modifiers)
+        }
+        return content.describe(context, modifiers)
+    }
+}
+
+extend Widget {
+    // SwiftUI: `.onModifierKeysChanged(mask: .all, initial: true, action)`.
+    function onModifierKeysChanged(
+        mask: EventModifiers = EventModifierMasks.all,
+        initial: Bool = true,
+        action: (EventModifiers, EventModifiers) -> Void
+    ) -> Any Widget {
+        return ModifierKeysChangedLayer(
+            mask: mask, initial: initial, action: action
+        ) { self }
+    }
+
+    // SwiftUI: `.modifierKeyAlternate(_ modifiers, @ViewBuilder alternate)`.
+    // Both branches are real view trees; only the active branch is lowered,
+    // so its own @State and focus lifetimes follow the visible content.
+    function modifierKeyAlternate(
+        required: EventModifiers,
+        alternate: Any Widget
+    ) -> Any Widget {
+        return ModifierKeyAlternateLayer(required: required, alternate: move alternate) {
+            self
+        }
+    }
+}

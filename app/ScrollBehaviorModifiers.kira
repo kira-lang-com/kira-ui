@@ -1,0 +1,63 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's public ScrollBounceBehavior cases, mapped onto the existing
+// KCoreAnimation motion model. The `.Automatic` setting preserves the native
+// scroller's existing edge resistance; `.BasedOnSize` avoids overscroll when
+// all content already fits inside the viewport.
+public enum ScrollBounceBehavior {
+    Automatic
+    Always
+    BasedOnSize
+}
+
+public function scrollBounces(
+    behavior: ScrollBounceBehavior,
+    contentLength: Number,
+    viewportLength: Number
+) -> Bool {
+    return match behavior {
+        Automatic -> true
+        Always -> true
+        BasedOnSize -> contentLength > viewportLength + 0.5
+    }
+}
+
+public function modifierDeltaScrollBounceBehavior(
+    behavior: ScrollBounceBehavior,
+    axes: ScrollIndicatorAxes
+) -> ModifierDelta {
+    return ModifierDelta {
+        hasScrollBounceVertical: axes == .Vertical || axes == .All,
+        scrollBounceVertical: behavior,
+        hasScrollBounceHorizontal: axes == .Horizontal || axes == .All,
+        scrollBounceHorizontal: behavior
+    }
+}
+
+extend Widget {
+    // SwiftUI: `.scrollBounceBehavior(_:axes:)`, defaulting to the vertical
+    // axis; axis-specific settings do not replace the other axis's behavior.
+    function scrollBounceBehavior(
+        behavior: ScrollBounceBehavior,
+        axes: ScrollIndicatorAxes = .Vertical
+    ) -> Any Widget {
+        return ModifierDeltaLayer(
+            delta: modifierDeltaScrollBounceBehavior(behavior, axes)
+        ) { self }
+    }
+
+    // SwiftUI: `.scrollDisabled(_ disabled: Bool)`. It disables scroll gesture,
+    // wheel and indicator-scrubbing input in descendant scroll surfaces, but
+    // does not disable their child controls or remove content from layout.
+    function scrollDisabled(disabled: Bool) -> Any Widget {
+        return ModifierDeltaLayer(delta: modifierDeltaScrollDisabled(disabled)) { self }
+    }
+
+    // SwiftUI: `.scrollClipDisabled(_ disabled: Bool = true)`. A scroll viewport
+    // may allow its content and shadows to paint past its edges; the caller may
+    // re-enable its default clipping with an explicit false argument.
+    function scrollClipDisabled(disabled: Bool = true) -> Any Widget {
+        return ModifierDeltaLayer(delta: modifierDeltaScrollClipDisabled(disabled)) { self }
+    }
+}

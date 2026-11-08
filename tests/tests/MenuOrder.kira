@@ -1,0 +1,96 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+function menuRowsHaveEndpoints(
+    root: borrow CALayerDescription,
+    first: borrow String,
+    last: borrow String
+) -> Bool {
+    if root.layout.axis == .Column && root.sublayers.count >= 2 {
+        let end = root.sublayers.count - 1
+        if describedContainsText(root.sublayers[0], first)
+            && describedContainsText(root.sublayers[end], last) {
+            return true
+        }
+    }
+    for child in root.sublayers {
+        if menuRowsHaveEndpoints(child, first, last) { return true }
+    }
+    return false
+}
+
+@Test
+function menuOrderHonorsMobileAndDesktopAutomaticDefaults() {
+    setInterfaceMode(.AdaptiveDesktop)
+    let default = ModifierContext {}
+    expect!(resolvedMenuOrder(default) == MenuOrder.Fixed)
+    setInterfaceMode(.AdaptiveMobile)
+    expect!(resolvedMenuOrder(default) == MenuOrder.Priority)
+    let scrolling = modifierContextApply(
+        default, ModifierDelta { entersScrollContent: true }
+    )
+    expect!(scrolling.insideScrollView)
+    expect!(modifierContextForChildren(scrolling).insideScrollView)
+    expect!(resolvedMenuOrder(scrolling) == MenuOrder.Fixed)
+    expect!(resolvedMenuOrder(default, isPicker: true) == MenuOrder.Fixed)
+    setInterfaceMode(hostInterfaceMode())
+}
+
+@Test
+function menuOrderCanExplicitlyOverrideScrollAndPlatformDefaults() {
+    let normal = ModifierContext {}
+    let priority = modifierContextApply(normal, modifierDeltaMenuOrder(.Priority))
+    let scrolling = modifierContextApply(priority, ModifierDelta {
+        entersScrollContent: true
+    })
+    expect!(resolvedMenuOrder(scrolling) == MenuOrder.Priority)
+    let fixed = modifierContextApply(priority, modifierDeltaMenuOrder(.Fixed))
+    expect!(resolvedMenuOrder(fixed) == MenuOrder.Fixed)
+    expect!(modifierContextForChildren(fixed).menuOrder == MenuOrder.Fixed)
+}
+
+@Test
+function priorityMenuOrderReversesVisualRowsWithoutChangingActionIdentities() {
+    let row1 = CALayerDescription { hitKey: 1001.0 }
+    let row2 = CALayerDescription { hitKey: 1002.0 }
+    let row3 = CALayerDescription { hitKey: 1003.0 }
+    let group = CALayerDescription {
+        layout: CALayoutIntent { axis: .Column },
+        sublayers: [move row1, move row2, move row3]
+    }
+    let wrapper = CALayerDescription { sublayers: [move group] }
+    let reordered = menuOrderRows(move wrapper, true)
+    expect!(reordered.sublayers[0].sublayers[0].hitKey == 1003.0)
+    expect!(reordered.sublayers[0].sublayers[1].hitKey == 1002.0)
+    expect!(reordered.sublayers[0].sublayers[2].hitKey == 1001.0)
+    let twice = menuOrderRows(copy reordered, false)
+    expect!(twice.sublayers[0].sublayers[0].hitKey == 1003.0)
+}
+
+@Test
+function fixedAndPriorityMenuItemsPreserveTheirRowsAndText() {
+    setInterfaceMode(.AdaptiveMobile)
+    let fixed = describedLayer(MenuItems() {
+        Text("First")
+        Text("Middle")
+        Text("Last")
+    }.menuOrder(order: .Fixed))
+    let priority = describedLayer(MenuItems() {
+        Text("First")
+        Text("Middle")
+        Text("Last")
+    }.menuOrder(order: .Priority))
+    expect!(menuRowsHaveEndpoints(fixed, "First", "Last"))
+    expect!(menuRowsHaveEndpoints(priority, "Last", "First"))
+    expect!(describedContainsText(priority, "Middle"))
+    setInterfaceMode(hostInterfaceMode())
+}
+
+@Test
+function menuOrderModifierPreservesSectionIdentity() {
+    let section = Section {
+        Text("Option")
+    }.menuOrder(order: .Fixed)
+    expect!(section.isSection())
+}

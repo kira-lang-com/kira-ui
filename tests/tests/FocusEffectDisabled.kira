@@ -1,0 +1,80 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function focusEffectDisabledDoesNotDisableFocusableOrItsKeyboardRegistration() {
+    layerActionsReset()
+    tapSeqReset()
+    let first = describedLayer(
+        Text("Editable").focusable().focusEffectDisabled()
+    )
+    expect!(first.focusKey != 0)
+    expect!(first.focusesOnPointer)
+    expect!(layerFocusableContains(first.focusKey))
+    let focusedContext = buildContext(FoundationUiContext {
+        focusedKey: first.focusKey
+    })
+    tapSeqReset()
+    let focused = Text("Editable").focusable().focusEffectDisabled()
+        .describe(focusedContext, ModifierContext {})
+    expect!(focused.focusKey == first.focusKey)
+    expect!(focused.borderWidth == 0.0)
+    expect!(layerFocusableContains(focused.focusKey))
+}
+
+@Test
+function focusedViewActuallyDrawsANativeAccentBorder() {
+    layerActionsReset()
+    tapSeqReset()
+    let ordinary = describedLayer(Text("Focus ring").focusable())
+    expect!(ordinary.borderWidth == 0.0)
+    let focusedContext = buildContext(FoundationUiContext {
+        focusedKey: ordinary.focusKey
+    })
+    tapSeqReset()
+    let focused = Text("Focus ring").focusable()
+        .describe(focusedContext, ModifierContext {})
+    expect!(focused.borderWidth == 2.0)
+    expect!(focused.borderColor.a > 0.0)
+    expect!(focused.layout.intrinsicWidth == ordinary.layout.intrinsicWidth)
+    expect!(focused.layout.intrinsicHeight == ordinary.layout.intrinsicHeight)
+}
+
+@Test
+function ancestorFocusEffectPolicyOverridesDescendantReenable() {
+    let base = ModifierContext {}
+    let disabled = modifierContextApply(base, modifierDeltaFocusEffectDisabled(true))
+    expect!(disabled.hasFocusEffectDisabled)
+    expect!(disabled.focusEffectDisabled)
+    expect!(modifierContextForChildren(disabled).focusEffectDisabled)
+    let child = modifierContextApply(disabled, modifierDeltaFocusEffectDisabled(false))
+    expect!(child.focusEffectDisabled)
+    let allowed = modifierContextApply(base, modifierDeltaFocusEffectDisabled(false))
+    expect!(!allowed.focusEffectDisabled)
+    let innerDisabled = modifierContextApply(allowed, modifierDeltaFocusEffectDisabled(true))
+    expect!(!innerDisabled.focusEffectDisabled)
+}
+
+@Test
+function focusEffectPolicyAlsoSuppressesVisualHoverWithoutDisablingHoverEvents() {
+    let noRing = describedLayer(
+        Text("Hover").hoverEffect().focusEffectDisabled()
+    )
+    expect!(noRing.hoverKey == 0)
+    let observer = describedLayer(
+        Text("Hover events")
+            .onHover(action: { inside in })
+            .focusEffectDisabled()
+    )
+    expect!(observer.hoverKey != 0)
+}
+
+@Test
+function focusEffectDisabledPreservesSectionGrouping() {
+    let section = Section {
+        Text("Item")
+    }.focusable().focusEffectDisabled()
+    expect!(section.isSection())
+    expect!(describedContainsText(describedLayer(move section), "Item"))
+}

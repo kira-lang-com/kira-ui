@@ -1,0 +1,66 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// The sidebar's view does not have to fill the rest of the split. A preferred
+// width controls the sidebar overlay, document safe area, and window toolbar
+// together; the underlying detail stays the FULL window width, so a pushed
+// page can actually move behind the sidebar glass.
+@Test
+function unifiedNavigationCanvasPassesUnderPreferredWidthSidebar() {
+    toolbarCollect()
+    let app = NavigationSplitView {
+        Rectangle().navigationSplitViewColumnWidth(width: 320.0)
+    } detail: {
+        NavigationStack {
+            Text("Welcome")
+        }
+    }
+    var described = describedLayerInWideWindow(move app)
+    expect!(toolbarNavigationWidth() == 320.0)
+    expect!(described.sublayers.count == 2)
+    layOutLayerTree(described, 1100.0, 720.0)
+    // The canvas extends beneath the glass, rather than being clipped at x=320.
+    expect!(described.sublayers[0].position.x == 0.0)
+    expect!(described.sublayers[0].size.width == 1100.0)
+    let overlay = described.sublayers[1]
+    expect!(overlay.sublayers[0].size.width == 320.0)
+    toolbarStopCollecting()
+}
+
+@Test
+function splitColumnWidthOffersBothSwiftUIOverloads() {
+    let fixed = describedLayerInWideWindow(
+        Rectangle().navigationSplitViewColumnWidth(width: 320.0)
+    )
+    expect!(fixed.layout.fixedWidth == 320.0)
+    let ranged = describedLayerInWideWindow(
+        Rectangle().navigationSplitViewColumnWidth(
+            min: .Some(250.0), ideal: 320.0, max: .Some(360.0)
+        )
+    )
+    expect!(ranged.layout.fixedWidth == 320.0)
+    let bounded = describedLayerInWideWindow(
+        Rectangle().navigationSplitViewColumnWidth(
+            min: .Some(300.0), ideal: 220.0, max: .Some(380.0)
+        )
+    )
+    expect!(bounded.layout.fixedWidth == 300.0)
+}
+
+@Test
+function splitColumnWithoutPreferenceKeepsPlatformMetrics() {
+    let sidebar = describedLayerInWideWindow(Rectangle())
+    expect!(navigationSplitColumnWidth(sidebar, 272.0) == 272.0)
+}
+
+@Test
+function compactNavigationUsesFullWidthRootDespitePreferredSidebarWidth() {
+    let context = buildContext(FoundationUiContext {
+        viewport: Size { width: 390.0, height: 844.0 }
+    })
+    let root = Rectangle().navigationSplitViewColumnWidth(width: 320.0)
+    let described = root.describe(context, ModifierContext {})
+    expect!(navigationMetrics(390.0).presentation == NavigationPresentation.Stack)
+    expect!(described.layout.fixedWidth < 0.0)
+}

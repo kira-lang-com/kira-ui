@@ -145,6 +145,7 @@ public struct ToolbarPage {
     var primaryAction: [ToolbarEntry] = []
     var automatic: [ToolbarEntry] = []
     var title: String = ""
+    var subtitle: String = ""
     var largeTitle: Bool = false
     var titleCollapse: Number = 0.0
 }
@@ -176,6 +177,13 @@ public struct ToolbarSink {
     // are set the same way without either column saying so.
     var sidebarTitle: String = ""
     var detailTitle: String = ""
+    var sidebarSubtitle: String = ""
+    var detailSubtitle: String = ""
+    // Both halves of a split view can have a scrollable large title. The
+    // sidebar List and the detail NavigationStack scroll independently; a
+    // single titleCollapse used for both makes either title stay inline.
+    var sidebarLargeTitle: Bool = false
+    var sidebarTitleCollapse: Number = 0.0
     // Whether the document's title is set large under the bar, by the stack
     // showing it, rather than in the bar's own band; and how far that title
     // has scrolled under the bar, which the band shows it inline as far as.
@@ -189,6 +197,10 @@ public struct ToolbarSink {
     // Geometry the navigation container reports after lowering. The root chrome
     // compositor consumes this once, after every contributor has been collected.
     var navigationWidth: Number = 0.0
+    // The persistent rail before a split sidebar. The title and other
+    // sidebar chrome must begin after it, while the section still ends at the
+    // combined rail-and-sidebar boundary.
+    var navigationRailWidth: Number = 0.0
     var hasNavigationColumn: Bool = false
     // Whether a navigation stack or split view lowered this frame. A Mac's
     // window holding one keeps its toolbar at the stack's root as on every
@@ -244,6 +256,11 @@ public struct ToolbarSink {
     // Whether a phone's page has its search presented, which the bar steps
     // aside for, as UIKit's navigation bar does during a search.
     var searchPresented: Bool = false
+    // The currently lowering page's local navigation bar preference. It is
+    // collected upward from the destination content, then restored before
+    // another page/column lowers (including covered transition pages).
+    var pageBackButtonHidden: Bool? = .None
+    var pageTitleDisplayMode: NavigationBarTitleDisplayMode? = .None
 }
 
 public function toolbarSinkEnsure() {
@@ -275,11 +292,16 @@ public function toolbarCollect() {
         sink.tabSearch = move tabSearch
         sink.sidebarTitle = ""
         sink.detailTitle = ""
+        sink.sidebarSubtitle = ""
+        sink.detailSubtitle = ""
+        sink.sidebarLargeTitle = false
+        sink.sidebarTitleCollapse = 0.0
         sink.largeTitle = false
         sink.titleCollapse = 0.0
         sink.sidebarMargin = -1.0
         sink.detailMargin = -1.0
         sink.navigationWidth = 0.0
+        sink.navigationRailWidth = 0.0
         sink.hasNavigationColumn = false
         sink.hasNavigation = false
         sink.navigationShown = 0.0
@@ -298,6 +320,8 @@ public function toolbarCollect() {
         sink.motion = .Inherit
         sink.search = .None
         sink.searchPresented = false
+        sink.pageBackButtonHidden = .None
+        sink.pageTitleDisplayMode = .None
     }
 }
 
@@ -352,10 +376,12 @@ public function toolbarBeginCovered(mark: borrow ToolbarMark) -> ToolbarPage {
             primaryAction: toolbarSplit(sink.primaryAction, mark.primaryAction),
             automatic: toolbarSplit(sink.automatic, mark.automatic),
             title: sink.detailTitle,
+            subtitle: sink.detailSubtitle,
             largeTitle: sink.largeTitle,
             titleCollapse: sink.titleCollapse
         }
         sink.detailTitle = ""
+        sink.detailSubtitle = ""
         sink.largeTitle = false
         sink.titleCollapse = 0.0
         return top
@@ -382,6 +408,7 @@ public function toolbarEndCovered(
             primaryAction: copy sink.primaryAction,
             automatic: copy sink.automatic,
             title: sink.detailTitle,
+            subtitle: sink.detailSubtitle,
             largeTitle: sink.largeTitle,
             titleCollapse: sink.titleCollapse
         }
@@ -396,6 +423,7 @@ public function toolbarEndCovered(
         toolbarJoin(sink.primaryAction, move page.primaryAction)
         toolbarJoin(sink.automatic, move page.automatic)
         sink.detailTitle = page.title
+        sink.detailSubtitle = page.subtitle
         sink.largeTitle = page.largeTitle
         sink.titleCollapse = page.titleCollapse
         sink.moving = true

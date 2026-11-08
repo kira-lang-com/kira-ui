@@ -20,6 +20,21 @@ public struct TextFieldState {
     // selection spans [min(anchor,caret), max(anchor,caret)).
     var anchor: Number = 0
     var seeded: Bool = false
+    // The latest wrapped viewport, used by click-to-place while the text
+    // scrolls inside a height-capped vertical field.
+    var editorWidth: Number = 0
+    var editorScrollY: Number = 0
+    // Preserves the intended x column through consecutive Up/Down presses.
+    var verticalX: Number = -1
+}
+
+public function textFieldViewport(key: Number, width: Number, scrollY: Number) {
+    unsafe {
+        textFieldEnsure(key)
+        var st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
+        st.editorWidth = width
+        st.editorScrollY = scrollY
+    }
 }
 
 public function textFieldSelMin(anchor: Number, caret: Number) -> Number {
@@ -78,6 +93,7 @@ public function textFieldReset(key: Number) {
         st.caret = 0
         st.anchor = 0
         st.seeded = false
+        st.verticalX = -1
     }
 }
 
@@ -112,9 +128,39 @@ public function textFieldSelectAll(key: Number) {
     }
 }
 
-public function textFieldInsert(key: Number, cp: Number) {
+// Double-click selects a word, not merely the insertion point. Treat Unicode
+// letters as word characters as well as ASCII letters/digits and underscore.
+public function textFieldWordCharacter(code: Number) -> Bool {
+    return (code >= 65 && code <= 90)
+        || (code >= 97 && code <= 122)
+        || (code >= 48 && code <= 57)
+        || code == 95 || code >= 128
+}
+
+public function textFieldSelectWord(key: Number) {
     unsafe {
-        if cp < 32 {
+        textFieldEnsure(key)
+        var st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
+        if st.codes.count == 0 { return }
+        var from = min(st.caret, st.codes.count - 1)
+        if from > 0 && !textFieldWordCharacter(st.codes[from])
+            && textFieldWordCharacter(st.codes[from - 1]) {
+            from--
+        }
+        let word = textFieldWordCharacter(st.codes[from])
+        var to = from + 1
+        if word {
+            while from > 0 && textFieldWordCharacter(st.codes[from - 1]) { from-- }
+            while to < st.codes.count && textFieldWordCharacter(st.codes[to]) { to++ }
+        }
+        st.anchor = from
+        st.caret = to
+    }
+}
+
+public function textFieldInsert(key: Number, cp: Number, multiline: Bool = false) {
+    unsafe {
+        if cp < 32 && !(multiline && cp == 10) {
             return
         }
         // Typing over a selection replaces it.
@@ -132,6 +178,7 @@ public function textFieldInsert(key: Number, cp: Number) {
         st.codes = move next
         st.caret++
         st.anchor = st.caret
+        st.verticalX = -1
     }
 }
 
@@ -157,6 +204,7 @@ public function textFieldBackspace(key: Number) {
         st.codes = move next
         st.caret--
         st.anchor = st.caret
+        st.verticalX = -1
     }
 }
 
@@ -179,6 +227,7 @@ public function textFieldDeleteForward(key: Number) {
             }
         }
         st.codes = move next
+        st.verticalX = -1
     }
 }
 
@@ -322,12 +371,16 @@ public function textFieldEdited(key: Number, before: borrow String, onChange: (S
 }
 
 // A character typed into the field, and the text it leaves handed on.
-public function textFieldTypeFn(key: Number, onChange: (String) -> Void) -> (Number) -> Void {
+public function textFieldTypeFn(
+    key: Number,
+    onChange: (String) -> Void,
+    multiline: Bool = false
+) -> (Number) -> Void {
     let k = key
     let change = onChange
     let f: (Number) -> Void = { cp in
         let before = textFieldText(k)
-        textFieldInsert(k, cp)
+        textFieldInsert(k, cp, multiline)
         textFieldEdited(k, before, change)
         return
     }
@@ -375,6 +428,100 @@ public function textFieldCommandFn(
     return f
 }
 
+// In a vertical-axis TextField, Return submits and Shift-Return inserts a
+// real newline. The modifier belongs to the keyboard event, not the text
+// renderer; ordinary single-line fields keep their original command path.
+public function multilineTextFieldCommandFn(
+    key: Number,
+    onChange: (String) -> Void,
+    onSubmit: () -> Void,
+    size: Number = 17,
+    weight: Number = 400,
+    design: CAFontDesign = .Default,
+    returnInsertsNewline: Bool = false
+) -> (Key, ModifierState) -> Void {
+    let k = key
+    let change = onChange
+    let submit = onSubmit
+    let fontSize = size
+    let fontWeight = weight
+    let fontDesign = design
+    let insertsNewline = returnInsertsNewline
+    return { pressed, modifiers in
+        let before = textFieldText(k)
+        match pressed {
+            Enter -> {
+                if insertsNewline || modifiers.shift {
+                    textFieldInsert(k, 10, true)
+                } else {
+                    submit()
+                }
+            }
+            Backspace -> textFieldBackspace(k)
+            Left, Right, Up, Down, Home, End -> multilineTextFieldNav(
+                k, pressed, modifiers.shift, fontSize, fontWeight, fontDesign
+            )
+            else -> textFieldNav(k, pressed)
+        }
+        textFieldEdited(k, before, change)
+        return
+    }
+}
+
+// Arrow movement follows the same wrapped document geometry as pointer
+// placement. Shift extends the anchor; bare arrows collapse a selection.
+public function multilineTextFieldNav(
+    key: Number,
+    pressed: Key,
+    extendSelection: Bool,
+    size: Number,
+    weight: Number,
+    design: borrow CAFontDesign
+) {
+    unsafe {
+        textFieldEnsure(key)
+        var st = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
+        let length = st.codes.count
+        var next = st.caret
+        let hasSelection = st.anchor != st.caret
+        match pressed {
+            Left -> {
+                next = !extendSelection && hasSelection
+                    ? textFieldSelMin(st.anchor, st.caret) : max(next - 1, 0)
+                st.verticalX = -1
+            }
+            Right -> {
+                next = !extendSelection && hasSelection
+                    ? textFieldSelMax(st.anchor, st.caret) : min(next + 1, length)
+                st.verticalX = -1
+            }
+            Home -> {
+                next = 0
+                st.verticalX = -1
+            }
+            End -> {
+                next = length
+                st.verticalX = -1
+            }
+            Up, Down -> {
+                let text = foundationStringFromCodepoints(st.codes, 0, length)
+                let width = max(st.editorWidth, 1)
+                let current = multilineCaretAt(text, st.caret, size, weight, width, design)
+                if st.verticalX < 0 { st.verticalX = current.x }
+                let line = foundationTextLineBox(size, weight, design)
+                next = multilineIndexAt(
+                    text, st.verticalX,
+                    current.y + (pressed == .Up ? -line : line),
+                    size, weight, width, design
+                )
+            }
+            else -> return
+        }
+        st.caret = next
+        if !extendSelection { st.anchor = next }
+    }
+}
+
 // The selected characters of the field under `key`, none when nothing is
 // selected.
 public function textFieldSelectedText(key: Number) -> String {
@@ -390,16 +537,25 @@ public function textFieldSelectedText(key: Number) -> String {
 // Puts `text` at the caret of the field under `key`, over its selection; a
 // line break or another control character is left out, since the field is
 // one line.
-public function textFieldInsertText(key: Number, text: borrow String) {
+public function textFieldInsertText(
+    key: Number,
+    text: borrow String,
+    multiline: Bool = false
+) {
     textFieldDeleteSelection(key)
     for code in foundationStringToCodepoints(text) {
-        textFieldInsert(key, code)
+        textFieldInsert(key, code, multiline)
     }
 }
 
 // Select All, Copy, Cut and Paste on the field under `key`; a `secure` field
 // gives none of its text away. What an edit leaves is handed on.
-public function textFieldEditFn(key: Number, secure: Bool, onChange: (String) -> Void) -> (
+public function textFieldEditFn(
+    key: Number,
+    secure: Bool,
+    onChange: (String) -> Void,
+    multiline: Bool = false
+) -> (
     TextEditCommand
 ) -> Void {
     let k = key
@@ -413,7 +569,7 @@ public function textFieldEditFn(key: Number, secure: Bool, onChange: (String) ->
                 textFieldCopy(k)
                 textFieldDeleteSelection(k)
             }
-            Paste -> textFieldPaste(k)
+            Paste -> textFieldPaste(k, multiline)
         }
         textFieldEdited(k, before, change)
         return
@@ -430,9 +586,9 @@ function textFieldCopy(key: Number) {
 
 // Pastes the pasteboard's text into the field under `key`; an empty or
 // refused pasteboard changes nothing.
-function textFieldPaste(key: Number) {
+function textFieldPaste(key: Number, multiline: Bool = false) {
     match pasteboardText() {
-        Ok(text) -> textFieldInsertText(key, text)
+        Ok(text) -> textFieldInsertText(key, text, multiline)
         Error(refusal) -> log info("nothing was pasted", refusal: traceText(refusal))
     }
 }

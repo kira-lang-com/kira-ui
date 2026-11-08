@@ -1,0 +1,140 @@
+import Foundation
+import KCoreAnimation
+
+// The platform's built-in SwiftUI hover effects. This is a visual response
+// to a pointer observing the view's actual region, not a press, and does not
+// change layout measurement or the identity of a nested Button.
+public enum HoverEffect {
+    Automatic
+    Highlight
+    Lift
+}
+
+public function modifierDeltaHoverEffectDisabled(disabled: Bool) -> ModifierDelta {
+    return ModifierDelta {
+        hasHoverEffectDisabled: true,
+        hoverEffectDisabled: disabled
+    }
+}
+
+public function modifierDeltaDefaultHoverEffect(effect: HoverEffect?) -> ModifierDelta {
+    return ModifierDelta { defaultHoverEffect: move effect }
+}
+
+// Automatic resolves the inherited default first, and only falls back to the
+// platform's built-in highlight when no ancestor supplied a different effect.
+public function resolvedHoverEffect(
+    requested: HoverEffect,
+    modifiers: borrow ModifierContext
+) -> HoverEffect {
+    if requested != .Automatic { return requested }
+    return match modifiers.defaultHoverEffect {
+        Some(effect) -> effect == .Automatic ? .Highlight : effect
+        None -> .Highlight
+    }
+}
+
+public struct HoverEffectState {
+    var hovered: Bool = false
+}
+
+public function hoverEffectEntered(key: Number, hovered: Bool) {
+    unsafe {
+        let slot = slotKey("kiraui.hover-effect.", key)
+        if !ambientStateHasView(slot) { return }
+        var state = nativeRecover<HoverEffectState>(ambientStateGetView(slot))
+        if state.hovered != hovered {
+            state.hovered = hovered
+            redrawAfter(0.0)
+        }
+    }
+}
+
+// The primitive is shared by ordinary `.hoverEffect` and a List's row-owned
+// hover presentation. It takes an already described layer, so a list can
+// choose the WHOLE row cell as the hover region instead of just its label.
+public function hoverEffectDescription(
+    rendered: CALayerDescription,
+    effect: HoverEffect,
+    enabled: Bool,
+    modifiers: borrow ModifierContext
+) -> CALayerDescription {
+    if !enabled || modifiers.hoverEffectDisabled || modifiers.focusEffectDisabled {
+        return rendered
+    }
+    let key = tapSeqKey()
+    var isHovered = false
+    unsafe {
+        let slot = slotKey("kiraui.hover-effect.", key)
+        if !ambientStateHasView(slot) {
+            ambientStatePutView(copy slot, nativeUserData(nativeState(HoverEffectState {})))
+        }
+        let state = nativeRecover<HoverEffectState>(ambientStateGetView(slot))
+        isHovered = state.hovered
+    }
+    layerHoverRegister(key, { hovered in hoverEffectEntered(key, hovered) })
+    var child = rendered
+    let resolved = resolvedHoverEffect(effect, modifiers)
+    if resolved == .Lift && isHovered {
+        child.scaleX = 1.035
+        child.scaleY = 1.035
+    }
+    let section = child.groupedSection
+    let bounds = surfaceFootprint(child.layout)
+    let tint = modifierPrimaryColor(.Accent, modifiers)
+    return CALayerDescription {
+        hoverKey: key,
+        layout: bounds,
+        groupedSection: section,
+        content: isHovered && resolved == .Highlight
+            ? .Solid(CASolid {
+                fill: CAColor {
+                    r: tint.r, g: tint.g, b: tint.b, a: tint.a * 0.14
+                },
+                cornerRadius: 7.0
+            })
+            : .Empty,
+        sublayers: [move child]
+    }
+}
+
+public construct HoverEffectLayer(
+    effect: HoverEffect,
+    enabled: Bool
+) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        return hoverEffectDescription(
+            content.describe(context, modifiers), effect, enabled, modifiers
+        )
+    }
+}
+
+extend Widget {
+    // SwiftUI's built-in HoverEffect overload, including the `isEnabled`
+    // spelling. CustomHoverEffect and HoverEffectGroup are separate APIs that
+    // need dedicated host visual-effect representation.
+    function hoverEffect(
+        effect: HoverEffect = .Automatic,
+        isEnabled: Bool = true
+    ) -> Any Widget {
+        return HoverEffectLayer(effect: effect, enabled: isEnabled) { self }
+    }
+
+    // SwiftUI: `.hoverEffectDisabled(_ disabled: Bool = true)`.
+    function hoverEffectDisabled(disabled: Bool = true) -> Any Widget {
+        return ModifierDeltaLayer(delta: modifierDeltaHoverEffectDisabled(disabled)) { self }
+    }
+
+    // SwiftUI: `.defaultHoverEffect(_ effect: HoverEffect?)`. A nil argument
+    // leaves any already inherited default unchanged, as on Apple platforms.
+    function defaultHoverEffect(effect: HoverEffect?) -> Any Widget {
+        return ModifierDeltaLayer(delta: modifierDeltaDefaultHoverEffect(move effect)) { self }
+    }
+}

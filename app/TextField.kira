@@ -217,7 +217,8 @@ public construct OnSubmitLayer(action: () -> Void) extends Widget {
 public construct TextField(
     title: String,
     text: Binding<String>,
-    prompt: String = ""
+    prompt: String = "",
+    axis: Axis = .Horizontal
 ) extends Widget {
 
     function describe(
@@ -227,14 +228,12 @@ public construct TextField(
         let key = tapSeqKey()
         textFieldFollow(key, text.get())
         let shown = prompt.isEmpty() ? copy title : copy prompt
-        var described = textFieldDescription(
-            key,
-            copy shown,
-            false,
-            copy text.set,
-            copy modifiers.submit,
-            context,
-            modifiers
+        var described = axis == .Vertical ? multilineTextFieldDescription(
+            key, copy shown, copy text.set, copy modifiers.submit,
+            context, modifiers
+        ) : textFieldDescription(
+            key, copy shown, false, copy text.set, copy modifiers.submit,
+            context, modifiers
         )
         let element = TextFieldElement {
             role: .TextField,
@@ -242,6 +241,34 @@ public construct TextField(
             label: copy title,
             value: copy text.get(),
             placeholder: move shown
+        }
+        described.accessibilityClear()
+        described.accessibilityElementOf(element.node(context, modifiers))
+        return described
+    }
+}
+
+// A document-style multiline editor. Unlike a vertical TextField (whose
+// Return action submits a composer), Return inserts an actual paragraph
+// break here. It shares text storage, selection, layout and focus semantics
+// with TextField so editing a document never forks into a second input model.
+public construct TextEditor(text: Binding<String>) extends Widget {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let key = tapSeqKey()
+        textFieldFollow(key, text.get())
+        var described = multilineTextFieldDescription(
+            key, "", copy text.set, copy modifiers.submit,
+            context, modifiers, true
+        )
+        let element = TextFieldElement {
+            role: .TextField,
+            key: key,
+            label: "Document text",
+            value: copy text.get(),
+            placeholder: ""
         }
         described.accessibilityClear()
         described.accessibilityElementOf(element.node(context, modifiers))

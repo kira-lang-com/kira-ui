@@ -1,0 +1,104 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function scrollDisabledSuppressesScrollInputWithoutRemovingContent() {
+    let normal = describedLayer(ScrollView { Text("A") })
+    let disabled = describedLayer(ScrollView { Text("A") }.scrollDisabled(disabled: true))
+    let explicitlyEnabled = describedLayer(ScrollView { Text("A") }.scrollDisabled(disabled: false))
+    expect!(normal.sublayers[0].scrollAxis == CAAxis.Column)
+    expect!(explicitlyEnabled.sublayers[0].scrollAxis == CAAxis.Column)
+    // The unbounded scroll measurement is retained when scrolling is disabled.
+    expect!(disabled.sublayers[0].scrollAxis == CAAxis.Column)
+    expect!(!disabled.sublayers[0].acceptsScrollInput)
+    expect!(explicitlyEnabled.sublayers[0].acceptsScrollInput)
+    expect!(disabled.sublayers[0].sublayers.count == 1)
+    // The scroll indicator remains drawable but cannot intercept a scrub.
+    expect!(disabled.sublayers[1].hittable == false)
+}
+
+@Test
+function scrollDisabledSuppressesCompositorScrollTargetRegistration() {
+    var enabled = describedLayer(ScrollView {
+        VStack {
+            Text("Top")
+            Text("Bottom")
+        }
+    })
+    layOutLayerTree(enabled, 180.0, 75.0)
+    var enabledTree = layerTree()
+    enabledTree.reconcileImmediate(enabled)
+    expect!(enabledTree.hitTestTree(60.0, 40.0).scrollLayer != Layers.none)
+
+    var disabled = describedLayer(ScrollView {
+        VStack {
+            Text("Top")
+            Text("Bottom")
+        }
+    }.scrollDisabled(disabled: true))
+    layOutLayerTree(disabled, 180.0, 75.0)
+    var disabledTree = layerTree()
+    disabledTree.reconcileImmediate(disabled)
+    expect!(disabledTree.hitTestTree(60.0, 40.0).scrollLayer == Layers.none)
+}
+
+@Test
+function scrollDisablingIsInheritedAndCannotBeReenabledInside() {
+    let disabled = modifierContextApply(
+        ModifierContext {}, modifierDeltaScrollDisabled(true)
+    )
+    let inner = modifierContextApply(disabled, modifierDeltaScrollDisabled(false))
+    expect!(!modifierContextForChildren(inner).scrollEnabled)
+    expect!(modifierContextForChildren(ModifierContext {}).scrollEnabled)
+    let nested = describedLayer(
+        ScrollView { Text("Nested") }.scrollDisabled(disabled: false)
+            .scrollDisabled(disabled: true)
+    )
+    expect!(!nested.sublayers[0].acceptsScrollInput)
+}
+
+@Test
+function scrollClipDisabledHonorsDefaultAndExplicitOverload() {
+    let defaultClip = describedLayer(ScrollView { Text("A") })
+    let unclipped = describedLayer(ScrollView { Text("A") }.scrollClipDisabled())
+    let clipped = describedLayer(ScrollView { Text("A") }.scrollClipDisabled(disabled: false))
+    expect!(defaultClip.sublayers[0].clipsChildren)
+    expect!(!unclipped.sublayers[0].clipsChildren)
+    expect!(clipped.sublayers[0].clipsChildren)
+    expect!(unclipped.sublayers[0].sublayers.count == 1)
+}
+
+@Test
+function scrollBounceBehaviorHasAllCasesAndAxisSpecificInheritance() {
+    expect!(scrollBounces(.Automatic, 5.0, 100.0))
+    expect!(scrollBounces(.Always, 5.0, 100.0))
+    expect!(!scrollBounces(.BasedOnSize, 5.0, 100.0))
+    expect!(scrollBounces(.BasedOnSize, 110.0, 100.0))
+
+    let vertical = modifierContextApply(
+        ModifierContext {},
+        modifierDeltaScrollBounceBehavior(.BasedOnSize, .Vertical)
+    )
+    expect!(vertical.scrollBounceVertical == ScrollBounceBehavior.BasedOnSize)
+    expect!(vertical.scrollBounceHorizontal == ScrollBounceBehavior.Automatic)
+    let both = modifierContextApply(
+        vertical, modifierDeltaScrollBounceBehavior(.Always, .All)
+    )
+    expect!(both.scrollBounceVertical == ScrollBounceBehavior.Always)
+    expect!(modifierContextForChildren(both).scrollBounceHorizontal == ScrollBounceBehavior.Always)
+    let horizontal = modifierContextApply(
+        vertical, modifierDeltaScrollBounceBehavior(.Always, .Horizontal)
+    )
+    expect!(horizontal.scrollBounceVertical == ScrollBounceBehavior.BasedOnSize)
+}
+
+@Test
+function scrollBounceBehaviorCanBeAppliedToScrollViewWithDefaultAndAxes() {
+    let implicit = describedLayer(ScrollView { Text("A") }
+        .scrollBounceBehavior(behavior: .BasedOnSize))
+    let explicit = describedLayer(ScrollView { Text("A") }
+        .scrollBounceBehavior(behavior: .Always, axes: .Vertical))
+    expect!(implicit.sublayers[0].scrollAxis == CAAxis.Column)
+    expect!(explicit.sublayers[0].scrollAxis == CAAxis.Column)
+}

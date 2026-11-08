@@ -1,0 +1,180 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI has two `frame` families: a fixed width/height box and a flexible
+// min/ideal/max proposal. A ceiling alone does not describe the latter: it
+// must also occupy the width offered by its parent up to that ceiling, and
+// align content within the new frame. That distinction is what a nested
+// `.frame(maxWidth: 760).frame(maxWidth: .infinity)` relies on.
+public enum FrameLimit {
+    Infinity
+    Points(Number)
+}
+
+public function boundedFrameLength(limit: borrow FrameLimit) -> Number {
+    return match limit {
+        Infinity -> -1.0
+        Points(value) -> value
+    }
+}
+
+public function frameExpands(limit: borrow FrameLimit) -> Bool {
+    return match limit {
+        Infinity -> true
+        Points(_) -> false
+    }
+}
+
+public construct FlexibleFrameLayer(
+    minWidth: Number = -1.0,
+    idealWidth: Number = -1.0,
+    maxWidth: Number = -1.0,
+    minHeight: Number = -1.0,
+    idealHeight: Number = -1.0,
+    maxHeight: Number = -1.0,
+    expandsWidth: Bool = false,
+    expandsHeight: Bool = false,
+    alignment: StackAlignment = .Center
+) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        return CALayerDescription {
+            layout: CALayoutIntent {
+                widthFill: expandsWidth || maxWidth >= 0,
+                heightFill: expandsHeight || maxHeight >= 0,
+                expandsWidth: expandsWidth || maxWidth >= 0,
+                expandsHeight: expandsHeight || maxHeight >= 0,
+                minWidth: max(minWidth, 0.0),
+                idealWidth: idealWidth,
+                maxWidth: maxWidth,
+                minHeight: max(minHeight, 0.0),
+                idealHeight: idealHeight,
+                maxHeight: maxHeight,
+                alignment: stackAlignmentUnitPoint(alignment)
+            },
+            sublayers: [content.describe(context, modifierContextForChildren(modifiers))]
+        }
+    }
+}
+
+extend Widget {
+    // The fixed-frame family already offers width:height:. These are its
+    // remaining source call forms, with the same default centered alignment.
+    // RIDL publishes one signature for each method name. Export the complete
+    // fixed-frame pair rather than the width-only overload.
+    function frame(
+        width: Number,
+        height: Number,
+        alignment: StackAlignment = .Center
+    ) -> Any Widget {
+        return FrameLayer(width: width, height: height, alignment: alignment) { self }
+    }
+
+    function frame(width: Number, alignment: StackAlignment = .Center) -> Any Widget {
+        return FrameLayer(width: width, height: -1.0, alignment: alignment) { self }
+    }
+
+    function frame(height: Number, alignment: StackAlignment = .Center) -> Any Widget {
+        return FrameLayer(width: -1.0, height: height, alignment: alignment) { self }
+    }
+
+    // SwiftUI's seven-parameter flexible-frame overload. The negative default
+    // means an unspecified dimension, never a negative extent.
+    function frame(
+        minWidth: Number = -1.0,
+        idealWidth: Number = -1.0,
+        maxWidth: Number = -1.0,
+        minHeight: Number = -1.0,
+        idealHeight: Number = -1.0,
+        maxHeight: Number = -1.0,
+        alignment: StackAlignment = .Center
+    ) -> Any Widget {
+        return FlexibleFrameLayer(
+            minWidth: minWidth, idealWidth: idealWidth, maxWidth: maxWidth,
+            minHeight: minHeight, idealHeight: idealHeight, maxHeight: maxHeight,
+            alignment: alignment
+        ) { self }
+    }
+
+    // Kira's explicit spelling of CGFloat.infinity. The unbounded side of a
+    // flexible frame claims the offered space rather than imposing a cap.
+    function frame(maxWidth: FrameLimit, alignment: StackAlignment = .Center) -> Any Widget {
+        return match maxWidth {
+            Infinity -> FlexibleFrameLayer(expandsWidth: true, alignment: alignment) { self }
+            Points(value) -> FlexibleFrameLayer(maxWidth: value, alignment: alignment) { self }
+        }
+    }
+
+    // SwiftUI's *single* flexible frame with an unbounded maximum width and
+    // a minimum height. Two nested modifiers are not the same layout: the
+    // outer frame can change the menu's proposal and the glass press anchor.
+    // A FrameLimit permits `.infinity` without a fake negative CGFloat.
+    function frame(
+        maxWidth: FrameLimit,
+        minHeight: Number,
+        idealHeight: Number = -1.0,
+        maxHeight: Number = -1.0,
+        alignment: StackAlignment = .Center
+    ) -> Any Widget {
+        return FlexibleFrameLayer(
+            maxWidth: boundedFrameLength(maxWidth),
+            minHeight: minHeight,
+            idealHeight: idealHeight,
+            maxHeight: maxHeight,
+            expandsWidth: frameExpands(maxWidth),
+            alignment: alignment
+        ) { self }
+    }
+
+    function frame(maxHeight: FrameLimit, alignment: StackAlignment = .Center) -> Any Widget {
+        return match maxHeight {
+            Infinity -> FlexibleFrameLayer(expandsHeight: true, alignment: alignment) { self }
+            Points(value) -> FlexibleFrameLayer(maxHeight: value, alignment: alignment) { self }
+        }
+    }
+
+    // Both dimensions may be flexible in the same SwiftUI `.frame` call.
+    function frame(
+        maxWidth: FrameLimit,
+        maxHeight: FrameLimit,
+        alignment: StackAlignment = .Center
+    ) -> Any Widget {
+        return FlexibleFrameLayer(
+            maxWidth: boundedFrameLength(maxWidth),
+            maxHeight: boundedFrameLength(maxHeight),
+            expandsWidth: frameExpands(maxWidth),
+            expandsHeight: frameExpands(maxHeight),
+            alignment: alignment
+        ) { self }
+    }
+
+    function frame(
+        maxWidth: Number,
+        maxHeight: FrameLimit,
+        alignment: StackAlignment = .Center
+    ) -> Any Widget {
+        return FlexibleFrameLayer(
+            maxWidth: maxWidth,
+            maxHeight: boundedFrameLength(maxHeight),
+            expandsHeight: frameExpands(maxHeight),
+            alignment: alignment
+        ) { self }
+    }
+
+    function frame(
+        maxWidth: FrameLimit,
+        maxHeight: Number,
+        alignment: StackAlignment = .Center
+    ) -> Any Widget {
+        return FlexibleFrameLayer(
+            maxWidth: boundedFrameLength(maxWidth),
+            maxHeight: maxHeight,
+            expandsWidth: frameExpands(maxWidth),
+            alignment: alignment
+        ) { self }
+    }
+}

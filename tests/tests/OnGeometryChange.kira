@@ -1,0 +1,173 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+struct GeometryChangeEvents {
+    var calls: Number = 0.0
+    var initial: Number = 0.0
+    var previous: Number = 0.0
+    var current: Number = 0.0
+}
+
+@Test
+function geometryChangeReportsItsInitialPlacedSizeWithoutMakingTextGreedy() {
+    unsafe {
+        let record = nativeUserData(nativeState(GeometryChangeEvents {}))
+        layerActionsReset()
+        tapSeqReset()
+        var observed = describedLayer(
+            Text("Intrinsic")
+                .onGeometryChangeNew(transform: { proxy in
+                    return proxy.size.width
+                }, action: { size in
+                    unsafe {
+                        var changed = nativeRecover<GeometryChangeEvents>(record)
+                        changed.calls++
+                        changed.current = size
+                    }
+                })
+        )
+        expect!(observed.geometryObserverKey != 0.0)
+        expect!(nativeRecover<GeometryChangeEvents>(record).calls == 0.0)
+        layOutLayerTree(observed, 400.0, 160.0)
+        expect!(nativeRecover<GeometryChangeEvents>(record).calls == 1.0)
+        expect!(nativeRecover<GeometryChangeEvents>(record).current > 0.0)
+        expect!(observed.size.width < 400.0)
+        expect!(observed.size.width == observed.sublayers[0].size.width)
+        layOutLayerTree(observed, 400.0, 160.0)
+        expect!(nativeRecover<GeometryChangeEvents>(record).calls == 1.0)
+    }
+}
+
+@Test
+function geometryObserverComparesTransformedValuesNotUnrelatedFrameFields() {
+    unsafe {
+        let record = nativeUserData(nativeState(GeometryChangeEvents {}))
+        let transform: (GeometryProxy) -> Number = { proxy in
+            return proxy.size.width
+        }
+        let action: (Number, Number) -> Void = { before, after in
+            unsafe {
+                var changed = nativeRecover<GeometryChangeEvents>(record)
+                changed.calls++
+                changed.previous = before
+                changed.current = after
+                if changed.calls == 1 { changed.initial = after }
+            }
+        }
+        expect!(geometryObserve(
+            902001.0,
+            GeometryProxy {
+                size: Size { width: 105.0, height: 38.0 },
+                frame: Rect { x: 10.0, y: 20.0, width: 105.0, height: 38.0 }
+            },
+            transform, action
+        ))
+        expect!(!geometryObserve(
+            902001.0,
+            GeometryProxy {
+                size: Size { width: 105.0, height: 55.0 },
+                frame: Rect { x: 85.0, y: 60.0, width: 105.0, height: 55.0 }
+            },
+            transform, action
+        ))
+        expect!(geometryObserve(
+            902001.0,
+            GeometryProxy {
+                size: Size { width: 142.0, height: 55.0 },
+                frame: Rect { x: 85.0, y: 60.0, width: 142.0, height: 55.0 }
+            },
+            transform, action
+        ))
+        expect!(nativeRecover<GeometryChangeEvents>(record).calls == 2.0)
+        expect!(nativeRecover<GeometryChangeEvents>(record).initial == 105.0)
+        expect!(nativeRecover<GeometryChangeEvents>(record).previous == 105.0)
+        expect!(nativeRecover<GeometryChangeEvents>(record).current == 142.0)
+    }
+}
+
+@Test
+function geometryChangeReportsGlobalFrameOnlyAfterLayoutPlacement() {
+    unsafe {
+        let record = nativeUserData(nativeState(GeometryChangeEvents {}))
+        layerActionsReset()
+        tapSeqReset()
+        var parent = describedLayer(
+            VStack(spacing: .Length(8.0)) {
+                Text("Header").frame(height: 25.0)
+                Text("Observed").frame(width: 130.0, height: 30.0)
+                    .onGeometryChange(transform: { proxy in
+                        return proxy.frame.y
+                    }, action: { before, after in
+                        unsafe {
+                            var changed = nativeRecover<GeometryChangeEvents>(record)
+                            changed.calls++
+                            changed.previous = before
+                            changed.current = after
+                        }
+                    })
+            }
+        )
+        expect!(nativeRecover<GeometryChangeEvents>(record).calls == 0.0)
+        layOutLayerTree(parent, 220.0, 150.0)
+        expect!(nativeRecover<GeometryChangeEvents>(record).calls == 1.0)
+        expect!(nativeRecover<GeometryChangeEvents>(record).current >= 25.0)
+        expect!(nativeRecover<GeometryChangeEvents>(record).previous
+            == nativeRecover<GeometryChangeEvents>(record).current)
+    }
+}
+
+@Test
+function geometryChangeSupportsMultipleIndependentObserversAtTheSameView() {
+    unsafe {
+        let a = nativeUserData(nativeState(GeometryChangeEvents {}))
+        let b = nativeUserData(nativeState(GeometryChangeEvents {}))
+        layerActionsReset()
+        tapSeqReset()
+        var two = describedLayer(
+            Text("Independent")
+                .onGeometryChangeNew(transform: { proxy in
+                    return proxy.size.height
+                }, action: { height in
+                    unsafe {
+                        var state = nativeRecover<GeometryChangeEvents>(a)
+                        state.calls++
+                    }
+                })
+                .onGeometryChangeNew(transform: { proxy in
+                    return proxy.frame.x
+                }, action: { x in
+                    unsafe {
+                        var state = nativeRecover<GeometryChangeEvents>(b)
+                        state.calls++
+                    }
+                })
+        )
+        expect!(two.geometryObserverKey != 0.0)
+        expect!(two.sublayers[0].geometryObserverKey != 0.0)
+        layOutLayerTree(two, 230.0, 95.0)
+        expect!(nativeRecover<GeometryChangeEvents>(a).calls == 1.0)
+        expect!(nativeRecover<GeometryChangeEvents>(b).calls == 1.0)
+        layOutLayerTree(two, 230.0, 95.0)
+        expect!(nativeRecover<GeometryChangeEvents>(a).calls == 1.0)
+        expect!(nativeRecover<GeometryChangeEvents>(b).calls == 1.0)
+    }
+}
+
+@Test
+function geometryObservationDoesNotChangeSectionStructureOrHitTesting() {
+    layerActionsReset()
+    tapSeqReset()
+    let section = Section {
+        Text("Observed row")
+    }.onGeometryChangeNew(transform: { proxy in
+        return proxy.size.height
+    }, action: { height in })
+    expect!(section.isSection())
+    var description = describedLayer(move section)
+    expect!(description.groupedSection)
+    expect!(!description.hittable)
+    layOutLayerTree(description, 210.0, 95.0)
+    expect!(description.size.height >= 0.0)
+    expect!(describedContainsText(description, "Observed row"))
+}

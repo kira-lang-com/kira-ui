@@ -1,0 +1,34 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's selectionDisabled trait is not the `disabled` environment.
+// Selection-aware rows consume it, leaving controls unrelated to selection
+// alone. It can be overridden on a nested row with explicit `false`.
+public function modifierDeltaSelectionDisabled(disabled: Bool) -> ModifierDelta {
+    return ModifierDelta {
+        hasSelectionDisabled: true,
+        selectionDisabled: disabled
+    }
+}
+
+public construct SelectionDisabledLayer(value: Bool) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        return content.describe(
+            context, modifierContextApply(modifiers, modifierDeltaSelectionDisabled(value))
+        )
+    }
+}
+
+extend Widget {
+    // SwiftUI: `.selectionDisabled(_ isDisabled: Bool = true)`.
+    function selectionDisabled(isDisabled: Bool = true) -> Any Widget {
+        return SelectionDisabledLayer(value: isDisabled) { self }
+    }
+}

@@ -386,6 +386,14 @@ public function workspaceDescription(
             var card = workspaceCard(state, edge, shown, panels, context, modifiers)
             workspacePlace(card, workspaceEdgeRect(geometry, edge))
             card.key = 10 + panelEdgeIndex(edge)
+            // A lifted lens crosses panel boundaries, so its owner must draw
+            // above other cards while it is being scrubbed. No panel content
+            // is clipped away, but only the active card gets this priority.
+            if state.drag.kind == .Tab && state.drag.tabGesture != .Detach {
+                for panel in shown {
+                    if panel == state.drag.panel { card.layout.zIndex = 10.0 }
+                }
+            }
             layers.append(move card)
         }
     }
@@ -433,16 +441,12 @@ public construct PanelToolbar() extends Widget {
         context: borrow BuildContext,
         modifiers: borrow ModifierContext
     ) -> CALayerDescription {
-        // The kit's tab bar sets its buttons end to end: each cell carries
-        // its own inset, so the row adds no spacing of its own.
-        let controls = HStack(spacing = .None) {
-            For(child in children) {
-                child
-            }
+        // Use the window toolbar's actual button frames and glass group.
+        // Panel tools do not introduce independent tab-bar sizes.
+        var controls: [CALayerDescription] = []
+        for child in children {
+            controls.append(child.describe(context, modifierContextPresenting(modifiers, .Toolbar)))
         }
-        .hugWidth()
-        .hugHeight()
-        .describe(context, modifierContextPresenting(modifiers, .TabBar))
         let inset = workspaceStripInset()
         return CALayerDescription {
             layout: CALayoutIntent {
@@ -452,7 +456,7 @@ public construct PanelToolbar() extends Widget {
                 paddingTrailing: inset,
                 alignment: Point { x: 1.0, y: 0.0 }
             },
-            sublayers: [tabBarCapsule([controls], context, modifiers)]
+            sublayers: [toolbarGlassGroup(move controls, windowChromeMetrics(), context, modifiers)]
         }
     }
 }

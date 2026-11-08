@@ -122,6 +122,8 @@ extend CALayerDescription {
 
         var wantW = contentWidth + intent.paddingLeading + intent.paddingTrailing
         var wantH = contentHeight + intent.paddingTop + intent.paddingBottom
+        if intent.idealWidth >= 0.0 { wantW = max(wantW, intent.idealWidth) }
+        if intent.idealHeight >= 0.0 { wantH = max(wantH, intent.idealHeight) }
         if intent.fixedWidth >= 0.0 {
             wantW = intent.fixedWidth
         }
@@ -135,7 +137,7 @@ extend CALayerDescription {
         }
         return Size {
             width: max(intent.cappedWidth(wantW), intent.minWidth),
-            height: max(wantH, intent.minHeight)
+            height: max(intent.cappedHeight(wantH), intent.minHeight)
         }
     }
 }
@@ -167,6 +169,11 @@ extend CALayoutIntent {
         }
         return width
     }
+
+    function cappedHeight(height: Number) -> Number {
+        if self.maxHeight >= 0.0 { return min(height, self.maxHeight) }
+        return height
+    }
 }
 
 extend CALayerDescription {
@@ -183,20 +190,59 @@ extend CALayerDescription {
         match self.content {
             Text(t) -> {
                 if t.wraps {
-                    return foundationTextWrappedSize(
+                    let effectiveSpacing = foundationTextTightenedSpacing(
+                        t.content, t.size, t.weight, width, t.design,
+                        t.lineLimit, t.letterSpacing, t.trackingSpacing,
+                        t.allowsTightening, t.widthRatio
+                    )
+                    let drawnSize = foundationTextFittedSize(
+                        t.content, t.size, t.weight, width, t.design,
+                        t.lineLimit, t.minimumScaleFactor,
+                        effectiveSpacing, t.trackingSpacing, t.widthRatio
+                    )
+                    let wrapped = foundationTextWrappedSize(
                         t.content,
-                        t.size,
+                        drawnSize,
                         t.weight,
                         width,
                         t.design,
                         t.lineLimit,
-                        t.lineSpacing
+                        t.lineSpacing,
+                        t.truncationMode,
+                        effectiveSpacing,
+                        t.trackingSpacing,
+                        t.widthRatio,
+                        t.lineHeight
                     )
+                    return Size {
+                        width: wrapped.width,
+                        height: wrapped.height + abs(t.baselineOffset)
+                    }
                 }
             }
             else -> {}
         }
         return intrinsic
+    }
+
+    // Stable ascending priority: equal-priority siblings keep source order.
+    // Used only for compression, not for the distribution of surplus space.
+    function compressionOrder() -> [Number] {
+        var order: [Number] = []
+        for i in 0..self.sublayers.count { order.append(i) }
+        for i in 0..order.count {
+            var j = i
+            while j > 0 {
+                let before = self.sublayers[order[j - 1]].layout.layoutPriority
+                let after = self.sublayers[order[j]].layout.layoutPriority
+                if before <= after { break }
+                let previous = order[j - 1]
+                order[j - 1] = order[j]
+                order[j] = previous
+                j = j - 1
+            }
+        }
+        return order
     }
 
     // The width each sublayer of a row gets out of `innerWidth`.
@@ -232,7 +278,9 @@ extend CALayerDescription {
         used = used + self.stackSpacing()
 
         var overflow = used - innerWidth
-        for i in 0..count {
+        let shrinkOrder = self.compressionOrder()
+        for index in 0..count {
+            let i = shrinkOrder[index]
             if overflow <= 0.5 {
                 break
             }
@@ -327,12 +375,12 @@ extend CALayerDescription {
         // A stack holding a layer that grows down takes the height offered,
         // as a SwiftUI stack around a List does, whatever it measures.
         var height = max(
-            intent.resolvedExtent(
+            intent.cappedHeight(intent.resolvedExtent(
                 self.measureLaid(width).height,
                 offeredHeight,
                 intent.fixedHeight,
                 intent.heightFill || self.growsDown(false)
-            ),
+            )),
             intent.minHeight
         )
         if intent.aspectRatio > 0.0 {
@@ -364,10 +412,17 @@ extend CALayerDescription {
                 for i in 0..self.sublayers.count {
                     self.sublayers[i].place(innerW, innerH)
                     let child = self.sublayers[i].size
-                    self.sublayers[i].position = pixelAligned(
-                        innerX + (innerW - child.width) * intent.alignment.x,
-                        innerY + (innerH - child.height) * intent.alignment.y
-                    )
+                    if intent.centersChildAtPosition {
+                        self.sublayers[i].position = placementOffset(
+                            innerX + intent.childCenter.x - child.width * 0.5,
+                            innerY + intent.childCenter.y - child.height * 0.5
+                        )
+                    } else {
+                        self.sublayers[i].position = placementOffset(
+                            innerX + (innerW - child.width) * intent.alignment.x,
+                            innerY + (innerH - child.height) * intent.alignment.y
+                        )
+                    }
                 }
             }
             Row -> {
@@ -412,20 +467,26 @@ extend CALayerDescription {
             }
             let child = self.sublayers[i].size
             if vertical {
-                self.sublayers[i].position = pixelAligned(
+                self.sublayers[i].position = placementOffset(
                     originX + (innerWidth - child.width) * self.layout.alignment.x,
                     originY
                 )
                 length = max(length, child.height)
             } else {
-                self.sublayers[i].position = pixelAligned(
+                self.sublayers[i].position = placementOffset(
                     originX,
                     originY + (innerHeight - child.height) * self.layout.alignment.y
                 )
                 length = max(length, child.width)
             }
         }
-        scrollMeasured(self.hitKey, length, vertical ? innerHeight : innerWidth)
+        scrollMeasured(
+            self.hitKey,
+            length,
+            vertical ? innerHeight : innerWidth,
+            vertical ? innerWidth : innerHeight,
+            vertical ? innerWidth : innerHeight
+        )
     }
 }
 
@@ -445,8 +506,11 @@ extend CALayerDescription {
             cursor = cursor + self.gapBefore(i)
             self.sublayers[i].place(widths[i], innerHeight)
             let across = (innerHeight - self.sublayers[i].size.height) * self.layout.alignment.y
-            self.sublayers[i].position = pixelAligned(originX + cursor, originY + across)
-            cursor = cursor + widths[i]
+            self.sublayers[i].position = placementOffset(originX + cursor, originY + across)
+            // A non-compressible view may remain wider than the offer. Move
+            // subsequent siblings past the ACTUAL laid-out width, not the
+            // proposed width, so layoutPriority cannot overlap/reorder them.
+            cursor = cursor + max(widths[i], self.sublayers[i].size.width)
         }
     }
 }
@@ -500,7 +564,7 @@ extend CALayerDescription {
             cursor = cursor + self.gapBefore(i)
             self.sublayers[i].place(innerWidth, heights[i])
             let across = (innerWidth - self.sublayers[i].size.width) * self.layout.alignment.x
-            self.sublayers[i].position = pixelAligned(originX + across, originY + cursor)
+            self.sublayers[i].position = placementOffset(originX + across, originY + cursor)
             cursor = cursor + heights[i]
         }
     }
@@ -570,7 +634,7 @@ extend CALayerDescription {
             }
             self.sublayers[i].place(grid.width, rows[row])
             let child = self.sublayers[i].size
-            self.sublayers[i].position = pixelAligned(
+            self.sublayers[i].position = placementOffset(
                 leading + column * (grid.width + intent.gridColumnSpacing) + (
                     grid.width - child.width
                 ) * intent.alignment.x,
@@ -597,8 +661,50 @@ extend CALayerDescription {
         self.place(width, height)
         self.position = Point { x: 0.0, y: 0.0 }
         self.resolveGuides()
+        // Snap in the window's coordinate space. Rounding every child-relative
+        // position separately accumulates half-point ties through centered
+        // frames and makes equal-center glyphs appear to drift horizontally.
+        // Do this before offsets so fractional animation offsets stay smooth.
+        self.snapPlacedPositions(
+            Point { x: 0.0, y: 0.0 },
+            Point { x: 0.0, y: 0.0 }
+        )
         self.applyOffsets()
         self.applyZIndex()
+        // Geometry changes are observed only after BOTH measurement and final
+        // placement. A view inside a scroll container thus reports movement
+        // with its content, rather than a speculative unscrolled parent size.
+        if layerGeometryObserversExist() || layerScrollVisibilityObserversExist() {
+            layerGeometryNotify(
+                self, Point {}, Rect {
+                    x: 0.0, y: 0.0,
+                    width: width, height: height
+                }
+            )
+        }
+    }
+
+    // Preserve the unsnapped ancestor position for each descendant, then
+    // express the globally snapped result relative to its snapped parent.
+    // Siblings with the same absolute center are aligned regardless of the
+    // number or sizes of the layout wrappers enclosing them.
+    function snapPlacedPositions(
+        borrow mut self,
+        parentAbsolute: borrow Point,
+        parentSnapped: borrow Point
+    ) {
+        let absolute = Point {
+            x: parentAbsolute.x + self.position.x,
+            y: parentAbsolute.y + self.position.y
+        }
+        let snapped = Point { x: round(absolute.x), y: round(absolute.y) }
+        self.position = Point {
+            x: snapped.x - parentSnapped.x,
+            y: snapped.y - parentSnapped.y
+        }
+        for i in 0..self.sublayers.count {
+            self.sublayers[i].snapPlacedPositions(copy absolute, copy snapped)
+        }
     }
 
     // Moves every layer by its offset once everything is placed, so it is drawn

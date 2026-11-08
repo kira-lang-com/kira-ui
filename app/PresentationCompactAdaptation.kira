@@ -1,0 +1,125 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's PresentationAdaptation values. The preference describes the
+// presentation host's *kind*, not its content's color or layout size; the
+// presenter chooses which real native host to construct at the size-class
+// boundary and then reuses the same lowered content and Binding.
+public enum PresentationAdaptation {
+    Automatic
+    None
+    FullScreenCover
+    Popover
+    Sheet
+}
+
+public enum PresentationKind {
+    Popover
+    Sheet
+    FullScreenCover
+}
+
+public enum PresentationCompactAxis {
+    Regular
+    Horizontal
+    Vertical
+}
+
+public function presentationAdaptationCode(value: PresentationAdaptation) -> Number {
+    return match value {
+        Automatic -> 0.0
+        None -> 1.0
+        FullScreenCover -> 2.0
+        Popover -> 3.0
+        Sheet -> 4.0
+    }
+}
+
+public function presentationCompactSizeClass(
+    width: Number,
+    height: Number,
+    desktop: Bool
+) -> PresentationCompactAxis {
+    // AppKit windows do not change UIKit presentation traits when resized.
+    if desktop { return .Regular }
+    // Mobile landscape where the shortest display dimension is phone-sized
+    // has the vertical-compact trait, which wins if both axes are compact.
+    // The host currently lacks UIKit's UITraitCollection, so the measured
+    // viewport is the closest available native trait approximation.
+    if height < width && height < 600.0 { return .Vertical }
+    if navigationWidthClass(width) == .Compact { return .Horizontal }
+    return .Regular
+}
+
+public function presentationCompactSizeClassForHost(
+    context: borrow BuildContext
+) -> PresentationCompactAxis {
+    return presentationCompactSizeClass(
+        context.viewportWidth,
+        context.viewportHeight,
+        interfaceMode() == .AdaptiveDesktop
+    )
+}
+
+public function presentationResolvedKind(
+    origin: PresentationKind,
+    compact: PresentationCompactAxis,
+    options: borrow PresentationPreferences
+) -> PresentationKind {
+    if compact == .Regular { return origin }
+    let requested = match compact {
+        Vertical -> options.verticalAdaptation
+        Horizontal -> options.horizontalAdaptation
+        Regular -> 0.0
+    }
+    if requested == 1.0 { return origin }
+    if requested == 2.0 { return .FullScreenCover }
+    if requested == 3.0 { return .Popover }
+    if requested == 4.0 { return .Sheet }
+    // UIKit's default behavior: a horizontal-compact popover becomes a sheet;
+    // a vertical-compact popover or sheet becomes a full-screen cover.
+    if compact == .Vertical { return .FullScreenCover }
+    if origin == .Popover { return .Sheet }
+    return origin
+}
+
+public construct PresentationCompactAdaptationLayer(
+    horizontal: PresentationAdaptation,
+    vertical: PresentationAdaptation
+) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var rendered = content.describe(context, modifiers)
+        rendered.hasPresentationCompactAdaptation = true
+        rendered.presentationHorizontalAdaptation = presentationAdaptationCode(horizontal)
+        rendered.presentationVerticalAdaptation = presentationAdaptationCode(vertical)
+        return rendered
+    }
+}
+
+extend Widget {
+    // SwiftUI: `.presentationCompactAdaptation(_:)`.
+    function presentationCompactAdaptation(
+        adaptation: PresentationAdaptation
+    ) -> Any Widget {
+        return PresentationCompactAdaptationLayer(
+            horizontal: adaptation, vertical: adaptation
+        ) { self }
+    }
+
+    // SwiftUI: `.presentationCompactAdaptation(horizontal:vertical:)`.
+    function presentationCompactAdaptation(
+        horizontal: PresentationAdaptation,
+        vertical: PresentationAdaptation
+    ) -> Any Widget {
+        return PresentationCompactAdaptationLayer(
+            horizontal: horizontal, vertical: vertical
+        ) { self }
+    }
+}

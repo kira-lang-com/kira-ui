@@ -1,0 +1,76 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// SwiftUI-style grouped form backgrounds are two separate surfaces. Hiding
+// the scrolling canvas exposes the caller's page background, while setting a
+// Section's row background recolors only its rounded card.
+@Test
+function hiddenFormScrollContentDoesNotPaintGroupedCanvas() {
+    let normal = describedLayer(Form {
+        Section { Text("Appearance") }
+    })
+    let hidden = describedLayer(Form {
+        Section { Text("Appearance") }
+    }.formStyle(.Grouped).scrollContentBackground(.Hidden))
+    match normal.content {
+        Solid(fill) -> expect!(fill.fill.a > 0.0)
+        else -> expect!(false)
+    }
+    match hidden.content {
+        Solid(fill) -> expect!((fill.fill.a == 0.0))
+        else -> expect!(false)
+    }
+}
+
+function formContainsColor(layer: borrow CALayerDescription, color: borrow RGBAColor) -> Bool {
+    match layer.content {
+        Solid(fill) -> {
+            if abs(fill.fill.r - color.r) < 0.001
+                && abs(fill.fill.g - color.g) < 0.001
+                && abs(fill.fill.b - color.b) < 0.001
+                && abs(fill.fill.a - color.a) < 0.001 {
+                return true
+            }
+        }
+        else -> {}
+    }
+    for child in layer.sublayers {
+        if formContainsColor(child, color) { return true }
+    }
+    return false
+}
+
+@Test
+function listRowBackgroundRecolorsOnlyTheSpecifiedSectionCard() {
+    let cardColor = RGBAColor { r: 0.31, g: 0.52, b: 0.69, a: 1.0 }
+    let form = Form {
+        Section { Text("Theme") }
+        .listRowBackground(copy cardColor)
+        Section { Text("Density") }
+    }
+    let layer = describedLayer(move form)
+    expect!(formContainsColor(layer, cardColor))
+    // Without the modifier the same section uses the platform grouped color.
+    let ordinary = describedLayer(Form { Section { Text("Theme") } })
+    expect!(!formContainsColor(ordinary, cardColor))
+}
+
+@Test
+function formBackgroundAndStylesAreInheritedAsIndependentEnvironmentValues() {
+    let context = modifierContextApply(
+        modifierContextApply(
+            ModifierContext {}, modifierDeltaFormStyle(.Columns)
+        ),
+        modifierDeltaScrollContentBackground(.Hidden)
+    )
+    let color = RGBAColor { r: 0.2, g: 0.4, b: 0.6, a: 1.0 }
+    let section = modifierContextForChildren(
+        modifierContextApply(context, modifierDeltaListRowBackground(copy color))
+    )
+    expect!((section.formStyle == FormStyle.Columns))
+    expect!((section.scrollContentBackground == Visibility.Hidden))
+    expect!(section.hasListRowBackground)
+    expect!((section.listRowBackground.r == 0.2))
+    expect!((modifierContextForChildren(ModifierContext {}).scrollContentBackground == Visibility.Automatic))
+}

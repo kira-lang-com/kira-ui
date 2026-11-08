@@ -1,0 +1,168 @@
+import Foundation
+import KiraLayout
+import KCoreAnimation
+
+// SwiftUI's public ScrollPhase values. Tracking differs from Interacting:
+// the pointer has begun a scroll gesture but has not yet moved the content.
+// A wheel-notch spring is Animating, while a released fling is Decelerating.
+public enum ScrollPhase {
+    Idle
+    Tracking
+    Interacting
+    Decelerating
+    Animating
+}
+
+extend ScrollPhase {
+    function isScrolling() -> Bool {
+        return self == .Interacting || self == .Decelerating || self == .Animating
+    }
+}
+
+// Matches the geometry data SwiftUI exposes at a scroll-phase boundary.
+// All point values are in the scroll container's own coordinate system.
+// KiraUI currently has a native vertical-axis ScrollView, so x offsets are 0.
+public struct ScrollGeometry {
+    let contentOffset: Point = Point {}
+    let contentSize: Size = Size {}
+    let contentInsets: EdgeInsets = EdgeInsets {}
+    let containerSize: Size = Size {}
+    let visibleRect: Rect = Rect {}
+    let bounds: Rect = Rect {}
+}
+
+public struct ScrollPhaseChangeContext {
+    let geometry: ScrollGeometry
+    let velocity: Point? = .None
+}
+
+public function scrollPhaseFromMotion(
+    motion: MotionScrollPhase,
+    hasDragged: Bool
+) -> ScrollPhase {
+    return match motion {
+        Idle -> .Idle
+        Dragging -> hasDragged ? .Interacting : .Tracking
+        Decelerating -> .Decelerating
+        Settling -> .Animating
+        Stepping -> .Animating
+    }
+}
+
+public function scrollPhaseGeometry(
+    scroll: borrow ScrollViewState
+) -> ScrollGeometry {
+    let vertical = max(scroll.viewportLength, 0.0)
+    let width = max(scroll.viewportCrossLength, 0.0)
+    let contentLength = max(scroll.contentLength, 0.0)
+    return ScrollGeometry {
+        contentOffset: Point { y: scroll.motion.offset },
+        contentSize: Size {
+            width: max(scroll.contentCrossLength, width),
+            height: contentLength
+        },
+        containerSize: Size { width: width, height: vertical },
+        visibleRect: Rect {
+            x: 0.0,
+            y: scroll.motion.offset,
+            width: width,
+            height: vertical
+        },
+        bounds: Rect {
+            x: 0.0,
+            y: 0.0,
+            width: width,
+            height: vertical
+        }
+    }
+}
+
+public function scrollPhaseChangeContext(
+    scroll: borrow ScrollViewState
+) -> ScrollPhaseChangeContext {
+    let speed: Point? = match scroll.motion.phase {
+        Dragging -> .Some(Point { y: scroll.motion.velocity })
+        Decelerating -> .Some(Point { y: scroll.motion.velocity })
+        Settling -> .Some(Point { y: scroll.motion.velocity })
+        else -> .None
+    }
+    return ScrollPhaseChangeContext {
+        geometry: scrollPhaseGeometry(scroll),
+        velocity: move speed
+    }
+}
+
+public function layerNoopScrollPhaseChange(
+    oldPhase: ScrollPhase,
+    newPhase: ScrollPhase,
+    context: ScrollPhaseChangeContext
+) {}
+
+public struct ScrollPhaseChangeHandler {
+    let action: (ScrollPhase, ScrollPhase, ScrollPhaseChangeContext) -> Void
+}
+
+public function scrollPhaseHandlersAppending(
+    previous: borrow [ScrollPhaseChangeHandler],
+    appended: ScrollPhaseChangeHandler?
+) -> [ScrollPhaseChangeHandler] {
+    var handlers = copy previous
+    match appended {
+        Some(handler) -> handlers.append(handler)
+        None -> {}
+    }
+    return handlers
+}
+
+// Observe the actual state transition after input has been applied and the
+// motion integrator has advanced. Each scroll view owns its own prior phase;
+// nested scrolls do not share a spurious global phase clock. No callback is
+// fired for an unchanged phase or the initial resting state.
+public function scrollPhaseDidChange(
+    scroll: borrow mut ScrollViewState,
+    handlers: borrow [ScrollPhaseChangeHandler]
+) -> Bool {
+    let current = scrollPhaseFromMotion(scroll.motion.phase, scroll.dragHasMoved)
+    let previous = scroll.lastReportedPhase
+    if current == previous { return false }
+    scroll.lastReportedPhase = current
+    let context = scrollPhaseChangeContext(scroll)
+    for handler in handlers {
+        handler.action(previous, current, copy context)
+    }
+    return true
+}
+
+public function modifierDeltaScrollPhaseChange(
+    handler: ScrollPhaseChangeHandler
+) -> ModifierDelta {
+    return ModifierDelta {
+        onScrollPhaseChange: .Some(move handler)
+    }
+}
+
+extend Widget {
+    // SwiftUI: `.onScrollPhaseChange { oldPhase, newPhase in ... }`.
+    function onScrollPhaseChange(
+        action: (ScrollPhase, ScrollPhase) -> Void
+    ) -> Any Widget {
+        return ModifierDeltaLayer(delta: modifierDeltaScrollPhaseChange(
+            ScrollPhaseChangeHandler {
+                action: { before, after, context in
+                    action(before, after)
+                }
+            }
+        )) { self }
+    }
+
+    // SwiftUI: `.onScrollPhaseChange { oldPhase, newPhase, context in ... }`.
+    // Kira overload resolution does not use closure arity to distinguish two
+    // overloads sharing the same label; name the 3-argument variant explicitly.
+    function onScrollPhaseChange(
+        actionWithContext: (ScrollPhase, ScrollPhase, ScrollPhaseChangeContext) -> Void
+    ) -> Any Widget {
+        return ModifierDeltaLayer(delta: modifierDeltaScrollPhaseChange(
+            ScrollPhaseChangeHandler { action: actionWithContext }
+        )) { self }
+    }
+}

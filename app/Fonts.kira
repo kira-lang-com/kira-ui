@@ -39,13 +39,13 @@ public function foundationFontWeight(weight: borrow FontWeight) -> Number {
     }
 }
 
-// SwiftUI's `Font.Design`: the system face, or its monospaced cut, where every
-// character takes the same advance and a column of code lines up. The system
-// face with only its figures the same width is what `.monospacedDigit()`
-// sets; it stands here beside the two because the monospaced cut's figures
-// already are.
+// SwiftUI's Font.Design: default, serif, rounded and monospaced. The extra
+// MonospacedDigits variant serves `.monospacedDigit()` (tabular figures),
+// which is not the same thing as selecting a monospaced face.
 public enum FontDesign {
     Default
+    Serif
+    Rounded
     Monospaced
     MonospacedDigits
 }
@@ -53,6 +53,8 @@ public enum FontDesign {
 public function foundationFontDesign(design: borrow FontDesign) -> CAFontDesign {
     match design {
         Default -> return .Default
+        Serif -> return .Serif
+        Rounded -> return .Rounded
         Monospaced -> return .Monospaced
         MonospacedDigits -> return .MonospacedDigits
     }
@@ -76,7 +78,7 @@ public function scaledTypography(
     // regular size's.
     let scale = resolvedControlSizeMetrics(modifiers).fontSize / controlSizeMetrics(
         .Regular
-    ).fontSize
+    ).fontSize * dynamicTypeScale(modifiers.dynamicType.size)
     return FontImplementation {
         size: font.size * scale,
         weight: font.weight,
@@ -103,7 +105,7 @@ public function typographyImplementation(
 // effect, else the body style.
 public function modifierTextSize(modifiers: borrow ModifierContext) -> Number {
     if modifiers.hasFont {
-        return modifiers.fontSize
+        return modifiers.fontSize * dynamicTypeScale(modifiers.dynamicType.size)
     }
     var style: TypographyStyle = .body
     if modifiers.hasTypography {
@@ -115,17 +117,20 @@ public function modifierTextSize(modifiers: borrow ModifierContext) -> Number {
 // The weight a run of text is set at, on the font's weight axis: a
 // `.fontWeight(...)`, else the weight of the font in effect.
 public function modifierTextWeight(modifiers: borrow ModifierContext) -> Number {
+    var base: Number = 400.0
     if modifiers.hasWeightOverride {
-        return foundationFontWeight(modifiers.weightOverride)
+        base = foundationFontWeight(modifiers.weightOverride)
+    } else if modifiers.hasFont {
+        base = foundationFontWeight(modifiers.fontWeight)
+    } else {
+        var style: TypographyStyle = .body
+        if modifiers.hasTypography {
+            style = modifiers.typography
+        }
+        base = foundationFontWeight(typographyImplementation(move style, modifiers).weight)
     }
-    if modifiers.hasFont {
-        return foundationFontWeight(modifiers.fontWeight)
-    }
-    var style: TypographyStyle = .body
-    if modifiers.hasTypography {
-        style = modifiers.typography
-    }
-    return foundationFontWeight(typographyImplementation(move style, modifiers).weight)
+    if modifiers.bold && base < 700.0 { return 700.0 }
+    return base
 }
 
 // A span of a Text's content set in an ink of its own: bytes `start` up to,
@@ -153,12 +158,17 @@ public construct Text(content: String, runs: [TextRun] = []) extends Widget {
         context: borrow BuildContext,
         modifiers: borrow ModifierContext
     ) -> CALayerDescription {
-        let textSize = modifierTextSize(modifiers)
+        let textSize = modifierTextSize(modifiers) * resolvedTextScale(modifiers)
         let textWeight = modifierTextWeight(modifiers)
         let design = foundationFontDesign(modifiers.fontDesign)
+        let letterSpacing = textCharacterSpacing(modifiers)
+        let trackingSpacing = textUsesTracking(modifiers)
+        let widthRatio = fontWidthRatio(modifiers.fontWidth)
+        let lineHeight = coreTextLineHeight(modifiers.lineHeight)
         // A run with a line break, or with room between its lines, stands on
         // the lines its breaks make even where nothing narrows it.
         let multiline = foundationTextBreaks(content) || modifiers.lineSpacing > 0.0
+            || lineHeight != .Variable
         let measured = multiline ? foundationTextWrappedSize(
             content,
             textSize,
@@ -166,20 +176,32 @@ public construct Text(content: String, runs: [TextRun] = []) extends Widget {
             unboundedLength,
             design,
             modifiers.lineLimit,
-            modifiers.lineSpacing
-        ) : foundationTextMeasure(content, textSize, textWeight, design)
+            modifiers.lineSpacing,
+            coreTruncationMode(modifiers.truncationMode),
+            letterSpacing, trackingSpacing, widthRatio, copy lineHeight
+        ) : foundationTextMeasure(
+            content, textSize, textWeight, design,
+            letterSpacing, trackingSpacing, widthRatio
+        )
         let ink = foundationTextRunInkEdges(
             content: content,
             size: textSize,
             weight: textWeight,
-            design: design
+            design: design,
+            widthRatio: widthRatio
         )
         var described = CALayerDescription {
             layout: CALayoutIntent {
                 widthFill: false,
                 heightFill: false,
                 intrinsicWidth: measured.width,
-                intrinsicHeight: measured.height
+                intrinsicHeight: measured.height + abs(modifiers.baselineOffset),
+                minHeight: modifiers.lineLimitReservesSpace
+                    ? foundationTextResolvedLineHeight(
+                        textSize, textWeight, design, copy lineHeight
+                    ) * modifiers.lineLimitMin
+                        + abs(modifiers.baselineOffset)
+                    : 0.0
             },
             content: .Text(
                 CAText {
@@ -190,13 +212,28 @@ public construct Text(content: String, runs: [TextRun] = []) extends Widget {
                     size: textSize,
                     weight: textWeight,
                     design: design,
+                    widthRatio: widthRatio,
                     inkLeft: ink.left,
                     inkRight: ink.right,
                     inkTop: ink.top,
                     inkBottom: ink.bottom,
                     wraps: true,
                     lineLimit: modifiers.lineLimit,
+                    minimumScaleFactor: modifiers.minimumScaleFactor,
+                    baselineOffset: modifiers.baselineOffset,
+                    letterSpacing: letterSpacing,
+                    trackingSpacing: trackingSpacing,
+                    allowsTightening: modifiers.allowsTightening,
+                    truncationMode: coreTruncationMode(modifiers.truncationMode),
                     lineSpacing: modifiers.lineSpacing,
+                    lineHeight: lineHeight,
+                    underline: modifiers.underline,
+                    underlinePattern: coreTextLinePattern(modifiers.underlinePattern),
+                    underlineColor: textDecorationColor(modifiers.underlineInk, modifiers),
+                    strikethrough: modifiers.strikethrough,
+                    strikethroughPattern: coreTextLinePattern(modifiers.strikethroughPattern),
+                    strikethroughColor: textDecorationColor(modifiers.strikethroughInk, modifiers),
+                    redacted: redactionIsActive(modifiers),
                     alignment: textAlignmentUnit(modifiers.textAlignment),
                     spans: textSpans(runs, modifiers),
                     blend: copy modifiers.textBlend,
@@ -207,7 +244,7 @@ public construct Text(content: String, runs: [TextRun] = []) extends Widget {
         described.accessibilityElementOf(
             AccessibilityNode {
                 role: .StaticText,
-                label: copy content,
+                label: redactionIsActive(modifiers) ? "Redacted content" : copy content,
                 traits: AccessibilityTraits.isStaticText
             }
         )
@@ -342,6 +379,30 @@ public construct LineLimitLayer(count: Number) extends Widget {
         modifiers: borrow ModifierContext
     ) -> CALayerDescription {
         let resolved = modifierContextApply(modifiers, modifierDeltaLineLimit(count))
+        return content.describe(context, resolved)
+    }
+}
+
+// SwiftUI's closed/partial ranges of line counts. Minimum line counts reserve
+// vertical space; a maximum bounds how much rendered text is shown. A field
+// with a vertical axis reads both values to choose its editable height.
+public struct TextLineLimitRange {
+    let min: Number = 0
+    let max: Number = 0
+    let reservesSpace: Bool = true
+}
+
+public construct LineLimitRangeLayer(range: TextLineLimitRange) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let resolved = modifierContextApply(
+            modifiers,
+            modifierDeltaLineLimit(range.max, range.min, range.reservesSpace)
+        )
         return content.describe(context, resolved)
     }
 }

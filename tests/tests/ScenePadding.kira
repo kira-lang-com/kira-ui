@@ -1,0 +1,82 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function scenePaddingDefaultsToAllFourSceneMargins() {
+    let described = describedLayer(Text("Page").scenePadding())
+    let margin = resolvedContentMargin(ModifierContext {})
+    expect!(described.layout.paddingTop == margin)
+    expect!(described.layout.paddingBottom == margin)
+    expect!(described.layout.paddingLeading == margin)
+    expect!(described.layout.paddingTrailing == margin)
+    expect!(describedContainsText(described, "Page"))
+}
+
+@Test
+function scenePaddingRespectsItsExactEdgeSet() {
+    var horizontal = describedLayer(
+        Rectangle().frame(width: 44.0, height: 18.0)
+            .scenePadding(edges: EdgeSet.horizontal)
+    )
+    let margin = resolvedContentMargin(ModifierContext {})
+    expect!(horizontal.layout.paddingTop == 0.0)
+    expect!(horizontal.layout.paddingBottom == 0.0)
+    expect!(horizontal.layout.paddingLeading == margin)
+    expect!(horizontal.layout.paddingTrailing == margin)
+    layOutLayerTree(horizontal, 170.0, 85.0)
+    expect!(horizontal.sublayers[0].position.x == margin)
+    expect!(horizontal.sublayers[0].position.y == 0.0)
+
+    let bottom = describedLayer(
+        Text("Footer").scenePadding(edges: EdgeSet.bottom)
+    )
+    expect!(bottom.layout.paddingBottom == margin)
+    expect!(bottom.layout.paddingTop == 0.0)
+    expect!(bottom.layout.paddingLeading == 0.0)
+    expect!(bottom.layout.paddingTrailing == 0.0)
+}
+
+@Test
+function typedMinimumScenePaddingMatchesTheDefaultOverload() {
+    let ordinary = describedLayer(
+        Text("Heading").scenePadding(edges: EdgeSet.vertical)
+    )
+    let minimum = describedLayer(
+        Text("Heading").scenePadding(
+            padding: .Minimum, edges: EdgeSet.vertical
+        )
+    )
+    expect!(ordinary.layout.paddingTop == minimum.layout.paddingTop)
+    expect!(ordinary.layout.paddingBottom == minimum.layout.paddingBottom)
+    expect!(ordinary.layout.paddingLeading == minimum.layout.paddingLeading)
+    expect!(ordinary.layout.paddingTrailing == minimum.layout.paddingTrailing)
+}
+
+@Test
+function scenePaddingPreservesSectionIdentityInGroupedLists() {
+    let section = Section {
+        Text("One row")
+    }.scenePadding(edges: EdgeSet.leading)
+    expect!(section.isSection())
+    let context = buildContext(FoundationUiContext {})
+    let modifiers = modifierContextPresenting(ModifierContext {}, .InsetGrouped)
+    let described = section.describe(context, modifiers)
+    expect!(described.groupedSection)
+    expect!(described.layout.paddingLeading == resolvedContentMargin(modifiers))
+    expect!(described.layout.paddingTrailing == 0.0)
+}
+
+@Test
+function scenePaddingUsesCurrentColumnContentMargins() {
+    let context = buildContext(FoundationUiContext {})
+    let margins = modifierContextApply(
+        ModifierContext {}, modifierDeltaContentMargin(31.0)
+    )
+    let described = ScenePaddingLayer(edges: EdgeSet.horizontal) {
+        Text("Column")
+    }.describe(context, margins)
+    expect!(described.layout.paddingLeading == 31.0)
+    expect!(described.layout.paddingTrailing == 31.0)
+    expect!(described.layout.paddingTop == 0.0)
+}

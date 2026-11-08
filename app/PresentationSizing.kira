@@ -1,0 +1,291 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's PresentationSizing protocol, represented by a native Kira
+// construct. A strategy supplies a size PROPOSAL to the presented root. The
+// root remains free to measure smaller or larger, as for ordinary SwiftUI
+// layouts; the host clamps the returned size to its available viewport.
+//
+// Applications may extend PresentationSizing to return a custom proposal:
+//
+//     construct SquarePresentationSizing() extends PresentationSizing {
+//         function proposedSize(
+//             root: borrow PresentationSizingRoot,
+//             context: borrow PresentationSizingContext
+//         ) -> PresentationSizeProposal {
+//             return PresentationSizeProposal {
+//                 width: .Some(400.0), height: .Some(400.0)
+//             }
+//         }
+//     }
+//
+// Using a construct instead of a closed enum retains the full public custom
+// strategy contract and supports fitted/sticky adapters around any strategy.
+public struct PresentationSizeProposal {
+    let width: Number? = .None
+    let height: Number? = .None
+}
+
+public struct PresentationSizingRoot {
+    let content: CALayerDescription
+
+    // No finite width proposal means the content may report its natural line
+    // length, exactly as SwiftUI's ProposedViewSize(nil,nil) does. The host
+    // still bounds the finished presentation to the actual available screen.
+    function sizeThatFits(proposal: PresentationSizeProposal) -> Size {
+        let availableWidth = match proposal.width {
+            Some(width) -> max(1.0, width)
+            None -> 1000000.0
+        }
+        return content.measure(availableWidth)
+    }
+}
+
+public struct PresentationSizingContext {
+    let viewport: Size = Size {}
+    let availableSize: Size = Size {}
+    let desktop: Bool = false
+}
+
+public struct PresentationStickyAxes {
+    let horizontal: Bool = false
+    let vertical: Bool = false
+}
+
+public construct PresentationSizing {
+    function proposedSize(
+        root: borrow PresentationSizingRoot,
+        context: borrow PresentationSizingContext
+    ) -> PresentationSizeProposal {
+        return PresentationSizeProposal {
+            width: .Some(context.availableSize.width),
+            height: .Some(context.availableSize.height)
+        }
+    }
+
+    function stickyAxes() -> PresentationStickyAxes {
+        return PresentationStickyAxes {}
+    }
+
+    // SwiftUI PresentationSizing.fitted(horizontal:vertical:): only selected
+    // dimensions get a nil (ideal-content) proposal, leaving the other axis
+    // governed by this strategy's original proposal.
+    function fitted(horizontal: Bool, vertical: Bool) -> Any PresentationSizing {
+        return FittedPresentationSizingAdapter {
+            base: self, horizontal: horizontal, vertical: vertical
+        }
+    }
+
+    // SwiftUI PresentationSizing.sticky(horizontal:vertical:): the modal can
+    // grow in these axes but will not contract while the presentation stays up.
+    function sticky(
+        horizontal: Bool = false,
+        vertical: Bool = false
+    ) -> Any PresentationSizing {
+        return StickyPresentationSizingAdapter {
+            base: self, horizontal: horizontal, vertical: vertical
+        }
+    }
+}
+
+public construct AutomaticPresentationSizing() extends PresentationSizing {
+    function proposedSize(
+        root: borrow PresentationSizingRoot,
+        context: borrow PresentationSizingContext
+    ) -> PresentationSizeProposal {
+        // Apple's documented default: macOS uses a form proposal fitted
+        // vertically, while iOS and other touch platforms use form sizing.
+        return PresentationSizeProposal {
+            width: .Some(min(SheetMetrics.width, context.availableSize.width)),
+            height: context.desktop
+                ? .None : .Some(min(SheetMetrics.height, context.availableSize.height))
+        }
+    }
+}
+
+public construct FormPresentationSizing() extends PresentationSizing {
+    function proposedSize(
+        root: borrow PresentationSizingRoot,
+        context: borrow PresentationSizingContext
+    ) -> PresentationSizeProposal {
+        return PresentationSizeProposal {
+            width: .Some(min(SheetMetrics.width, context.availableSize.width)),
+            height: .Some(min(SheetMetrics.height, context.availableSize.height))
+        }
+    }
+}
+
+public construct PagePresentationSizing() extends PresentationSizing {
+    function proposedSize(
+        root: borrow PresentationSizingRoot,
+        context: borrow PresentationSizingContext
+    ) -> PresentationSizeProposal {
+        // A page is a wider reading/composition surface than a form. Apple's
+        // exact floor sizes are private platform metrics; these dimensions
+        // are chosen in KiraUI's own point scale and then viewport-clamped.
+        return PresentationSizeProposal {
+            width: .Some(min(SheetMetrics.pageWidth, context.availableSize.width)),
+            height: .Some(min(SheetMetrics.pageHeight, context.availableSize.height))
+        }
+    }
+}
+
+public construct FittedPresentationSizing() extends PresentationSizing {
+    function proposedSize(
+        root: borrow PresentationSizingRoot,
+        context: borrow PresentationSizingContext
+    ) -> PresentationSizeProposal {
+        return PresentationSizeProposal {}
+    }
+}
+
+public construct FittedPresentationSizingAdapter(
+    base: Any PresentationSizing,
+    horizontal: Bool,
+    vertical: Bool
+) extends PresentationSizing {
+    function proposedSize(
+        root: borrow PresentationSizingRoot,
+        context: borrow PresentationSizingContext
+    ) -> PresentationSizeProposal {
+        let original = base.proposedSize(root, context)
+        return PresentationSizeProposal {
+            width: horizontal ? .None : copy original.width,
+            height: vertical ? .None : copy original.height
+        }
+    }
+
+    function stickyAxes() -> PresentationStickyAxes {
+        return base.stickyAxes()
+    }
+}
+
+public construct StickyPresentationSizingAdapter(
+    base: Any PresentationSizing,
+    horizontal: Bool,
+    vertical: Bool
+) extends PresentationSizing {
+    function proposedSize(
+        root: borrow PresentationSizingRoot,
+        context: borrow PresentationSizingContext
+    ) -> PresentationSizeProposal {
+        return base.proposedSize(root, context)
+    }
+
+    function stickyAxes() -> PresentationStickyAxes {
+        let inner = base.stickyAxes()
+        return PresentationStickyAxes {
+            horizontal: inner.horizontal || horizontal,
+            vertical: inner.vertical || vertical
+        }
+    }
+}
+
+// Matching Apple strategy names, as named Kira values rather than Swift
+// metatype-constrained static properties on a protocol existential.
+public namespace PresentationSizings {
+    let automatic: Any PresentationSizing = AutomaticPresentationSizing {}
+    let form: Any PresentationSizing = FormPresentationSizing {}
+    let page: Any PresentationSizing = PagePresentationSizing {}
+    let fitted: Any PresentationSizing = FittedPresentationSizing {}
+}
+
+public construct PresentationSizingLayer(sizing: Any PresentationSizing) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var described = content.describe(context, modifiers)
+        let wide = context.viewportWidth >= 640.0
+        let horizontalInset = wide ? SheetMetrics.wideInset : SheetMetrics.compactInset
+        let availableWidth = max(1.0, context.viewportWidth - horizontalInset * 2.0)
+        let availableHeight = max(1.0,
+            context.viewportHeight - (wide ? 70.0 : context.safeArea.top + 12.0))
+        let environment = PresentationSizingContext {
+            viewport: Size {
+                width: context.viewportWidth, height: context.viewportHeight
+            },
+            availableSize: Size {
+                width: availableWidth, height: availableHeight
+            },
+            desktop: interfaceMode() == .AdaptiveDesktop
+        }
+        let root = PresentationSizingRoot { content: copy described }
+        let proposal = sizing.proposedSize(root, environment)
+        let measured = root.sizeThatFits(copy proposal)
+        let sticky = sizing.stickyAxes()
+        described.hasPresentationSizing = true
+        // Keep the computed dimensions as point proposals. Fitted axes adopt
+        // their natural size; fixed proposals retain their requested extent,
+        // unless the root's own explicit frame requires more room.
+        described.presentationSizingWidth = min(availableWidth, max(1.0,
+            match proposal.width {
+                Some(value) -> max(value, measured.width)
+                None -> measured.width
+            }
+        ))
+        described.presentationSizingHeight = min(availableHeight, max(1.0,
+            match proposal.height {
+                Some(value) -> max(value, measured.height)
+                None -> measured.height
+            }
+        ))
+        described.presentationSizingStickyHorizontal = sticky.horizontal
+        described.presentationSizingStickyVertical = sticky.vertical
+        return described
+    }
+}
+
+public struct PresentationSizingStickyState {
+    var largestWidth: Number = 0.0
+    var largestHeight: Number = 0.0
+}
+
+public function presentationSizingStickySlot(key: Number) -> ViewStateKey {
+    return slotKey("kiraui.presentation.sticky-size.", key)
+}
+
+// Called by the actual native modal host after selecting a size. A nonsticky
+// sizing can both grow and shrink. Sticky axes remember the largest presented
+// value while the presentation remains open; the other axis remains adaptive.
+public function presentationSizedCard(
+    key: Number,
+    options: borrow PresentationPreferences,
+    defaultSize: borrow Size,
+    availableSize: borrow Size
+) -> Size {
+    if !options.hasSizing { return copy defaultSize }
+    let desired = Size {
+        width: clamp(options.sizingWidth, 1.0, availableSize.width),
+        height: clamp(options.sizingHeight, 1.0, availableSize.height)
+    }
+    unsafe {
+        let slot = presentationSizingStickySlot(key)
+        if !ambientStateHasView(slot) {
+            ambientStatePutView(copy slot, nativeUserData(nativeState(
+                PresentationSizingStickyState {}
+            )))
+        }
+        var saved = nativeRecover<PresentationSizingStickyState>(ambientStateGetView(slot))
+        saved.largestWidth = options.stickySizingHorizontal
+            ? max(saved.largestWidth, desired.width) : desired.width
+        saved.largestHeight = options.stickySizingVertical
+            ? max(saved.largestHeight, desired.height) : desired.height
+        return Size {
+            width: min(saved.largestWidth, availableSize.width),
+            height: min(saved.largestHeight, availableSize.height)
+        }
+    }
+}
+
+extend Widget {
+    // SwiftUI: `.presentationSizing(_ sizing: some PresentationSizing)`.
+    // Native KiraUI custom sizing strategies extend the public construct.
+    function presentationSizing(sizing: Any PresentationSizing) -> Any Widget {
+        return PresentationSizingLayer(sizing: sizing) { self }
+    }
+}

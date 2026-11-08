@@ -4,13 +4,12 @@ import KCoreAnimation
 // What lets a layer grow when its stack has room to give, and where a placed
 // layer sits, as SwiftUI's layout decides both. LayerLayout places with them.
 
-// Where a sublayer sits, on whole points. SwiftUI rounds every frame it places
-// to the pixel grid, so a capsule centered in a row 47 tall starts on a pixel
-// rather than half way across one, and a label in it, whose baseline the
-// rasterizer sets on a whole pixel, stands where it does in SwiftUI rather
-// than half a point low. A whole point is a whole pixel at every scale.
-function pixelAligned(x: Number, y: Number) -> Point {
-    return Point { x: round(x), y: round(y) }
+// An unsnapped placement in the parent's coordinate space. Rounding here used
+// to shift a deeply nested centered child by a point at *every* half-point tie:
+// each parent rounded independently, and the errors added up. LayoutTree snaps
+// the composed position once, in window coordinates, after all guides resolve.
+function placementOffset(x: Number, y: Number) -> Point {
+    return Point { x: x, y: y }
 }
 
 extend CALayerDescription {
@@ -46,6 +45,11 @@ extend CALayerDescription {
         if intent.fixedWidth >= 0.0 {
             return false
         }
+        // Grid's unsized horizontal axis must suppress inherited flexible
+        // width, not just its immediate cell measurement. Without this guard,
+        // GridRows expands to the entire offered width by recursively finding
+        // `.fillWidth()` inside a cell deliberately marked as unsized.
+        if intent.gridUnsizedHorizontal { return false }
         if intent.expandsWidth || (inRow && intent.flex > 0) || self.scrollAxis != .None {
             return true
         }

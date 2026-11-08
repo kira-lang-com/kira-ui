@@ -36,7 +36,7 @@ import KCoreAnimation
 // content: the title goes up with the content, and as soon as it meets the
 // bar it fades out while the bar's own title fades in, rising into place --
 // and back again once it comes out.
-public construct ScrollView() extends Widget {
+public construct ScrollView(listLike: Bool = false) extends Widget {
     let content: some Widget
 
     function describe(
@@ -47,6 +47,11 @@ public construct ScrollView() extends Widget {
             let key = scrollIdentity()
             let indicatorKey = tapSeqKey()
             var page = scrollClaimPage()
+            if !navigationBarUsesLargeTitle(modifiers.navigationBarTitleDisplayMode) {
+                // An inline page never creates a title inside scrolling
+                // content: the toolbar owns it at full opacity from the start.
+                page.title = ""
+            }
             // A presented search stands where the bar did, at the top of the
             // screen, and the page runs on under it without its large title.
             var presented = false
@@ -60,7 +65,13 @@ public construct ScrollView() extends Widget {
                 }
                 None -> {}
             }
-            let document = content.describe(context, modifierContextForChildren(modifiers))
+            let document = content.describe(
+                context,
+                modifierContextApply(
+                    modifierContextForChildren(modifiers),
+                    ModifierDelta { entersScrollContent: true }
+                )
+            )
 
             // Recovered in place rather than through a helper: a recovered value
             // handed back out of a function is a copy, and the motion would be lost.
@@ -69,32 +80,60 @@ public construct ScrollView() extends Widget {
                 ambientStatePutView(copy slot, nativeUserData(nativeState(ScrollViewState {})))
             }
             var scroll = nativeRecover<ScrollViewState>(ambientStateGetView(slot))
+            scroll.keyboardDismissMode = resolvedScrollDismissesKeyboard(
+                modifiers.scrollDismissesKeyboard, listLike
+            )
+            scroll.keyboardDismissEnabled = modifiers.scrollEnabled
             let bounds = MotionScrollBounds {
                 contentLength: scroll.contentLength,
                 viewportLength: scroll.viewportLength
             }
+            // Measurement from the preceding frame is the earliest point at
+            // which a scroll anchor can be resolved. Initialize only after
+            // nonzero viewport measurement, and preserve the scroll position
+            // across later content/viewport changes according to the role.
+            scrollApplyDefaultAnchors(scroll, modifiers.scrollAnchors)
+            scroll.motion.bounces = scrollBounces(
+                modifiers.scrollBounceVertical, scroll.contentLength, scroll.viewportLength
+            )
             let delta = clockDelta()
             let metrics = scrollIndicatorMetrics()
+            // A flash is a scroll-view event, not an opacity modifier on its
+            // content. Consume each inherited generation exactly once.
+            let flash = consumeScrollIndicatorFlash(scroll, modifiers)
+            if flash {
+                scroll.still = 0.0
+                clockStillMoving()
+            }
 
             // What the fingers and the wheel did to it since the last frame, in the
             // order they did it.
             let input = scrollTake(key)
-            if input.began {
+            if modifiers.scrollEnabled && input.began {
                 motionScrollDragBegin(scroll.motion, 0.0, bounds, input.resistance, input.beganAt)
+                scroll.dragHasMoved = false
             }
-            if input.moved {
+            if modifiers.scrollEnabled && input.moved {
                 for report in input.reports {
                     motionScrollDragMove(scroll.motion, report.travel, bounds, report.time)
+                    if report.travel != 0.0 { scroll.dragHasMoved = true }
                 }
             }
-            if input.cancelled {
+            if modifiers.scrollEnabled && input.cancelled {
                 scroll.motion.velocity = 0.0
             }
-            if input.ended || input.cancelled {
+            if modifiers.scrollEnabled && (input.ended || input.cancelled) {
                 motionScrollDragEnd(scroll.motion, bounds, prefersReducedMotion())
             }
-            if input.wheel != 0.0 {
+            if modifiers.scrollEnabled && input.wheel != 0.0 {
                 motionScrollWheel(scroll.motion, input.wheel, bounds)
+            }
+            if !modifiers.scrollEnabled {
+                // Disable an already coasting/dragging scroll immediately. The
+                // content stays where it was, but receives no new scroll input.
+                scroll.motion.phase = .Idle
+                scroll.motion.velocity = 0.0
+                scroll.motion.offset = motionScrollClamp(scroll.motion.offset, bounds)
             }
 
             // Held, the bar scrubs: the content follows the pointer as far along
@@ -102,11 +141,13 @@ public construct ScrollView() extends Widget {
             // in, and let go it coasts on from however fast it was going.
             let track = max(scroll.viewportLength - page.barInset, 0.0)
             let length = scrollIndicatorLength(scroll.contentLength, track, metrics)
-            let scrubbing = context.heldControl == indicatorKey && indicatorKey != 0
+            let scrubbing = modifiers.scrollEnabled
+                && context.heldControl == indicatorKey && indicatorKey != 0
             if scrubbing && !scroll.scrubbing {
                 scroll.scrubFrom = scroll.motion.offset
                 scroll.scrubPointer = context.pointerY
                 motionScrollScrubBegin(scroll.motion)
+                scroll.dragHasMoved = true
             }
             if !scrubbing && scroll.scrubbing {
                 motionScrollScrubEnd(scroll.motion, bounds, prefersReducedMotion())
@@ -127,6 +168,8 @@ public construct ScrollView() extends Widget {
                 scroll.motion.offset = motionScrollClamp(scroll.motion.offset, bounds)
             }
             let moving = motionScrollAdvance(scroll.motion, delta, bounds)
+            scrollPhaseDidChange(scroll, modifiers.scrollPhaseHandlers)
+            scrollGeometryDidChange(key, scroll, modifiers.scrollGeometryObservers)
 
             // The bar shows while the surface moves or a pointer is on it, and a
             // second after the last of either it fades.
@@ -137,7 +180,14 @@ public construct ScrollView() extends Widget {
             } else {
                 scroll.still = scroll.still + delta
             }
-            scroll.opacity = scrollable ? scrollIndicatorOpacity(scroll.still, metrics) : 0.0
+            let indicatorAllowed = scrollIndicatorIsAllowed(
+                modifiers.scrollIndicatorVisibility, modifiers.scrollIndicatorAxes
+            )
+            scroll.opacity = scrollable && indicatorAllowed ? (
+                modifiers.scrollIndicatorVisibility == .Visible
+                    && scrollIndicatorAffectsVertical(modifiers.scrollIndicatorAxes)
+                    ? 1.0 : scrollIndicatorOpacity(scroll.still, metrics)
+            ) : 0.0
             let expanded = (hovered || scrubbing) && scroll.opacity > 0.0
             let swelling = scrollIndicatorSwell(scroll, expanded, metrics, delta)
             let offset = scroll.motion.offset
@@ -150,6 +200,16 @@ public construct ScrollView() extends Widget {
                 clockStillMoving()
             }
             let barShown = motionEase(.EaseInOut, scroll.barFade)
+            // Collapse the title according to how far its actual header has
+            // moved under the window bar. The edge wash may fade on a clock,
+            // but title position must track the scroll, including when a user
+            // slowly scrubs or reverses direction.
+            let titleFace = modifierTypography(modifiers, .largeTitle)
+            let titleShown = scrollLargeTitleProgress(
+                offset,
+                largeTitleMetrics().topInset,
+                titleFace.lineHeight + largeTitleMetrics().bottomInset
+            )
 
             let overshoot = motionScrollOvershoot(offset, bounds)
             let thickness = scroll.thickness
@@ -168,14 +228,21 @@ public construct ScrollView() extends Widget {
                 None -> {}
             }
             if page.title.count > 0 {
-                moved = scrollLargeTitled(
-                    move moved,
-                    copy page.title,
-                    barShown,
-                    page.search != .None,
-                    context,
-                    modifiers
-                )
+                if page.contentTitleHeader {
+                    // Editable document headings already live inside `moved`.
+                    // They scroll like every other body view; only their
+                    // compact toolbar counterpart is managed by navigation.
+                    toolbarCollapseLargeTitle(titleShown)
+                } else {
+                    moved = scrollLargeTitled(
+                        move moved,
+                        copy page.title,
+                        titleShown,
+                        page.search != .None,
+                        context,
+                        modifiers
+                    )
+                }
             }
             if page.barInset > 0.0 {
                 moved = CALayerDescription {
@@ -187,7 +254,13 @@ public construct ScrollView() extends Widget {
                     sublayers: [move moved]
                 }
             }
-            moved.layout.offset = Point { x: moved.layout.offset.x, y: moved.layout.offset.y - offset }
+            moved.layout.offset = Point {
+                x: moved.layout.offset.x,
+                y: moved.layout.offset.y - offset + scrollSmallContentAlignment(
+                    scroll.contentLength, scroll.viewportLength,
+                    modifiers.scrollAnchors.alignment
+                )
+            }
             // The surface moves its content itself, every frame.
             moved.disablesActions = true
 
@@ -206,16 +279,25 @@ public construct ScrollView() extends Widget {
                 opacity,
                 modifiers
             )
+            if !modifiers.scrollEnabled {
+                indicator.hitKey = 0
+                indicator.hittable = false
+            }
             var layers = [CALayerDescription {
                 hitKey: key,
                 scrollAxis: .Column,
-                clipsChildren: true,
+                acceptsScrollInput: modifiers.scrollEnabled,
+                clipsChildren: !modifiers.scrollClipDisabled,
                 sublayers: [move moved]
             }]
-            if barShown > 0.0 {
+            if barShown > 0.0 && scrollTopEdgeEffectShows(modifiers) {
                 layers.append(scrollEdgeEffect(page.barInset, barShown, modifiers))
             }
-            layers.append(move indicator)
+            // A hidden bar is not merely transparent: it has no hit region,
+            // so its invisible scrub target cannot obstruct content controls.
+            if indicatorAllowed {
+                layers.append(move indicator)
+            }
             for field in bar {
                 layers.append(field)
             }
@@ -250,6 +332,20 @@ public function scrollLargeTitled(
         layout: CALayoutIntent { axis: .Column, heightFill: false },
         sublayers: [move heading, move document]
     }
+}
+
+// Zero at the resting large title, one after its full line and lower inset
+// have passed into the toolbar. A positive continuous value during the travel
+// lets both the large heading and compact window title share one transition.
+// Reduced-motion mode switches at the boundary without a sliding fade.
+public function scrollLargeTitleProgress(
+    offset: Number,
+    topInset: Number,
+    travel: Number
+) -> Number {
+    let progress = min(max((offset - max(topInset, 0.0)) / max(travel, 1.0), 0.0), 1.0)
+    if prefersReducedMotion() { return progress >= 1.0 ? 1.0 : 0.0 }
+    return motionEase(.EaseInOut, progress)
 }
 
 // The page's search field over `document`, across the column, going up with
@@ -301,10 +397,13 @@ public function scrollSearchPresented(
 // `fade` a frame further toward whole while `shown`, or toward nothing while
 // not, at the fixed pace the bar goes over at.
 public function scrollFadeStep(fade: Number, shown: Bool) -> Number {
-    if prefersReducedMotion() {
+    // An isolated view may be laid out before platform metrics have loaded.
+    // A zero-duration fade is an immediate state change, not a divide by zero.
+    let duration = largeTitleMetrics().fadeDuration
+    if prefersReducedMotion() || duration <= 0.0 {
         return shown ? 1.0 : 0.0
     }
-    let step = clockDelta() / largeTitleMetrics().fadeDuration
+    let step = clockDelta() / duration
     return shown ? min(fade + step, 1.0) : max(fade - step, 0.0)
 }
 
@@ -313,9 +412,11 @@ public function scrollFading(fade: Number) -> Bool {
     return fade > 0.0 && fade < 1.0
 }
 
-// The kit's hard scroll edge effect, `height` deep, faded to `opacity`: what
-// passes beneath it blurred and washed over, and a hairline along its bottom
-// edge. Glass with no edge of its own: only its blur and its wash.
+// The system scroll-edge effect exists only where pinned window controls
+// overlap scrolling content. Its default is the kit's hard, glass-backed
+// boundary; an explicit soft effect distributes that same native blur over
+// successive translucent bands without a separating hairline. Both stay
+// outside the content's clipping/hit-test subtree and fade with the toolbar.
 public function scrollEdgeEffect(
     height: Number,
     opacity: Number,
@@ -336,6 +437,48 @@ public function scrollEdgeEffect(
         )
     )
     let radius = metrics.blurRadius
+    if resolvedScrollEdgeEffectStyle(modifiers.scrollEdgeEffects.top) == .Soft {
+        // Soft is a progressively weakening backdrop blur rather than a
+        // solid, opaque bar. Keep the system's real glass sampling, divided
+        // into strips from the strongly protected toolbar edge to the content.
+        // Eight strips keep the step differences below typical display alpha
+        // quantization after ease-out, without allocating a fragment shader.
+        var faded: [CALayerDescription] = []
+        let bands = 8
+        let pitch = height / Number(bands)
+        for index in 0..bands {
+            let progress = (Number(index) + 0.5) / Number(bands)
+            let strength = (1.0 - progress) * (1.0 - progress)
+            faded.append(CALayerDescription {
+                opacity: strength,
+                disablesActions: true,
+                capturesBackdrop: true,
+                content: .Glass((CAGlass {
+                    tint: wash,
+                    sizing: CAGlassSizing {
+                        blurRadius: CAGlassRamp {
+                            base: radius, minimum: radius, maximum: radius
+                        }
+                    }
+                }).edgeless()),
+                layout: CALayoutIntent {
+                    heightFill: false,
+                    fixedHeight: pitch,
+                    offset: Point { y: Number(index) * pitch }
+                }
+            })
+        }
+        return CALayerDescription {
+            opacity: opacity,
+            disablesActions: true,
+            layout: CALayoutIntent {
+                heightFill: false,
+                fixedHeight: height,
+                alignment: Point { x: 0.0, y: 0.0 }
+            },
+            sublayers: move faded
+        }
+    }
     return CALayerDescription {
         opacity: opacity,
         disablesActions: true,
@@ -372,7 +515,17 @@ public struct ScrollViewState {
     var motion: MotionScrollState = MotionScrollState {}
     var contentLength: Number = 0.0
     var viewportLength: Number = 0.0
+    var viewportCrossLength: Number = 0.0
+    var contentCrossLength: Number = 0.0
+    var dragHasMoved: Bool = false
+    var lastReportedPhase: ScrollPhase = .Idle
+    var defaultAnchorInitialized: Bool = false
+    var lastAnchoredContentLength: Number = 0.0
+    var lastAnchoredViewportLength: Number = 0.0
     var still: Number = 1000000.0
+    var lastFlashGeneration: Number = 0.0
+    var keyboardDismissMode: ScrollDismissesKeyboardMode = .Interactively
+    var keyboardDismissEnabled: Bool = true
     var opacity: Number = 0.0
     var thickness: Number = 0.0
     var thicknessVelocity: Number = 0.0
@@ -383,6 +536,61 @@ public struct ScrollViewState {
     var barFade: Number = 0.0
 }
 
+// A scroll viewport's first *measured* frame, followed by changes to that
+// viewport or its content. Regular user scrolling updates `motion.offset`
+// directly; this function never pulls the view back to its default anchor on
+// an otherwise unchanged frame. A drag or coast is not interrupted by a
+// simultaneous layout change. Each ScrollView retains its own measurements.
+public function scrollApplyDefaultAnchors(
+    scroll: borrow mut ScrollViewState,
+    anchors: borrow ScrollAnchorPreferences
+) {
+    if scroll.viewportLength <= 0.0 { return }
+    let currentContent = scroll.contentLength
+    let currentViewport = scroll.viewportLength
+    if !scroll.defaultAnchorInitialized {
+        scroll.defaultAnchorInitialized = true
+        scroll.lastAnchoredContentLength = currentContent
+        scroll.lastAnchoredViewportLength = currentViewport
+        match anchors.initialOffset {
+            Some(point) -> {
+                scroll.motion.offset = scrollAnchoredOffset(
+                    currentContent, currentViewport, .Some(point)
+                )
+                scroll.motion.velocity = 0.0
+                scroll.motion.phase = .Idle
+            }
+            None -> {}
+        }
+        return
+    }
+    if scroll.lastAnchoredContentLength == currentContent
+        && scroll.lastAnchoredViewportLength == currentViewport { return }
+    if scroll.motion.phase == .Idle {
+        scroll.motion.offset = scrollAnchorResizedOffset(
+            scroll.motion.offset,
+            scroll.lastAnchoredContentLength,
+            scroll.lastAnchoredViewportLength,
+            currentContent, currentViewport,
+            anchors.sizeChanges
+        )
+    }
+    scroll.lastAnchoredContentLength = currentContent
+    scroll.lastAnchoredViewportLength = currentViewport
+}
+
+// One flash per version for each descendant scroll view, independent of its
+// sibling scroll views and their content identities.
+public function consumeScrollIndicatorFlash(
+    scroll: borrow mut ScrollViewState,
+    modifiers: borrow ModifierContext
+) -> Bool {
+    if !modifiers.scrollFlashEnabled { return false }
+    if scroll.lastFlashGeneration == modifiers.scrollFlashGeneration { return false }
+    scroll.lastFlashGeneration = modifiers.scrollFlashGeneration
+    return true
+}
+
 public function scrollViewSlotKey(key: Number) -> ViewStateKey {
     return slotKey("kiraui.scroll.", key)
 }
@@ -390,7 +598,13 @@ public function scrollViewSlotKey(key: Number) -> ViewStateKey {
 // Layout's answer for the scroll view under `key`: how long its content came
 // out and how long the window onto it is. The motion reads it on the next
 // frame.
-public function scrollMeasured(key: Number, contentLength: Number, viewportLength: Number) {
+public function scrollMeasured(
+    key: Number,
+    contentLength: Number,
+    viewportLength: Number,
+    contentCrossLength: Number = 0.0,
+    viewportCrossLength: Number = 0.0
+) {
     unsafe {
         if !ambientStateHasView(scrollViewSlotKey(key)) {
             return
@@ -398,6 +612,8 @@ public function scrollMeasured(key: Number, contentLength: Number, viewportLengt
         var scroll = nativeRecover<ScrollViewState>(ambientStateGetView(scrollViewSlotKey(key)))
         scroll.contentLength = contentLength
         scroll.viewportLength = viewportLength
+        scroll.contentCrossLength = contentCrossLength
+        scroll.viewportCrossLength = viewportCrossLength
     }
 }
 

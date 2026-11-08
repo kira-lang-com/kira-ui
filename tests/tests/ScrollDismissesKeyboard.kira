@@ -1,0 +1,115 @@
+import Foundation
+import Ember
+import KiraUI
+import KCoreAnimation
+
+@Test
+function scrollDismissesKeyboardResolvesAllModesByOwningContainer() {
+    expect!(resolvedScrollDismissesKeyboard(
+        .Automatic, false
+    ) == ScrollDismissesKeyboardMode.Interactively)
+    expect!(resolvedScrollDismissesKeyboard(
+        .Automatic, true
+    ) == ScrollDismissesKeyboardMode.Immediately)
+    expect!(resolvedScrollDismissesKeyboard(
+        .Never, true
+    ) == ScrollDismissesKeyboardMode.Never)
+    expect!(resolvedScrollDismissesKeyboard(
+        .Immediately, false
+    ) == ScrollDismissesKeyboardMode.Immediately)
+    expect!(resolvedScrollDismissesKeyboard(
+        .Interactively, true
+    ) == ScrollDismissesKeyboardMode.Interactively)
+}
+
+@Test
+function scrollDismissesKeyboardInheritsIntoNestedScrollContainers() {
+    let never = modifierContextApply(
+        ModifierContext {}, modifierDeltaScrollDismissesKeyboard(.Never)
+    )
+    expect!(never.scrollDismissesKeyboard == ScrollDismissesKeyboardMode.Never)
+    expect!(modifierContextForChildren(never).scrollDismissesKeyboard == ScrollDismissesKeyboardMode.Never)
+    let reset = modifierContextApply(never, modifierDeltaScrollDismissesKeyboard(.Automatic))
+    expect!(reset.scrollDismissesKeyboard == ScrollDismissesKeyboardMode.Automatic)
+}
+
+@Test
+function scrollViewKeyboardPolicyIsStoredOnTheRealScrollViewport() {
+    let default = describedLayer(ScrollView {
+        Text("Content")
+    })
+    let defaultKey = default.sublayers[0].hitKey
+    expect!(!scrollShouldDismissKeyboard(defaultKey, false))
+    expect!(scrollShouldDismissKeyboard(defaultKey, true))
+
+    let list = describedLayer(List() {
+        Text("List item")
+    })
+    let listKey = list.sublayers[0].hitKey
+    expect!(scrollShouldDismissKeyboard(listKey, false))
+
+    let never = describedLayer(ScrollView {
+        Text("Nothing")
+    }.scrollDismissesKeyboard(mode: .Never))
+    let neverKey = never.sublayers[0].hitKey
+    expect!(!scrollShouldDismissKeyboard(neverKey, false))
+    expect!(!scrollShouldDismissKeyboard(neverKey, true))
+}
+
+@Test
+function actualScrollGestureDismissesFocusedInputOnlyWhenPolicyRequestsIt() {
+    layerActionsReset()
+    tapSeqReset()
+    var immediate = describedLayer(ScrollView {
+        VStack {
+            Text("First")
+            Text("Second")
+            Text("Third")
+        }
+    }.scrollDismissesKeyboard(mode: .Immediately))
+    immediate.layoutTree(190.0, 84.0)
+    var runner = KiraLayerAppState {}
+    runner.compositor.tree.reconcileImmediate(immediate)
+    runner.ui.focusedKey = 8701.0
+    kiraLayerHandleEvent(runner, AppEvent {
+        kind: .Scroll,
+        scrollPrecise: true,
+        scrollPhase: .Began,
+        pointerX: 34.0,
+        pointerY: 36.0
+    })
+    expect!(runner.ui.focusedKey == 0.0)
+
+    layerActionsReset()
+    tapSeqReset()
+    var never = describedLayer(ScrollView {
+        Text("Not dismissing")
+    }.scrollDismissesKeyboard(mode: .Never))
+    never.layoutTree(190.0, 84.0)
+    runner.compositor.tree.reconcileImmediate(never)
+    runner.ui.focusedKey = 8702.0
+    kiraLayerHandleEvent(runner, AppEvent {
+        kind: .Scroll,
+        scrollPrecise: true,
+        scrollPhase: .Began,
+        pointerX: 34.0,
+        pointerY: 36.0
+    })
+    expect!(runner.ui.focusedKey == 8702.0)
+}
+
+@Test
+function interactiveScrollKeyboardPolicyWaitsUntilMovement() {
+    let described = describedLayer(ScrollView {
+        Text("Content")
+    }.scrollDismissesKeyboard(mode: .Interactively))
+    let key = described.sublayers[0].hitKey
+    expect!(!scrollShouldDismissKeyboard(key, false))
+    expect!(scrollShouldDismissKeyboard(key, true))
+    let disabled = describedLayer(ScrollView {
+        Text("No scrolling")
+    }.scrollDismissesKeyboard(mode: .Immediately).scrollDisabled(disabled: true))
+    let disabledKey = disabled.sublayers[0].hitKey
+    expect!(!scrollShouldDismissKeyboard(disabledKey, false))
+    expect!(!scrollShouldDismissKeyboard(disabledKey, true))
+}

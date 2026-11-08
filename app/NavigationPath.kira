@@ -299,6 +299,25 @@ public function navigationSetBackground(color: RGBAColor) {
     }
 }
 
+// A page's opaque full-bleed background is also its navigation canvas. In
+// SwiftUI, `Color.ignoresSafeArea()` and a page-sized `.background(Color)`
+// reach under the unified toolbar; the navigation stack must not paint its
+// own default white surface on top. Card-sized backgrounds are deliberately
+// excluded by their callers, not inferred from a color alone.
+public function navigationRegisterPageBackground(layer: borrow CALayerDescription) {
+    match layer.content {
+        Solid(solid) -> {
+            if solid.fill.a >= 0.999 && solid.cornerRadius == 0.0 {
+                navigationSetBackground(RGBAColor {
+                    r: solid.fill.r, g: solid.fill.g,
+                    b: solid.fill.b, a: solid.fill.a
+                })
+            }
+        }
+        else -> {}
+    }
+}
+
 public function navigationClearBackground() {
     unsafe {
         navigationEnvironment()

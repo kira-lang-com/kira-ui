@@ -1,0 +1,89 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function buttonSizingHasAllThreeCasesAndInheritsToDescendants() {
+    let normal = ModifierContext {}
+    expect!(normal.buttonSizing == ButtonSizing.Automatic)
+    let flexible = modifierContextApply(normal, modifierDeltaButtonSizing(.Flexible))
+    expect!(flexible.buttonSizing == ButtonSizing.Flexible)
+    expect!(modifierContextForChildren(flexible).buttonSizing == ButtonSizing.Flexible)
+    let fitted = modifierContextApply(flexible, modifierDeltaButtonSizing(.Fitted))
+    expect!(fitted.buttonSizing == ButtonSizing.Fitted)
+    expect!(modifierContextForPresentation(fitted).buttonSizing == ButtonSizing.Fitted)
+}
+
+@Test
+function flexibleBorderedButtonExpandsItsPaintedSurfaceAndCentersLabel() {
+    let root = Button(title: "Save", action: noAction)
+        .buttonStyle(.Bordered)
+        .buttonSizing(sizing: .Flexible)
+    var layer = describedLayer(move root)
+    expect!(layer.layout.widthFill)
+    expect!(layer.layout.expandsWidth)
+    expect!(layer.sublayers.count == 1)
+    let key = layer.hitKey
+    layOutLayerTree(layer, 300.0, 64.0)
+    expect!(layer.size.width == 300.0)
+    expect!(layer.hitKey == key)
+    expect!(layer.hittable)
+    let label = layer.sublayers[0]
+    expect!(abs(label.position.x + label.size.width * 0.5 - 150.0) < 1.0)
+}
+
+@Test
+function flexiblePlainButtonWidensItsHitAreaWithoutStretchingText() {
+    var natural = describedLayer(
+        Button(title: "Retry", action: noAction).buttonStyle(.Plain)
+    )
+    var flexible = describedLayer(
+        Button(title: "Retry", action: noAction)
+            .buttonStyle(.Plain).buttonSizing(sizing: .Flexible)
+    )
+    layOutLayerTree(natural, 280.0, 58.0)
+    layOutLayerTree(flexible, 280.0, 58.0)
+    expect!(flexible.layout.widthFill)
+    expect!(flexible.layout.expandsWidth)
+    expect!(flexible.size.width == 280.0)
+    expect!(natural.size.width < flexible.size.width)
+    expect!(flexible.sublayers.count == 1)
+    expect!(flexible.hittable)
+    // Flexible plain controls add a full-width hit-region wrapper around the
+    // intrinsically sized label. The Text run belongs to that child, not the
+    // non-text wrapper that owns the press key.
+    expect!(textRunOf(flexible.sublayers[0]).content == "Retry")
+    let title = flexible.sublayers[0]
+    expect!(abs(title.position.x + title.size.width * 0.5 - 140.0) < 1.0)
+}
+
+@Test
+function fittedSizingPreservesTheControlIntrinsicSize() {
+    var fitted = describedLayer(
+        Button(title: "Apply", action: noAction)
+            .buttonStyle(.BorderedProminent).buttonSizing(sizing: .Fitted)
+    )
+    layOutLayerTree(fitted, 320.0, 70.0)
+    expect!(!fitted.layout.widthFill)
+    expect!(!fitted.layout.expandsWidth)
+    expect!(fitted.size.width < 320.0)
+    expect!(fitted.size.height >= buttonControlSizeMetrics(ModifierContext {}).height)
+}
+
+@Test
+function buttonSizingKeepsMenuAndToolbarOwnedWidths() {
+    let normal = ModifierContext {}
+    let flexible = modifierContextApply(normal, modifierDeltaButtonSizing(.Flexible))
+    let context = buildContext(FoundationUiContext {})
+    let inMenu = Button(title: "Choose", action: noAction).describe(
+        context, modifierContextPresenting(flexible, .MenuRow)
+    )
+    let ordinaryMenu = Button(title: "Choose", action: noAction).describe(
+        context, modifierContextPresenting(normal, .MenuRow)
+    )
+    expect!(inMenu.layout.widthFill == ordinaryMenu.layout.widthFill)
+    expect!(inMenu.layout.expandsWidth == ordinaryMenu.layout.expandsWidth)
+    expect!(buttonSizingOwnedByContainer(.Toolbar))
+    expect!(buttonSizingOwnedByContainer(.MenuAction))
+    expect!(!buttonSizingOwnedByContainer(.Standalone))
+}

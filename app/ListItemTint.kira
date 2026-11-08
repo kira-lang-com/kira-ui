@@ -1,0 +1,107 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI ListItemTint's complete public policy family. `Fixed` is a hard
+// instruction for a colored list row; `Preferred` is advisory to a list style
+// (KiraUI sidebars currently honor it); `Monochrome` uses the label's own ink.
+// The Color? overload maps to Fixed, just as Apple's public swiftinterface
+// forwards to `.fixed(tint)` through `_trait(ListItemTintTraitKey.self, ...)`.
+public enum ListItemTint {
+    Monochrome
+    Fixed(RGBAColor)
+    Preferred(RGBAColor)
+}
+
+public function modifierDeltaListItemTint(value: ListItemTint?) -> ModifierDelta {
+    return ModifierDelta { hasListItemTint: true, listItemTint: move value }
+}
+
+public construct ListItemTintLayer(value: ListItemTint?) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        // A view's outer `.listItemTint(nil)` restores the style default;
+        // an earlier inner tint must not reapply a fixed color beneath it.
+        if modifiers.hasListItemTint { return content.describe(context, modifiers) }
+        return content.describe(
+            context,
+            modifierContextApply(modifiers, modifierDeltaListItemTint(copy value))
+        )
+    }
+}
+
+// Resolves a palette color only after the active appearance/theme is known.
+// This avoids fixing `.Accent` to one RGB value at the call site.
+public construct ListItemPaletteTintLayer(color: PrimaryColor) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let actual = modifierPrimaryColor(color, modifiers)
+        return content.describe(
+            context,
+            modifierContextApply(modifiers, modifierDeltaListItemTint(.Some(.Fixed(
+                RGBAColor { r: actual.r, g: actual.g, b: actual.b, a: actual.a }
+            ))))
+        )
+    }
+}
+
+// A label's symbol consumes list-item tint; the title must never inherit its
+// icon-only pigment. Other controls still use `.tint`, not this row trait.
+public function listItemIconModifiers(modifiers: borrow ModifierContext) -> ModifierContext {
+    match modifiers.listItemTint {
+        None -> return modifierContextApply(modifiers, modifierDeltaForegroundColor(.Accent))
+        Some(tint) -> match tint {
+            Monochrome -> return copy modifiers
+            Fixed(color) -> return modifierContextApply(
+                modifiers, modifierDeltaTextColor(copy color)
+            )
+            Preferred(color) -> return modifierContextApply(
+                modifiers, modifierDeltaTextColor(copy color)
+            )
+        }
+    }
+}
+
+public construct ListItemIconInk() extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        return content.describe(context, listItemIconModifiers(modifiers))
+    }
+}
+
+extend Widget {
+    // SwiftUI: `.listItemTint(_ tint: ListItemTint?)`.
+    function listItemTint(value: ListItemTint?) -> Any Widget {
+        return ListItemTintLayer(value: move value) { self }
+    }
+
+    // SwiftUI: `.listItemTint(_ tint: Color?)` — KiraUI's Color is RGBAColor.
+    function listItemTint(color: RGBAColor?) -> Any Widget {
+        let resolved: ListItemTint? = match color {
+            Some(c) -> .Some(.Fixed(move c))
+            None -> .None
+        }
+        return ListItemTintLayer(value: move resolved) { self }
+    }
+
+    // Semantic colors are resolved against the receiving theme instead of
+    // needing a separate, fixed RGB constant from the caller.
+    function listItemTint(color: PrimaryColor) -> Any Widget {
+        return ListItemPaletteTintLayer(color: color) { self }
+    }
+}

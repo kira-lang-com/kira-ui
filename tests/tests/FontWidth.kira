@@ -1,0 +1,119 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function fontWidthHasFourNamedDesignsAndAClampedRelativeCase() {
+    expect!(fontWidthRatio(.None) == 1.0)
+    expect!(fontWidthRatio(.Some(.Compressed)) == 0.70)
+    expect!(fontWidthRatio(.Some(.Condensed)) == 0.85)
+    expect!(fontWidthRatio(.Some(.Standard)) == 1.0)
+    expect!(fontWidthRatio(.Some(.Expanded)) == 1.2)
+    expect!(fontWidthRatio(.Some(.Relative(0.9))) == 0.9)
+    expect!(fontWidthRatio(.Some(.Relative(0.1))) == 0.5)
+    expect!(fontWidthRatio(.Some(.Relative(5.0))) == 1.5)
+}
+
+@Test
+function fontWidthIsInheritedAndNilRestoresTheNativeTypeface() {
+    let root = ModifierContext {}
+    let narrower = modifierContextApply(
+        root, modifierDeltaFontWidth(.Some(.Condensed))
+    )
+    expect!(fontWidthRatio(narrower.fontWidth) == 0.85)
+    expect!(fontWidthRatio(modifierContextForChildren(narrower).fontWidth) == 0.85)
+    let expanded = modifierContextApply(
+        narrower, modifierDeltaFontWidth(.Some(.Expanded))
+    )
+    expect!(fontWidthRatio(expanded.fontWidth) == 1.20)
+    let reset = modifierContextApply(expanded, modifierDeltaFontWidth(.None))
+    expect!(fontWidthRatio(reset.fontWidth) == 1.0)
+}
+
+@Test
+function fontWidthRunsThroughNativeTextLayerNotAnOuterViewTransform() {
+    let default = describedLayer(Text("Variable width"))
+    let condensed = describedLayer(
+        Text("Variable width").fontWidth(width: .Condensed)
+    )
+    let expanded = describedLayer(
+        Text("Variable width").fontWidth(width: .Expanded)
+    )
+    match innermostLayer(default).content {
+        Text(run) -> expect!(run.widthRatio == 1.0)
+        else -> expect!(false)
+    }
+    match innermostLayer(condensed).content {
+        Text(run) -> {
+            expect!(run.widthRatio == 0.85)
+            expect!(run.content == "Variable width")
+        }
+        else -> expect!(false)
+    }
+    match innermostLayer(expanded).content {
+        Text(run) -> expect!(run.widthRatio == 1.20)
+        else -> expect!(false)
+    }
+    expect!(condensed.scaleX == 1.0)
+    expect!(expanded.scaleX == 1.0)
+}
+
+@Test
+function nativeFontMeasurementAndTextLayoutShareRequestedWidthAxis() {
+    let content = "Typography"
+    let default = foundationTextRunWidth(
+        content: content, size: 20.0, weight: 400.0
+    )
+    let narrow = foundationTextRunWidth(
+        content: content, size: 20.0, weight: 400.0,
+        widthRatio: 0.7
+    )
+    let wide = foundationTextRunWidth(
+        content: content, size: 20.0, weight: 400.0,
+        widthRatio: 1.2
+    )
+    expect!(default > 0.0)
+    expect!(narrow > 0.0)
+    expect!(wide > 0.0)
+    // The font may not expose `wdth`, in which case SwiftUI itself preserves
+    // its standard outlines. With the axis present, both the measurement and
+    // the CAText run must be derived from the same requested width.
+    // Measure the same explicit 20pt face used by the text-layout assertion.
+    // An unstyled Text otherwise uses KiraUI's platform body size.
+    let described = describedLayer(
+        Text(content).font(size: resolvedLength(20.0)).fontWidth(width: .Compressed)
+    )
+    expect!(abs(described.layout.intrinsicWidth - narrow) < 0.5)
+    let ink = foundationTextRunInkEdges(
+        content: content, size: 20.0, weight: 400.0, widthRatio: 0.7
+    )
+    expect!(ink.right >= ink.left)
+}
+
+@Test
+function fontWidthComposesWithDynamicTypeAndTracking() {
+    let described = describedLayer(
+        Text("Narrow caption")
+            .fontWidth(width: .Some(.Relative(0.76)))
+            .tracking(value: 1.5)
+            .dynamicTypeSize(size: .Accessibility2)
+    )
+    match innermostLayer(described).content {
+        Text(run) -> {
+            expect!(run.widthRatio == 0.76)
+            expect!(run.letterSpacing == 1.5)
+            expect!(run.trackingSpacing)
+            expect!(run.size > 17.0)
+        }
+        else -> expect!(false)
+    }
+}
+
+@Test
+function fontWidthModifierPreservesSectionGrouping() {
+    let section = Section {
+        Text("Group")
+    }.fontWidth(width: .Condensed)
+    expect!(section.isSection())
+    expect!(describedContainsText(describedLayer(move section), "Group"))
+}

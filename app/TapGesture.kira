@@ -1,0 +1,81 @@
+import Foundation
+import KCoreAnimation
+
+// A tap is a completed press, never an ongoing drag. The existing layer action
+// router dispatches completed taps, and this recognizer counts successive
+// activations against a *view-owned* key, so taps on adjacent widgets cannot
+// accidentally complete each other's double-tap sequences.
+public struct TapGestureTrack {
+    var lastTime: Number = -1.0
+    var taps: Number = 0
+}
+
+public function tapGestureNext(
+    track: borrow mut TapGestureTrack,
+    timestamp: Number,
+    requiredCount: Number
+) -> Bool {
+    if requiredCount < 1 { return false }
+    // System UI recognizes multiple clicks within roughly a third of a
+    // second. A new press after that interval starts a fresh sequence.
+    if track.lastTime < 0.0 || timestamp - track.lastTime > 350.0 {
+        track.taps = 0
+    }
+    track.lastTime = timestamp
+    track.taps += 1
+    if track.taps < requiredCount { return false }
+    track.taps = 0
+    track.lastTime = -1.0
+    return true
+}
+
+function tapGestureInvoke(key: Number, requiredCount: Number, action: () -> Void) {
+    unsafe {
+        let slot = slotKey("kiraui.tap.", key)
+        if !ambientStateHasView(slot) {
+            ambientStatePutView(copy slot, nativeUserData(nativeState(TapGestureTrack {})))
+        }
+        var track = nativeRecover<TapGestureTrack>(ambientStateGetView(slot))
+        if tapGestureNext(track, unixMillis(), requiredCount) {
+            action()
+        }
+    }
+}
+
+public construct TapGestureLayer(count: Number, action: () -> Void) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let key = tapSeqKey()
+        let callback = copy action
+        layerActionRegister(key, { in tapGestureInvoke(key, count, callback) })
+        var described = content.describe(context, modifiers)
+        // Accessibility activation is a semantic tap even when a pointer
+        // gesture requires multiple clicks, so it invokes the action directly.
+        described.accessibilityActivates(action, modifiers)
+        let radius = described.cornerRadius > 0.0
+            ? described.cornerRadius : cornerRadiusImplementation(.Small, modifiers)
+        return CALayerDescription {
+            groupedSection: described.groupedSection,
+            layout: surfaceFootprint(described.layout),
+            hittable: !modifiers.disabled,
+            hitKey: key,
+            cornerRadius: radius,
+            content: .Solid(CASolid { fill: CAColor { a: 0.0 }, cornerRadius: radius }),
+            sublayers: [described]
+        }
+    }
+}
+
+extend Widget {
+    // SwiftUI's count/perform overload. Location-aware overloads require the
+    // host's completed-press position to flow through layer-action dispatch.
+    function onTapGesture(count: Number = 1, action: () -> Void) -> Any Widget {
+        return TapGestureLayer(count: count, action: action) { self }
+    }
+}

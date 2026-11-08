@@ -1,0 +1,112 @@
+import Foundation
+import KiraUI
+import KiraLayout
+import KCoreAnimation
+
+@Test
+function listSectionMarginsOverrideOnlySelectedEdgesAndAllowNilReset() {
+    let normal = ModifierContext {}
+    let vertical = modifierContextApply(
+        normal, modifierDeltaListSectionMargins(EdgeSet.vertical, .Some(11.0))
+    )
+    let leading = modifierContextApply(
+        vertical, modifierDeltaListSectionMargins(EdgeSet.leading, .Some(27.0))
+    )
+    expect!(leading.listSectionMargins.hasTop)
+    expect!(leading.listSectionMargins.hasBottom)
+    expect!(leading.listSectionMargins.hasLeading)
+    expect!(!leading.listSectionMargins.hasTrailing)
+    expect!(resolvedListRowInset(leading.listSectionMargins.top, 0.0) == 11.0)
+    expect!(resolvedListRowInset(leading.listSectionMargins.bottom, 0.0) == 11.0)
+    expect!(resolvedListRowInset(leading.listSectionMargins.leading, 0.0) == 27.0)
+
+    let reset = modifierContextApply(
+        leading, modifierDeltaListSectionMargins(EdgeSet.top, .None)
+    )
+    expect!(reset.listSectionMargins.hasTop)
+    expect!(resolvedListRowInset(reset.listSectionMargins.top, 90.0) == 90.0)
+    expect!(resolvedListRowInset(reset.listSectionMargins.bottom, 0.0) == 11.0)
+    expect!(modifierContextForChildren(reset).listSectionMargins.hasLeading)
+}
+
+@Test
+function groupedListSectionMarginsResolveAroundHeaderCardAndFooter() {
+    let content = InsetGroupedList() {
+        Section {
+            Text("First row")
+        } header: {
+            Text("First header")
+        } footer: {
+            Text("First footer")
+        }
+        .listSectionMargins(edges: EdgeSet.bottom, length: .Some(4.0))
+
+        Section {
+            Text("Second row")
+        } header: {
+            Text("Second header")
+        }
+        .listSectionMargins(edges: EdgeSet.top, length: .Some(9.0))
+    }
+    let described = describedLayer(move content)
+    expect!(described.sublayers.count == 1)
+    let sections = described.sublayers[0].sublayers
+    expect!(sections.count == 2)
+    expect!(sections[0].groupedSection)
+    expect!(sections[1].groupedSection)
+    // The top of the next section shares (max) its 9pt margin with the
+    // previous section's 4pt bottom margin; it isn't 4+9 or style+9.
+    expect!(sections[1].layout.paddingTop == 9.0)
+    expect!(sections[0].layout.paddingBottom == 0.0)
+    expect!(describedContainsText(sections[0], "First footer"))
+    expect!(describedContainsText(sections[1], "Second header"))
+}
+
+@Test
+function sectionHorizontalMarginReplacesRatherThanAddsToListDefault() {
+    let base = ModifierContext {}
+    let margin = resolvedContentMargin(base)
+    let content = InsetGroupedList() {
+        Section {
+            Text("Full bleed")
+        }
+        .listSectionMargins(edges: EdgeSet.horizontal, length: .Some(0.0))
+    }
+    let described = describedLayer(move content)
+    let section = described.sublayers[0].sublayers[0]
+    expect!(section.layout.paddingLeading == -margin)
+    expect!(section.layout.paddingTrailing == -margin)
+    expect!(described.layout.paddingLeading == margin)
+    expect!(section.layout.hasListSectionMarginLeading)
+}
+
+@Test
+function sectionMarginsApplyThroughListEnvironmentAndDefaultAllEdges() {
+    let content = InsetGroupedList() {
+        Section {
+            Text("Row")
+        }
+    }.listSectionMargins(length: .Some(18.0))
+    let described = describedLayer(move content)
+    let section = described.sublayers[0].sublayers[0]
+    expect!(section.layout.paddingTop == 18.0)
+    expect!(section.layout.paddingBottom == 18.0)
+    expect!(section.layout.hasListSectionMarginLeading)
+    expect!(section.layout.hasListSectionMarginTrailing)
+}
+
+@Test
+function sidebarSectionMarginsParticipateInRealSectionLayout() {
+    let context = buildContext(FoundationUiContext {})
+    let sidebar = modifierContextPresenting(ModifierContext {}, .Sidebar)
+    let section = Section {
+        Text("Sidebar item")
+    } header: {
+        Text("Header")
+    }
+    .listSectionMargins(edges: EdgeSet.leading, length: .Some(28.0))
+    let described = section.describe(context, sidebar)
+    expect!(described.layout.paddingLeading == 28.0)
+    expect!(described.layout.hasListSectionMarginLeading)
+    expect!(describedContainsText(described, "Sidebar item"))
+}

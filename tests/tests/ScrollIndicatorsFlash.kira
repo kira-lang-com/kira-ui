@@ -1,0 +1,77 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// A child always receives the nearest inherited scroll flash signal; no
+// renderer-only opacity patch or hidden overlay is used for the effect.
+public construct FlashEnvironmentReader() extends Widget {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        return CALayerDescription {
+            opacity: modifiers.scrollFlashGeneration,
+            kind: modifiers.scrollFlashEnabled ? 1.0 : 0.0
+        }
+    }
+}
+
+@Test
+function scrollFlashOnAppearancePropagatesOnlyWhenEnabled() {
+    let disabled = describedLayer(
+        FlashEnvironmentReader().scrollIndicatorsFlash(onAppear: false)
+    )
+    let enabled = describedLayer(
+        FlashEnvironmentReader().scrollIndicatorsFlash(onAppear: true)
+    )
+    expect!(disabled.kind == 0.0)
+    expect!(enabled.kind == 1.0)
+    expect!(enabled.opacity == 1.0)
+}
+
+@Test
+function scrollFlashTriggerInitiallyRemembersValueWithoutFlashing() {
+    let first = describedLayer(
+        FlashEnvironmentReader().scrollIndicatorsFlash(trigger: 1.0)
+    )
+    expect!(first.kind == 1.0)
+    expect!(first.opacity == 0.0)
+    let stringValue = describedLayer(
+        FlashEnvironmentReader().scrollIndicatorsFlash(trigger: "Refresh")
+    )
+    expect!(stringValue.kind == 1.0)
+}
+
+@Test
+function scrollFlashTriggerOnlyAdvancesForChangedEquatableValues() {
+    var observed = ScrollFlashObservation<Number> { value: 3.0 }
+    expect!(advanceScrollFlash(observed, 3.0) == 0.0)
+    expect!(advanceScrollFlash(observed, 4.0) == 1.0)
+    expect!(advanceScrollFlash(observed, 4.0) == 1.0)
+    expect!(advanceScrollFlash(observed, 5.0) == 2.0)
+    var words = ScrollFlashObservation<String> { value: "first" }
+    expect!(advanceScrollFlash(words, "first") == 0.0)
+    expect!(advanceScrollFlash(words, "second") == 1.0)
+}
+
+@Test
+function eachScrollSurfaceConsumesAFlashGenerationOnce() {
+    let initial = modifierContextApply(ModifierContext {}, ModifierDelta {
+        hasScrollFlash: true,
+        scrollFlashGeneration: 2.0
+    })
+    var first = ScrollViewState {}
+    var second = ScrollViewState {}
+    expect!(consumeScrollIndicatorFlash(first, initial))
+    expect!(!consumeScrollIndicatorFlash(first, initial))
+    expect!(consumeScrollIndicatorFlash(second, initial))
+    let changed = modifierContextApply(initial, ModifierDelta {
+        hasScrollFlash: true,
+        scrollFlashGeneration: 1.0
+    })
+    expect!(changed.scrollFlashGeneration == 3.0)
+    expect!(consumeScrollIndicatorFlash(first, changed))
+    expect!(!consumeScrollIndicatorFlash(first, changed))
+    let absent = ModifierContext {}
+    expect!(!consumeScrollIndicatorFlash(second, absent))
+}

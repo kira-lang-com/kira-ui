@@ -1,0 +1,296 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's built-in PresentationDetent cases. Fraction and Height are tied
+// to a sheet's actual available viewport, not hardcoded iPhone dimensions.
+// CustomPresentationDetent requires a native protocol-backed host context and
+// is deliberately not represented by a dummy constant.
+public enum PresentationDetent {
+    Medium
+    Large
+    Fraction(Number)
+    Height(Number)
+}
+
+public function presentationMaximumDetentHeight(context: borrow BuildContext) -> Number {
+    return max(1.0, context.viewportHeight - context.safeArea.top
+        - context.safeArea.bottom - 12.0)
+}
+
+public function presentationDetentHeight(detent: PresentationDetent, maximum: Number) -> Number {
+    let raw = match detent {
+        Medium -> maximum * 0.5
+        Large -> maximum
+        Fraction(fraction) -> maximum * clamp(fraction, 0.0, 1.0)
+        Height(points) -> points
+    }
+    return clamp(raw, 1.0, maximum)
+}
+
+public function presentationDetentHeights(
+    choices: borrow [PresentationDetent],
+    maximum: Number
+) -> [Number] {
+    var sizes: [Number] = []
+    for choice in choices {
+        let height = presentationDetentHeight(copy choice, maximum)
+        var found = false
+        for other in sizes {
+            if abs(other - height) < 0.5 { found = true }
+        }
+        if !found { sizes.append(height) }
+    }
+    return sizes
+}
+
+public function presentationDetentNearestHeight(
+    offered: borrow [Number],
+    preferred: Number
+) -> Number {
+    if offered.count == 0 { return preferred }
+    var closest = offered[0]
+    for height in offered {
+        if abs(height - preferred) < abs(closest - preferred) {
+            closest = height
+        }
+    }
+    return closest
+}
+
+public function presentationDetentSmallest(offered: borrow [Number]) -> Number {
+    if offered.count == 0 { return 0.0 }
+    var smallest = offered[0]
+    for height in offered {
+        if height < smallest { smallest = height }
+    }
+    return smallest
+}
+
+// The selectable detent is a binding to the PRESENTING view's state, while
+// a child-to-host modifier preference must cross the CoreAnimation tree.
+// Store the binding in stable per-view state under a numeric selection key;
+// never put arbitrary KiraUI closures into the KCoreAnimation layer model.
+public struct PresentationDetentSelectionState {
+    var binding: Binding<PresentationDetent>
+    var choices: [PresentationDetent] = []
+    var maximum: Number = 1.0
+}
+
+public function presentationDetentSelectionSlot(key: Number) -> ViewStateKey {
+    return slotKey("kiraui.presentation-detent-selection.", key)
+}
+
+public function presentationDetentSelectionRegister(
+    key: Number,
+    binding: Binding<PresentationDetent>,
+    choices: [PresentationDetent],
+    maximum: Number
+) {
+    unsafe {
+        let slot = presentationDetentSelectionSlot(key)
+        if !ambientStateHasView(slot) {
+            ambientStatePutView(copy slot, nativeUserData(nativeState(
+                PresentationDetentSelectionState {
+                    binding: copy binding, choices: copy choices, maximum: maximum
+                }
+            )))
+        } else {
+            var saved = nativeRecover<PresentationDetentSelectionState>(
+                ambientStateGetView(slot)
+            )
+            saved.binding = binding
+            saved.choices = move choices
+            saved.maximum = maximum
+        }
+    }
+}
+
+public function presentationDetentSelectHeight(
+    key: Number,
+    desired: Number
+) {
+    unsafe {
+        if key == 0 || !ambientStateHasView(presentationDetentSelectionSlot(key)) { return }
+        let saved = nativeRecover<PresentationDetentSelectionState>(
+            ambientStateGetView(presentationDetentSelectionSlot(key))
+        )
+        if saved.choices.count == 0 { return }
+        var closest = copy saved.choices[0]
+        var height = presentationDetentHeight(copy closest, saved.maximum)
+        for choice in saved.choices {
+            let next = presentationDetentHeight(copy choice, saved.maximum)
+            if abs(next - desired) < abs(height - desired) {
+                closest = copy choice
+                height = next
+            }
+        }
+        saved.binding.set(move closest)
+    }
+}
+
+// Sheet-local selection is retained when no explicit selection Binding was
+// provided: a drag between medium and large still changes the real card size.
+public struct PresentationSheetDetentState {
+    var selectedHeight: Number = 0.0
+}
+
+public function presentationSheetDetentSlot(key: Number) -> ViewStateKey {
+    return slotKey("kiraui.sheet-detent.", key)
+}
+
+public function presentationSheetDetentHeight(
+    key: Number,
+    options: borrow PresentationPreferences,
+    fallback: Number
+) -> Number {
+    unsafe {
+        if !options.hasDetents || options.detentHeights.count == 0 { return fallback }
+        let slot = presentationSheetDetentSlot(key)
+        if !ambientStateHasView(slot) {
+            ambientStatePutView(copy slot, nativeUserData(nativeState(
+                PresentationSheetDetentState {}
+            )))
+        }
+        var state = nativeRecover<PresentationSheetDetentState>(ambientStateGetView(slot))
+        if options.selectionKey != 0 {
+            state.selectedHeight = presentationDetentNearestHeight(
+                options.detentHeights, options.selectedHeight
+            )
+        } else if state.selectedHeight <= 0.0 {
+            state.selectedHeight = presentationDetentSmallest(options.detentHeights)
+        } else {
+            state.selectedHeight = presentationDetentNearestHeight(
+                options.detentHeights, state.selectedHeight
+            )
+        }
+        return state.selectedHeight
+    }
+}
+
+public function presentationSheetDetentDragEnded(
+    key: Number,
+    options: borrow PresentationPreferences,
+    travel: Number
+) {
+    unsafe {
+        if !options.hasDetents || options.detentHeights.count < 2 { return }
+        if abs(travel) < 6.0 { return }
+        let slot = presentationSheetDetentSlot(key)
+        if !ambientStateHasView(slot) { return }
+        var state = nativeRecover<PresentationSheetDetentState>(ambientStateGetView(slot))
+        // Dragging upward enlarges the sheet; dragging downward contracts it.
+        let desired = state.selectedHeight - travel
+        let selected = presentationDetentNearestHeight(options.detentHeights, desired)
+        if selected != state.selectedHeight {
+            state.selectedHeight = selected
+            if options.selectionKey != 0 {
+                presentationDetentSelectHeight(options.selectionKey, selected)
+            }
+            redrawAfter(0.0)
+        }
+    }
+}
+
+public construct PresentationDetentsLayer(
+    detents: [PresentationDetent],
+    selection: Binding<PresentationDetent>? = .None
+) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let maximum = presentationMaximumDetentHeight(context)
+        let sizes = presentationDetentHeights(detents, maximum)
+        let selectionKey = tapSeqKey()
+        var selected = presentationDetentSmallest(sizes)
+        var retainedKey = 0.0
+        match selection {
+            Some(binding) -> {
+                retainedKey = selectionKey
+                selected = presentationDetentHeight(binding.get(), maximum)
+                presentationDetentSelectionRegister(
+                    selectionKey, copy binding, copy detents, maximum
+                )
+            }
+            None -> {}
+        }
+        var described = content.describe(context, modifiers)
+        described.hasPresentationDetents = true
+        described.presentationDetentHeights = move sizes
+        described.presentationSelectedHeight = selected
+        described.presentationSelectionKey = retainedKey
+        return described
+    }
+}
+
+public construct PresentationDragIndicatorLayer(visibility: Visibility) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var described = content.describe(context, modifiers)
+        described.hasPresentationDragIndicator = true
+        described.presentationDragIndicator = match visibility {
+            Automatic -> 0.0
+            Visible -> 1.0
+            Hidden -> 2.0
+        }
+        return described
+    }
+}
+
+public function presentationDragIndicatorShows(options: borrow PresentationPreferences) -> Bool {
+    if options.hasDragIndicator {
+        if options.dragIndicator == 1.0 { return true }
+        if options.dragIndicator == 2.0 { return false }
+    }
+    return options.hasDetents && options.detentHeights.count > 1
+}
+
+extend Widget {
+    // SwiftUI: `.presentationDetents(_ detents: Set<PresentationDetent>)`.
+    // Native Kira arrays are also accepted to preserve caller declaration
+    // order, but the actual detents form a mathematically unordered set.
+    function presentationDetents(detents: [PresentationDetent]) -> Any Widget {
+        return PresentationDetentsLayer(detents: move detents) { self }
+    }
+
+    function presentationDetents(
+        detents: [PresentationDetent],
+        selection: Binding<PresentationDetent>
+    ) -> Any Widget {
+        return PresentationDetentsLayer(
+            detents: move detents, selection: .Some(move selection)
+        ) { self }
+    }
+
+    function presentationDetents(detents: Set<PresentationDetent>) -> Any Widget {
+        var offered: [PresentationDetent] = []
+        for detent in detents.elements() { offered.append(detent) }
+        return PresentationDetentsLayer(detents: move offered) { self }
+    }
+
+    function presentationDetents(
+        detents: Set<PresentationDetent>,
+        selection: Binding<PresentationDetent>
+    ) -> Any Widget {
+        var offered: [PresentationDetent] = []
+        for detent in detents.elements() { offered.append(detent) }
+        return PresentationDetentsLayer(
+            detents: move offered, selection: .Some(move selection)
+        ) { self }
+    }
+
+    // SwiftUI: `.presentationDragIndicator(_ visibility: Visibility)`.
+    function presentationDragIndicator(visibility: Visibility) -> Any Widget {
+        return PresentationDragIndicatorLayer(visibility: visibility) { self }
+    }
+}

@@ -1,0 +1,144 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+struct SheetPresentationTestState {
+    var shown: Bool = true
+    var dismissals: Number = 0.0
+}
+
+@Test
+function interactiveDismissDisabledActuallyPreventsBackdropDismissal() {
+    unsafe {
+        let record = nativeUserData(nativeState(SheetPresentationTestState {}))
+        let shown = Binding<Bool> {
+            get: { in
+                unsafe { return nativeRecover<SheetPresentationTestState>(record).shown }
+            },
+            set: { value in
+                unsafe {
+                    var state = nativeRecover<SheetPresentationTestState>(record)
+                    state.shown = value
+                    if !value { state.dismissals++ }
+                }
+            }
+        }
+        layerActionsReset()
+        overlayCollect()
+        tapSeqReset()
+        let page = Text("Page").sheet(isPresented: shown) {
+            Text("Please confirm")
+                .interactiveDismissDisabled()
+        }
+        absorb describedLayerInWideWindow(move page)
+        let overlays = overlaysThisFrame()
+        expect!(overlays.count == 2)
+        expect!(overlays[0].content.hittable)
+        expect!(overlays[0].content.hitKey != 0)
+        layerActionInvoke(overlays[0].content.hitKey)
+        expect!(nativeRecover<SheetPresentationTestState>(record).shown)
+        expect!(nativeRecover<SheetPresentationTestState>(record).dismissals == 0.0)
+
+        // No interactive constraint may prevent a legitimate programmatic
+        // change through the same Binding.
+        shown.set(false)
+        expect!(!nativeRecover<SheetPresentationTestState>(record).shown)
+        expect!(nativeRecover<SheetPresentationTestState>(record).dismissals == 1.0)
+        overlayStopCollecting()
+    }
+}
+
+@Test
+function interactiveDismissDisabledFalseRestoresNormalScrimDismissal() {
+    unsafe {
+        let record = nativeUserData(nativeState(SheetPresentationTestState {}))
+        let shown = Binding<Bool> {
+            get: { in
+                unsafe { return nativeRecover<SheetPresentationTestState>(record).shown }
+            },
+            set: { value in
+                unsafe {
+                    var state = nativeRecover<SheetPresentationTestState>(record)
+                    state.shown = value
+                }
+            }
+        }
+        layerActionsReset()
+        overlayCollect()
+        tapSeqReset()
+        absorb describedLayerInWideWindow(Text("Page").sheet(isPresented: shown) {
+            Text("Free to dismiss").interactiveDismissDisabled(disabled: false)
+        })
+        let overlays = overlaysThisFrame()
+        expect!(overlays.count == 2)
+        layerActionInvoke(overlays[0].content.hitKey)
+        expect!(!nativeRecover<SheetPresentationTestState>(record).shown)
+        overlayStopCollecting()
+    }
+}
+
+@Test
+function presentationCornerRadiusChangesTheActualModalCardClip() {
+    let shown = Binding<Bool> { get: { in return true }, set: { value in } }
+    overlayCollect()
+    tapSeqReset()
+    absorb describedLayerInWideWindow(Text("Page").sheet(isPresented: shown) {
+        Text("Rounded sheet")
+            .presentationCornerRadius(radius: 12.0)
+    })
+    let overlays = overlaysThisFrame()
+    expect!(overlays.count == 2)
+    expect!(overlays[1].content.cornerRadius == 12.0)
+    expect!(overlays[1].content.clipsChildren)
+    expect!(overlays[1].content.layout.fixedWidth == SheetMetrics.width)
+    expect!(describedContainsText(overlays[1].content, "Rounded sheet"))
+    overlayStopCollecting()
+}
+
+@Test
+function nilRadiusRestoresPlatformPresentationStyleAndZeroMakesSquare() {
+    let context = buildContext(FoundationUiContext {})
+    let root = Text("Modal")
+        .presentationCornerRadius(radius: 35.0)
+        .presentationCornerRadius(radius: .None)
+        .describe(context, ModifierContext {})
+    let options = presentationPreferences(root)
+    expect!(options.hasCornerRadius)
+    expect!(resolvedPresentationCornerRadius(options, SheetMetrics.corner)
+        == SheetMetrics.corner)
+    let square = presentationPreferences(describedLayer(
+        Text("Modal").presentationCornerRadius(radius: 0.0)
+    ))
+    expect!(resolvedPresentationCornerRadius(square, 28.0) == 0.0)
+    let negative = presentationPreferences(describedLayer(
+        Text("Modal").presentationCornerRadius(radius: -10.0)
+    ))
+    expect!(resolvedPresentationCornerRadius(negative, 28.0) == 0.0)
+}
+
+@Test
+function presentationPreferenceOverridesIndependentFieldsAcrossNestedWrappers() {
+    let view = describedLayer(
+        Text("Presented")
+            .interactiveDismissDisabled()
+            .presentationCornerRadius(radius: 21.0)
+            .frame(width: 240.0, height: 110.0)
+            .interactiveDismissDisabled(disabled: false)
+    )
+    let options = presentationPreferences(view)
+    expect!(options.hasInteractiveDismissDisabled)
+    expect!(!options.interactiveDismissDisabled)
+    expect!(options.hasCornerRadius)
+    expect!(resolvedPresentationCornerRadius(options, 28.0) == 21.0)
+}
+
+@Test
+function presentationModifiersPreserveSectionIdentityOutsidePresentation() {
+    let section = Section {
+        Text("Row")
+    }.interactiveDismissDisabled().presentationCornerRadius(radius: 8.0)
+    expect!(section.isSection())
+    let described = describedLayer(move section)
+    expect!(describedContainsText(described, "Row"))
+    expect!(presentationPreferences(described).interactiveDismissDisabled)
+}

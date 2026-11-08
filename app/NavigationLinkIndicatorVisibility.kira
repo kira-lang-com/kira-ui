@@ -1,0 +1,35 @@
+import Foundation
+import KCoreAnimation
+
+// The default disclosure indicator is style-dependent: a grouped List row
+// pushes into its destination and shows a trailing chevron, while a sidebar
+// selection row and a plain standalone link normally do not. Explicit
+// Visible/Hidden override that environment at any place in the hierarchy.
+public function navigationLinkIndicatorShows(
+    visibility: Visibility,
+    presentation: ControlPresentation
+) -> Bool {
+    return match visibility {
+        Visible -> true
+        Hidden -> false
+        Automatic -> presentation == .InsetGrouped
+    }
+}
+
+public function modifierDeltaNavigationLinkIndicatorVisibility(
+    visibility: Visibility
+) -> ModifierDelta {
+    return ModifierDelta {
+        hasNavigationLinkIndicatorVisibility: true,
+        navigationLinkIndicatorVisibility: visibility
+    }
+}
+
+extend Widget {
+    // SwiftUI: `.navigationLinkIndicatorVisibility(_ visibility: Visibility)`.
+    function navigationLinkIndicatorVisibility(visibility: Visibility) -> Any Widget {
+        return ModifierDeltaLayer(
+            delta: modifierDeltaNavigationLinkIndicatorVisibility(visibility)
+        ) { self }
+    }
+}

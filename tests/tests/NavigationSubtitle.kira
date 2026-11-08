@@ -1,0 +1,119 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+function subtitleInside(view: borrow CALayerDescription, text: borrow String) -> Bool {
+    match view.content {
+        Text(run) -> {
+            if run.content == text { return true }
+        }
+        else -> {}
+    }
+    for child in view.sublayers {
+        if subtitleInside(child, text) { return true }
+    }
+    return false
+}
+
+@Test
+function navigationSubtitleLivesInRealWindowChromeNotDestinationBody() {
+    toolbarCollect()
+    let stack = NavigationStack {
+        Text("Document body")
+            .navigationTitle("Design notes")
+            .navigationSubtitle("Saved just now")
+            .navigationBarTitleDisplayMode(mode: .Inline)
+    }
+    let destination = describedLayer(move stack)
+    expect!(subtitleInside(destination, "Document body"))
+    expect!(!subtitleInside(destination, "Saved just now"))
+    unsafe {
+        let sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+        expect!(sink.detailTitle == "Design notes")
+        expect!(sink.detailSubtitle == "Saved just now")
+    }
+    let chrome = describedLayerInWideWindow(WindowChrome())
+    expect!(subtitleInside(chrome, "Design notes"))
+    expect!(subtitleInside(chrome, "Saved just now"))
+    toolbarStopCollecting()
+}
+
+@Test
+function navigationSubtitleTextOverloadUsesToolbarTitleTypography() {
+    toolbarCollect()
+    let stack = NavigationStack {
+        Text("Body")
+            .navigationTitle("Project")
+            .navigationSubtitle(Text("A second line"))
+            .navigationBarTitleDisplayMode(mode: .Inline)
+    }
+    describedLayer(move stack)
+    let face = windowTitleFontFor(1024.0)
+    let context = buildContext(FoundationUiContext {
+        viewport: Size { width: 1024.0, height: 768.0 }
+    })
+    let measured = windowTitleWithSubtitle(
+        "Project", "A second line", context, ModifierContext {}
+    )
+    expect!(measured.layout.axis == CAAxis.Column)
+    expect!(measured.sublayers.count == 2)
+    expect!(subtitleInside(measured.sublayers[0], "Project"))
+    expect!(subtitleInside(measured.sublayers[1], "A second line"))
+    match measured.sublayers[1].content {
+        Text(run) -> expect!(run.size < face.size)
+        else -> expect!(false)
+    }
+    toolbarStopCollecting()
+}
+
+@Test
+function navigationSubtitlePreservesItsCoveredPageDuringNavigationTransition() {
+    toolbarCollect()
+    toolbarSetTitle("Current")
+    toolbarSetSubtitle("Current subtitle")
+    let mark = toolbarMark()
+    let top = toolbarBeginCovered(mark)
+    toolbarSetTitle("Previous")
+    toolbarSetSubtitle("Previous subtitle")
+    toolbarEndCovered(move top, mark, 0.5, .Inherit)
+    unsafe {
+        let sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+        expect!(sink.detailTitle == "Current")
+        expect!(sink.detailSubtitle == "Current subtitle")
+        expect!(sink.covered.title == "Previous")
+        expect!(sink.covered.subtitle == "Previous subtitle")
+    }
+    toolbarStopCollecting()
+}
+
+@Test
+function navigationSubtitleTravelsFromCompactSidebarIntoPageToolbar() {
+    toolbarCollect()
+    toolbarEnterColumn(ToolbarColumn.sidebar)
+    toolbarSetTitle("Folders")
+    toolbarSetSubtitle("12 pinned")
+    let page = toolbarTakeColumnTitle()
+    expect!(page.title == "Folders")
+    expect!(page.subtitle == "12 pinned")
+    toolbarEnterColumn(ToolbarColumn.detail)
+    toolbarShowPageTitle(page)
+    unsafe {
+        let sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+        expect!(sink.detailTitle == "Folders")
+        expect!(sink.detailSubtitle == "12 pinned")
+    }
+    toolbarStopCollecting()
+}
+
+@Test
+function navigationSubtitleWithoutTitleDoesNotCreateASecondToolbarTitle() {
+    toolbarCollect()
+    let isolated = describedLayer(
+        Text("Body").navigationSubtitle("Metadata only")
+    )
+    expect!(subtitleInside(isolated, "Body"))
+    expect!(!subtitleInside(isolated, "Metadata only"))
+    let chrome = describedLayerInWideWindow(WindowChrome())
+    expect!(!subtitleInside(chrome, "Metadata only"))
+    toolbarStopCollecting()
+}

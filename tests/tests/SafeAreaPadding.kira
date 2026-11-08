@@ -1,0 +1,39 @@
+import Foundation
+import KiraUI
+import KiraLayout
+import KCoreAnimation
+
+@Test
+function safeAreaPaddingAppliesExactEdgeInsetsToMeasuredContent() {
+    var view = describedLayer(
+        Rectangle().frame(width: 60.0, height: 20.0).safeAreaPadding(
+            insets: EdgeInsets { top: 2.0, leading: 4.0, bottom: 6.0, trailing: 8.0 }
+        )
+    )
+    layOutLayerTree(view, 200.0, 100.0)
+    expect!(view.layout.paddingTop == 2.0)
+    expect!(view.layout.paddingLeading == 4.0)
+    expect!(view.layout.paddingBottom == 6.0)
+    expect!(view.layout.paddingTrailing == 8.0)
+    expect!(view.sublayers[0].position.x == 4.0)
+    expect!(view.sublayers[0].position.y == 2.0)
+}
+
+@Test
+function safeAreaPaddingHasEdgeAndLengthOverloads() {
+    let edges = safeAreaPaddingInsets(EdgeSet.vertical, 11.0)
+    expect!(edges.top == 11.0)
+    expect!(edges.bottom == 11.0)
+    expect!(edges.leading == 0.0)
+    expect!(edges.trailing == 0.0)
+
+    let defaulted = describedLayer(Text("Inset").safeAreaPadding())
+    let explicitly = describedLayer(Text("Inset").safeAreaPadding(length: 8.0))
+    let vertical = describedLayer(
+        Text("Inset").safeAreaPadding(edges: EdgeSet.vertical, length: .Some(8.0))
+    )
+    expect!(defaulted.layout.paddingTop == LayoutMargin.compact)
+    expect!(explicitly.layout.paddingLeading == 8.0)
+    expect!(vertical.layout.paddingTop == 8.0)
+    expect!(vertical.layout.paddingLeading == 0.0)
+}

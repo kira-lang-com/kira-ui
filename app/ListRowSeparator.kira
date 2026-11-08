@@ -1,0 +1,201 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's VerticalEdge.Set expressed without exposing Apple-framework types
+// to KiraUI or KCoreAnimation. Empty is useful when edge sets are constructed
+// conditionally; the remaining cases select exactly the documented edges.
+public enum VerticalEdgeSet {
+    None
+    Top
+    Bottom
+    All
+}
+
+public function verticalEdgesContainTop(edges: VerticalEdgeSet) -> Bool {
+    return edges == .Top || edges == .All
+}
+
+public function verticalEdgesContainBottom(edges: VerticalEdgeSet) -> Bool {
+    return edges == .Bottom || edges == .All
+}
+
+public function listRowSeparatorPreference(visibility: Visibility) -> Bool? {
+    return match visibility {
+        Automatic -> .None
+        Visible -> .Some(true)
+        Hidden -> .Some(false)
+    }
+}
+
+// Applied to a *row*, not the inherited styles of its labels. This is the
+// same metadata channel that listRowInsets uses for its row-sized placement.
+public construct ListRowSeparatorLayer(
+    visibility: Visibility,
+    edges: VerticalEdgeSet
+) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var described = content.describe(context, modifiers)
+        if verticalEdgesContainTop(edges) {
+            described.layout.hasListRowSeparatorTop = true
+            described.layout.listRowSeparatorTop = listRowSeparatorPreference(visibility)
+        }
+        if verticalEdgesContainBottom(edges) {
+            described.layout.hasListRowSeparatorBottom = true
+            described.layout.listRowSeparatorBottom = listRowSeparatorPreference(visibility)
+        }
+        return described
+    }
+}
+
+public construct ListRowSeparatorTintLayer(
+    color: CAColor?,
+    edges: VerticalEdgeSet
+) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var described = content.describe(context, modifiers)
+        if verticalEdgesContainTop(edges) {
+            described.layout.hasListRowSeparatorTintTop = true
+            described.layout.listRowSeparatorTintTop = color
+        }
+        if verticalEdgesContainBottom(edges) {
+            described.layout.hasListRowSeparatorTintBottom = true
+            described.layout.listRowSeparatorTintBottom = color
+        }
+        return described
+    }
+}
+
+public struct ListRowSeparatorPreferences {
+    var hasTop: Bool = false
+    var top: Bool? = .None
+    var hasBottom: Bool = false
+    var bottom: Bool? = .None
+    var hasTopTint: Bool = false
+    var topTint: CAColor? = .None
+    var hasBottomTint: Bool = false
+    var bottomTint: CAColor? = .None
+}
+
+// Walk single-child modifier wrappers only. Outer modifiers on an edge win;
+// a modifier on the other edge does not clear an inner one. Rows with multiple
+// children are not mistaken for one row-wide modifier. Nil is a *real reset*.
+public function listRowSeparatorPreferences(
+    view: borrow CALayerDescription
+) -> ListRowSeparatorPreferences {
+    let intent = view.layout
+    var result = ListRowSeparatorPreferences {
+        hasTop: intent.hasListRowSeparatorTop,
+        top: intent.listRowSeparatorTop,
+        hasBottom: intent.hasListRowSeparatorBottom,
+        bottom: intent.listRowSeparatorBottom,
+        hasTopTint: intent.hasListRowSeparatorTintTop,
+        topTint: intent.listRowSeparatorTintTop,
+        hasBottomTint: intent.hasListRowSeparatorTintBottom,
+        bottomTint: intent.listRowSeparatorTintBottom
+    }
+    if view.sublayers.count == 1 {
+        let child = listRowSeparatorPreferences(view.sublayers[0])
+        if !result.hasTop {
+            result.hasTop = child.hasTop
+            result.top = child.top
+        }
+        if !result.hasBottom {
+            result.hasBottom = child.hasBottom
+            result.bottom = child.bottom
+        }
+        if !result.hasTopTint {
+            result.hasTopTint = child.hasTopTint
+            result.topTint = child.topTint
+        }
+        if !result.hasBottomTint {
+            result.hasBottomTint = child.hasBottomTint
+            result.bottomTint = child.bottomTint
+        }
+    }
+    return result
+}
+
+public function listRowSeparatorShows(visibility: Bool?, platformDefault: Bool) -> Bool {
+    return match visibility {
+        Some(value) -> value
+        None -> platformDefault
+    }
+}
+
+public function resolvedRowSeparatorColor(
+    tint: CAColor?,
+    defaultColor: CAColor
+) -> CAColor {
+    return match tint {
+        Some(value) -> value
+        None -> defaultColor
+    }
+}
+
+extend Widget {
+    // SwiftUI: `.listRowSeparator(_ visibility: Visibility,
+    //                                edges: VerticalEdge.Set = .all)`.
+    function listRowSeparator(
+        visibility: Visibility,
+        edges: VerticalEdgeSet = .All
+    ) -> Any Widget {
+        return ListRowSeparatorLayer(visibility: visibility, edges: edges) { self }
+    }
+
+    // SwiftUI: `.listRowSeparatorTint(_ color: Color?,
+    //                                    edges: VerticalEdge.Set = .all)`.
+    // KiraUI's RGBAColor is its platform-independent Color value. An explicit
+    // nil restores the list style's adaptive tint rather than using clear.
+    function listRowSeparatorTint(
+        color: RGBAColor?,
+        edges: VerticalEdgeSet = .All
+    ) -> Any Widget {
+        let resolved: CAColor? = match color {
+            Some(value) -> .Some(colorFromFoundation(foundationColor(move value)))
+            None -> .None
+        }
+        return ListRowSeparatorTintLayer(color: move resolved, edges: edges) { self }
+    }
+
+    // The semantic-color spelling resolves through the active theme, not
+    // through a hard-coded palette (the same contract as foregroundColor).
+    function listRowSeparatorTint(
+        color: PrimaryColor,
+        edges: VerticalEdgeSet = .All
+    ) -> Any Widget {
+        return ListRowSeparatorSemanticTint(color: color, edges: edges) { self }
+    }
+}
+
+public construct ListRowSeparatorSemanticTint(
+    color: PrimaryColor,
+    edges: VerticalEdgeSet
+) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let tint = colorFromFoundation(modifierPrimaryColor(color, modifiers))
+        return ListRowSeparatorTintLayer(color: .Some(tint), edges: edges) {
+            content
+        }.describe(context, modifiers)
+    }
+}

@@ -1,0 +1,210 @@
+import Foundation
+import KCoreAnimation
+
+// Interactive dismissal and card geometry belong to the PRESENTED content,
+// not its presenting button or the underlying page. They are child-to-host
+// preferences: the Sheet reads the described child once and applies the
+// resulting policy to its scrim and modal card. A programmatic binding change
+// remains allowed even when interactive dismissal is disabled.
+public struct PresentationPreferences {
+    var hasInteractiveDismissDisabled: Bool = false
+    var interactiveDismissDisabled: Bool = false
+    var hasCornerRadius: Bool = false
+    var cornerRadius: Number? = .None
+    var hasDetents: Bool = false
+    var detentHeights: [Number] = []
+    var selectedHeight: Number = 0.0
+    var selectionKey: Number = 0.0
+    var hasDragIndicator: Bool = false
+    var dragIndicator: Number = 0.0
+    var hasBackgroundInteraction: Bool = false
+    var backgroundInteraction: Number = 0.0
+    var backgroundInteractiveThroughHeight: Number = 0.0
+    var hasBackground: Bool = false
+    var backgroundLayers: [CALayerDescription] = []
+    var backgroundAlignment: Point = Point { x: 0.5, y: 0.5 }
+    var hasCompactAdaptation: Bool = false
+    var horizontalAdaptation: Number = 0.0
+    var verticalAdaptation: Number = 0.0
+    var hasContentInteraction: Bool = false
+    var contentInteraction: Number = 0.0
+    var hasSizing: Bool = false
+    var sizingWidth: Number = 0.0
+    var sizingHeight: Number = 0.0
+    var stickySizingHorizontal: Bool = false
+    var stickySizingVertical: Bool = false
+    var hasPlacement: Bool = false
+    var placement: Number = 0.0
+}
+
+public construct InteractiveDismissDisabledLayer(disabled: Bool = true) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var rendered = content.describe(context, modifiers)
+        rendered.hasInteractiveDismissDisabled = true
+        rendered.interactiveDismissDisabled = disabled
+        return rendered
+    }
+}
+
+public construct PresentationCornerRadiusLayer(radius: Number?) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var rendered = content.describe(context, modifiers)
+        rendered.hasPresentationCornerRadius = true
+        rendered.presentationCornerRadius = copy radius
+        return rendered
+    }
+}
+
+// Inspect outermost presentation annotations first; descend into the content
+// tree only for fields without a root override. This also handles modifier
+// wrappers such as `.frame` or a view with a body while preserving the rule
+// that a Section's shape does not by itself set a modal preference.
+public function presentationPreferences(
+    rendered: borrow CALayerDescription
+) -> PresentationPreferences {
+    var chosen = PresentationPreferences {
+        hasInteractiveDismissDisabled: rendered.hasInteractiveDismissDisabled,
+        interactiveDismissDisabled: rendered.interactiveDismissDisabled,
+        hasCornerRadius: rendered.hasPresentationCornerRadius,
+        cornerRadius: copy rendered.presentationCornerRadius,
+        hasDetents: rendered.hasPresentationDetents,
+        detentHeights: copy rendered.presentationDetentHeights,
+        selectedHeight: rendered.presentationSelectedHeight,
+        selectionKey: rendered.presentationSelectionKey,
+        hasDragIndicator: rendered.hasPresentationDragIndicator,
+        dragIndicator: rendered.presentationDragIndicator,
+        hasBackgroundInteraction: rendered.hasPresentationBackgroundInteraction,
+        backgroundInteraction: rendered.presentationBackgroundInteraction,
+        backgroundInteractiveThroughHeight: rendered.presentationBackgroundInteractiveThroughHeight,
+        hasBackground: rendered.hasPresentationBackground,
+        backgroundLayers: copy rendered.presentationBackgroundLayers,
+        backgroundAlignment: rendered.presentationBackgroundAlignment,
+        hasCompactAdaptation: rendered.hasPresentationCompactAdaptation,
+        horizontalAdaptation: rendered.presentationHorizontalAdaptation,
+        verticalAdaptation: rendered.presentationVerticalAdaptation,
+        hasContentInteraction: rendered.hasPresentationContentInteraction,
+        contentInteraction: rendered.presentationContentInteraction,
+        hasSizing: rendered.hasPresentationSizing,
+        sizingWidth: rendered.presentationSizingWidth,
+        sizingHeight: rendered.presentationSizingHeight,
+        stickySizingHorizontal: rendered.presentationSizingStickyHorizontal,
+        stickySizingVertical: rendered.presentationSizingStickyVertical,
+        hasPlacement: rendered.hasPresentationPlacement,
+        placement: rendered.presentationPlacement
+    }
+    if chosen.hasInteractiveDismissDisabled && chosen.hasCornerRadius
+        && chosen.hasDetents && chosen.hasDragIndicator
+        && chosen.hasBackgroundInteraction && chosen.hasBackground
+        && chosen.hasCompactAdaptation && chosen.hasContentInteraction
+        && chosen.hasSizing && chosen.hasPlacement { return chosen }
+    for child in rendered.sublayers {
+        let inner = presentationPreferences(child)
+        if !chosen.hasInteractiveDismissDisabled && inner.hasInteractiveDismissDisabled {
+            chosen.hasInteractiveDismissDisabled = true
+            chosen.interactiveDismissDisabled = inner.interactiveDismissDisabled
+        }
+        if !chosen.hasCornerRadius && inner.hasCornerRadius {
+            chosen.hasCornerRadius = true
+            chosen.cornerRadius = copy inner.cornerRadius
+        }
+        if !chosen.hasDetents && inner.hasDetents {
+            chosen.hasDetents = true
+            chosen.detentHeights = copy inner.detentHeights
+            chosen.selectedHeight = inner.selectedHeight
+            chosen.selectionKey = inner.selectionKey
+        }
+        if !chosen.hasDragIndicator && inner.hasDragIndicator {
+            chosen.hasDragIndicator = true
+            chosen.dragIndicator = inner.dragIndicator
+        }
+        if !chosen.hasBackgroundInteraction && inner.hasBackgroundInteraction {
+            chosen.hasBackgroundInteraction = true
+            chosen.backgroundInteraction = inner.backgroundInteraction
+            chosen.backgroundInteractiveThroughHeight = inner.backgroundInteractiveThroughHeight
+        }
+        if !chosen.hasBackground && inner.hasBackground {
+            chosen.hasBackground = true
+            chosen.backgroundLayers = copy inner.backgroundLayers
+            chosen.backgroundAlignment = inner.backgroundAlignment
+        }
+        if !chosen.hasCompactAdaptation && inner.hasCompactAdaptation {
+            chosen.hasCompactAdaptation = true
+            chosen.horizontalAdaptation = inner.horizontalAdaptation
+            chosen.verticalAdaptation = inner.verticalAdaptation
+        }
+        if !chosen.hasContentInteraction && inner.hasContentInteraction {
+            chosen.hasContentInteraction = true
+            chosen.contentInteraction = inner.contentInteraction
+        }
+        if !chosen.hasSizing && inner.hasSizing {
+            chosen.hasSizing = true
+            chosen.sizingWidth = inner.sizingWidth
+            chosen.sizingHeight = inner.sizingHeight
+            chosen.stickySizingHorizontal = inner.stickySizingHorizontal
+            chosen.stickySizingVertical = inner.stickySizingVertical
+        }
+        if !chosen.hasPlacement && inner.hasPlacement {
+            chosen.hasPlacement = true
+            chosen.placement = inner.placement
+        }
+        if chosen.hasInteractiveDismissDisabled && chosen.hasCornerRadius
+            && chosen.hasDetents && chosen.hasDragIndicator
+            && chosen.hasBackgroundInteraction && chosen.hasBackground
+            && chosen.hasCompactAdaptation && chosen.hasContentInteraction
+            && chosen.hasSizing && chosen.hasPlacement { break }
+    }
+    return chosen
+}
+
+public function resolvedPresentationCornerRadius(
+    requested: borrow PresentationPreferences,
+    styleDefault: Number
+) -> Number {
+    return match requested.cornerRadius {
+        Some(radius) -> max(0.0, radius)
+        None -> styleDefault
+    }
+}
+
+// Reuses a once-described child when applying the presentation surface's
+// background and border, avoiding any second @State read, .onAppear callback
+// or duplicate action registration just to inspect the presentation policy.
+public construct DescribedPresentationContent(layer: CALayerDescription) extends Widget {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        return copy layer
+    }
+}
+
+extend Widget {
+    // SwiftUI: `.interactiveDismissDisabled(_ isDisabled: Bool = true)`.
+    function interactiveDismissDisabled(disabled: Bool = true) -> Any Widget {
+        return InteractiveDismissDisabledLayer(disabled: disabled) { self }
+    }
+
+    // SwiftUI: `.presentationCornerRadius(_ cornerRadius: CGFloat?)`.
+    // Passing nil returns to the current presentation's native style radius.
+    function presentationCornerRadius(radius: Number?) -> Any Widget {
+        return PresentationCornerRadiusLayer(radius: move radius) { self }
+    }
+
+    function presentationCornerRadius(radius: Number) -> Any Widget {
+        return PresentationCornerRadiusLayer(radius: .Some(radius)) { self }
+    }
+}

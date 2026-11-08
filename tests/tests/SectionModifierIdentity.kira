@@ -1,0 +1,76 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// A Form can receive a feature-specific View whose *body* is the Section,
+// exactly as the Harmony Settings Form receives AppearanceSettingsView.
+construct AppearanceFormContent() extends Widget {
+    body {
+        Section {
+            Text("Theme")
+            Text("Message density")
+        } header: {
+            Text("Appearance")
+        }
+        .listRowBackground(RGBAColor { r: 1.0, g: 1.0, b: 1.0, a: 1.0 })
+    }
+}
+
+@Test
+function nestedViewContainingSectionMustNotProduceAnAdditionalGroupedCard() {
+    let content = AppearanceFormContent()
+    // Static Widget metadata is not the same as the recursively rendered
+    // body. The Form must preserve the body's section via its description.
+    expect!(!content.isSection())
+    let screen = Form {
+        AppearanceFormContent()
+    }.formStyle(.Grouped)
+    .scrollContentBackground(.Hidden)
+    let described = describedLayerInWideWindow(move screen)
+    expect!(countInsetGroupedCards(described) == 1)
+}
+
+// SwiftUI section modifiers style the same Form section. A wrapper must not
+// conceal a Section from InsetGroupedList, which would place a second card
+// around the section's original header and rows.
+function countInsetGroupedCards(layer: borrow CALayerDescription) -> Number {
+    var count: Number = layer.clipsChildren && layer.cornerRadius > 0.0 ? 1 : 0
+    for child in layer.sublayers {
+        count += countInsetGroupedCards(child)
+    }
+    return count
+}
+
+@Test
+function listRowBackgroundPreservesOneSectionAndOneGroupedCard() {
+    let color = RGBAColor { r: 0.92, g: 0.45, b: 0.24, a: 1.0 }
+    let section = Section {
+        Text("Theme")
+        Text("Message density")
+    } header: {
+        Text("Appearance")
+    }
+    .listRowBackground(copy color)
+    expect!(section.isSection())
+    let screen = Form {
+        section
+    }.formStyle(.Grouped)
+    .scrollContentBackground(.Hidden)
+    let described = describedLayerInWideWindow(move screen)
+    expect!(countInsetGroupedCards(described) == 1)
+}
+
+@Test
+function styledSectionRemainsSectionThroughEnvironmentWrappers() {
+    let section = Section {
+        Text("Theme")
+    } header: {
+        Text("Appearance")
+    }
+    .foregroundColor(.Primary)
+    .listRowBackground(RGBAColor { r: 1.0, g: 1.0, b: 1.0, a: 1.0 })
+    expect!(section.isSection())
+    let screen = Form { section }
+    let described = describedLayerInWideWindow(move screen)
+    expect!(countInsetGroupedCards(described) == 1)
+}

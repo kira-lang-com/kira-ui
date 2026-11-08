@@ -1,0 +1,78 @@
+import Foundation
+import KCoreAnimation
+
+// The visible destination can set the back-button policy by its own View
+// modifier, even though its system back button was declared by NavigationStack
+// before the destination was described. This is an upward preference scoped to
+// one page, not a drawing-only opacity toggle.
+public construct NavigationBackButtonHiddenLayer(hidden: Bool) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        toolbarPageBackButtonPreference(hidden)
+        return content.describe(
+            context, modifierContextApply(modifiers, modifierDeltaNavigationBackButtonHidden(hidden))
+        )
+    }
+}
+
+// An optional pending preference distinguishes an explicit `false` on an
+// inner destination from no setting at all on that destination.
+public function toolbarBeginPageBackButton() -> Bool? {
+    unsafe {
+        toolbarSinkEnsure()
+        var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+        let previous = sink.pageBackButtonHidden
+        sink.pageBackButtonHidden = .None
+        return previous
+    }
+}
+
+public function toolbarPageBackButtonPreference(hidden: Bool) {
+    unsafe {
+        toolbarSinkEnsure()
+        var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+        sink.pageBackButtonHidden = .Some(hidden)
+    }
+}
+
+public function toolbarEndPageBackButton(previous: Bool?, defaultHidden: Bool) -> Bool {
+    unsafe {
+        toolbarSinkEnsure()
+        var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+        let decision = match sink.pageBackButtonHidden {
+            Some(value) -> value
+            None -> defaultHidden
+        }
+        sink.pageBackButtonHidden = previous
+        return decision
+    }
+}
+
+// Remove exactly the system button's original chrome group, not the custom
+// leading items a destination declared while lowering. Other pages in a
+// transition remain in the toolbar's covered/current buckets and retain their
+// own independent back-button policy.
+public function toolbarRemoveBackGroup(group: Number) {
+    unsafe {
+        toolbarSinkEnsure()
+        var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+        var remaining: [ToolbarEntry] = []
+        for item in sink.back {
+            if item.group != group { remaining.append(copy item) }
+        }
+        sink.back = move remaining
+    }
+}
+
+extend Widget {
+    // SwiftUI: `.navigationBarBackButtonHidden(_ hidesBackButton: Bool = true)`.
+    function navigationBarBackButtonHidden(hidden: Bool = true) -> Any Widget {
+        return NavigationBackButtonHiddenLayer(hidden: hidden) { self }
+    }
+}

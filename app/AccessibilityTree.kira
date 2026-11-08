@@ -26,6 +26,9 @@ public struct AccessibilityElement {
     let sortPriority: Number
     // The element's box in the window, in points from its top-leading corner.
     let frame: Rect
+    // Window position where the host accessibility service should initiate
+    // a gesture, derived from the element's FINAL measured frame.
+    let activationPoint: Point
     let actions: [AccessibilityAction]
     let adjustable: Bool
     let adjust: (AccessibilityAdjustmentDirection) -> Void
@@ -93,6 +96,12 @@ extend AccessibilityNode {
             }
         }
         self.hasKeyboardFocus = self.hasKeyboardFocus || inner.hasKeyboardFocus
+        // A combined element can inherit the activation point of the first
+        // meaningful child, unless it explicitly states its own point.
+        match self.activationPoint {
+            Some(value) -> {}
+            None -> self.activationPoint = copy inner.activationPoint
+        }
         if !self.adjustable && inner.adjustable {
             self.adjustable = true
             self.adjust = inner.adjust
@@ -288,6 +297,7 @@ function accessibilityElementFrom(
         hasKeyboardFocus: node.hasKeyboardFocus,
         sortPriority: node.sortPriority,
         frame: frame,
+        activationPoint: resolvedAccessibilityActivationPoint(node.activationPoint, frame),
         actions: copy node.actions,
         adjustable: node.adjustable,
         adjust: node.adjust,

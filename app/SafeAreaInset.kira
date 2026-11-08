@@ -24,7 +24,46 @@ public enum VerticalEdge {
     Bottom
 }
 
-public construct SafeAreaInsetLayer(edge: VerticalEdge, inset: Any Widget) extends Widget {
+// The other overload's edge, perpendicular to VerticalEdge.
+public enum HorizontalEdge {
+    Leading
+    Trailing
+}
+
+// The cross-axis position of a safe-area bar, with SwiftUI's default center.
+public function safeAreaBarHorizontalAnchor(alignment: HorizontalAlignment) -> Number {
+    return match alignment {
+        Leading -> 0.0
+        Center -> 0.5
+        Trailing -> 1.0
+        Stretch -> 0.5
+    }
+}
+
+public function safeAreaBarVerticalAnchor(alignment: VerticalAlignment) -> Number {
+    return match alignment {
+        Top, FirstTextBaseline -> 0.0
+        Center -> 0.5
+        Bottom -> 1.0
+        Stretch -> 0.5
+    }
+}
+
+// `nil` means the platform's normal zero-gap safe-area bar; non-nil spacing
+// explicitly holds this much room between its content and the surrounding view.
+public function safeAreaBarSpacing(spacing: Number?) -> Number {
+    return match spacing {
+        Some(value) -> value
+        None -> 0.0
+    }
+}
+
+public construct SafeAreaInsetLayer(
+    edge: VerticalEdge,
+    inset: Any Widget,
+    alignment: HorizontalAlignment = .Center,
+    spacing: Number? = .None
+) extends Widget {
     let content: some Widget
 
     function describe(
@@ -34,7 +73,19 @@ public construct SafeAreaInsetLayer(edge: VerticalEdge, inset: Any Widget) exten
         var bar = inset.describe(context, modifiers)
         bar.layout.heightFill = false
         let across = context.viewportWidth - context.safeArea.leading - context.safeArea.trailing
-        let height = bar.measure(across).height
+        let gap = safeAreaBarSpacing(spacing)
+        let height = bar.measure(across).height + gap
+        let horizontalAnchor = safeAreaBarHorizontalAnchor(alignment)
+        let held = CALayerDescription {
+            layout: CALayoutIntent {
+                alignment: Point { x: horizontalAnchor, y: 0.0 },
+                paddingLeading: context.safeArea.leading,
+                paddingTop: edge == .Bottom ? gap : 0.0,
+                paddingTrailing: context.safeArea.trailing,
+                paddingBottom: edge == .Top ? gap : 0.0
+            },
+            sublayers: [move bar]
+        }
         var inner = copy context
         if edge == .Top {
             inner.safeArea.top = inner.safeArea.top + height
@@ -52,32 +103,196 @@ public construct SafeAreaInsetLayer(edge: VerticalEdge, inset: Any Widget) exten
             chromeSafeAreaHandled()
         }
         if handled {
-            let held = CALayerDescription {
-                layout: CALayoutIntent {
-                    heightFill: false,
-                    paddingLeading: context.safeArea.leading,
-                    paddingTop: edge == .Top ? context.safeArea.top : 0.0,
-                    paddingTrailing: context.safeArea.trailing,
-                    paddingBottom: edge == .Bottom ? context.safeArea.bottom : 0.0
-                },
-                sublayers: [bar]
-            }
             return CALayerDescription {
                 layout: CALayoutIntent { alignment: Point { x: 0.0, y: edge == .Top ? 0.0 : 1.0 } },
-                sublayers: [body, held]
+                sublayers: [body, move held]
             }
         }
         body.layout.flex = 1
         return CALayerDescription {
             layout: CALayoutIntent { axis: .Column },
-            sublayers: edge == .Top ? [bar, body] : [body, bar]
+            sublayers: edge == .Top ? [copy held, body] : [body, move held]
+        }
+    }
+}
+
+// The horizontal overload has the same contract: reserve the bar's width
+// from the content's safe area and place it on the chosen leading/trailing
+// edge. Its alignment is vertical, not horizontal.
+public construct HorizontalSafeAreaInsetLayer(
+    edge: HorizontalEdge,
+    inset: Any Widget,
+    alignment: VerticalAlignment = .Center,
+    spacing: Number? = .None
+) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var bar = inset.describe(context, modifiers)
+        bar.layout.widthFill = false
+        let gap = safeAreaBarSpacing(spacing)
+        let width = bar.measure(context.viewportWidth).width + gap
+        let verticalAnchor = safeAreaBarVerticalAnchor(alignment)
+        let held = CALayerDescription {
+            layout: CALayoutIntent {
+                alignment: Point { x: 0.0, y: verticalAnchor },
+                paddingLeading: edge == .Trailing ? gap : 0.0,
+                paddingTop: context.safeArea.top,
+                paddingTrailing: edge == .Leading ? gap : 0.0,
+                paddingBottom: context.safeArea.bottom
+            },
+            sublayers: [move bar]
+        }
+        var inner = copy context
+        if edge == .Leading {
+            inner.safeArea.leading = inner.safeArea.leading + width
+        } else {
+            inner.safeArea.trailing = inner.safeArea.trailing + width
+        }
+        let around = chromeSafeAreaWasHandled()
+        chromeSafeAreaPending()
+        var body = content.describe(inner, modifiers)
+        let handled = chromeSafeAreaWasHandled()
+        if around || handled {
+            chromeSafeAreaHandled()
+        }
+        if handled {
+            return CALayerDescription {
+                layout: CALayoutIntent {
+                    alignment: Point { x: edge == .Leading ? 0.0 : 1.0, y: 0.0 }
+                },
+                sublayers: [body, move held]
+            }
+        }
+        body.layout.flex = 1
+        return CALayerDescription {
+            layout: CALayoutIntent { axis: .Row },
+            sublayers: edge == .Leading ? [copy held, body] : [body, move held]
         }
     }
 }
 
 extend Widget {
+    // Keep the single-edge spelling as a distinct overload. A trailing view
+    // block is one argument in Kira, so the zero-configuration case should
+    // not rely on synthetic defaults in the longer SwiftUI-shaped overload.
     function safeAreaInset(edge: VerticalEdge, inset: some Widget) -> Any Widget {
-        return SafeAreaInsetLayer(edge: edge, inset: inset) {
+        return SafeAreaInsetLayer(edge: edge, inset: inset) { self }
+    }
+
+    function safeAreaInset(
+        edge: VerticalEdge,
+        alignment: HorizontalAlignment,
+        inset: some Widget
+    ) -> Any Widget {
+        return SafeAreaInsetLayer(edge: edge, inset: inset, alignment: alignment) { self }
+    }
+
+    function safeAreaInset(edge: VerticalEdge, spacing: Number?, inset: some Widget) -> Any Widget {
+        return SafeAreaInsetLayer(edge: edge, inset: inset, spacing: spacing) { self }
+    }
+
+    function safeAreaInset(
+        edge: VerticalEdge,
+        alignment: HorizontalAlignment,
+        spacing: Number?,
+        inset: some Widget
+    ) -> Any Widget {
+        return SafeAreaInsetLayer(
+            edge: edge, inset: inset, alignment: alignment, spacing: spacing
+        ) {
+            self
+        }
+    }
+
+    function safeAreaInset(edge: HorizontalEdge, inset: some Widget) -> Any Widget {
+        return HorizontalSafeAreaInsetLayer(edge: edge, inset: inset) { self }
+    }
+
+    function safeAreaInset(
+        edge: HorizontalEdge,
+        alignment: VerticalAlignment,
+        inset: some Widget
+    ) -> Any Widget {
+        return HorizontalSafeAreaInsetLayer(edge: edge, inset: inset, alignment: alignment) { self }
+    }
+
+    function safeAreaInset(edge: HorizontalEdge, spacing: Number?, inset: some Widget) -> Any Widget {
+        return HorizontalSafeAreaInsetLayer(edge: edge, inset: inset, spacing: spacing) { self }
+    }
+
+    function safeAreaInset(
+        edge: HorizontalEdge,
+        alignment: VerticalAlignment,
+        spacing: Number?,
+        inset: some Widget
+    ) -> Any Widget {
+        return HorizontalSafeAreaInsetLayer(
+            edge: edge, inset: inset, alignment: alignment, spacing: spacing
+        ) {
+            self
+        }
+    }
+
+    // Both SwiftUI safeAreaBar overloads, including their cross-axis alignment
+    // and optional separation from the surrounding content.
+    function safeAreaBar(edge: VerticalEdge, content: some Widget) -> Any Widget {
+        return SafeAreaInsetLayer(edge: edge, inset: content) { self }
+    }
+
+    function safeAreaBar(
+        edge: VerticalEdge,
+        alignment: HorizontalAlignment,
+        content: some Widget
+    ) -> Any Widget {
+        return SafeAreaInsetLayer(edge: edge, inset: content, alignment: alignment) { self }
+    }
+
+    function safeAreaBar(edge: VerticalEdge, spacing: Number?, content: some Widget) -> Any Widget {
+        return SafeAreaInsetLayer(edge: edge, inset: content, spacing: spacing) { self }
+    }
+
+    function safeAreaBar(
+        edge: VerticalEdge,
+        alignment: HorizontalAlignment,
+        spacing: Number?,
+        content: some Widget
+    ) -> Any Widget {
+        return SafeAreaInsetLayer(
+            edge: edge, inset: content, alignment: alignment, spacing: spacing
+        ) {
+            self
+        }
+    }
+
+    function safeAreaBar(edge: HorizontalEdge, content: some Widget) -> Any Widget {
+        return HorizontalSafeAreaInsetLayer(edge: edge, inset: content) { self }
+    }
+
+    function safeAreaBar(
+        edge: HorizontalEdge,
+        alignment: VerticalAlignment,
+        content: some Widget
+    ) -> Any Widget {
+        return HorizontalSafeAreaInsetLayer(edge: edge, inset: content, alignment: alignment) { self }
+    }
+
+    function safeAreaBar(edge: HorizontalEdge, spacing: Number?, content: some Widget) -> Any Widget {
+        return HorizontalSafeAreaInsetLayer(edge: edge, inset: content, spacing: spacing) { self }
+    }
+
+    function safeAreaBar(
+        edge: HorizontalEdge,
+        alignment: VerticalAlignment,
+        spacing: Number?,
+        content: some Widget
+    ) -> Any Widget {
+        return HorizontalSafeAreaInsetLayer(
+            edge: edge, inset: content, alignment: alignment, spacing: spacing
+        ) {
             self
         }
     }

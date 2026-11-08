@@ -2,6 +2,48 @@ import Foundation
 import KiraUI
 import KCoreAnimation
 
+// Every SwiftUI Font.Design case reaches a distinct renderable text design.
+@Test
+function systemFontDesignIncludesSerifRoundedAndMonospaced() {
+    expect!(foundationFontDesign(FontDesign.Serif) == CAFontDesign.Serif)
+    expect!(foundationFontDesign(FontDesign.Rounded) == CAFontDesign.Rounded)
+    expect!(foundationFontDesign(FontDesign.Monospaced) == CAFontDesign.Monospaced)
+    expect!(foundationFontDesign(FontDesign.Default) == CAFontDesign.Default)
+}
+
+// SwiftUI interpolating a foreground-styled Text in another Text creates one
+// line and one CAText layer with an ink span, not two separately laid-out
+// HStack siblings. The full title retains its semantic type scale.
+@Test
+function interpolatedSecondaryWorkSuffixIsOneSerifTitleRun() {
+    let title = Text(content: "HarmonyAI Work", runs: [
+        TextRun { start: 9, end: 14, foregroundColor: .Secondary }
+    ])
+    .typography(.title)
+    .fontWeight(.Bold)
+    .fontDesign(.Serif)
+    .foregroundColor(.Primary)
+    let described = describedLayer(move title)
+    expect!(described.sublayers.count == 0)
+    let text = textRunOf(described)
+    expect!(text.content == "HarmonyAI Work")
+    expect!(text.spans.count == 1)
+    expect!(text.spans[0].start == 9)
+    expect!(text.spans[0].end == 14)
+    expect!(text.design == CAFontDesign.Serif)
+    expect!(text.weight == 700.0)
+    expect!(text.size == typographyImplementation(.title, ModifierContext {}).size)
+    expect!(text.spans[0].color != text.color)
+}
+
+@Test
+function optionalFontDesignWithoutAnOverrideKeepsTheInheritedDesign() {
+    let design: FontDesign? = .None
+    // With no override there is no extra modifier layer over the rectangle.
+    let layer = describedLayer(Rectangle().fontDesign(copy design))
+    expect!(layer.sublayers.count == 0)
+}
+
 // The type a run is set in, as the layer carries it to the compositor: of
 // `.font` and `.typography` the innermost names the font, and `.fontWeight`
 // sets the weight of whichever is in effect until a `.font` inside names its

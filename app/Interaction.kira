@@ -355,3 +355,27 @@ public construct GestureTextureView(
         }
     }
 }
+
+// An engine-backed view with native editor-style input. A pointer press owns
+// the whole gesture, including movement outside the viewport; scroll affects
+// only the hovered viewport, and keys go to the last focused viewport, never
+// to a field or another panel. The actual event retains its mouse button and
+// modifier keys, so an editor can separate picking, orbit and pan.
+public construct InteractiveTextureViewport(
+    key: Number,
+    texture: TextureHandle,
+    onEvent: (AppEvent, Point, Size) -> Void
+) extends Widget {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        layerViewportRegister(key, onEvent)
+        return CALayerDescription {
+            hittable: !modifiers.disabled,
+            hitKey: key,
+            layout: CALayoutIntent { widthFill: true, heightFill: true },
+            content: .Texture(CATexture { handle: texture, opacity: modifiers.opacity })
+        }
+    }
+}

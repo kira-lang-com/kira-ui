@@ -1,0 +1,27 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function labelsVisibilityIsInheritedAndSupportsAllVisibilityCases() {
+    let hidden = modifierContextApply(
+        ModifierContext {}, modifierDeltaLabelsHidden(true)
+    )
+    expect!(modifierContextForChildren(hidden).labelsHidden)
+    let visible = modifierContextApply(hidden, modifierDeltaLabelsHidden(false))
+    expect!(!modifierContextForChildren(visible).labelsHidden)
+
+    // The modifier must use the same environment as labelsHidden. Distinct
+    // descendants can restore default/visible labels after a hidden ancestor.
+    let shown = describedLayer(
+        Toggle(title: "Wi-Fi", isOn: true).labelsVisibility(visibility: .Visible)
+    )
+    let automatic = describedLayer(
+        Toggle(title: "Wi-Fi", isOn: true).labelsVisibility(visibility: .Automatic)
+    )
+    let concealed = describedLayer(
+        Toggle(title: "Wi-Fi", isOn: true).labelsVisibility(visibility: .Hidden)
+    )
+    expect!(shown.sublayers.count == automatic.sublayers.count)
+    expect!(concealed.sublayers.count <= shown.sublayers.count)
+}

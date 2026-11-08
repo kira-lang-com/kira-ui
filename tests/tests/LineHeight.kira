@@ -1,0 +1,135 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function lineHeightIncludesAllPublicSemanticAndNumericCases() {
+    expect!(foundationTextResolvedLineHeight(
+        17.0, 400.0, .Default, .Exact(31.0)
+    ) == 31.0)
+    expect!(foundationTextResolvedLineHeight(
+        17.0, 400.0, .Default, .Leading(5.0)
+    ) == 22.0)
+    expect!(foundationTextResolvedLineHeight(
+        17.0, 400.0, .Default, .Multiple(1.5)
+    ) == 25.5)
+    let tight = foundationTextResolvedLineHeight(17.0, 400.0, .Default, .Tight)
+    let normal = foundationTextResolvedLineHeight(17.0, 400.0, .Default, .Normal)
+    let loose = foundationTextResolvedLineHeight(17.0, 400.0, .Default, .Loose)
+    expect!(tight < normal)
+    expect!(normal < loose)
+    expect!(foundationTextResolvedLineHeight(17.0, 400.0, .Default)
+        == foundationTextLineBox(17.0, 400.0, .Default))
+}
+
+@Test
+function exactLineHeightIsMeasuredOnSingleLineText() {
+    let ordinary = describedLayer(Text("Header"))
+    let exact = describedLayer(Text("Header").lineHeight(height: .Exact(35.0)))
+    expect!(exact.layout.intrinsicHeight == 35.0)
+    expect!(exact.layout.intrinsicWidth == ordinary.layout.intrinsicWidth)
+    match innermostLayer(exact).content {
+        Text(run) -> match run.lineHeight {
+            Exact(points) -> expect!(points == 35.0)
+            else -> expect!(false)
+        }
+        else -> expect!(false)
+    }
+}
+
+@Test
+function lineHeightUsesSameBaselinePitchInWrappingAndMeasurement() {
+    let content = "One line\nAnother line\nFinal line"
+    let exact = foundationTextWrappedSize(
+        content, 17.0, 400.0, 260.0,
+        lineHeight: .Exact(32.0)
+    )
+    expect!(exact.height == 96.0)
+    let withSpacing = foundationTextWrappedSize(
+        content, 17.0, 400.0, 260.0,
+        lineSpacing: 4.0, lineHeight: .Exact(32.0)
+    )
+    expect!(withSpacing.height == 104.0)
+    let described = describedLayer(
+        Text(content).lineHeight(height: .Exact(32.0))
+            .lineSpacing(4.0)
+    )
+    expect!(described.layout.intrinsicHeight == 104.0)
+    match innermostLayer(described).content {
+        Text(run) -> match run.lineHeight {
+            Exact(points) -> expect!(points == 32.0)
+            else -> expect!(false)
+        }
+        else -> expect!(false)
+    }
+}
+
+@Test
+function lineHeightInheritsAndAnExplicitNilRestoresFontMetrics() {
+    let base = ModifierContext {}
+    let outer = modifierContextApply(
+        base, modifierDeltaLineHeight(.Some(.Multiple(1.8)))
+    )
+    match modifierContextForChildren(outer).lineHeight {
+        Some(height) -> match height {
+            Multiple(factor) -> expect!(factor == 1.8)
+            else -> expect!(false)
+        }
+        else -> expect!(false)
+    }
+    let overridden = modifierContextApply(
+        outer, modifierDeltaLineHeight(.Some(.Exact(29.0)))
+    )
+    match overridden.lineHeight {
+        Some(height) -> match height {
+            Exact(points) -> expect!(points == 29.0)
+            else -> expect!(false)
+        }
+        else -> expect!(false)
+    }
+    let reset = modifierContextApply(overridden, modifierDeltaLineHeight(.None))
+    match reset.lineHeight {
+        None -> {}
+        else -> expect!(false)
+    }
+    expect!(coreTextLineHeight(reset.lineHeight) == CATextLineHeight.Variable)
+}
+
+@Test
+function lineHeightWorksWithDynamicTypeAndLineLimits() {
+    let view = Text("Adaptive line with a long enough continuation to wrap")
+        .dynamicTypeSize(size: .Accessibility1)
+        .lineLimit(2)
+        .lineHeight(height: .Multiple(1.65))
+    let description = describedLayer(move view)
+    match innermostLayer(description).content {
+        Text(run) -> {
+            expect!(run.size > 17.0)
+            expect!(run.lineLimit == 2.0)
+            match run.lineHeight {
+                Multiple(factor) -> expect!(factor == 1.65)
+                else -> expect!(false)
+            }
+        }
+        else -> expect!(false)
+    }
+    let constrained = description.contentSize(130.0)
+    expect!(constrained.height > 0.0)
+    expect!(constrained.width <= 131.0)
+}
+
+@Test
+function lineHeightPreservesSectionIdentityAndSupportForReset() {
+    let section = Section {
+        Text("Line")
+    }.lineHeight(height: .Some(.Tight))
+    expect!(section.isSection())
+    let reset = Text("System baseline")
+        .lineHeight(height: .Some(.Loose))
+        .lineHeight(height: .None)
+    let described = describedLayer(move reset)
+    match innermostLayer(described).content {
+        Text(run) -> expect!(run.lineHeight == CATextLineHeight.Variable)
+        else -> expect!(false)
+    }
+}

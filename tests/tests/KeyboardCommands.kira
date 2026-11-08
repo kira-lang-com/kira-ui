@@ -1,0 +1,183 @@
+import Foundation
+import Ember
+import KiraUI
+import KCoreAnimation
+
+struct KeyboardCommandCounts {
+    var moved: Number = 0.0
+    var direction: MoveCommandDirection = .Up
+    var deleted: Number = 0.0
+    var exited: Number = 0.0
+    var played: Number = 0.0
+}
+
+@Test
+function moveCommandsFollowActualFocusedSubviewOnly() {
+    unsafe {
+        let counters = nativeUserData(nativeState(KeyboardCommandCounts {}))
+        layerActionsReset()
+        tapSeqReset()
+        let view = describedLayer(VStack {
+            Text("First").focusable().onMoveCommand(action: { direction in
+                unsafe {
+                    var counts = nativeRecover<KeyboardCommandCounts>(counters)
+                    counts.moved++
+                    counts.direction = direction
+                }
+            })
+            Text("Second").focusable()
+        })
+        let firstKey = view.sublayers[0].sublayers[0].focusKey
+        let secondKey = view.sublayers[1].focusKey
+        expect!(firstKey != 0)
+        expect!(secondKey != 0)
+        expect!(!layerKeyboardCommandDispatch(secondKey, .Move, .Right))
+        expect!(layerKeyboardCommandDispatch(firstKey, .Move, .Left))
+        expect!(nativeRecover<KeyboardCommandCounts>(counters).moved == 1.0)
+        expect!(nativeRecover<KeyboardCommandCounts>(counters).direction
+            == MoveCommandDirection.Left)
+
+        var runner = KiraLayerAppState {}
+        runner.ui.focusedKey = firstKey
+        kiraLayerHandleEvent(runner, AppEvent { kind: .KeyDown, key: .Right })
+        expect!(nativeRecover<KeyboardCommandCounts>(counters).moved == 2.0)
+        expect!(nativeRecover<KeyboardCommandCounts>(counters).direction
+            == MoveCommandDirection.Right)
+    }
+}
+
+@Test
+function commandModifierWorksInsideAnOuterFocusableWrapper() {
+    unsafe {
+        let counters = nativeUserData(nativeState(KeyboardCommandCounts {}))
+        layerActionsReset()
+        tapSeqReset()
+        let view = describedLayer(
+            Text("Nested")
+                .onDeleteCommand(action: { in
+                    unsafe {
+                        var counts = nativeRecover<KeyboardCommandCounts>(counters)
+                        counts.deleted++
+                    }
+                })
+                .focusable(interactions: .Edit)
+        )
+        let key = view.focusKey
+        expect!(key != 0)
+        expect!(layerKeyboardCommandDispatch(key, .Delete))
+        expect!(nativeRecover<KeyboardCommandCounts>(counters).deleted == 1.0)
+
+        var runner = KiraLayerAppState {}
+        runner.ui.focusedKey = key
+        kiraLayerHandleEvent(runner, AppEvent { kind: .KeyDown, key: .Backspace })
+        expect!(nativeRecover<KeyboardCommandCounts>(counters).deleted == 2.0)
+        kiraLayerHandleEvent(runner, AppEvent { kind: .KeyDown, key: .Delete })
+        expect!(nativeRecover<KeyboardCommandCounts>(counters).deleted == 3.0)
+        kiraLayerHandleEvent(runner, AppEvent {
+            kind: .KeyDown, key: .Delete,
+            modifiers: ModifierState { superKey: true }
+        })
+        expect!(nativeRecover<KeyboardCommandCounts>(counters).deleted == 3.0)
+    }
+}
+
+@Test
+function exitCommandCanHandleEscapeWithoutClearingFocusedRegion() {
+    unsafe {
+        let counters = nativeUserData(nativeState(KeyboardCommandCounts {}))
+        layerActionsReset()
+        tapSeqReset()
+        let view = describedLayer(
+            Text("Modal")
+                .focusable()
+                .onExitCommand(action: { in
+                    unsafe {
+                        var counts = nativeRecover<KeyboardCommandCounts>(counters)
+                        counts.exited++
+                    }
+                })
+        )
+        let key = view.sublayers[0].focusKey
+        expect!(key != 0)
+        var runner = KiraLayerAppState {}
+        runner.ui.focusedKey = key
+        kiraLayerHandleEvent(runner, AppEvent { kind: .KeyDown, key: .Escape })
+        expect!(nativeRecover<KeyboardCommandCounts>(counters).exited == 1.0)
+        expect!(runner.ui.focusedKey == key)
+        kiraLayerHandleEvent(runner, AppEvent { kind: .KeyUp, key: .Escape })
+        expect!(nativeRecover<KeyboardCommandCounts>(counters).exited == 1.0)
+    }
+}
+
+@Test
+function editingFieldRetainsArrowAndDeletionKeysFromOuterCommand() {
+    unsafe {
+        let counters = nativeUserData(nativeState(KeyboardCommandCounts {}))
+        layerActionsReset()
+        tapSeqReset()
+        // A native field consumes its own editing keys, even though the
+        // ancestor registered a focused command for the same field.
+        let key = 4402.0
+        layerTextInputRegister(
+            key, { code in }, { pressed in }
+        )
+        let commandKey = 884.0
+        layerKeyboardCommandRegister(commandKey, .Delete, { in
+            unsafe {
+                var counts = nativeRecover<KeyboardCommandCounts>(counters)
+                counts.deleted++
+            }
+        })
+        layerKeyboardCommandAttach(commandKey, key)
+        var runner = KiraLayerAppState {}
+        runner.ui.focusedKey = key
+        kiraLayerHandleEvent(runner, AppEvent { kind: .KeyDown, key: .Backspace })
+        expect!(nativeRecover<KeyboardCommandCounts>(counters).deleted == 0.0)
+    }
+}
+
+@Test
+function playPauseCommandUsesFocusedKeyboardSpaceWithoutCatchingOtherViews() {
+    unsafe {
+        let counters = nativeUserData(nativeState(KeyboardCommandCounts {}))
+        layerActionsReset()
+        tapSeqReset()
+        let view = describedLayer(
+            Text("Player").onPlayPauseCommand(action: { in
+                unsafe {
+                    var counts = nativeRecover<KeyboardCommandCounts>(counters)
+                    counts.played++
+                }
+            }).focusable(interactions: .Edit)
+        )
+        let key = view.focusKey
+        var runner = KiraLayerAppState {}
+        runner.ui.focusedKey = key
+        kiraLayerHandleEvent(runner, AppEvent { kind: .KeyDown, key: .Space })
+        expect!(nativeRecover<KeyboardCommandCounts>(counters).played == 1.0)
+        kiraLayerHandleEvent(runner, AppEvent {
+            kind: .KeyDown, key: .Space, keyRepeat: true
+        })
+        expect!(nativeRecover<KeyboardCommandCounts>(counters).played == 1.0)
+    }
+}
+
+@Test
+function nilCommandActionsAreNotRegisteredAndSectionIdentitySurvives() {
+    layerActionsReset()
+    tapSeqReset()
+    let view = describedLayer(
+        Text("No command").onMoveCommand(action: .None)
+            .onDeleteCommand(action: .None)
+            .onExitCommand(action: .None)
+            .onPlayPauseCommand(action: .None)
+            .focusable()
+    )
+    expect!(view.focusKey != 0)
+    expect!(!layerKeyboardCommandDispatch(view.focusKey, .Move))
+    expect!(!layerKeyboardCommandDispatch(view.focusKey, .Delete))
+    let section = Section {
+        Text("Item").focusable()
+    }.onMoveCommand(action: { direction in })
+    expect!(section.isSection())
+}

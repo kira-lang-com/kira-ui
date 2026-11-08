@@ -1,0 +1,38 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function headerProminenceIsAnInheritedSectionEnvironmentValue() {
+    let base = ModifierContext {}
+    let increased = modifierContextApply(base, modifierDeltaHeaderProminence(.Increased))
+    expect!(base.headerProminence == Prominence.Standard)
+    expect!(increased.headerProminence == Prominence.Increased)
+    expect!(modifierContextForChildren(increased).headerProminence == Prominence.Increased)
+    let restored = modifierContextApply(increased, modifierDeltaHeaderProminence(.Standard))
+    expect!(restored.headerProminence == Prominence.Standard)
+}
+
+@Test
+function increasedProminenceUsesTheThemeHeadlineForGroupedHeaders() {
+    let base = ModifierContext {}
+    let increased = modifierContextApply(base, modifierDeltaHeaderProminence(.Increased))
+    let standardFont = resolvedSectionHeaderFont(base)
+    let prominentFont = resolvedSectionHeaderFont(increased)
+    expect!(prominentFont.size >= standardFont.size)
+    expect!(foundationFontWeight(prominentFont.weight) >= foundationFontWeight(.Regular))
+
+    let context = buildContext(FoundationUiContext {})
+    let section = Section() {
+        Text("Row")
+    } header: {
+        Text("Header")
+    }.headerProminence(prominence: .Increased)
+    let styled = section.describe(
+        context,
+        modifierContextPresenting(ModifierContext {}, .InsetGrouped)
+    )
+    expect!(styled.groupedSection)
+    expect!(describedContainsText(styled, "Header"))
+    expect!(describedContainsText(styled, "Row"))
+}

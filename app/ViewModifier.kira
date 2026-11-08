@@ -1,0 +1,63 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's `ViewModifier` composes a reusable view transformation. The body
+// receives the original view as content and returns its full transformed tree.
+// That tree is described under the *same* environment as a directly applied
+// modifier: no environment snapshot is created and no UIKit/AppKit view is used.
+//
+//     construct SubtleInset() extends ViewModifier {
+//         function body(content: borrow Any Widget) -> Any Widget {
+//             return (copy content).padding(length: resolvedLength(8.0)).opacity(0.8)
+//         }
+//     }
+//
+//     Text("Content").modifier(value: SubtleInset())
+public construct ViewModifier {
+    @Required function body(content: borrow Any Widget) -> Any Widget
+}
+
+// Composition is evaluated as part of description, not eagerly at the call
+// site. A modifier can therefore read state and environment-dependent widgets
+// on each rebuild, and its content follows the same view lifetime as its host.
+public construct ModifiedContent(
+    modifier: Any ViewModifier, modifierType: String
+) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var described = modifier.body(content: content).describe(context, modifiers)
+        if environmentValue("KIRAUI_MODIFIER_DEBUG") == "1" {
+            let erasedModifier: Any = modifier
+            absorb writeFile(
+                "/tmp/kiraui-modifier-runtime-\(described.opacity)",
+                "modifierType=\(modifierType) dynamicType=\(modifier.type.name) erasedType=\(erasedModifier.type.name) childType=\(content.type.name) kind=\(described.kind)"
+            )
+        }
+        // Preserve BOTH the original child's kind and the modifier's kind.
+        // Otherwise two different view types with the same reusable modifier
+        // would share a retained identity even though their structure changed.
+        described.kind = Number(hash(
+            modifierType + ":" + content.type.name + ":" + String(described.kind)
+        ))
+        return described
+    }
+}
+
+extend Widget {
+    // SwiftUI's sole `modifier(_:)` overload, using Kira's `value:` spelling.
+    function modifier(value: some ViewModifier) -> Any Widget {
+        // Capturing `.type` directly on the interface view can describe the
+        // ViewModifier interface instead of the concrete value. Foundation's
+        // `Any` descriptor preserves the originally boxed runtime type, even
+        // across an erased protocol boundary.
+        let erased: Any = value
+        let typeName = erased.type.name
+        return ModifiedContent(modifier: value, modifierType: typeName) { self }
+    }
+}

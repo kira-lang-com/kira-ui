@@ -1,0 +1,84 @@
+import Foundation
+import KiraLayout
+import KCoreAnimation
+
+// Safe-area padding is carried in the safe-area proposal until a container
+// that owns the scene's chrome consumes it. An ordinary view, which has no
+// concept of chrome, reserves exactly the same insets in its measured box.
+public construct SafeAreaPaddingLayer(insets: EdgeInsets) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var inner = copy context
+        inner.safeArea.top += insets.top
+        inner.safeArea.leading += insets.leading
+        inner.safeArea.bottom += insets.bottom
+        inner.safeArea.trailing += insets.trailing
+
+        let alreadyHandled = chromeSafeAreaWasHandled()
+        chromeSafeAreaPending()
+        let described = content.describe(inner, modifiers)
+        let handled = chromeSafeAreaWasHandled()
+        if alreadyHandled || handled { chromeSafeAreaHandled() }
+        if handled { return described }
+        return CALayerDescription {
+            groupedSection: described.groupedSection,
+            layout: CALayoutIntent {
+                widthFill: described.layout.widthFill,
+                heightFill: described.layout.heightFill,
+                flex: described.layout.flex,
+                expandsWidth: described.layout.expandsWidth,
+                expandsHeight: described.layout.expandsHeight,
+                layoutPriority: described.layout.layoutPriority,
+                paddingTop: insets.top,
+                paddingLeading: insets.leading,
+                paddingBottom: insets.bottom,
+                paddingTrailing: insets.trailing
+            },
+            sublayers: [described]
+        }
+    }
+}
+
+public function safeAreaPaddingInsets(edges: EdgeSet, length: Number) -> EdgeInsets {
+    return EdgeInsets {
+        top: edges.has(EdgeSet.top) ? length : 0.0,
+        leading: edges.has(EdgeSet.leading) ? length : 0.0,
+        bottom: edges.has(EdgeSet.bottom) ? length : 0.0,
+        trailing: edges.has(EdgeSet.trailing) ? length : 0.0
+    }
+}
+
+extend Widget {
+    // SwiftUI: `.safeAreaPadding(_ insets: EdgeInsets)`.
+    function safeAreaPadding(insets: EdgeInsets) -> Any Widget {
+        return SafeAreaPaddingLayer(insets: move insets) { self }
+    }
+
+    // SwiftUI: `.safeAreaPadding(_ edges: Edge.Set = .all,
+    //                           _ length: CGFloat? = nil)`.
+    function safeAreaPadding(
+        edges: EdgeSet = EdgeSet.all,
+        length: Number? = .None
+    ) -> Any Widget {
+        let actual = match length {
+            Some(value) -> value
+            None -> LayoutMargin.compact
+        }
+        return SafeAreaPaddingLayer(
+            insets: safeAreaPaddingInsets(edges, actual)
+        ) { self }
+    }
+
+    // SwiftUI: `.safeAreaPadding(_ length: CGFloat)`.
+    function safeAreaPadding(length: Number) -> Any Widget {
+        return SafeAreaPaddingLayer(
+            insets: safeAreaPaddingInsets(EdgeSet.all, length)
+        ) { self }
+    }
+}

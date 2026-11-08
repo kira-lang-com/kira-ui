@@ -1,0 +1,39 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI lifecycle callbacks belong to a view's structural identity, not
+// every evaluation of its `body`. The same view state sweep that owns @State
+// detects insertion/removal and also handles navigation/tab retention.
+public construct ViewLifecycleLayer(
+    appearing: () -> Void = layerNoop,
+    disappearing: () -> Void = layerNoop
+) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        lifecycleViewRegister(
+            slotKey("kiraui.lifecycle.", tapSeqKey()),
+            appearing,
+            disappearing
+        )
+        return content.describe(context, modifiers)
+    }
+}
+
+extend Widget {
+    // SwiftUI's View `.onAppear(perform: (() -> Void)? = nil)` overload.
+    // The no-argument form is useful for generic modifier composition.
+    function onAppear(action: () -> Void = layerNoop) -> Any Widget {
+        return ViewLifecycleLayer(appearing: action) { self }
+    }
+
+    // SwiftUI's View `.onDisappear(perform: (() -> Void)? = nil)` overload.
+    function onDisappear(action: () -> Void = layerNoop) -> Any Widget {
+        return ViewLifecycleLayer(disappearing: action) { self }
+    }
+}

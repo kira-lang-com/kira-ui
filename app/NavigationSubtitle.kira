@@ -1,0 +1,66 @@
+import Foundation
+import KCoreAnimation
+
+// A navigation subtitle is a child-to-ancestor preference, like navigationTitle
+// and toolbar actions. The window's toolbar draws it; the view's body must NOT
+// gain a second independent text layer or an accidental safe-area inset.
+public construct NavigationSubtitleLayer(subtitle: String) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        toolbarSetSubtitle(copy subtitle)
+        return content.describe(context, modifiers)
+    }
+}
+
+extend Widget {
+    // SwiftUI's StringProtocol overload; Kira String is its native text type.
+    function navigationSubtitle(subtitle: String) -> Any Widget {
+        return NavigationSubtitleLayer(subtitle: move subtitle) { self }
+    }
+
+    // SwiftUI's `Text` overload, preserving the source text while the actual
+    // navigation bar applies its own adaptive title/subtitle typography.
+    function navigationSubtitle(subtitle: Text) -> Any Widget {
+        return NavigationSubtitleLayer(subtitle: copy subtitle.content) { self }
+    }
+}
+
+// One native toolbar title stack. Both rows are measured under their own font
+// faces and align in a column within the SAME title/section key; navigation
+// transition code fades or moves them together. Without a subtitle this is
+// exactly the previous one-line native toolbar title description.
+public function windowTitleWithSubtitle(
+    title: borrow String,
+    subtitle: borrow String,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext
+) -> CALayerDescription {
+    if subtitle.count == 0 { return windowTitle(title, context, modifiers) }
+    let face = windowTitleFontFor(context.viewportWidth)
+    var heading = windowTitle(title, context, modifiers)
+    heading.layout.widthFill = false
+    heading.layout.heightFill = false
+    let subface = max(face.size * 0.72, 10.0)
+    var secondary = Text(content: copy subtitle)
+        .font(size: resolvedLength(subface), weight: .Regular)
+        .foregroundColor(.Secondary)
+        .describe(context, modifiers)
+    secondary.layout.widthFill = false
+    secondary.layout.heightFill = false
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            axis: .Column,
+            widthFill: false,
+            heightFill: false,
+            spacing: 0.0,
+            alignment: Point { x: 0.0, y: 0.5 }
+        },
+        sublayers: [move heading, move secondary]
+    }
+}

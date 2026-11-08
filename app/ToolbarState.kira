@@ -40,6 +40,17 @@ public function toolbarEnterColumn(column: Number) {
     }
 }
 
+// A custom column wrapper must restore its parent's slot when it finishes;
+// otherwise a detail stack following a sidebar incorrectly declares its title
+// and search over the sidebar.
+public function toolbarCurrentColumn() -> Number {
+    unsafe {
+        toolbarSinkEnsure()
+        let sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+        return sink.column
+    }
+}
+
 // What a column calls itself. The LAST title wins, matching SwiftUI: a title set
 // deeper in a column is the one that column is currently showing.
 public function toolbarSetTitle(title: String) {
@@ -54,6 +65,22 @@ public function toolbarSetTitle(title: String) {
             return
         }
         sink.detailTitle = move title
+    }
+}
+
+// Titles and subtitles are independent page preferences: either may be set
+// before or after the other, and covered navigation pages retain both while
+// the toolbar cross-fades during a push or pop.
+public function toolbarSetSubtitle(subtitle: String) {
+    unsafe {
+        toolbarSinkEnsure()
+        var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+        if !sink.collecting { return }
+        if sink.column == ToolbarColumn.sidebar {
+            sink.sidebarSubtitle = move subtitle
+        } else {
+            sink.detailSubtitle = move subtitle
+        }
     }
 }
 
@@ -107,6 +134,7 @@ public function toolbarColumnTitle() -> String {
 // set large under the bar, and how far that has scrolled under.
 public struct ToolbarTitle {
     var title: String = ""
+    var subtitle: String = ""
     var largeTitle: Bool = false
     var titleCollapse: Number = 0.0
 }
@@ -120,11 +148,23 @@ public function toolbarTakeColumnTitle() -> ToolbarTitle {
         var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
         let taken = ToolbarTitle {
             title: toolbarColumnTitle(),
-            largeTitle: sink.largeTitle,
-            titleCollapse: sink.titleCollapse
+            subtitle: sink.column == ToolbarColumn.sidebar
+                ? sink.sidebarSubtitle : sink.detailSubtitle,
+            // A compact split view lowers its sidebar as the root page then
+            // transfers that title to the document toolbar. Its collapsed
+            // fraction must come along too, otherwise it stays large and
+            // never becomes inline after the sidebar scrolls.
+            largeTitle: sink.column == ToolbarColumn.sidebar
+                ? sink.sidebarLargeTitle : sink.largeTitle,
+            titleCollapse: sink.column == ToolbarColumn.sidebar
+                ? sink.sidebarTitleCollapse : sink.titleCollapse
         }
         sink.largeTitle = false
         sink.titleCollapse = 0.0
+        if sink.column == ToolbarColumn.sidebar {
+            sink.sidebarLargeTitle = false
+            sink.sidebarTitleCollapse = 0.0
+        }
         return taken
     }
 }
@@ -135,6 +175,7 @@ public function toolbarShowPageTitle(page: borrow ToolbarTitle) {
         toolbarSinkEnsure()
         var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
         sink.detailTitle = page.title
+        sink.detailSubtitle = page.subtitle
         sink.largeTitle = page.largeTitle
         sink.titleCollapse = page.titleCollapse
     }
@@ -146,6 +187,10 @@ public function toolbarShowLargeTitle() {
     unsafe {
         toolbarSinkEnsure()
         var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+        if sink.column == ToolbarColumn.sidebar {
+            sink.sidebarLargeTitle = true
+            return
+        }
         sink.largeTitle = true
     }
 }
@@ -156,6 +201,11 @@ public function toolbarCollapseLargeTitle(collapse: Number) {
     unsafe {
         toolbarSinkEnsure()
         var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+        if sink.column == ToolbarColumn.sidebar {
+            sink.sidebarLargeTitle = true
+            sink.sidebarTitleCollapse = collapse
+            return
+        }
         sink.titleCollapse = collapse
     }
 }
@@ -218,11 +268,13 @@ public function chromeSetNavigationLayout(
     hasNavigationColumn: Bool,
     navigationShown: Number,
     visibleColumn: Number,
+    railWidth: Number = 0.0,
 ) {
     unsafe {
         toolbarSinkEnsure()
         var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
         sink.navigationWidth = navigationWidth
+        sink.navigationRailWidth = railWidth
         sink.hasNavigationColumn = hasNavigationColumn
         sink.navigationShown = navigationShown
         sink.visibleColumn = visibleColumn

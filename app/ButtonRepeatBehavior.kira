@@ -1,0 +1,113 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's ButtonRepeatBehavior. Automatic delegates to the host's ordinary
+// button policy; explicit Enabled repeats a held press, while Disabled forbids
+// both pointer and keyboard auto-repeat. The button's normal pointer-up click
+// remains responsible for taps shorter than the repeat threshold.
+public enum ButtonRepeatBehavior {
+    Automatic
+    Enabled
+    Disabled
+}
+
+public function modifierDeltaButtonRepeatBehavior(
+    behavior: ButtonRepeatBehavior
+) -> ModifierDelta {
+    return ModifierDelta {
+        hasButtonRepeatBehavior: true,
+        buttonRepeatBehavior: behavior
+    }
+}
+
+public struct ButtonRepeatTrack {
+    var press: Number = 0
+    var nextMillis: Number = 0
+    var fired: Number = 0
+}
+
+public namespace ButtonRepeatTiming {
+    // Recognize one deliberate hold before repeating, like the platform's
+    // press-and-hold repeat button. Intervals accelerate and settle at 50 ms.
+    let initialDelayMillis: Number = 450.0
+}
+
+public function buttonRepeatIntervalMillis(completed: Number) -> Number {
+    return max(50.0, 135.0 - completed * 6.0)
+}
+
+// Deterministic state machine, separate from real wall-clock reads. A fresh
+// press arms but does not activate the button; each due tick activates once
+// and sets the next accelerated interval. The release router later suppresses
+// its ordinary click iff this physical press has already activated.
+public function buttonRepeatAdvance(
+    track: borrow mut ButtonRepeatTrack,
+    physicalPress: Number,
+    nowMillis: Number
+) -> Bool {
+    if physicalPress <= 0.0 {
+        track.press = 0
+        track.nextMillis = 0
+        track.fired = 0
+        return false
+    }
+    if track.press != physicalPress {
+        track.press = physicalPress
+        track.nextMillis = nowMillis + ButtonRepeatTiming.initialDelayMillis
+        track.fired = 0
+        return false
+    }
+    if nowMillis < track.nextMillis { return false }
+    track.fired++
+    track.nextMillis = nowMillis + buttonRepeatIntervalMillis(track.fired)
+    return true
+}
+
+public function buttonRepeatSlot(key: Number) -> ViewStateKey {
+    return slotKey("kiraui.button-repeat.", key)
+}
+
+public function buttonRepeatConsumed(key: Number, physicalPress: Number) -> Bool {
+    unsafe {
+        if key == 0 || !ambientStateHasView(buttonRepeatSlot(key)) { return false }
+        let track = nativeRecover<ButtonRepeatTrack>(ambientStateGetView(buttonRepeatSlot(key)))
+        return track.press == physicalPress && track.fired > 0
+    }
+}
+
+public function buttonRepeatFollow(
+    key: Number,
+    context: borrow BuildContext,
+    action: () -> Void
+) {
+    unsafe {
+        let slot = buttonRepeatSlot(key)
+        if !ambientStateHasView(slot) {
+            ambientStatePutView(copy slot, nativeUserData(nativeState(ButtonRepeatTrack {})))
+        }
+        var track = nativeRecover<ButtonRepeatTrack>(ambientStateGetView(slot))
+        if context.heldStartedControl != key || context.heldControl != key {
+            buttonRepeatAdvance(track, 0.0, 0.0)
+            return
+        }
+        // Leaving the button pauses repetition without forgetting the press
+        // that already fired; lifting over the original button must NOT
+        // trigger a duplicate normal click after it was held elsewhere.
+        if context.hoveredKey != key { return }
+        let now = unixMillis()
+        if buttonRepeatAdvance(track, context.heldPress, now) {
+            action()
+        }
+        let remaining = max(0.001, (track.nextMillis - now) / 1000.0)
+        redrawAfter(remaining)
+    }
+}
+
+extend Widget {
+    // SwiftUI: `.buttonRepeatBehavior(_ behavior: ButtonRepeatBehavior)`.
+    function buttonRepeatBehavior(behavior: ButtonRepeatBehavior) -> Any Widget {
+        return ModifierDeltaLayer(
+            delta: modifierDeltaButtonRepeatBehavior(behavior)
+        ) { self }
+    }
+}

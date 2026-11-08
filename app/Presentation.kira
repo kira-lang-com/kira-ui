@@ -55,9 +55,13 @@ public construct PopoverLayer(
         context: borrow BuildContext,
         modifiers: borrow ModifierContext
     ) -> CALayerDescription {
-        let described = content.describe(context, modifiers)
+        var described = content.describe(context, modifiers)
         match presentationAnchor(isPresented.get()) {
-            Some(anchor) -> presentPopover(anchor, context, modifiers)
+            Some(anchor) -> {
+                if presentPopover(anchor, context, modifiers) {
+                    presentationHideAccessibility(described)
+                }
+            }
             None -> {}
         }
         return described
@@ -67,8 +71,9 @@ public construct PopoverLayer(
         anchor: borrow Overlay,
         context: borrow BuildContext,
         modifiers: borrow ModifierContext
-    ) {
+    ) -> Bool {
         let band = tapSeqEnterOverlay()
+        let sizingKey = tapSeqKey()
         let dismiss = tapSeqKey()
         let shown = isPresented
         layerActionRegister(
@@ -81,16 +86,71 @@ public construct PopoverLayer(
         let blocker = tapSeqKey()
         layerActionRegister(blocker, layerNoop)
         let scope = scrollScopeEnterFloating(presentationScrollScope)
-        var card = popover
-        .background(RoundedRectangle(cornerRadius: PopoverMetrics.corner, style: .Continuous))
-        .backgroundStyle(.Raised)
-        .themeBorder(.Subtle)
-        .describe(context, modifierContextForOverlay(modifiers))
+        let presentedModifiers = modifierContextForOverlay(modifiers)
+        let raw = popover.describe(context, presentedModifiers)
+        let options = presentationPreferences(raw)
+        let presentedAs = presentationResolvedKind(
+            .Popover, presentationCompactSizeClassForHost(context), options
+        )
+        if presentedAs == .Sheet {
+            let unused = scrollScopeLeave(copy scope)
+            tapSeqLeaveOverlay(band)
+            let adapter = SheetLayer(
+                isPresented: isPresented,
+                sheetContent: DescribedPresentationContent(layer: copy raw)
+            ) { EmptyView() }
+            let ignored = adapter.describe(context, modifiers)
+            return true
+        }
+        if presentedAs == .FullScreenCover {
+            let unused = scrollScopeLeave(copy scope)
+            tapSeqLeaveOverlay(band)
+            let adapter = FullScreenCoverLayer(
+                isPresented: isPresented,
+                cover: DescribedPresentationContent(layer: copy raw)
+            ) { EmptyView() }
+            let ignored = adapter.describe(context, modifiers)
+            return true
+        }
+        let corner = resolvedPresentationCornerRadius(options, PopoverMetrics.corner)
+        var arrowBackground: CAContent? = .None
+        var card = CALayerDescription {}
+        match presentationBackgroundLayer(options) {
+            Some(customBackground) -> {
+                // Uniform paints can continue across the arrow's clipped
+                // diamond. A custom composition retains the standard arrow
+                // fill until a shared arbitrary-view mask is available.
+                arrowBackground = match customBackground.content {
+                    Solid(solid) -> .Some(.Solid(solid))
+                    Glass(glass) -> .Some(.Glass(glass))
+                    else -> .None
+                }
+                card = DescribedPresentationContent(layer: move raw)
+                    .background(DescribedPresentationContent(layer: customBackground))
+                    .themeBorder(.Subtle)
+                    .describe(context, presentedModifiers)
+            }
+            None -> {
+                card = DescribedPresentationContent(layer: move raw)
+                    .background(RoundedRectangle(cornerRadius: corner, style: .Continuous))
+                    .backgroundStyle(.Raised)
+                    .themeBorder(.Subtle)
+                    .describe(context, presentedModifiers)
+            }
+        }
         let claimed = scrollScopeLeave(move scope)
-        let size = card.measure(context.viewportWidth)
+        let measured = card.measure(context.viewportWidth)
+        let margin = windowChromeMetrics().edgeInset
+        let size = presentationSizedCard(
+            sizingKey, options, measured,
+            Size {
+                width: max(1.0, context.viewportWidth - margin * 2.0),
+                height: max(1.0, context.viewportHeight - margin * 2.0)
+            }
+        )
         card.layout.fixedWidth = size.width
         card.layout.fixedHeight = size.height
-        card.cornerRadius = PopoverMetrics.corner
+        card.cornerRadius = corner
         card.clipsChildren = true
         card.hittable = true
         card.hitKey = blocker
@@ -103,10 +163,12 @@ public construct PopoverLayer(
                 anchorX: placed.x,
                 anchorY: placed.y,
                 z: OverlayLevel.surface,
-                content: popoverCard(move card, size, placed, arrowEdge, fill),
+                content: popoverCard(move card, size, placed, arrowEdge, fill,
+                    move arrowBackground),
                 dismissKey: dismiss
             }
         )
+        return false
     }
 }
 
@@ -134,10 +196,10 @@ public construct FullScreenCoverLayer(
                 // cover keeps clear of the status bar and the home indicator.
                 let inset = context.safeArea
                 let scope = scrollScopeEnterFloating(presentationScrollScope)
-                var inner = cover.describe(
-                    insideSafeArea(context),
-                    modifierContextForOverlay(modifiers)
-                )
+                let presentedModifiers = modifierContextForOverlay(modifiers)
+                var inner = cover.describe(insideSafeArea(context), presentedModifiers)
+                let options = presentationPreferences(inner)
+                let selectedBackground = presentationBackgroundLayer(options)
                 let claimed = scrollScopeLeave(move scope)
                 inner.layout.widthFill = false
                 inner.layout.heightFill = false
@@ -145,15 +207,29 @@ public construct FullScreenCoverLayer(
                 inner.layout.fixedHeight = context.viewportHeight - inset.top - inset.bottom
                 inner.layout.offset = Point { x: inset.leading, y: inset.top }
                 let fill = colorFromFoundation(modifierBackgroundStyle(.Window, modifiers))
-                var shown = CALayerDescription {
-                    content: .Solid(CASolid { fill: fill }),
-                    layout: CALayoutIntent {
-                        widthFill: false,
-                        heightFill: false,
-                        fixedWidth: context.viewportWidth,
-                        fixedHeight: context.viewportHeight
-                    },
-                    sublayers: [move inner]
+                var shown = CALayerDescription {}
+                match selectedBackground {
+                    Some(background) -> {
+                        shown = CALayerDescription {
+                            layout: CALayoutIntent {
+                                widthFill: false, heightFill: false,
+                                fixedWidth: context.viewportWidth,
+                                fixedHeight: context.viewportHeight
+                            },
+                            sublayers: [move background, move inner]
+                        }
+                    }
+                    None -> {
+                        shown = CALayerDescription {
+                            content: .Solid(CASolid { fill: fill }),
+                            layout: CALayoutIntent {
+                                widthFill: false, heightFill: false,
+                                fixedWidth: context.viewportWidth,
+                                fixedHeight: context.viewportHeight
+                            },
+                            sublayers: [move inner]
+                        }
+                    }
                 }
                 shown.hittable = true
                 shown.hitKey = blocker
@@ -301,7 +377,8 @@ function popoverCard(
     size: borrow Size,
     placed: borrow PopoverPlacement,
     arrowEdge: Edge,
-    fill: borrow CAColor
+    fill: borrow CAColor,
+    arrowBackground: CAContent? = .None
 ) -> CALayerDescription {
     let width = PopoverMetrics.arrowWidth
     let height = PopoverMetrics.arrowHeight
@@ -319,8 +396,12 @@ function popoverCard(
         Leading -> Point { x: height, y: width / 2.0 }
         Trailing -> Point { x: overlap, y: width / 2.0 }
     }
+    let arrowContent = match arrowBackground {
+        Some(content) -> content
+        None -> CAContent.Solid(CASolid { fill: copy fill })
+    }
     var square = CALayerDescription {
-        content: .Solid(CASolid { fill: copy fill }),
+        content: move arrowContent,
         rotation: 0.785398163397448309,
         layout: CALayoutIntent {
             widthFill: false,

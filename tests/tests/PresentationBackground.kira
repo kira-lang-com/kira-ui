@@ -1,0 +1,239 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+struct PresentationBackgroundDescribes {
+    var count: Number = 0.0
+}
+
+public construct CountedPresentationBackground(onDescribe: () -> Void) extends Widget {
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        onDescribe()
+        return CALayerDescription {
+            content: .Solid(CASolid {
+                fill: CAColor { r: 0.25, g: 0.45, b: 0.8, a: 1.0 }
+            })
+        }
+    }
+}
+
+@Test
+function presentationBackgroundSupportsThemeColorAndRealLiteralFill() {
+    let literal = RGBAColor { r: 0.12, g: 0.35, b: 0.65, a: 0.92 }
+    let described = describedLayer(
+        Text("Sheet content").presentationBackground(style: literal)
+    )
+    let options = presentationPreferences(described)
+    expect!(options.hasBackground)
+    expect!(options.backgroundLayers.count == 1)
+    match options.backgroundLayers[0].content {
+        Solid(fill) -> {
+            expect!(abs(fill.fill.r - 0.12) < 0.01)
+            expect!(abs(fill.fill.g - 0.35) < 0.01)
+            expect!(abs(fill.fill.b - 0.65) < 0.01)
+            expect!(abs(fill.fill.a - 0.92) < 0.01)
+        }
+        else -> expect!(false)
+    }
+    let theme = presentationPreferences(describedLayer(
+        Text("Sheet content").presentationBackground(style: PrimaryColor.Blue)
+    ))
+    expect!(theme.hasBackground)
+    match theme.backgroundLayers[0].content {
+        Solid(fill) -> expect!(fill.fill.a > 0.0)
+        else -> expect!(false)
+    }
+}
+
+@Test
+function presentationBackgroundAcceptsThemeElevationAndNativeMaterial() {
+    let raised = presentationPreferences(describedLayer(
+        Text("Content").presentationBackground(style: BackgroundStyle.Raised)
+    ))
+    expect!(raised.hasBackground)
+    match raised.backgroundLayers[0].content {
+        Solid(fill) -> expect!(fill.fill.a > 0.0)
+        else -> expect!(false)
+    }
+    let glass = presentationPreferences(describedLayer(
+        Text("Content").presentationBackground(style: Material.LayeredGlass)
+    ))
+    expect!(glass.hasBackground)
+    match glass.backgroundLayers[0].content {
+        Glass(lens) -> {}
+        else -> expect!(false)
+    }
+}
+
+@Test
+function customPresentationBackgroundHasIndependentAlignmentAndDoesNotFillLayout() {
+    let noDecoration = describedLayer(Text("Natural content"))
+    let custom = describedLayer(
+        Text("Natural content")
+            .presentationBackground(
+                alignment: .TopTrailing,
+                content: RoundedRectangle(cornerRadius: 8.0)
+                    .fill(RGBAColor { r: 0.15, g: 0.52, b: 0.27, a: 1.0 })
+                    .frame(width: 80.0, height: 24.0)
+            )
+    )
+    expect!(custom.layout.intrinsicWidth == noDecoration.layout.intrinsicWidth)
+    expect!(custom.layout.intrinsicHeight == noDecoration.layout.intrinsicHeight)
+    let options = presentationPreferences(custom)
+    expect!(options.backgroundAlignment.x == 1.0)
+    expect!(options.backgroundAlignment.y == 0.0)
+    match presentationBackgroundLayer(options) {
+        Some(background) -> {
+            expect!(background.layout.decorates)
+            expect!(background.layout.alignment.x == 1.0)
+            expect!(background.layout.alignment.y == 0.0)
+        }
+        None -> expect!(false)
+    }
+}
+
+@Test
+function sheetBackgroundDecoratesActualPresentedCardAndIsBelowItsContent() {
+    let shown = Binding<Bool> { get: { in return true }, set: { value in } }
+    layerActionsReset()
+    overlayCollect()
+    tapSeqReset()
+    absorb describedLayerInWideWindow(Text("Presenting view").sheet(isPresented: shown) {
+        Text("Sheet foreground")
+            .presentationBackground(style: RGBAColor {
+                r: 0.85, g: 0.10, b: 0.15, a: 1.0
+            })
+            .presentationCornerRadius(radius: 19.0)
+    })
+    let overlays = overlaysThisFrame()
+    expect!(overlays.count == 2)
+    let card = overlays[1].content
+    expect!(card.cornerRadius == 19.0)
+    expect!(card.clipsChildren)
+    expect!(card.sublayers.count >= 2)
+    let background = card.sublayers[0]
+    expect!(background.layout.decorates)
+    match background.content {
+        Solid(fill) -> {
+            expect!(fill.fill.r > 0.8)
+            expect!(fill.fill.g < 0.15)
+        }
+        else -> expect!(false)
+    }
+    expect!(describedContainsText(card, "Sheet foreground"))
+    // A wide window keeps a 70pt margin for its document-style sheet.
+    expect!(card.layout.fixedHeight == min(SheetMetrics.height, 720.0 - 70.0))
+    overlayStopCollecting()
+}
+
+@Test
+function backgroundIsDescribedOnceAndOuterPreferenceOverridesInnerPreference() {
+    unsafe {
+        let record = nativeUserData(nativeState(PresentationBackgroundDescribes {}))
+        let described = describedLayer(
+            Text("Content")
+                .presentationBackground(style: PrimaryColor.Red)
+                .frame(width: 250.0, height: 90.0)
+                .presentationBackground(content: CountedPresentationBackground(onDescribe: { in
+                    unsafe {
+                        var count = nativeRecover<PresentationBackgroundDescribes>(record)
+                        count.count++
+                    }
+                }))
+        )
+        let chosen = presentationPreferences(described)
+        expect!(chosen.hasBackground)
+        expect!(chosen.backgroundLayers.count == 1)
+        expect!(nativeRecover<PresentationBackgroundDescribes>(record).count == 1.0)
+        match chosen.backgroundLayers[0].content {
+            Solid(fill) -> expect!(fill.fill.b == 0.8)
+            else -> expect!(false)
+        }
+    }
+}
+
+@Test
+function backgroundModifiersPreserveSectionIdentityAndAreNotModalWhenInline() {
+    let section = Section {
+        Text("Row")
+    }.presentationBackground(style: PrimaryColor.Teal)
+    expect!(section.isSection())
+    let described = describedLayer(move section)
+    expect!(describedContainsText(described, "Row"))
+    let settings = presentationPreferences(described)
+    expect!(settings.hasBackground)
+    // This is only a preference until an actual Sheet or Popover consumes it.
+    match described.content {
+        Empty -> {}
+        else -> expect!(false)
+    }
+}
+
+@Test
+function popoverBackgroundReplacesRaisedCardAndPaintsTheArrowContinuously() {
+    let shown = Binding<Bool> { get: { in return true }, set: { value in } }
+    layerActionsReset()
+    overlayCollect()
+    tapSeqReset()
+    absorb describedLayerInWideWindow(Text("Show popover").popover(
+        isPresented: shown, arrowEdge: .Top
+    ) {
+        Text("Popover detail")
+            .presentationBackground(style: RGBAColor {
+                r: 0.14, g: 0.57, b: 0.30, a: 1.0
+            })
+            .presentationCornerRadius(radius: 13.0)
+    })
+    let overlays = overlaysThisFrame()
+    expect!(overlays.count == 1)
+    let presented = overlays[0].content
+    expect!(presented.sublayers.count == 2)
+    let card = presented.sublayers[0]
+    expect!(card.cornerRadius == 13.0)
+    expect!(card.clipsChildren)
+    expect!(card.sublayers.count >= 2)
+    match card.sublayers[0].content {
+        Solid(fill) -> expect!(fill.fill.g > 0.50)
+        else -> expect!(false)
+    }
+    let arrow = presented.sublayers[1]
+    expect!(arrow.sublayers.count == 1)
+    match arrow.sublayers[0].content {
+        Solid(fill) -> expect!(fill.fill.g > 0.50)
+        else -> expect!(false)
+    }
+    expect!(describedContainsText(card, "Popover detail"))
+    overlayStopCollecting()
+}
+
+@Test
+function fullScreenCoverBackgroundPaintsWholeWindowBehindSafeAreaContent() {
+    let shown = Binding<Bool> { get: { in return true }, set: { value in } }
+    layerActionsReset()
+    overlayCollect()
+    tapSeqReset()
+    absorb describedLayerInWideWindow(Text("Page under cover").fullScreenCover(
+        isPresented: shown
+    ) {
+        Text("Cover details")
+            .presentationBackground(style: RGBAColor {
+                r: 0.35, g: 0.17, b: 0.83, a: 1.0
+            })
+    })
+    let overlays = overlaysThisFrame()
+    expect!(overlays.count == 1)
+    let full = overlays[0].content
+    expect!(full.layout.fixedWidth == 1100.0)
+    expect!(full.layout.fixedHeight == 720.0)
+    expect!(full.sublayers.count == 2)
+    expect!(full.sublayers[0].layout.decorates)
+    match full.sublayers[0].content {
+        Solid(fill) -> expect!(fill.fill.b > 0.80)
+        else -> expect!(false)
+    }
+    expect!(describedContainsText(full.sublayers[1], "Cover details"))
+    overlayStopCollecting()
+}

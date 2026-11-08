@@ -1,0 +1,43 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function listSectionSpacingKeepsCustomValuesInTheInheritedContext() {
+    let context = modifierContextApply(
+        ModifierContext {}, modifierDeltaListSectionSpacing(.Custom(13.0))
+    )
+    expect!(resolvedListSectionSpacing(context.listSectionSpacing) == 13.0)
+    expect!(resolvedListSectionSpacing(modifierContextForChildren(context).listSectionSpacing) == 13.0)
+    let overridden = modifierContextApply(
+        context, modifierDeltaListSectionSpacing(.Custom(5.0))
+    )
+    expect!(resolvedListSectionSpacing(overridden.listSectionSpacing) == 5.0)
+    expect!(resolvedListSectionSpacing(.Custom(-10.0)) == 0.0)
+    expect!(resolvedListSectionSpacing(.Default) == listMetrics().sectionSpacing)
+    expect!(resolvedListSectionSpacing(.Compact) <= listMetrics().sectionSpacing)
+}
+
+@Test
+function listSectionSpacingSupportsNumericAndTypedOverloads() {
+    let numeric = describedLayer(
+        List() {
+            Text("One")
+            Text("Two")
+        }.listSectionSpacing(spacing: 12.0)
+    )
+    let typed = describedLayer(
+        List() {
+            Text("One")
+            Text("Two")
+        }.listSectionSpacing(spacing: .Custom(12.0))
+    )
+    expect!(numeric.sublayers.count == typed.sublayers.count)
+    let compact = describedLayer(
+        List() {
+            Text("One")
+            Text("Two")
+        }.listSectionSpacing(spacing: .Compact)
+    )
+    expect!(compact.sublayers.count > 0)
+}

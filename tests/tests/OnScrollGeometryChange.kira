@@ -1,0 +1,226 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+struct ScrollGeometryEvents {
+    var calls: Number = 0.0
+    var firstOld: Number = 0.0
+    var firstNew: Number = 0.0
+    var lastOld: Number = 0.0
+    var lastNew: Number = 0.0
+}
+
+@Test
+function scrollGeometryProjectionDoesNotNotifyDuringItsInitialMeasurement() {
+    unsafe {
+        let record = nativeUserData(nativeState(ScrollGeometryEvents {}))
+        let projection: (ScrollGeometry) -> Number = { geometry in
+            return geometry.contentOffset.y
+        }
+        let callback: (Number, Number) -> Void = { before, after in
+            unsafe {
+                var values = nativeRecover<ScrollGeometryEvents>(record)
+                values.calls++
+                values.lastOld = before
+                values.lastNew = after
+            }
+        }
+        let original = ScrollGeometry {
+            contentOffset: Point { y: 15.0 }
+        }
+        expect!(!scrollGeometryObserve(
+            982111.0, 982112.0, original, projection, callback
+        ))
+        expect!(!scrollGeometryObserve(
+            982111.0, 982112.0, original, projection, callback
+        ))
+        expect!(nativeRecover<ScrollGeometryEvents>(record).calls == 0.0)
+    }
+}
+
+@Test
+function scrollGeometryObserverSendsRealOldAndNewOnlyWhenProjectionChanges() {
+    unsafe {
+        let record = nativeUserData(nativeState(ScrollGeometryEvents {}))
+        let callback: (Number, Number) -> Void = { before, after in
+            unsafe {
+                var state = nativeRecover<ScrollGeometryEvents>(record)
+                if state.calls == 0.0 {
+                    state.firstOld = before
+                    state.firstNew = after
+                }
+                state.calls++
+                state.lastOld = before
+                state.lastNew = after
+            }
+        }
+        let projection: (ScrollGeometry) -> Number = { geometry in
+            return geometry.contentOffset.y
+        }
+        let first = ScrollGeometry { contentOffset: Point { y: 20.0 } }
+        let resized = ScrollGeometry {
+            contentOffset: Point { y: 20.0 },
+            containerSize: Size { width: 300.0, height: 130.0 }
+        }
+        let scrolled = ScrollGeometry {
+            contentOffset: Point { y: 95.0 },
+            containerSize: Size { width: 300.0, height: 130.0 }
+        }
+        let further = ScrollGeometry {
+            contentOffset: Point { y: 125.0 }
+        }
+        expect!(!scrollGeometryObserve(
+            982201.0, 982202.0, first, projection, callback
+        ))
+        expect!(!scrollGeometryObserve(
+            982201.0, 982202.0, resized, projection, callback
+        ))
+        expect!(scrollGeometryObserve(
+            982201.0, 982202.0, scrolled, projection, callback
+        ))
+        expect!(scrollGeometryObserve(
+            982201.0, 982202.0, further, projection, callback
+        ))
+        expect!(nativeRecover<ScrollGeometryEvents>(record).calls == 2.0)
+        expect!(nativeRecover<ScrollGeometryEvents>(record).firstOld == 20.0)
+        expect!(nativeRecover<ScrollGeometryEvents>(record).firstNew == 95.0)
+        expect!(nativeRecover<ScrollGeometryEvents>(record).lastOld == 95.0)
+        expect!(nativeRecover<ScrollGeometryEvents>(record).lastNew == 125.0)
+    }
+}
+
+@Test
+function sameModifierTracksSeparateScrollViewsIndependently() {
+    unsafe {
+        let record = nativeUserData(nativeState(ScrollGeometryEvents {}))
+        let projection: (ScrollGeometry) -> Number = { geometry in
+            return geometry.contentOffset.y
+        }
+        let callback: (Number, Number) -> Void = { before, after in
+            unsafe {
+                var values = nativeRecover<ScrollGeometryEvents>(record)
+                values.calls++
+                values.lastOld = before
+                values.lastNew = after
+            }
+        }
+        expect!(!scrollGeometryObserve(
+            982301.0, 982302.0,
+            ScrollGeometry { contentOffset: Point { y: 70.0 } },
+            projection, callback
+        ))
+        expect!(!scrollGeometryObserve(
+            982301.0, 982303.0,
+            ScrollGeometry { contentOffset: Point { y: 205.0 } },
+            projection, callback
+        ))
+        expect!(scrollGeometryObserve(
+            982301.0, 982302.0,
+            ScrollGeometry { contentOffset: Point { y: 82.0 } },
+            projection, callback
+        ))
+        expect!(nativeRecover<ScrollGeometryEvents>(record).lastOld == 70.0)
+        expect!(scrollGeometryObserve(
+            982301.0, 982303.0,
+            ScrollGeometry { contentOffset: Point { y: 210.0 } },
+            projection, callback
+        ))
+        expect!(nativeRecover<ScrollGeometryEvents>(record).lastOld == 205.0)
+        expect!(nativeRecover<ScrollGeometryEvents>(record).calls == 2.0)
+    }
+}
+
+@Test
+function observerOnViewportHeightIgnoresContentOffsetChanges() {
+    unsafe {
+        let record = nativeUserData(nativeState(ScrollGeometryEvents {}))
+        let projection: (ScrollGeometry) -> Number = { geometry in
+            return geometry.containerSize.height
+        }
+        let callback: (Number, Number) -> Void = { before, after in
+            unsafe {
+                var values = nativeRecover<ScrollGeometryEvents>(record)
+                values.calls++
+                values.lastOld = before
+                values.lastNew = after
+            }
+        }
+        expect!(!scrollGeometryObserve(
+            982401.0, 982402.0,
+            ScrollGeometry { containerSize: Size { height: 250.0 } },
+            projection, callback
+        ))
+        expect!(!scrollGeometryObserve(
+            982401.0, 982402.0,
+            ScrollGeometry {
+                contentOffset: Point { y: 150.0 },
+                containerSize: Size { height: 250.0 }
+            },
+            projection, callback
+        ))
+        expect!(scrollGeometryObserve(
+            982401.0, 982402.0,
+            ScrollGeometry { containerSize: Size { height: 190.0 } },
+            projection, callback
+        ))
+        expect!(nativeRecover<ScrollGeometryEvents>(record).calls == 1.0)
+        expect!(nativeRecover<ScrollGeometryEvents>(record).lastOld == 250.0)
+        expect!(nativeRecover<ScrollGeometryEvents>(record).lastNew == 190.0)
+    }
+}
+
+@Test
+function scrollGeometryObserverEnvironmentComposesAndUsesMeasuredScrollState() {
+    let root = ModifierContext {}
+    let first = modifierContextApply(root, ModifierDelta {
+        onScrollGeometryChange: .Some(ScrollGeometryChangeHandler {
+            changed: { scrollKey, geometry in }
+        })
+    })
+    let second = modifierContextApply(first, ModifierDelta {
+        onScrollGeometryChange: .Some(ScrollGeometryChangeHandler {
+            changed: { scrollKey, geometry in }
+        })
+    })
+    expect!(second.scrollGeometryObservers.count == 2)
+    expect!(modifierContextForChildren(second).scrollGeometryObservers.count == 2)
+    let measured = ScrollViewState {
+        contentLength: 1170.0,
+        viewportLength: 260.0,
+        viewportCrossLength: 190.0,
+        motion: MotionScrollState { offset: 304.0 }
+    }
+    scrollGeometryDidChange(982502.0, measured, second.scrollGeometryObservers)
+    expect!(scrollPhaseGeometry(measured).visibleRect.y == 304.0)
+}
+
+@Test
+function onScrollGeometryChangeLowersOntoActualScrollView() {
+    let scroll = ScrollView {
+        VStack {
+            Text("First")
+            Text("Second")
+            Text("Third")
+        }
+    }.onScrollGeometryChange(transform: { geometry in
+        return geometry.contentOffset.y
+    }, action: { old, new in })
+    var description = describedLayer(move scroll)
+    expect!(description.sublayers[0].scrollAxis == CAAxis.Column)
+    layOutLayerTree(description, 230.0, 105.0)
+    let key = description.sublayers[0].hitKey
+    unsafe {
+        let state = nativeRecover<ScrollViewState>(
+            ambientStateGetView(scrollViewSlotKey(key))
+        )
+        expect!(state.viewportLength > 0.0)
+        expect!(state.viewportCrossLength > 0.0)
+        expect!(state.contentLength > 0.0)
+    }
+    let section = Section {
+        Text("Row")
+    }.onScrollGeometryChange(transform: { geometry in
+        return geometry.visibleRect.y
+    }, action: { old, new in })
+    expect!(section.isSection())
+}

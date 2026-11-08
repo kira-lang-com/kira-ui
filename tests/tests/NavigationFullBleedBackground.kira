@@ -1,0 +1,77 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// A SwiftUI `Color.ignoresSafeArea()` must reach underneath the navigation
+// bar. It is not a second card below a white toolbar: the navigation canvas
+// is the same color as the whole page, including above the safe-area content.
+function navigationCanvasHasRGB(
+    layer: borrow CALayerDescription,
+    red: Number,
+    green: Number,
+    blue: Number
+) -> Bool {
+    match layer.content {
+        Solid(face) -> {
+            if abs(face.fill.r - red) < 0.001 && abs(face.fill.g - green) < 0.001
+                && abs(face.fill.b - blue) < 0.001 && face.fill.a >= 0.999 {
+                return true
+            }
+        }
+        else -> {}
+    }
+    for child in layer.sublayers {
+        if navigationCanvasHasRGB(child, red, green, blue) { return true }
+    }
+    return false
+}
+
+@Test
+function expandingPageBackgroundPaintsNavigationCanvas() {
+    toolbarCollect()
+    let color = RGBAColor { r: 0.72, g: 0.31, b: 0.23, a: 1.0 }
+    let screen = NavigationStack {
+        VStack {
+            Text("Home")
+        }
+        .fillWidth()
+        .fillHeight()
+        .background(Rectangle().fill(copy color))
+    }
+    let rendered = describedLayerInWideWindow(move screen)
+    expect!(navigationCanvasHasRGB(rendered, 0.72, 0.31, 0.23))
+    toolbarStopCollecting()
+}
+
+@Test
+function fullBleedColorUnderZStackPaintsNavigationCanvas() {
+    toolbarCollect()
+    let color = RGBAColor { r: 0.34, g: 0.68, b: 0.25, a: 1.0 }
+    let screen = NavigationStack {
+        ZStack {
+            Rectangle().fill(copy color).ignoresSafeArea()
+            Text("Settings")
+        }
+    }
+    let rendered = describedLayerInWideWindow(move screen)
+    expect!(navigationCanvasHasRGB(rendered, 0.34, 0.68, 0.25))
+    toolbarStopCollecting()
+}
+
+@Test
+function CardBackgroundDoesNotRepaintNavigationCanvas() {
+    toolbarCollect()
+    let color = RGBAColor { r: 0.62, g: 0.15, b: 0.17, a: 1.0 }
+    let screen = NavigationStack {
+        VStack {
+            Text("Card").background(Rectangle().fill(copy color))
+        }
+    }
+    let rendered = describedLayerInWideWindow(move screen)
+    // A colored row must not become the page background. Its color exists
+    // inside the sublayers but the stack's own canvas is unmodified.
+    let canvas = navigationColumnCanvas(ModifierContext {})
+    expect!(abs(canvas.r - 0.62) > 0.01)
+    expect!(navigationCanvasHasRGB(rendered, 0.62, 0.15, 0.17))
+    toolbarStopCollecting()
+}

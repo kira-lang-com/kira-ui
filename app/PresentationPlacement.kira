@@ -1,0 +1,61 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's `PresentationPlacement` (iOS/macOS 2026). Only sheet presentation
+// hosts consume this preference. A popover keeps its arrow pointing to its
+// anchor and full-screen covers always fill their entire window.
+public enum PresentationPlacement {
+    Automatic
+    Center
+    Leading
+    Trailing
+}
+
+public function presentationPlacementCode(placement: PresentationPlacement) -> Number {
+    return match placement {
+        Automatic -> 0.0
+        Center -> 1.0
+        Leading -> 2.0
+        Trailing -> 3.0
+    }
+}
+
+// Sheet positions share the host's same safe edge margins as its width
+// proposal. Automatic currently chooses a centered window sheet. Leading and
+// trailing move the actual modal card—not its label or a fake offset within
+// an unchanged centered hit surface.
+public function presentationSheetHorizontalOrigin(
+    width: Number,
+    viewportWidth: Number,
+    edgeMargin: Number,
+    placement: Number
+) -> Number {
+    let remaining = max(viewportWidth - width, 0.0)
+    let margin = min(max(edgeMargin, 0.0), remaining / 2.0)
+    if placement == 2.0 { return margin }
+    if placement == 3.0 { return remaining - margin }
+    return remaining * 0.5
+}
+
+public construct PresentationPlacementLayer(value: PresentationPlacement) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var described = content.describe(context, modifiers)
+        described.hasPresentationPlacement = true
+        described.presentationPlacement = presentationPlacementCode(value)
+        return described
+    }
+}
+
+extend Widget {
+    // SwiftUI `.presentationPlacement(_ placement: PresentationPlacement)`.
+    function presentationPlacement(placement: PresentationPlacement) -> Any Widget {
+        return PresentationPlacementLayer(value: placement) { self }
+    }
+}

@@ -1,0 +1,104 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function truncationModeSelectsARealHeadMiddleOrTailEllipsis() {
+    let content = "Sunlight through the trees at the end of autumn"
+    let tail = foundationTextLines(content, 15.0, 400.0, 100.0, .Default, 1, .Tail)
+    let head = foundationTextLines(content, 15.0, 400.0, 100.0, .Default, 1, .Head)
+    let middle = foundationTextLines(content, 15.0, 400.0, 100.0, .Default, 1, .Middle)
+    expect!(head.count == 1)
+    expect!(middle.count == 1)
+    expect!(tail.count == 1)
+    let h = foundationStringToCodepoints(head[0])
+    let m = foundationStringToCodepoints(middle[0])
+    let t = foundationStringToCodepoints(tail[0])
+    expect!(h[0] == 8230)
+    expect!(m[0] != 8230)
+    expect!(m[m.count - 1] != 8230)
+    expect!(t[t.count - 1] == 8230)
+    expect!(foundationTextRunWidth(content: head[0], size: 15.0, weight: 400.0) <= 101.0)
+    expect!(foundationTextRunWidth(content: middle[0], size: 15.0, weight: 400.0) <= 101.0)
+    expect!(foundationTextRunWidth(content: tail[0], size: 15.0, weight: 400.0) <= 101.0)
+}
+
+@Test
+function headTruncationKeepsLastVisibleLineInMultilineText() {
+    let source = "First paragraph\nSecond paragraph\nThird paragraph\nLast paragraph"
+    let head = foundationTextLines(source, 15.0, 400.0, 130.0, .Default, 2, .Head)
+    let tail = foundationTextLines(source, 15.0, 400.0, 130.0, .Default, 2, .Tail)
+    expect!(head.count == 2)
+    expect!(tail.count == 2)
+    expect!(foundationStringToCodepoints(head[0])[0] == 8230)
+    expect!(head[1] == "Last paragraph")
+    expect!(tail[0] == "First paragraph")
+    let ending = foundationStringToCodepoints(tail[1])
+    expect!(ending[ending.count - 1] == 8230)
+}
+
+@Test
+function unbreakableSingleWordTruncatesWithLineLimit() {
+    let longWord = "Supercalifragilisticexpialidocious"
+    let cut = foundationTextLines(longWord, 15.0, 400.0, 70.0, .Default, 1, .Middle)
+    expect!(cut.count == 1)
+    expect!(cut[0] != longWord)
+    let codes = foundationStringToCodepoints(cut[0])
+    var hasEllipsis = false
+    for code in codes {
+        if code == 8230 { hasEllipsis = true }
+    }
+    expect!(hasEllipsis)
+    expect!(foundationTextRunWidth(content: cut[0], size: 15.0, weight: 400.0) <= 71.0)
+}
+
+@Test
+function truncationModeIsInheritedAndMatchesItsNativeRun() {
+    let outer = modifierContextApply(
+        ModifierContext {}, modifierDeltaTruncationMode(.Head)
+    )
+    expect!(modifierContextForChildren(outer).truncationMode == TextTruncationMode.Head)
+    let inner = modifierContextApply(outer, modifierDeltaTruncationMode(.Middle))
+    expect!(inner.truncationMode == TextTruncationMode.Middle)
+    let described = describedLayer(
+        Text("A very long sentence that exceeds its proposed width")
+            .lineLimit(1)
+            .truncationMode(mode: .Head)
+    )
+    match innermostLayer(described).content {
+        Text(run) -> {
+            expect!(run.truncationMode == CATextTruncationMode.Head)
+            expect!(run.content == "A very long sentence that exceeds its proposed width")
+        }
+        else -> expect!(false)
+    }
+}
+
+@Test
+function textMeasurementAndRasterizationUseTheSameTruncationMode() {
+    let sample = "Horizon near the tidal shore and distant hills"
+    let described = describedLayer(
+        Text(sample)
+            .lineLimit(1)
+            .truncationMode(mode: .Middle)
+    )
+    match innermostLayer(described).content {
+        Text(run) -> {
+            let width = 120.0
+            let measured = foundationTextWrappedSize(
+                run.content, run.size, run.weight, width,
+                run.design, run.lineLimit, run.lineSpacing, run.truncationMode
+            )
+            let visible = foundationTextLines(
+                run.content, run.size, run.weight, width,
+                run.design, run.lineLimit, run.truncationMode
+            )
+            expect!(visible.count == 1)
+            expect!(abs(measured.width - foundationTextRunWidth(
+                content: visible[0], size: run.size,
+                weight: run.weight, design: run.design
+            )) < 0.5)
+        }
+        else -> expect!(false)
+    }
+}

@@ -66,6 +66,16 @@ extend CALayerDescription {
                         max(self.sublayers[r].sublayers[c].layout.gridCellColumns, 1),
                         count - column
                     )
+                    let cellLayout = self.sublayers[r].sublayers[c].layout
+                    // Unsized axes suppress a flexible view's request for
+                    // surplus room. A fixed-size view still defines the
+                    // column's minimum (matching SwiftUI's Grid contract).
+                    if cellLayout.gridUnsizedHorizontal
+                        && cellLayout.fixedWidth < 0.0
+                        && self.sublayers[r].sublayers[c].layout.widthFlexible() {
+                        column = column + span
+                        continue
+                    }
                     let wanted = self.sublayers[r].sublayers[c].measureLaid(width).width
                     if pass == 0 && span == 1 {
                         columns.widths[column] = max(columns.widths[column], wanted)
@@ -77,6 +87,26 @@ extend CALayerDescription {
                         }
                     }
                     column = column + span
+                }
+            }
+        }
+        // A free-standing view in Grid is a full-span row. SwiftUI lets a
+        // flexible Divider/Color in that row expand all the grid's columns
+        // up to the proposed width, unless `.gridCellUnsizedAxes(.horizontal)`
+        // asks it not to contribute surplus width.
+        if columns.widths.count > 0 && width > columns.span() {
+            var wantsFullWidth = false
+            for row in self.sublayers {
+                if !row.layout.gridRow
+                    && row.layout.widthFlexible()
+                    && !row.layout.gridUnsizedHorizontal {
+                    wantsFullWidth = true
+                }
+            }
+            if wantsFullWidth {
+                let extra = (width - columns.span()) / columns.widths.count
+                for i in 0..columns.widths.count {
+                    columns.widths[i] = columns.widths[i] + extra
                 }
             }
         }
@@ -96,7 +126,7 @@ extend CALayerDescription {
             var column = 0
             for cell in row.sublayers {
                 let span = min(max(cell.layout.gridCellColumns, 1), columns.widths.count - column)
-                if cell.layout.widthFlexible() {
+                if cell.layout.widthFlexible() && !cell.layout.gridUnsizedHorizontal {
                     for i in column..(column + span) { fills[i] = true }
                 }
                 column = column + span
@@ -124,8 +154,14 @@ extend CALayerDescription {
                 max(self.sublayers[r].sublayers[c].layout.gridCellColumns, 1),
                 columns.widths.count - column
             )
-            let cell = self.sublayers[r].sublayers[c].measureLaid(columns.width(column, span))
-            tallest = max(tallest, cell.height)
+            let cellLayout = self.sublayers[r].sublayers[c].layout
+            let unsizedFlexible = cellLayout.gridUnsizedVertical
+                && cellLayout.fixedHeight < 0.0
+                && (cellLayout.heightFill || cellLayout.expandsHeight || cellLayout.flex > 0.0)
+            if !unsizedFlexible {
+                let cell = self.sublayers[r].sublayers[c].measureLaid(columns.width(column, span))
+                tallest = max(tallest, cell.height)
+            }
             column = column + span
         }
         return tallest
@@ -150,13 +186,35 @@ extend CALayerDescription {
         let columns = self.gridColumnsOffered(innerWidth)
         let span = columns.span()
         let leading = originX + max(innerWidth - span, 0.0) * intent.alignment.x
+        // A column-wide alignment may be declared on any one of its cells.
+        // The first declaration in source order establishes it; without one,
+        // the grid's overall alignment applies. Spanning cells do not assign
+        // an alignment to several unrelated columns.
+        var columnAlignment: [Number] = []
+        var columnDeclared: [Bool] = []
+        for i in 0..columns.widths.count {
+            columnAlignment.append(intent.alignment.x)
+            columnDeclared.append(false)
+        }
+        for row in self.sublayers {
+            if !row.layout.gridRow { continue }
+            var col = 0
+            for cell in row.sublayers {
+                let cells = min(max(cell.layout.gridCellColumns, 1), columns.widths.count - col)
+                if cells == 1 && cell.layout.hasGridColumnAlignment && !columnDeclared[col] {
+                    columnAlignment[col] = cell.layout.gridColumnAlignment
+                    columnDeclared[col] = true
+                }
+                col = col + cells
+            }
+        }
         var top = originY
         for r in 0..self.sublayers.count {
             let height = self.gridRowHeight(r, columns)
             if !self.sublayers[r].layout.gridRow {
                 self.sublayers[r].place(span, height)
                 let child = self.sublayers[r].size
-                self.sublayers[r].position = pixelAligned(
+                self.sublayers[r].position = placementOffset(
                     leading + (span - child.width) * intent.alignment.x,
                     top + (height - child.height) * intent.alignment.y
                 )
@@ -164,7 +222,7 @@ extend CALayerDescription {
                 continue
             }
             self.sublayers[r].size = Size { width: span, height: height }
-            self.sublayers[r].position = pixelAligned(leading, top)
+            self.sublayers[r].position = placementOffset(leading, top)
             let rowAlignment = self.sublayers[r].layout.alignment.y
             let alignY = rowAlignment < 0.0 ? intent.alignment.y : rowAlignment
             var column = 0
@@ -176,9 +234,15 @@ extend CALayerDescription {
                 let width = columns.width(column, cells)
                 self.sublayers[r].sublayers[c].place(width, height)
                 let cell = self.sublayers[r].sublayers[c].size
-                self.sublayers[r].sublayers[c].position = pixelAligned(
-                    columns.leading(column) + (width - cell.width) * intent.alignment.x,
-                    (height - cell.height) * alignY
+                let cellIntent = self.sublayers[r].sublayers[c].layout
+                let alignX = cellIntent.hasGridCellAnchor
+                    ? cellIntent.gridCellAnchor.x
+                    : (cells == 1 ? columnAlignment[column] : intent.alignment.x)
+                let cellAlignY = cellIntent.hasGridCellAnchor
+                    ? cellIntent.gridCellAnchor.y : alignY
+                self.sublayers[r].sublayers[c].position = placementOffset(
+                    columns.leading(column) + (width - cell.width) * alignX,
+                    (height - cell.height) * cellAlignY
                 )
                 column = column + cells
             }

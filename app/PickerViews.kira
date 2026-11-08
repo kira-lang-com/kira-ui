@@ -11,6 +11,7 @@ public enum PickerStyle {
     Menu
     Inline
     Segmented
+    RadioGroup
 }
 
 @Instance(Number)
@@ -25,6 +26,35 @@ public construct Picker<SelectionValue>(
         context: borrow BuildContext,
         modifiers: borrow ModifierContext
     ) -> CALayerDescription {
+        if modifiers.pickerStyle == .RadioGroup {
+            // A radio Picker remains a single selection control in either
+            // arrangement. Only the option axis changes; each radio keeps its
+            // own action, hit target and selected accessibility trait.
+            var options: Any Widget = TagScope(
+                selector: tagSelector(.PickerRadio, selection)
+            ) {
+                VStack(spacing: .Small, alignment: .Leading) {
+                    For(option in children) { option }
+                }
+            }
+            if modifiers.horizontalRadioGroupLayout {
+                options = TagScope(selector: tagSelector(.PickerRadio, selection)) {
+                    HStack(spacing: .Default, alignment: .Center) {
+                        For(option in children) { option }
+                    }
+                }
+            }
+            let grouped = options
+                .accessibilityElement(children: .Contain)
+                .accessibilityLabel(copy title)
+            if modifiers.labelsHidden || title.count == 0 {
+                return grouped.describe(context, modifiers)
+            }
+            return VStack(spacing: .Small, alignment: .Leading) {
+                Text(content: copy title).accessibilityHidden(true)
+                grouped
+            }.describe(context, modifiers)
+        }
         // Inline, and in a menu, the options are rows in place, as SwiftUI's
         // `.inline` sets them.
         if modifiers.pickerStyle == .Inline || modifiers.controlPresentation == .MenuRow {

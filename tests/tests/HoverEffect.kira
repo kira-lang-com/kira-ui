@@ -1,0 +1,151 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function builtInHoverEffectsPaintRealHighlightAndScaleContentOnEnter() {
+    layerActionsReset()
+    tapSeqReset()
+    let before = describedLayer(Text("Hover").hoverEffect(effect: .Highlight))
+    expect!(before.hoverKey != 0)
+    expect!(!before.hittable)
+    match before.content {
+        Empty -> {}
+        else -> expect!(false)
+    }
+    layerHoverChanged(before.hoverKey, true)
+    tapSeqReset()
+    let after = describedLayer(Text("Hover").hoverEffect(effect: .Highlight))
+    expect!(after.hoverKey == before.hoverKey)
+    match after.content {
+        Solid(solid) -> {
+            expect!(solid.fill.a > 0.0)
+            expect!(solid.cornerRadius > 0.0)
+        }
+        else -> expect!(false)
+    }
+    layerHoverChanged(after.hoverKey, false)
+    tapSeqReset()
+    let exited = describedLayer(Text("Hover").hoverEffect(effect: .Highlight))
+    match exited.content {
+        Empty -> {}
+        else -> expect!(false)
+    }
+}
+
+@Test
+function liftHoverEffectChangesTransformNotTheLayoutProposal() {
+    layerActionsReset()
+    tapSeqReset()
+    let normal = describedLayer(Text("Lift").hoverEffect(effect: .Lift))
+    expect!(normal.sublayers.count == 1)
+    expect!(normal.sublayers[0].scaleX == 1.0)
+    layerHoverChanged(normal.hoverKey, true)
+    tapSeqReset()
+    let lifted = describedLayer(Text("Lift").hoverEffect(effect: .Lift))
+    expect!(lifted.sublayers[0].scaleX > 1.0)
+    expect!(lifted.sublayers[0].scaleY > 1.0)
+    expect!(lifted.sublayers[0].layout.intrinsicWidth
+        == normal.sublayers[0].layout.intrinsicWidth)
+    layerHoverChanged(lifted.hoverKey, false)
+}
+
+@Test
+function hoverEffectDisabledSuppressesOnlyVisualEffectNotHoverEvents() {
+    let modifiers = modifierContextApply(
+        ModifierContext {}, modifierDeltaHoverEffectDisabled(true)
+    )
+    expect!(modifiers.hoverEffectDisabled)
+    expect!(modifierContextForChildren(modifiers).hoverEffectDisabled)
+    // Apple's parent-scope disabled policy has precedence over any explicit
+    // child request to re-enable visual hover effects.
+    let child = modifierContextApply(modifiers, modifierDeltaHoverEffectDisabled(false))
+    expect!(child.hoverEffectDisabled)
+    let explicitlyOn = modifierContextApply(
+        ModifierContext {}, modifierDeltaHoverEffectDisabled(false)
+    )
+    let innerDisabled = modifierContextApply(
+        explicitlyOn, modifierDeltaHoverEffectDisabled(true)
+    )
+    expect!(!innerDisabled.hoverEffectDisabled)
+
+    let disabled = describedLayer(
+        Text("No effect").hoverEffect().hoverEffectDisabled()
+    )
+    expect!(disabled.hoverKey == 0.0)
+    expect!(describedContainsText(disabled, "No effect"))
+    let explicitlyOff = describedLayer(
+        Text("Off").hoverEffect(effect: .Highlight, isEnabled: false)
+    )
+    expect!(explicitlyOff.hoverKey == 0.0)
+
+    let hoverObserver = describedLayer(
+        Text("Still observing")
+            .onHover(action: { entered in })
+            .hoverEffectDisabled()
+    )
+    expect!(hoverObserver.hoverKey != 0)
+}
+
+@Test
+function hoverEffectDoesNotInterfereWithNestedClickTarget() {
+    var described = describedLayer(Button(title: "Save", action: { in })
+        .hoverEffect(effect: .Lift))
+    expect!(described.hoverKey != 0.0)
+    expect!(!described.hittable)
+    expect!(describedContainsText(described, "Save"))
+    layOutLayerTree(described, 200.0, 80.0)
+    var tree = layerTree()
+    tree.reconcileImmediate(described)
+    let hit = tree.hitTestTree(28.0, 22.0)
+    expect!(hit.hitKey != 0.0)
+    expect!(hit.hoverKeys.count > 0)
+}
+
+@Test
+function hoverEffectPreservesSectionGroupingAndAutomaticFallback() {
+    let section = Section {
+        Text("Section")
+    }.hoverEffect()
+    expect!(section.isSection())
+    let described = describedLayer(move section)
+    expect!(describedContainsText(described, "Section"))
+    expect!(described.hoverKey != 0)
+}
+
+@Test
+function defaultHoverEffectResolvesAutomaticButNeverOverridesExplicitEffect() {
+    let root = ModifierContext {}
+    expect!(resolvedHoverEffect(.Automatic, root) == HoverEffect.Highlight)
+    let lifted = modifierContextApply(
+        root, modifierDeltaDefaultHoverEffect(.Some(.Lift))
+    )
+    expect!(resolvedHoverEffect(.Automatic, lifted) == HoverEffect.Lift)
+    expect!(resolvedHoverEffect(.Highlight, lifted) == HoverEffect.Highlight)
+    expect!(modifierContextForChildren(lifted).defaultHoverEffect.isSome())
+    let nilChange = modifierContextApply(lifted, modifierDeltaDefaultHoverEffect(.None))
+    expect!(resolvedHoverEffect(.Automatic, nilChange) == HoverEffect.Lift)
+    let resetToHighlight = modifierContextApply(
+        lifted, modifierDeltaDefaultHoverEffect(.Some(.Highlight))
+    )
+    expect!(resolvedHoverEffect(.Automatic, resetToHighlight) == HoverEffect.Highlight)
+}
+
+@Test
+function inheritedDefaultHoverEffectActuallyLiftsAnAutomaticEffect() {
+    layerActionsReset()
+    tapSeqReset()
+    let first = describedLayer(
+        Text("Default lift").hoverEffect()
+            .defaultHoverEffect(effect: .Some(.Lift))
+    )
+    expect!(first.hoverKey != 0)
+    layerHoverChanged(first.hoverKey, true)
+    tapSeqReset()
+    let lifted = describedLayer(
+        Text("Default lift").hoverEffect()
+            .defaultHoverEffect(effect: .Some(.Lift))
+    )
+    expect!(lifted.sublayers[0].scaleX > 1.0)
+    layerHoverChanged(lifted.hoverKey, false)
+}

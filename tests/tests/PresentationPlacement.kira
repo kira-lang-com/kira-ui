@@ -1,0 +1,106 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function presentationPlacementEnumeratesAllPublicStrategies() {
+    expect!(presentationPlacementCode(.Automatic) == 0.0)
+    expect!(presentationPlacementCode(.Center) == 1.0)
+    expect!(presentationPlacementCode(.Leading) == 2.0)
+    expect!(presentationPlacementCode(.Trailing) == 3.0)
+}
+
+@Test
+function placementComputesExactRealCardOriginWithinPresenterMargins() {
+    let width = 500.0
+    let viewport = 1100.0
+    let margin = 40.0
+    expect!(presentationSheetHorizontalOrigin(width, viewport, margin, 0.0) == 300.0)
+    expect!(presentationSheetHorizontalOrigin(width, viewport, margin, 1.0) == 300.0)
+    expect!(presentationSheetHorizontalOrigin(width, viewport, margin, 2.0) == 40.0)
+    expect!(presentationSheetHorizontalOrigin(width, viewport, margin, 3.0) == 560.0)
+    expect!(presentationSheetHorizontalOrigin(1100.0, viewport, margin, 2.0) == 0.0)
+    expect!(presentationSheetHorizontalOrigin(1100.0, viewport, margin, 3.0) == 0.0)
+    expect!(presentationSheetHorizontalOrigin(600.0, 400.0, 8.0, 3.0) == 0.0)
+}
+
+@Test
+function placementIsConsumedFromActualPresentationPreferences() {
+    let value = presentationPreferences(describedLayer(
+        Text("Presented content").presentationPlacement(placement: .Trailing)
+    ))
+    expect!(value.hasPlacement)
+    expect!(value.placement == 3.0)
+    let overridden = presentationPreferences(describedLayer(
+        Text("Presented content")
+            .presentationPlacement(placement: .Trailing)
+            .frame(width: 300.0, height: 140.0)
+            .presentationPlacement(placement: .Leading)
+    ))
+    expect!(overridden.placement == 2.0)
+}
+
+@Test
+function leadingAndTrailingMoveNativeSheetCardNotItsInternalLabel() {
+    let shown = Binding<Bool> { get: { in return true }, set: { value in } }
+    layerActionsReset()
+    overlayCollect()
+    tapSeqReset()
+    absorb describedLayerInWideWindow(Text("Main").sheet(isPresented: shown) {
+        Text("Leading card")
+            .presentationSizing(sizing: SquarePresentationSizing {})
+            .presentationPlacement(placement: .Leading)
+    })
+    let left = overlaysThisFrame()
+    expect!(left.count == 2)
+    expect!(left[1].anchorX == SheetMetrics.wideInset)
+    expect!(left[1].content.layout.fixedWidth == 320.0)
+    expect!(describedContainsText(left[1].content, "Leading card"))
+    overlayStopCollecting()
+
+    layerActionsReset()
+    overlayCollect()
+    tapSeqReset()
+    absorb describedLayerInWideWindow(Text("Main").sheet(isPresented: shown) {
+        Text("Trailing card")
+            .presentationSizing(sizing: SquarePresentationSizing {})
+            .presentationPlacement(placement: .Trailing)
+    })
+    let right = overlaysThisFrame()
+    expect!(right.count == 2)
+    expect!(right[1].anchorX == 1100.0 - 320.0 - SheetMetrics.wideInset)
+    expect!(right[1].anchorX > left[1].anchorX)
+    expect!(right[1].content.layout.fixedWidth == 320.0)
+    overlayStopCollecting()
+}
+
+@Test
+function automaticKeepsOriginalCenteredSheetPresentation() {
+    let shown = Binding<Bool> { get: { in return true }, set: { value in } }
+    layerActionsReset()
+    overlayCollect()
+    tapSeqReset()
+    absorb describedLayerInWideWindow(Text("Main").sheet(isPresented: shown) {
+        Text("Center")
+            .presentationPlacement(placement: .Automatic)
+    })
+    let presented = overlaysThisFrame()
+    expect!(presented.count == 2)
+    expect!(presented[1].anchorX == (1100.0 - SheetMetrics.width) * 0.5)
+    overlayStopCollecting()
+}
+
+@Test
+function modifierPreservesSectionIdentityAndDoesNotMoveUnpresentedContent() {
+    let plain = describedLayer(Text("Row"))
+    let decorated = describedLayer(
+        Text("Row").presentationPlacement(placement: .Trailing)
+    )
+    expect!(plain.layout.intrinsicWidth == decorated.layout.intrinsicWidth)
+    expect!(plain.layout.intrinsicHeight == decorated.layout.intrinsicHeight)
+    let section = Section {
+        Text("Row")
+    }.presentationPlacement(placement: .Center)
+    expect!(section.isSection())
+    expect!(describedLayer(move section).groupedSection)
+}

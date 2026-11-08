@@ -1,0 +1,134 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+import Ember
+
+struct ContinuousHoverRecord {
+    var active: Number = 0.0
+    var ended: Number = 0.0
+    var x: Number = -1.0
+    var y: Number = -1.0
+}
+
+@Test
+function continuousHoverDeliversActiveCoordinatesAndEndedOnce() {
+    unsafe {
+        let record = nativeUserData(nativeState(ContinuousHoverRecord {}))
+        layerActionsReset()
+        tapSeqReset()
+        let observed = Text("Track")
+            .frame(width: 180.0, height: 65.0)
+            .onContinuousHover(action: { phase in
+                unsafe {
+                    var counts = nativeRecover<ContinuousHoverRecord>(record)
+                    match phase {
+                        Active(point) -> {
+                            counts.active++
+                            counts.x = point.x
+                            counts.y = point.y
+                        }
+                        Ended -> counts.ended++
+                    }
+                }
+            })
+        var description = describedLayer(move observed)
+        expect!(description.hoverKey != 0)
+        expect!(!description.hittable)
+        description.layoutTree(340.0, 230.0)
+        var runner = KiraLayerAppState {}
+        runner.compositor.tree.reconcileImmediate(description)
+
+        kiraLayerHandleEvent(runner, AppEvent {
+            kind: .PointerMoved, pointerX: 45.0, pointerY: 24.0
+        })
+        expect!(nativeRecover<ContinuousHoverRecord>(record).active == 1.0)
+        expect!(abs(nativeRecover<ContinuousHoverRecord>(record).x - 45.0) < 0.1)
+        kiraLayerHandleEvent(runner, AppEvent {
+            kind: .PointerMoved, pointerX: 45.0, pointerY: 24.0
+        })
+        expect!(nativeRecover<ContinuousHoverRecord>(record).active == 1.0)
+        kiraLayerHandleEvent(runner, AppEvent {
+            kind: .PointerMoved, pointerX: 65.0, pointerY: 32.0
+        })
+        expect!(nativeRecover<ContinuousHoverRecord>(record).active == 2.0)
+        expect!(abs(nativeRecover<ContinuousHoverRecord>(record).x - 65.0) < 0.1)
+        kiraLayerHandleEvent(runner, AppEvent { kind: .PointerExited })
+        expect!(nativeRecover<ContinuousHoverRecord>(record).ended == 1.0)
+        expect!(runner.continuousHoverRegions.count == 0)
+    }
+}
+
+@Test
+function continuousHoverUsesInverseTransformedLocalPosition() {
+    let region = CADrawItem {
+        hoverKey: 150.0,
+        transform: translation(30.0, 40.0),
+        localWidth: 100.0,
+        localHeight: 90.0
+    }
+    let test = hitTest([move region], 55.0, 63.0)
+    expect!(test.hoverRegions.count == 1)
+    expect!(test.hoverRegions[0].key == 150.0)
+    expect!(test.hoverRegions[0].localX == 25.0)
+    expect!(test.hoverRegions[0].localY == 23.0)
+    expect!(test.hoverRegions[0].globalX == 55.0)
+    expect!(test.hoverRegions[0].globalY == 63.0)
+}
+
+@Test
+function continuousHoverCoordinateSpaceChangesOnlyDeliveredCoordinates() {
+    unsafe {
+        let localRecord = nativeUserData(nativeState(ContinuousHoverRecord {}))
+        let globalRecord = nativeUserData(nativeState(ContinuousHoverRecord {}))
+        layerActionsReset()
+        layerContinuousHoverRegister(90.0, .Local, { phase in
+            unsafe {
+                var record = nativeRecover<ContinuousHoverRecord>(localRecord)
+                match phase {
+                    Active(point) -> {
+                        record.active++
+                        record.x = point.x
+                    }
+                    Ended -> record.ended++
+                }
+            }
+        })
+        layerContinuousHoverRegister(91.0, .Global, { phase in
+            unsafe {
+                var record = nativeRecover<ContinuousHoverRecord>(globalRecord)
+                match phase {
+                    Active(point) -> {
+                        record.active++
+                        record.x = point.x
+                    }
+                    Ended -> record.ended++
+                }
+            }
+        })
+        let local = CAHoverRegion {
+            key: 90.0, localX: 12.0, localY: 24.0,
+            globalX: 112.0, globalY: 224.0
+        }
+        let global = CAHoverRegion {
+            key: 91.0, localX: 12.0, localY: 24.0,
+            globalX: 112.0, globalY: 224.0
+        }
+        layerContinuousHoverChanged(90.0, true, local)
+        layerContinuousHoverChanged(91.0, true, global)
+        expect!(nativeRecover<ContinuousHoverRecord>(localRecord).x == 12.0)
+        expect!(nativeRecover<ContinuousHoverRecord>(globalRecord).x == 112.0)
+        layerContinuousHoverChanged(90.0, false, local)
+        layerContinuousHoverChanged(91.0, false, global)
+        expect!(nativeRecover<ContinuousHoverRecord>(localRecord).ended == 1.0)
+        expect!(nativeRecover<ContinuousHoverRecord>(globalRecord).ended == 1.0)
+    }
+}
+
+@Test
+function onContinuousHoverPreservesSectionGrouping() {
+    let section = Section {
+        Text("Section")
+    }.onContinuousHover(coordinateSpace: .Global, action: { phase in })
+    expect!(section.isSection())
+    expect!(describedContainsText(describedLayer(move section), "Section"))
+}

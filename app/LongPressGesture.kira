@@ -22,12 +22,16 @@ struct LongPressTrack {
     var start: Point = Point {}
     // Whether this press has run the action, or moved too far to.
     var done: Bool = false
+    // SwiftUI's touching-change action is called on transitions, not every
+    // frame. Release/cancellation must report false even after recognition.
+    var touching: Bool = false
 }
 
 public construct LongPressGestureLayer(
     minimumDuration: Number,
     maximumDistance: Number,
-    action: () -> Void
+    action: () -> Void,
+    touchingChanged: (Bool) -> Void = layerNoopFlag
 ) extends Widget {
     let content: some Widget
 
@@ -61,22 +65,33 @@ public construct LongPressGestureLayer(
             }
             var track = nativeRecover<LongPressTrack>(ambientStateGetView(slot))
             if context.heldKey != key {
+                if track.touching {
+                    track.touching = false
+                    touchingChanged(false)
+                }
                 track.press = 0
                 track.done = false
                 return
             }
             let now = unixMillis()
             if track.press != context.heldPress {
+                if track.touching { touchingChanged(false) }
                 track.press = context.heldPress
                 track.began = now
                 track.start = copy context.heldPoint
                 track.done = false
+                track.touching = true
+                touchingChanged(true)
             }
             if track.done { return }
             let dx = context.heldPoint.x - track.start.x
             let dy = context.heldPoint.y - track.start.y
             if sqrt(dx * dx + dy * dy) > maximumDistance {
                 track.done = true
+                if track.touching {
+                    track.touching = false
+                    touchingChanged(false)
+                }
                 return
             }
             let left = minimumDuration - (now - track.began) / 1000

@@ -1,0 +1,53 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// A custom SwiftUI-style HStack can draw its own full-height sidebar without
+// using NavigationSplitView. The WINDOW chrome must still divide its sections
+// at that sidebar's width; no page may push its title into the sidebar slot.
+@Test
+function customSidebarColumnSeparatesTheWindowToolbarFromDetail() {
+    toolbarCollect()
+    let shell = HStack(spacing: .None) {
+        Rectangle().frame(width: 320, height: 720).navigationSidebarColumn()
+        NavigationStack {
+            Text("A conversation").navigationTitle("Conversation")
+        }
+    }
+    let described = describedLayerInWideWindow(move shell)
+    expect!(described.sublayers.count == 2)
+    expect!(toolbarNavigationWidth() == 320)
+    expect!(toolbarCurrentColumn() == ToolbarColumn.detail)
+    expect!(toolbarColumnTitle() == "Conversation")
+    expect!(chromeSafeAreaWasHandled())
+
+    var chrome = describedLayerInWideWindow(WindowChrome())
+    expect!(chrome.sublayers.count == 2)
+    expect!(chrome.sublayers[0].layout.fixedWidth == 320)
+    expect!(chrome.sublayers[1].layout.flex > 0)
+    layOutLayerTree(chrome, 1100, 720)
+    expect!(chrome.sublayers[0].size.width == 320)
+    expect!(chrome.sublayers[1].position.x == 320)
+    toolbarStopCollecting()
+}
+
+// The boundary follows a framed column, not a hardcoded sidebar metric: both
+// the document's toolbar and the window controls follow a resize.
+@Test
+function customSidebarWindowChromeFollowsTheActualSidebarWidth() {
+    toolbarCollect()
+    let shell = HStack(spacing: .None) {
+        Rectangle().frame(width: 260, height: 700).navigationSidebarColumn()
+        Text("Home")
+    }
+    describedLayerInWideWindow(move shell)
+    expect!(toolbarNavigationWidth() == 260)
+    expect!(toolbarCurrentColumn() == ToolbarColumn.detail)
+    // Without any detail navigation or toolbar, a column boundary does not
+    // declare a navigation stack; Home must not acquire a phantom bar.
+    var chrome = describedLayerInWideWindow(WindowChrome())
+    expect!(chrome.sublayers[0].layout.fixedWidth == 260)
+    layOutLayerTree(chrome, 1100, 700)
+    expect!(chrome.sublayers[1].position.x == 260)
+    toolbarStopCollecting()
+}

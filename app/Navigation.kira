@@ -112,17 +112,19 @@ public function navigationSidebarToggleAction() -> () -> Void {
 public function navigationDeclareBack(
     context: borrow BuildContext,
     modifiers: borrow ModifierContext
-) {
+) -> Number {
     let button = Button(action: navigationPopAction()) {
         Icon(symbol: .ChevronBack)
     }
+    let group = toolbarOpenGroup()
     chromeAppend(
         .Back,
         ToolbarEntry {
             content: button.describe(context, modifierContextPresenting(modifiers, .Toolbar)),
-            group: toolbarOpenGroup()
+            group: group
         }
     )
+    return group
 }
 
 // Value-based link, matching SwiftUI's NavigationLink(value:label:). The
@@ -183,12 +185,30 @@ public construct NavigationLink(value: Any NavigationRoute) extends Widget {
     ) -> CALayerDescription {
         if modifiers.controlPresentation == .Sidebar || modifiers.controlPresentation == .SidebarCell {
             let selected = NavigationPath {}.startsWith(value: value)
+            let showChevron = navigationLinkIndicatorShows(
+                modifiers.navigationLinkIndicatorVisibility, modifiers.controlPresentation
+            )
+            if showChevron {
+                let rowContent = HStack(spacing: .Length(listMetrics().accessorySpacing)) {
+                    label.fillWidth()
+                    Icon(symbol: .ChevronForward)
+                        .imageScale(.Small)
+                        .foregroundColor(.Tertiary)
+                }
+                let row = SidebarRow(selected: selected, action: navigationSelectAction(copy value)) {
+                    rowContent
+                }
+                return row.describe(context, modifiers)
+            }
             let row = SidebarRow(selected: selected, action: navigationSelectAction(copy value)) {
                 label
             }
             return row.describe(context, modifiers)
         }
         if modifiers.controlPresentation == .InsetGrouped {
+            let showChevron = navigationLinkIndicatorShows(
+                modifiers.navigationLinkIndicatorVisibility, modifiers.controlPresentation
+            )
             let face = modifierTypography(modifiers, .body)
             // The label takes the row up to the chevron, as SwiftUI's does, so
             // a `LabeledContent` label sets its value against the chevron
@@ -203,26 +223,39 @@ public construct NavigationLink(value: Any NavigationRoute) extends Widget {
             // _defaultDisclosureImageForTraitCollection:]`), centered down the
             // row in a box no taller than its ink, so the label alone sets the
             // row's height.
-            var chevron = Icon(symbol: .ChevronForward)
-            .imageScale(.Small)
-            .font(size: resolvedLength(face.size), weight: .SemiBold)
-            .foregroundColor(.Tertiary)
-            .describe(context, modifiers)
-            chevron.layout.fixedHeight = -1.0
-            chevron.layout.heightFill = true
             // The press is the whole row's, which the list lights across the
             // card: the link only says what it does.
             let key = tapSeqKey()
             layerActionRegister(key, navigationPushAction(copy value))
             var described = row.describe(context, modifiers)
-            described.sublayers.append(move chevron)
+            if showChevron {
+                var chevron = Icon(symbol: .ChevronForward)
+                    .imageScale(.Small)
+                    .font(size: resolvedLength(face.size), weight: .SemiBold)
+                    .foregroundColor(.Tertiary)
+                    .describe(context, modifiers)
+                chevron.layout.fixedHeight = -1.0
+                chevron.layout.heightFill = true
+                described.sublayers.append(move chevron)
+            }
             described.hittable = !modifiers.disabled
             described.hitKey = key
             return described
         }
         let metrics = navigationMetrics(context.viewportWidth)
-        let target = label.minHeight(resolvedLength(metrics.targetSize))
-        return target.onClick(navigationPushAction(copy value)).describe(context, modifiers)
+        if navigationLinkIndicatorShows(
+            modifiers.navigationLinkIndicatorVisibility, modifiers.controlPresentation
+        ) {
+            let target = HStack(spacing: .Length(listMetrics().accessorySpacing)) {
+                label
+                Icon(symbol: .ChevronForward)
+                    .imageScale(.Small)
+                    .foregroundColor(.Tertiary)
+            }.minHeight(resolvedLength(metrics.targetSize))
+            return target.onClick(navigationPushAction(copy value)).describe(context, modifiers)
+        }
+        return label.minHeight(resolvedLength(metrics.targetSize))
+            .onClick(navigationPushAction(copy value)).describe(context, modifiers)
     }
 }
 
@@ -244,7 +277,7 @@ public construct NavigationBar(title: String = "") extends Widget {
     ) -> CALayerDescription {
         let path = NavigationPath {}
         let items = HStack(spacing: .Small, alignment: .Center) {
-            if !path.isEmpty() {
+            if !path.isEmpty() && !modifiers.navigationBackButtonHidden {
                 NavigationBackButton()
             }
             if title.count > 0 {
@@ -410,8 +443,15 @@ public construct NavigationStack(path: NavigationPath = NavigationPath {}) exten
         depth: Number,
         radius: Number,
     ) -> CALayerDescription {
+        // Declare the system Back control before lowering page content to
+        // retain the same key sequence and stable view identity. A destination
+        // can override it only when it lowers, so filter this exact toolbar
+        // group afterwards rather than changing description order.
+        let previousBackPreference = toolbarBeginPageBackButton()
+        let previousTitlePreference = toolbarBeginPageTitleDisplayMode()
+        var backGroup: Number = 0
         if depth > navigationRootDepth() {
-            navigationDeclareBack(context, modifiers)
+            backGroup = navigationDeclareBack(context, modifiers)
         }
         navigationClearBackground()
         // The page's scroll views are its own, known by the path and the depth,
@@ -424,11 +464,20 @@ public construct NavigationStack(path: NavigationPath = NavigationPath {}) exten
         stateScopeRecord(navigationPageScope(depth))
         let view = navigationPageView(root).describe(insideSafeArea(context), columnModifiers)
         stateScopeRecorded()
+        let hideBackButton = toolbarEndPageBackButton(
+            move previousBackPreference, columnModifiers.navigationBackButtonHidden
+        )
+        let titleDisplayMode = toolbarEndPageTitleDisplayMode(
+            move previousTitlePreference, columnModifiers.navigationBarTitleDisplayMode
+        )
+        if hideBackButton && backGroup != 0 {
+            toolbarRemoveBackGroup(backGroup)
+        }
         let carried = scrollScopeLeave(move scope)
         let canvas = navigationColumnCanvas(modifiers)
         var column: [CALayerDescription] = []
         let title = toolbarColumnTitle()
-        if title.count > 0 {
+        if title.count > 0 && navigationBarUsesLargeTitle(titleDisplayMode) {
             toolbarShowLargeTitle()
             if !carried {
                 column.append(navigationLargeTitle(move title, context, columnModifiers))
@@ -471,6 +520,10 @@ function navigationPageView(root: Any Widget) -> Any Widget {
 // The scroll scope a stacked split view's root page lowers in: apart from
 // every stack page's, whose scopes count up from the stack's generation.
 public let navigationStackedRootScope = 999999
+// The sidebar in an expanded split has a page scroll view just as a compact
+// sidebar does. Its distinct scope preserves its own scroll offset and title
+// collapse independently from any detail pages beside it.
+public let navigationSplitSidebarScope = 999998
 
 // A stacked split view's sidebar as the stack's root page: inside the safe
 // area under its title set large, unless its scroll view carries both up
@@ -486,7 +539,8 @@ public function navigationStackedRoot(
     if carried {
         insets.top = 0.0
     }
-    if carried || title.count == 0 {
+    if carried || title.count == 0
+        || !navigationBarUsesLargeTitle(modifiers.navigationBarTitleDisplayMode) {
         return safeAreaInset(move sidebar, insets)
     }
     var content = move sidebar

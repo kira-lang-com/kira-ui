@@ -1,0 +1,187 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+import Ember
+
+@Test
+function verticalTextFieldGrowsBetweenOneAndEightLines() {
+    let line = foundationTextLineBox(17, 400, .Default)
+    expect!(multilineFieldHeight("Hello", 17, 400, 760, .Default, 1, 8) == line)
+    expect!(multilineFieldHeight("One\nTwo\nThree", 17, 400, 760, .Default, 1, 8) == 3 * line)
+    let long = "1\n2\n3\n4\n5\n6\n7\n8\n9\n10"
+    expect!(multilineFieldHeight(long, 17, 400, 760, .Default, 1, 8) == 8 * line)
+}
+
+@Test
+function verticalFieldKeepsItsNewlinesInEditingAndPaste() {
+    let key = 91001
+    textFieldReset(key)
+    textFieldSeed(key, "Hello")
+    textFieldInsert(key, 10, true)
+    textFieldInsertText(key, "second\nthird", true)
+    expect!(textFieldText(key) == "Hello\nsecond\nthird")
+    textFieldReset(key)
+    textFieldSeed(key, "Hello")
+    textFieldInsert(key, 10)
+    expect!(textFieldText(key) == "Hello")
+}
+
+@Test
+function verticalTextFieldUsesShiftReturnForNewlineAndReturnForSubmit() {
+    let key = 91002
+    textFieldReset(key)
+    textFieldSeed(key, "Hello")
+    let command = multilineTextFieldCommandFn(
+        key,
+        { text in return },
+        { in return }
+    )
+    command(.Enter, ModifierState { shift: true })
+    expect!(textFieldText(key) == "Hello\n")
+    command(.Enter, ModifierState {})
+    expect!(textFieldText(key) == "Hello\n")
+}
+
+@Test
+function verticalCaretUsesTheSameWrappedLineMetricsAsText() {
+    let line = foundationTextLineBox(17, 400, .Default)
+    let start = multilineCaretPosition("", 17, 400, 760, .Default)
+    expect!(start.x == 0)
+    expect!(start.y == 0)
+    let afterNewline = multilineCaretPosition("one\ntwo", 17, 400, 760, .Default)
+    expect!(afterNewline.y == line)
+    expect!(afterNewline.x == foundationTextRunWidth("two", 17, 400, .Default))
+}
+
+@Test
+function verticalTextFieldUsesActualWidthAndLineRangeForItsLayout() {
+    let field = TextField(
+        title: "Ask HarmonyAI",
+        text: unboundText("one\ntwo\nthree"),
+        axis: .Vertical
+    ).lineLimit(min: 1, max: 8).textFieldStyle(.Plain)
+    var described = describedLayer(move field)
+    let authoredRun = textRunOf(described.sublayers[0].sublayers[0])
+    let line = foundationTextLineBox(
+        authoredRun.size, authoredRun.weight, authoredRun.design
+    )
+    expect!(described.layout.minHeight == line)
+    expect!(described.layout.maxHeight == 8 * line)
+    layOutLayerTree(described, 180, 250)
+    expect!(described.size.width == 180)
+    expect!(described.size.height >= 3 * line)
+    expect!(described.size.height <= described.layout.maxHeight)
+    // Unlike the old one-row field, the visible text run is wrap-enabled.
+    let run = textRunOf(described.sublayers[0].sublayers[0])
+    expect!(run.wraps)
+}
+
+@Test
+function longMultilineTextScrollsInsideEightLinesWithoutTruncatingItsContent() {
+    let document = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten"
+    let field = TextField(
+        title: "Message", text: unboundText(copy document), axis: .Vertical
+    ).lineLimit(min: 1, max: 8).textFieldStyle(.Plain)
+    var described = describedLayer(move field)
+    layOutLayerTree(described, 260, 300)
+    let visual = described.sublayers[0]
+    let textLayer = visual.sublayers[0]
+    let text = textRunOf(textLayer)
+    expect!(text.content == document)
+    expect!(text.lineLimit == 0)
+    expect!(described.clipsChildren)
+    expect!(textLayer.layout.intrinsicHeight > described.size.height)
+    expect!(textLayer.layout.offset.y < 0)
+}
+
+@Test
+function caretAndClickUseTheFullDocumentWrapRatherThanPrefixWrap() {
+    let size = 17.0
+    let weight = 400.0
+    let width = max(
+        foundationTextRunWidth("hello", size, weight, .Default),
+        foundationTextRunWidth("world", size, weight, .Default)
+    ) + 3.0
+    let content = "hello world"
+    let line = foundationTextLineBox(size, weight, .Default)
+    let caret = multilineCaretAt(content, 7, size, weight, width, .Default)
+    expect!(caret.y == line)
+    expect!(caret.x == foundationTextRunWidth("w", size, weight, .Default))
+    let roundTrip = multilineIndexAt(
+        content, caret.x, caret.y + line * 0.5,
+        size, weight, width, .Default
+    )
+    expect!(roundTrip == 7)
+}
+
+@Test
+function documentEditorSupportsParagraphsArrowsWordAndSelectAll() {
+    let key = 91003
+    textFieldReset(key)
+    textFieldSeed(key, "hello world\nnext line")
+    let width = 300.0
+    textFieldViewport(key, width, 0)
+    let command = multilineTextFieldCommandFn(
+        key, { text in return }, { in return }, 17, 400, .Default, true
+    )
+    // A document's Return inserts a paragraph instead of submitting.
+    command(.Enter, ModifierState {})
+    expect!(textFieldText(key) == "hello world\nnext line\n")
+    // Up and Down use actual wrapped line positions, not a one-line caret.
+    command(.Up, ModifierState {})
+    let movedUp = textFieldSelectedText(key)
+    expect!(movedUp == "")
+    command(.Down, ModifierState {})
+    command(.Left, ModifierState { shift: true })
+    expect!(textFieldSelectedText(key).count == 1)
+    let edit = textFieldEditFn(key, false, { text in return }, true)
+    edit(.SelectAll)
+    expect!(textFieldSelectedText(key) == textFieldText(key))
+    textFieldInsert(key, 88, true)
+    expect!(textFieldText(key) == "X")
+    textFieldReset(key)
+    textFieldSeed(key, "hello world")
+    textFieldNav(key, .Home)
+    textFieldSelectWord(key)
+    expect!(textFieldSelectedText(key) == "hello")
+}
+
+@Test
+function textEditorUsesDocumentSemanticsAndActualMultilineViewport() {
+    setInterfaceMode(.AdaptiveDesktop)
+    let editor = TextEditor(text: unboundText("first\nsecond"))
+        .lineLimit(min: 3, max: 12)
+        .textFieldStyle(.Plain)
+    var described = describedLayer(move editor)
+    let run = textRunOf(described.sublayers[0].sublayers[0])
+    let line = foundationTextLineBox(run.size, run.weight, run.design)
+    expect!(described.layout.minHeight == 3 * line)
+    expect!(described.layout.maxHeight == 12 * line)
+    layOutLayerTree(described, 420, 250)
+    expect!(described.size.width == 420)
+    expect!(described.sublayers[0].sublayers[0].size.width <= 420)
+    setInterfaceMode(hostInterfaceMode())
+}
+
+// `.lineLimit(min:max:)` reserves space for the editor's viewport, but it
+// must NOT stretch the text run to the same height. Otherwise a short line is
+// painted halfway down a fourteen-line glyph box while the caret stays at y=0.
+@Test
+function documentEditorReservedLinesKeepShortTextAtTopWithCaret() {
+    setInterfaceMode(.AdaptiveDesktop)
+    let editor = TextEditor(text: unboundText("hhhhh"))
+        .textFieldStyle(.Plain)
+        .lineLimit(min: 14, max: 36)
+        .font(size: resolvedLength(17.0), weight: .Regular)
+    var described = describedLayer(move editor)
+    let run = textRunOf(described.sublayers[0].sublayers[0])
+    let lineHeight = foundationTextLineBox(run.size, run.weight, run.design)
+    layOutLayerTree(described, 600, 640)
+
+    let glyph = described.sublayers[0].sublayers[0]
+    expect!(described.size.height >= 14 * lineHeight)
+    expect!(glyph.layout.minHeight == 0)
+    expect!(glyph.size.height == lineHeight)
+    expect!(described.sublayers[0].position.y + glyph.position.y == 0)
+    setInterfaceMode(hostInterfaceMode())
+}

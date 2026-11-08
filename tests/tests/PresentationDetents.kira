@@ -1,0 +1,165 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+struct DetentSelectionTestState {
+    var chosen: PresentationDetent = .Medium
+    var updates: Number = 0.0
+}
+
+@Test
+function detentsConvertAllBuiltInHeightCasesUsingTheActualAvailableSpace() {
+    let context = buildContext(FoundationUiContext {
+        viewport: Size { width: 390.0, height: 800.0 }
+    })
+    let maximum = presentationMaximumDetentHeight(context)
+    expect!(maximum > 600.0)
+    expect!(presentationDetentHeight(.Large, maximum) == maximum)
+    expect!(presentationDetentHeight(.Medium, maximum) == maximum * 0.5)
+    expect!(presentationDetentHeight(.Fraction(0.30), maximum)
+        == maximum * 0.3)
+    expect!(presentationDetentHeight(.Height(192.0), maximum) == 192.0)
+    expect!(presentationDetentHeight(.Fraction(1.8), maximum) == maximum)
+    expect!(presentationDetentHeight(.Height(-23.0), maximum) == 1.0)
+}
+
+@Test
+function presentationDetentSetDeduplicatesAndFindsClosestHeight() {
+    let offered = presentationDetentHeights([
+        .Medium, .Large, .Fraction(0.5), .Height(210.0)
+    ], 600.0)
+    expect!(offered.count == 3)
+    expect!(presentationDetentSmallest(offered) == 210.0)
+    expect!(presentationDetentNearestHeight(offered, 310.0) == 300.0)
+    expect!(presentationDetentNearestHeight(offered, 580.0) == 600.0)
+    expect!(presentationDetentNearestHeight(offered, 80.0) == 210.0)
+}
+
+@Test
+function sheetDetentsReallyChangeThePresentedCardHeightAndShowAGrabber() {
+    let shown = Binding<Bool> { get: { in return true }, set: { value in } }
+    layerActionsReset()
+    overlayCollect()
+    tapSeqReset()
+    absorb describedLayerInWideWindow(Text("Presenting view").sheet(isPresented: shown) {
+        Text("Sheet content")
+            .presentationDetents(detents: [.Medium, .Large])
+            .presentationDragIndicator(visibility: .Automatic)
+    })
+    let overlays = overlaysThisFrame()
+    expect!(overlays.count == 2)
+    let maximum = 720.0 - 12.0
+    expect!(abs(overlays[1].content.layout.fixedHeight - maximum * 0.5) < 1.0)
+    expect!(overlays[1].content.clipsChildren)
+    expect!(overlays[1].content.sublayers.count > 0)
+    // The grabber has a real pointer/gesture hit target and lives inside the
+    // overlay card, not in a global screen overlay covering the backdrop.
+    let grabber = overlays[1].content.sublayers[
+        overlays[1].content.sublayers.count - 1
+    ]
+    expect!(grabber.hittable)
+    expect!(grabber.hitKey != 0)
+    expect!(grabber.layout.offset.x > 0)
+    overlayStopCollecting()
+}
+
+@Test
+function dragIndicatorVisibilityOverridesTheAutomaticDetentDecision() {
+    let hidden = presentationPreferences(describedLayer(
+        Text("Sheet")
+            .presentationDetents(detents: [.Medium, .Large])
+            .presentationDragIndicator(visibility: .Hidden)
+    ))
+    expect!(hidden.hasDetents)
+    expect!(!presentationDragIndicatorShows(hidden))
+
+    let visible = presentationPreferences(describedLayer(
+        Text("Sheet").presentationDragIndicator(visibility: .Visible)
+    ))
+    expect!(presentationDragIndicatorShows(visible))
+
+    let one = presentationPreferences(describedLayer(
+        Text("Sheet").presentationDetents(detents: [.Large])
+    ))
+    expect!(!presentationDragIndicatorShows(one))
+}
+
+@Test
+function boundDetentSelectionUpdatesItsRealBindingWhenDragged() {
+    unsafe {
+        let state = nativeUserData(nativeState(DetentSelectionTestState {}))
+        let binding = Binding<PresentationDetent> {
+            get: { in
+                unsafe { return copy nativeRecover<DetentSelectionTestState>(state).chosen }
+            },
+            set: { selected in
+                unsafe {
+                    var record = nativeRecover<DetentSelectionTestState>(state)
+                    record.chosen = move selected
+                    record.updates++
+                }
+            }
+        }
+        tapSeqReset()
+        let context = buildContext(FoundationUiContext {
+            viewport: Size { width: 380.0, height: 800.0 }
+        })
+        let modifiers = ModifierContext {}
+        let described = Text("Sheet")
+            .presentationDetents(
+                detents: [.Medium, .Large], selection: binding
+            ).describe(context, modifiers)
+        let options = presentationPreferences(described)
+        expect!(options.hasDetents)
+        expect!(options.selectionKey != 0)
+        let maximum = presentationMaximumDetentHeight(context)
+        expect!(options.selectedHeight == maximum * 0.5)
+        presentationDetentSelectHeight(options.selectionKey, maximum)
+        match nativeRecover<DetentSelectionTestState>(state).chosen {
+            Large -> {}
+            else -> expect!(false)
+        }
+        expect!(nativeRecover<DetentSelectionTestState>(state).updates == 1.0)
+        // Selection is not merely stored in the modifier; on the next build
+        // the new Binding value controls the physical height again.
+        let next = Text("Sheet").presentationDetents(
+            detents: [.Medium, .Large], selection: binding
+        ).describe(context, modifiers)
+        expect!(presentationPreferences(next).selectedHeight == maximum)
+    }
+}
+
+@Test
+function unboundSheetDragUpdatesRetainedHeightOnlyAfterASubstantialGesture() {
+    let options = presentationPreferences(describedLayer(
+        Text("Sheet")
+            .presentationDetents(detents: [.Medium, .Large])
+    ))
+    expect!(options.hasDetents)
+    let key = 91919.0
+    let first = presentationSheetDetentHeight(key, options, 600.0)
+    expect!(first == presentationDetentSmallest(options.detentHeights))
+    presentationSheetDetentDragEnded(key, options, -2.0)
+    expect!(presentationSheetDetentHeight(key, options, 600.0) == first)
+    presentationSheetDetentDragEnded(key, options, -10000.0)
+    expect!(presentationSheetDetentHeight(key, options, 600.0)
+        == presentationDetentNearestHeight(options.detentHeights, 100000.0))
+    presentationSheetDetentDragEnded(key, options, 10000.0)
+    expect!(presentationSheetDetentHeight(key, options, 600.0) == first)
+}
+
+@Test
+function presentationDetentsAcceptSetOverloadsAndPreserveSectionIdentity() {
+    var allowed = Set<PresentationDetent>()
+    allowed.insert(.Medium)
+    allowed.insert(.Large)
+    let section = Section {
+        Text("Modal row")
+    }.presentationDetents(detents: allowed)
+        .presentationDragIndicator(visibility: .Visible)
+    expect!(section.isSection())
+    // The two fractions of the available height are distinct only for a
+    // nonzero presenter viewport; an unhosted zero-size view has a 1pt cap.
+    let described = describedLayerInWideWindow(move section)
+    expect!(presentationPreferences(described).detentHeights.count == 2)
+}

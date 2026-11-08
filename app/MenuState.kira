@@ -115,12 +115,17 @@ public function menuRetarget(
 // open after its item was chosen would leave the user to close a panel they have
 // already finished with. The action runs first: what it does is the point, and
 // the dismissal is what happens to the menu afterwards.
-public function menuChooseFn(action: () -> Void) -> () -> Void {
+public function menuChooseFn(action: () -> Void, dismiss: Bool = true) -> () -> Void {
     unsafe {
         let chosen = action
+        let shouldDismiss = dismiss
         let press: () -> Void = { in
             unsafe {
                 chosen()
+                // A repeating menu action still runs through the exact same
+                // action router, but it leaves the presented menu and its
+                // keyboard/pointer focus intact for the next selection.
+                if !shouldDismiss { return }
                 menuEnsure()
                 var state = nativeRecover<MenuState>(ambientStateGet(StateSlot.menu))
                 if state.openKey != 0 {

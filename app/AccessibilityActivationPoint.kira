@@ -1,0 +1,79 @@
+import Foundation
+import KCoreAnimation
+
+// A normalized point in the measured bounds of a view. SwiftUI's UnitPoint
+// can intentionally fall outside 0...1, so projection does not clamp it.
+public struct UnitPoint {
+    let x: Number = 0.5
+    let y: Number = 0.5
+}
+
+public namespace UnitPoints {
+    let center: UnitPoint = UnitPoint { x: 0.5, y: 0.5 }
+    let top: UnitPoint = UnitPoint { x: 0.5, y: 0.0 }
+    let bottom: UnitPoint = UnitPoint { x: 0.5, y: 1.0 }
+    let leading: UnitPoint = UnitPoint { x: 0.0, y: 0.5 }
+    let trailing: UnitPoint = UnitPoint { x: 1.0, y: 0.5 }
+    let topLeading: UnitPoint = UnitPoint { x: 0.0, y: 0.0 }
+    let bottomTrailing: UnitPoint = UnitPoint { x: 1.0, y: 1.0 }
+}
+
+// SwiftUI accepts either a concrete CGPoint or a UnitPoint. A concrete point
+// remains in window coordinates; a UnitPoint follows the element's final
+// measured frame, even when its size changes between layout passes.
+public enum AccessibilityActivationPosition {
+    Absolute(Point)
+    Relative(UnitPoint)
+}
+
+public struct AccessibilityActivationChange {
+    let position: AccessibilityActivationPosition
+    let enabled: Bool = true
+}
+
+public function resolvedAccessibilityActivationPoint(
+    specified: AccessibilityActivationPosition?,
+    frame: borrow Rect
+) -> Point {
+    return match specified {
+        None -> Point {
+            x: frame.x + frame.width * 0.5,
+            y: frame.y + frame.height * 0.5
+        }
+        Some(position) -> match position {
+            Absolute(point) -> point
+            Relative(unit) -> Point {
+                x: frame.x + frame.width * unit.x,
+                y: frame.y + frame.height * unit.y
+            }
+        }
+    }
+}
+
+extend Widget {
+    // SwiftUI: `.accessibilityActivationPoint(_ activationPoint: CGPoint,
+    //                                        isEnabled: Bool = true)`.
+    function accessibilityActivationPoint(
+        point: Point,
+        isEnabled: Bool = true
+    ) -> Any Widget {
+        return AccessibilityLayer(
+            change: .ActivationPoint(AccessibilityActivationChange {
+                position: .Absolute(point), enabled: isEnabled
+            })
+        ) { self }
+    }
+
+    // SwiftUI's UnitPoint overload. A separate Kira type avoids confusing
+    // normalized positions with pixel positions even though both carry x/y.
+    function accessibilityActivationPoint(
+        point: UnitPoint,
+        isEnabled: Bool = true
+    ) -> Any Widget {
+        return AccessibilityLayer(
+            change: .ActivationPoint(AccessibilityActivationChange {
+                position: .Relative(point), enabled: isEnabled
+            })
+        ) { self }
+    }
+}

@@ -1,0 +1,250 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// Applications can supply their own proposal by extending the same native
+// PresentationSizing abstraction used by all built-in strategies.
+public construct SquarePresentationSizing() extends PresentationSizing {
+    function proposedSize(
+        root: borrow PresentationSizingRoot,
+        context: borrow PresentationSizingContext
+    ) -> PresentationSizeProposal {
+        return PresentationSizeProposal {
+            width: .Some(320.0), height: .Some(320.0)
+        }
+    }
+}
+
+@Test
+function presentationSizingSupportsAllBuiltinStrategiesAndCustomProtocols() {
+    let sizingContext = PresentationSizingContext {
+        viewport: Size { width: 1100.0, height: 1000.0 },
+        availableSize: Size { width: 900.0, height: 940.0 },
+        desktop: true
+    }
+    let root = PresentationSizingRoot { content: describedLayer(Text("Label")) }
+    let form = PresentationSizings.form.proposedSize(root, sizingContext)
+    let page = PresentationSizings.page.proposedSize(root, sizingContext)
+    let fitted = PresentationSizings.fitted.proposedSize(root, sizingContext)
+    let automatic = PresentationSizings.automatic.proposedSize(root, sizingContext)
+    match form.width {
+        Some(value) -> expect!(value == SheetMetrics.width)
+        None -> expect!(false)
+    }
+    match page.width {
+        Some(value) -> expect!(value == SheetMetrics.pageWidth)
+        None -> expect!(false)
+    }
+    match fitted.width {
+        None -> {}
+        Some(value) -> expect!(false)
+    }
+    match fitted.height {
+        None -> {}
+        Some(value) -> expect!(false)
+    }
+    match automatic.height {
+        None -> {}
+        Some(value) -> expect!(false)
+    }
+    let square = SquarePresentationSizing {}
+    let custom = square.proposedSize(root, sizingContext)
+    match custom.width {
+        Some(value) -> expect!(value == 320.0)
+        None -> expect!(false)
+    }
+    match custom.height {
+        Some(value) -> expect!(value == 320.0)
+        None -> expect!(false)
+    }
+}
+
+@Test
+function axisSelectiveFittingAndStickyMethodsComposeWithoutLosingBaseProposal() {
+    let context = PresentationSizingContext {
+        availableSize: Size { width: 960.0, height: 850.0 }
+    }
+    let root = PresentationSizingRoot { content: describedLayer(Text("Variable")) }
+    let adjusted = PresentationSizings.page
+        .fitted(horizontal: false, vertical: true)
+        .sticky(horizontal: true, vertical: true)
+    let proposal = adjusted.proposedSize(root, context)
+    match proposal.width {
+        Some(value) -> expect!(value == SheetMetrics.pageWidth)
+        None -> expect!(false)
+    }
+    match proposal.height {
+        None -> {}
+        Some(value) -> expect!(false)
+    }
+    let sticky = adjusted.stickyAxes()
+    expect!(sticky.horizontal)
+    expect!(sticky.vertical)
+
+    let natural = PresentationSizings.form.fitted(horizontal: true, vertical: false)
+    let other = natural.proposedSize(root, context)
+    match other.width {
+        None -> {}
+        Some(value) -> expect!(false)
+    }
+    match other.height {
+        Some(value) -> expect!(value == SheetMetrics.height)
+        None -> expect!(false)
+    }
+}
+
+@Test
+function fittedRootMeasuresActualContentWithoutFillingItsProposal() {
+    let root = PresentationSizingRoot {
+        content: describedLayer(
+            Text("Short content").frame(width: 184.0, height: 37.0)
+        )
+    }
+    let natural = root.sizeThatFits(PresentationSizeProposal {})
+    expect!(natural.width == 184.0)
+    expect!(natural.height == 37.0)
+    let constrained = root.sizeThatFits(PresentationSizeProposal {
+        width: .Some(170.0)
+    })
+    expect!(constrained.width == 184.0)
+    expect!(constrained.height == 37.0)
+}
+
+@Test
+function presentationSizingChangesRealSheetCardWidthAndHeight() {
+    let shown = Binding<Bool> { get: { in return true }, set: { visible in } }
+    layerActionsReset()
+    overlayCollect()
+    tapSeqReset()
+    absorb describedLayerInWideWindow(Text("Main view").sheet(isPresented: shown) {
+        Text("Custom sheet").frame(width: 320.0, height: 165.0)
+            .presentationSizing(sizing: SquarePresentationSizing {})
+    })
+    let overlays = overlaysThisFrame()
+    expect!(overlays.count == 2)
+    let card = overlays[1].content
+    expect!(card.layout.fixedWidth == 320.0)
+    expect!(card.layout.fixedHeight == 320.0)
+    expect!(card.clipsChildren)
+    expect!(describedContainsText(card, "Custom sheet"))
+    overlayStopCollecting()
+}
+
+@Test
+function automaticPageAndFittedStrategiesDifferInActualSheetCard() {
+    let shown = Binding<Bool> { get: { in return true }, set: { visible in } }
+    layerActionsReset()
+    overlayCollect()
+    tapSeqReset()
+    absorb describedLayerInWideWindow(Text("Main").sheet(isPresented: shown) {
+        Text("Page").presentationSizing(sizing: PresentationSizings.page)
+    })
+    let page = overlaysThisFrame()[1].content
+    expect!(page.layout.fixedWidth > SheetMetrics.width)
+    expect!(page.layout.fixedHeight > 0.0)
+    overlayStopCollecting()
+
+    layerActionsReset()
+    overlayCollect()
+    tapSeqReset()
+    absorb describedLayerInWideWindow(Text("Main").sheet(isPresented: shown) {
+        Text("Fitted").frame(width: 195.0, height: 68.0)
+            .presentationSizing(sizing: PresentationSizings.fitted)
+    })
+    let fitted = overlaysThisFrame()[1].content
+    expect!(fitted.layout.fixedWidth == 195.0)
+    expect!(fitted.layout.fixedHeight == 68.0)
+    overlayStopCollecting()
+}
+
+@Test
+function stickySizingGrowsButNeverShrinksWithinTheSamePresentationIdentity() {
+    let available = Size { width: 850.0, height: 750.0 }
+    let initial = PresentationPreferences {
+        hasSizing: true,
+        sizingWidth: 300.0, sizingHeight: 280.0,
+        stickySizingHorizontal: true, stickySizingVertical: true
+    }
+    let a = presentationSizedCard(
+        984001.0, initial, Size { width: 500.0, height: 500.0 }, available
+    )
+    expect!(a.width == 300.0)
+    expect!(a.height == 280.0)
+
+    let smaller = PresentationPreferences {
+        hasSizing: true,
+        sizingWidth: 190.0, sizingHeight: 125.0,
+        stickySizingHorizontal: true, stickySizingVertical: true
+    }
+    let b = presentationSizedCard(984001.0, smaller, a, available)
+    expect!(b.width == 300.0)
+    expect!(b.height == 280.0)
+
+    let larger = PresentationPreferences {
+        hasSizing: true,
+        sizingWidth: 410.0, sizingHeight: 330.0,
+        stickySizingHorizontal: true, stickySizingVertical: true
+    }
+    let c = presentationSizedCard(984001.0, larger, b, available)
+    expect!(c.width == 410.0)
+    expect!(c.height == 330.0)
+
+    let d = presentationSizedCard(984001.0, smaller, c, available)
+    expect!(d.width == 410.0)
+    expect!(d.height == 330.0)
+}
+
+@Test
+function stickyIsIndependentPerAxisAndDoesNotAffectAnotherPresentation() {
+    let available = Size { width: 700.0, height: 700.0 }
+    let big = PresentationPreferences {
+        hasSizing: true,
+        sizingWidth: 380.0, sizingHeight: 340.0,
+        stickySizingHorizontal: false, stickySizingVertical: true
+    }
+    let small = PresentationPreferences {
+        hasSizing: true,
+        sizingWidth: 210.0, sizingHeight: 120.0,
+        stickySizingHorizontal: false, stickySizingVertical: true
+    }
+    let first = presentationSizedCard(984101.0, big, available, available)
+    expect!(first.width == 380.0)
+    let changed = presentationSizedCard(984101.0, small, available, available)
+    expect!(changed.width == 210.0)
+    expect!(changed.height == 340.0)
+    let separate = presentationSizedCard(984102.0, small, available, available)
+    expect!(separate.width == 210.0)
+    expect!(separate.height == 120.0)
+}
+
+@Test
+function presentationSizingWidthComposesWithExplicitSheetDetents() {
+    let shown = Binding<Bool> { get: { in return true }, set: { visible in } }
+    layerActionsReset()
+    overlayCollect()
+    tapSeqReset()
+    absorb describedLayerInWideWindow(Text("Main").sheet(isPresented: shown) {
+        Text("Detented page")
+            .presentationSizing(sizing: PresentationSizings.page)
+            .presentationDetents(detents: [.Height(230.0)])
+    })
+    let card = overlaysThisFrame()[1].content
+    expect!(card.layout.fixedWidth > SheetMetrics.width)
+    expect!(card.layout.fixedHeight == 230.0)
+    overlayStopCollecting()
+}
+
+@Test
+function sizingIsAPresentationPreferenceAndPreservesSectionGrouping() {
+    let section = Section {
+        Text("Section body")
+    }.presentationSizing(sizing: PresentationSizings.form)
+    expect!(section.isSection())
+    let view = describedLayer(move section)
+    expect!(view.groupedSection)
+    expect!(describedContainsText(view, "Section body"))
+    let options = presentationPreferences(view)
+    expect!(options.hasSizing)
+    expect!(options.sizingWidth > 0.0)
+    expect!(options.sizingHeight > 0.0)
+}

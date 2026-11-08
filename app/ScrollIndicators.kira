@@ -1,0 +1,56 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's `scrollIndicators(_:axes:)`: visibility is an environment value
+// consumed by the scroll view, not an opacity patch on its entire content.
+// Hidden indicators do not draw or intercept dragging; the scroll surface
+// remains fully scrollable. Visible indicators stay visible while scrollable.
+//
+// The native ScrollView currently scrolls vertically. Naming the axes now
+// preserves the full SwiftUI call shape without disabling its vertical bar
+// when an application asks to hide *horizontal* indicators only.
+public enum ScrollIndicatorAxes {
+    Vertical
+    Horizontal
+    All
+}
+
+public function scrollIndicatorAffectsVertical(axes: ScrollIndicatorAxes) -> Bool {
+    return axes == .Vertical || axes == .All
+}
+
+public function scrollIndicatorIsAllowed(
+    visibility: Visibility,
+    axes: ScrollIndicatorAxes
+) -> Bool {
+    return visibility != .Hidden || !scrollIndicatorAffectsVertical(axes)
+}
+
+public construct ScrollIndicatorsLayer(
+    visibility: Visibility,
+    axes: ScrollIndicatorAxes = .All
+) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        return content.describe(
+            context,
+            modifierContextApply(modifiers, modifierDeltaScrollIndicators(visibility, axes))
+        )
+    }
+}
+
+extend Widget {
+    // Both SwiftUI call forms:
+    // `.scrollIndicators(.hidden)` and
+    // `.scrollIndicators(.hidden, axes: .vertical)`.
+    function scrollIndicators(
+        visibility: Visibility,
+        axes: ScrollIndicatorAxes = .All
+    ) -> Any Widget {
+        return ScrollIndicatorsLayer(visibility: visibility, axes: axes) { self }
+    }
+}

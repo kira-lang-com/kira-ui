@@ -1,0 +1,64 @@
+import Foundation
+import KCoreAnimation
+
+// The three SwiftUI MenuOrder strategies. On mobile, the default is priority
+// (first actions nearest the point where the person opened the menu). Menus
+// inside scroll content and menu-style Pickers default to fixed; desktop menu
+// order is always fixed unless the caller explicitly chooses priority.
+public enum MenuOrder {
+    Automatic
+    Fixed
+    Priority
+}
+
+public function resolvedMenuOrder(
+    modifiers: borrow ModifierContext,
+    isPicker: Bool = false
+) -> MenuOrder {
+    if modifiers.menuOrder != .Automatic { return modifiers.menuOrder }
+    if interfaceMode() == .AdaptiveDesktop || modifiers.insideScrollView || isPicker {
+        return .Fixed
+    }
+    return .Priority
+}
+
+public function modifierDeltaMenuOrder(order: MenuOrder) -> ModifierDelta {
+    return ModifierDelta { hasMenuOrder: true, menuOrder: order }
+}
+
+// The parent menu describes actions in DECLARATION order to issue stable
+// identities and register their keyboard/assistive actions. Only afterwards
+// does the presentation reverse the visual rows in a priority-first menu
+// above its button. This keeps each row's key, action and accessibility node
+// attached to its original declaration, even as its visual position changes.
+// Only the outer row column is reversed; icons, title children and the rows of
+// an independently opened submenu are never reordered.
+public function menuOrderRows(
+    root: CALayerDescription,
+    priorityNearAnchor: Bool
+) -> CALayerDescription {
+    if !priorityNearAnchor { return root }
+    var described = root
+    if described.layout.axis == .Column && described.sublayers.count > 1 {
+        var ordered: [CALayerDescription] = []
+        let total = described.sublayers.count
+        for index in 0..total {
+            ordered.append(copy described.sublayers[total - index - 1])
+        }
+        described.sublayers = move ordered
+        return described
+    }
+    if described.sublayers.count == 1 {
+        described.sublayers[0] = menuOrderRows(
+            copy described.sublayers[0], priorityNearAnchor
+        )
+    }
+    return described
+}
+
+extend Widget {
+    // SwiftUI: `.menuOrder(_ order: MenuOrder)`.
+    function menuOrder(order: MenuOrder) -> Any Widget {
+        return ModifierDeltaLayer(delta: modifierDeltaMenuOrder(order)) { self }
+    }
+}

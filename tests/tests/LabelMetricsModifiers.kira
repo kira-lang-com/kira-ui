@@ -1,0 +1,65 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function labelMetricsModifiersInheritAndOverrideIndependently() {
+    let base = ModifierContext {}
+    let spaced = modifierContextApply(base, modifierDeltaLabelIconToTitleSpacing(13.0))
+    let sized = modifierContextApply(spaced, modifierDeltaLabelReservedIconWidth(34.0))
+    expect!(resolvedLabelIconToTitleSpacing(base, 8.0) == 8.0)
+    expect!(resolvedLabelReservedIconWidth(base, 22.0) == 22.0)
+    expect!(resolvedLabelIconToTitleSpacing(sized, 8.0) == 13.0)
+    expect!(resolvedLabelReservedIconWidth(sized, 22.0) == 34.0)
+    let inherited = modifierContextForChildren(sized)
+    expect!(resolvedLabelIconToTitleSpacing(inherited, 2.0) == 13.0)
+    expect!(resolvedLabelReservedIconWidth(inherited, 2.0) == 34.0)
+    let reset = modifierContextApply(sized, modifierDeltaLabelIconToTitleSpacing(0.0))
+    expect!(resolvedLabelIconToTitleSpacing(reset, 8.0) == 0.0)
+    expect!(resolvedLabelReservedIconWidth(reset, 8.0) == 34.0)
+}
+
+@Test
+function labelIconToTitleSpacingChangesRealHorizontalLayout() {
+    let context = buildContext(FoundationUiContext {})
+    let sidebar = modifierContextPresenting(ModifierContext {}, .SidebarCell)
+    let standard = Label(title: "Projects", systemImage: .Folder)
+        .describe(context, sidebar)
+    let spaced = Label(title: "Projects", systemImage: .Folder)
+        .labelIconToTitleSpacing(value: 17.0).describe(context, sidebar)
+    expect!(standard.layout.spacing == sidebarMetrics().titleSpacing)
+    expect!(spaced.layout.spacing == 17.0)
+    expect!(spaced.sublayers.count == 2)
+    expect!(spaced.sublayers[0].layout.fixedWidth == standard.sublayers[0].layout.fixedWidth)
+}
+
+@Test
+function labelReservedIconWidthMeasuresColumnEvenWithoutAnIcon() {
+    let context = buildContext(FoundationUiContext {})
+    let grouped = modifierContextPresenting(ModifierContext {}, .InsetGrouped)
+    let without = Label(title: "Iconless").describe(context, grouped)
+    let reserved = Label(title: "Iconless")
+        .labelReservedIconWidth(value: 44.0).describe(context, grouped)
+    expect!(without.sublayers.count == 1)
+    expect!(reserved.sublayers.count == 2)
+    expect!(reserved.sublayers[0].layout.fixedWidth == 44.0)
+    expect!(describedContainsText(reserved, "Iconless"))
+}
+
+@Test
+function labelMetricsOverridesWorkInMenuAndStandalonePresentations() {
+    let context = buildContext(FoundationUiContext {})
+    let menu = Label(title: "Open", systemImage: .Folder)
+        .labelIconToTitleSpacing(value: 5.0)
+        .labelReservedIconWidth(value: 37.0)
+        .describe(context, modifierContextPresenting(ModifierContext {}, .MenuRow))
+    expect!(menu.layout.spacing == 5.0)
+    expect!(menu.sublayers[0].layout.fixedWidth == 37.0)
+
+    let plain = Label(title: "Open", systemImage: .Folder)
+        .labelIconToTitleSpacing(value: 14.0)
+        .labelReservedIconWidth(value: 31.0)
+        .describe(context, ModifierContext {})
+    expect!(plain.layout.spacing == 14.0)
+    expect!(plain.sublayers[0].layout.fixedWidth == 31.0)
+}

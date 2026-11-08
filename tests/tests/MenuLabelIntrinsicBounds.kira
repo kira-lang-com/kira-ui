@@ -1,0 +1,89 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// SwiftUI `Menu { ... } label: { title; chevron } .buttonStyle(.plain)
+// .frame(maxWidth: .infinity, alignment: .leading)` has an expanding outer
+// frame, but the menu's own hit target hugs its label. The glass morph starts
+// from THAT hit rect, never the full width of a sidebar or its cell.
+function firstMenuHitWidth(layer: borrow CALayerDescription) -> Number {
+    if layer.hitKey != 0 { return layer.size.width }
+    for sublayer in layer.sublayers {
+        let found = firstMenuHitWidth(sublayer)
+        if found > 0.0 { return found }
+    }
+    return 0.0
+}
+
+@Test
+function plainMenuInLeadingFlexibleFrameRetainsIntrinsicPressBounds() {
+    var described = describedLayer(
+        Menu {
+            Button(title: "Chat", action: { in })
+            Button(title: "Work", action: { in })
+        } label: {
+            HStack(spacing: .Length(6.0)) {
+                Text(content: "HarmonyAI")
+                .font(size: resolvedLength(28.0), weight: .Bold)
+                Icon(symbol: .ChevronDown)
+                .font(size: resolvedLength(15.0), weight: .SemiBold)
+            }
+        }
+        .buttonStyle(.Plain)
+        .frame(maxWidth: FrameLimit.Infinity, alignment: .Leading)
+        .minHeight(resolvedLength(44.0))
+    )
+    layOutLayerTree(described, 560.0, 200.0)
+    expect!(described.size.width == 560.0)
+    let hit = firstMenuHitWidth(described)
+    expect!(hit > 80.0)
+    expect!(hit < 300.0)
+}
+
+@Test
+function styledTitleInsideSingleFlexibleFrameKeepsMenuGlassAnchorCompact() {
+    var described = describedLayer(
+        Menu {
+            Button(title: "Chat", action: { in })
+            Button(title: "Work", action: { in })
+        } label: {
+            HStack(alignment: .Center, spacing: .Length(6.0)) {
+                Text(content: "HarmonyAI Work", runs: [
+                    TextRun { start: 9, end: 14, foregroundColor: .Secondary }
+                ])
+                .typography(.title)
+                .fontWeight(.Bold)
+                .fontDesign(.Serif)
+                .foregroundColor(.Primary)
+                Icon(symbol: .ChevronDown)
+                .typography(.subheadline)
+                .fontWeight(.SemiBold)
+                .foregroundColor(.Secondary)
+            }
+        }
+        .buttonStyle(.Plain)
+        .frame(maxWidth: FrameLimit.Infinity, minHeight: 44.0, alignment: .Leading)
+    )
+    layOutLayerTree(described, 320.0, 120.0)
+    expect!(described.size.width == 320.0)
+    expect!(described.size.height >= 44.0)
+    let hit = firstMenuHitWidth(described)
+    expect!(hit > 80.0)
+    expect!(hit < 320.0)
+}
+
+@Test
+function plainMenuDoesNotAppendSecondChevronToCustomLabel() {
+    let authored = HStack(spacing: .Length(6.0)) {
+        Text(content: "HarmonyAI")
+        Icon(symbol: .ChevronDown)
+    }
+    let expected = describedLayer(copy authored).measure(500.0).width
+    let menu = Menu {
+        Button(title: "Chat", action: { in })
+    } label: {
+        authored
+    }.buttonStyle(.Plain)
+    let actual = describedLayer(move menu).measure(500.0).width
+    expect!(abs(actual - expected) < 1.0)
+}

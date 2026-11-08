@@ -51,6 +51,9 @@ public function navigationShowsContent(visibility: NavigationSplitViewVisibility
 public construct NavigationSplitView(
     columnVisibility: NavigationSplitViewVisibility = .Automatic,
     path: NavigationPath = NavigationPath {},
+    // Radius of the single *content* top-leading corner at the junction with
+    // the unified toolbar. The sidebar is not a floating rounded card.
+    paneCornerRadius: Number? = .None,
 ) extends Widget {
     // The columns are child slots, so a window writes them as blocks in the
     // order it reads them:
@@ -60,21 +63,21 @@ public construct NavigationSplitView(
     // The bare block is the sidebar because the sidebar is the slot declared
     // first, and `content:` and `detail:` name theirs, which is what SwiftUI's
     // labels do. `content` keeps its default, so the two-column form is the
-    // three-column one with the middle block left unwritten.
+    // three-column one with the middle block left unwritten. A rail is an
+    // additional *named* child slot: keeping sidebar first ensures existing
+    // bare-block constructions never silently become rails.
     let sidebar: some Widget
     let content: some Widget = EmptyView()
     let detail: some Widget
+    let rail: some Widget = EmptyView()
 
     // The columns, each described under its own toolbar column so the items
     // and title each one declares land over it.
     //
-    // Side by side, the sidebar is a pane of glass the window's full height:
-    // it runs under the bar, so the window controls and the sidebar's items sit
-    // on it, and only its content is held below the band. The detail runs
-    // under the sidebar too, to the window's leading edge, with its content
-    // held clear of it: the glass is over the detail's canvas, and a view the
-    // detail slides in or out passes under the glass rather than being cut at
-    // the column's edge.
+    // Side by side, the rail and sidebar hand their content to the window so
+    // it can draw a single translucent material behind them and the toolbar.
+    // The detail stays under the leading region, while its content is held
+    // clear of the rail and sidebar by the appropriate safe area.
     function describe(
         context: borrow BuildContext,
         modifiers: borrow ModifierContext
@@ -92,15 +95,42 @@ public construct NavigationSplitView(
         navigationSetRootDepth(split ? 1 : 0)
         let inner = insideSafeArea(context)
         let previous = navigationEnter(true)
-        inspectorCollect()
         toolbarEnterColumn(ToolbarColumn.sidebar)
+        var railDesc = CALayerDescription {}
+        if split {
+            railDesc = rail.describe(inner, navigationColumnModifiers(modifiers, metrics))
+        }
+        let hasRail = split && !describesNothing(railDesc)
+        let railWidth = hasRail ? railDesc.measure(context.viewportWidth).width : 0.0
+        let paneRadius = match paneCornerRadius {
+            Some(value) -> max(value, 0.0)
+            None -> windowChromeMetrics().cornerRadius
+        }
         let sidebarModifiers = navigationSidebarModifiers(modifiers, metrics)
         var sidebarDesc = CALayerDescription {}
         var rootCarried = false
         if split {
+            // The first sidebar List/ScrollView is a page-level scroll view
+            // even on desktop: it owns the large title, which moves underneath
+            // the sidebar's section of the one window toolbar as it scrolls.
+            // Previously only the compact branch installed this scroll scope,
+            // so desktop could show only a permanently inline title.
+            let scope = scrollScopeEnter(navigationSplitSidebarScope, context.safeArea.top)
             sidebarSelectionBegin()
             sidebarDesc = sidebar.describe(inner, sidebarModifiers)
             sidebarSelectionEnd()
+            rootCarried = scrollScopeLeave(move scope)
+            let title = toolbarColumnTitle()
+            if title.count > 0 && !rootCarried {
+                toolbarShowLargeTitle()
+                sidebarDesc = CALayerDescription {
+                    layout: CALayoutIntent { axis: .Column, heightFill: false },
+                    sublayers: [
+                        navigationLargeTitle(copy title, context, sidebarModifiers),
+                        move sidebarDesc
+                    ]
+                }
+            }
         } else {
             // Stacked, the sidebar is the stack's root page, and is lowered as
             // one: its first scroll view runs up under the bar with its title.
@@ -108,6 +138,7 @@ public construct NavigationSplitView(
             sidebarDesc = sidebar.describe(inner, sidebarModifiers)
             rootCarried = scrollScopeLeave(move scope)
         }
+        let primaryWidth = navigationSplitColumnWidth(sidebarDesc, metrics.primaryWidth)
         var rootTitle = ToolbarTitle {}
         if !split {
             rootTitle = toolbarTakeColumnTitle()
@@ -119,7 +150,7 @@ public construct NavigationSplitView(
         // content column as more of it on the leading side: a stack in it
         // paints its canvas under all of them and holds only its content clear.
         // Anything else is held clear here.
-        var beside = metrics.primaryWidth * shown
+        var beside = railWidth + primaryWidth * shown
         if split {
             beside = beside + contentDesc.measure(context.viewportWidth).width
         }
@@ -148,7 +179,6 @@ public construct NavigationSplitView(
         if !chromeSafeAreaWasHandled() {
             detailDesc = safeAreaInset(move detailDesc, detailContext.safeArea)
         }
-        inspectorStopCollecting()
         navigationLeave(previous)
         chromeSafeAreaHandled()
 
@@ -198,74 +228,115 @@ public construct NavigationSplitView(
         }
 
         chromeShowSidebarToggle()
-        if hasSidebar {
-            chromeSetNavigationLayout(metrics.primaryWidth, true, shown, ToolbarColumn.detail)
+        if hasRail {
+            // The rail is persistent even when the sidebar slides away. The
+            // toolbar boundary and the detail safe area include its width.
+            chromeSetNavigationLayout(
+                railWidth + primaryWidth * shown, true, 1.0, ToolbarColumn.detail, railWidth
+            )
+        } else if hasSidebar {
+            chromeSetNavigationLayout(primaryWidth, true, shown, ToolbarColumn.detail)
         }
         // Each column is known by its own key, so the sidebar coming and going
         // never has the tree take the content column for it.
         //
-        // The sidebar takes the room it is out by and slides in it, its glass
-        // at its own width, past the window's leading edge as it goes. The
-        // glass runs past the window's leading, top and bottom edges by the
-        // bleed, holding its content in by as much, so its own edge is never
-        // on the window there, and it meets the detail with no edge at all.
+        // The sidebar takes the room it is out by and slides in it, past the
+        // window's leading edge as it goes. The window owns the shared chrome
+        // material, and the individual columns supply content rather than
+        // overlapping backgrounds.
         var columns: [CALayerDescription] = []
+        let nativeBackdrop = windowBackdropShown()
+        var backdropParts: [CALayerDescription] = []
+        if hasRail {
+            var railColumn = safeAreaInset(move railDesc, context.safeArea)
+            railColumn.key = 3
+            railColumn.layout.widthFill = false
+            railColumn.layout.fixedWidth = railWidth
+            // The window draws the same material behind every leading column,
+            // then lifts their contents over it in one pass.
+            backdropParts.append(move railColumn)
+        }
         if showsSidebar {
-            var glass = liquidGlassDescription(
-                CALayoutIntent {
+            // The sidebar's page ScrollView has already reserved the toolbar
+            // inset in its scrollable content. Insetting that layer again
+            // would double the top clearance and break the large-title scroll
+            // handoff. Other safe-area edges still apply to the glass pane.
+            var sidebarArea = copy context.safeArea
+            if rootCarried { sidebarArea.top = 0.0 }
+            let pane = CALayerDescription {
+                layout: CALayoutIntent {
                     widthFill: false,
                     heightFill: false,
-                    fixedWidth: metrics.primaryWidth + bleed,
+                    fixedWidth: primaryWidth + bleed,
                     fixedHeight: context.viewportHeight + bleed * 2.0,
                     paddingLeading: bleed,
                     paddingTop: bleed,
                     paddingBottom: bleed
                 },
-                0.0,
-                .Rect,
-                modifiers,
-                [safeAreaInset(move sidebarDesc, context.safeArea), sidebarShadow(
-                    metrics.primaryWidth,
-                    context.viewportHeight,
-                    modifiers
-                )]
-            )
-            glass.content = .Glass(sidebarGlass(modifiers))
-            // Meeting the detail with no edge, it casts no shadow on it either:
-            // a panel's would fall across the detail as a dark band.
-            glass.shadow = CAShadow {}
-            // Where the host shows what is behind the window, the sidebar is
-            // a hole the backdrop shows through: it has no glass of its own,
-            // and the window draws it over its content, past the cut.
-            let backdrop = windowBackdropShown()
-            if backdrop { glass.content = .Empty }
+                clipsChildren: true,
+                sublayers: [safeAreaInset(move sidebarDesc, sidebarArea)]
+            }
+            // The pane has no glass, solid paint or shadow. Its content is
+            // lifted over the host's translucent backdrop when available.
             let slid = CALayerDescription {
                 layout: CALayoutIntent {
                     axis: .Row,
                     widthFill: false,
                     heightFill: false,
-                    offset: Point { x: -metrics.primaryWidth * (1.0 - shown) - bleed, y: -bleed }
+                    offset: Point { x: -primaryWidth * (1.0 - shown) - bleed, y: -bleed }
                 },
-                sublayers: [move glass]
+                sublayers: [move pane]
             }
             var column = CALayerDescription {
                 key: 1,
                 layout: CALayoutIntent {
                     widthFill: false,
-                    fixedWidth: metrics.primaryWidth * shown
+                    fixedWidth: primaryWidth * shown
                 }
             }
-            if backdrop {
+            if hasRail {
+                backdropParts.append(move slid)
+            } else if nativeBackdrop {
+                // Preserve the existing leading-edge backdrop geometry
+                // for split views without the new rail slot.
                 windowBackdropSidebar(
                     move slid,
-                    metrics.primaryWidth * shown,
+                    primaryWidth * shown,
                     context.viewportHeight,
-                    surfaceGlassScheme(modifiers)
+                    surfaceGlassScheme(modifiers),
+                    railWidth: 0.0,
+                    cornerRadius: paneRadius
                 )
             } else {
                 column.sublayers = [move slid]
+                columns.append(move column)
             }
-            columns.append(move column)
+        }
+        if hasRail {
+            // The window owns the entire L-shaped material. The rail and
+            // sidebar supply only their content, including the profile and
+            // sidebar buttons. They never each draw a separate glass panel.
+            // Native hosts get one cut over the leading region; standalone
+            // windows use the same backdrop-sampling material as the toolbar.
+            windowBackdropSidebar(
+                CALayerDescription {
+                    layout: CALayoutIntent {
+                        axis: .Row,
+                        widthFill: false,
+                        heightFill: false,
+                        fixedWidth: railWidth + primaryWidth * shown,
+                        fixedHeight: context.viewportHeight
+                    },
+                    sublayers: move backdropParts
+                },
+                railWidth + primaryWidth * shown,
+                context.viewportHeight,
+                surfaceGlassScheme(modifiers),
+                true,
+                context.viewportWidth,
+                railWidth,
+                paneRadius
+            )
         }
         detailDesc = navigationSelectedDetail(move detailDesc)
         // An unwritten content column measures nothing.

@@ -1,0 +1,109 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// A panel being carried between docks has its own unselected pill. The
+// selection guide belongs only to the dock's tab strip, never to its ghost.
+function containsSelectedTab(layer: borrow CALayerDescription) -> Bool {
+    if layer.layout.guide == guideTag(TabBarSelection()) {
+        return true
+    }
+    for child in layer.sublayers {
+        if containsSelectedTab(child) { return true }
+    }
+    return false
+}
+
+function containsUnselectedTab(layer: borrow CALayerDescription) -> Bool {
+    if layer.layout.guide == guideTag(TabBarTab()) { return true }
+    for child in layer.sublayers {
+        if containsUnselectedTab(child) { return true }
+    }
+    return false
+}
+
+@Test
+function carriedWorkspacePanelUsesRegularPill() {
+    let context = buildContext(FoundationUiContext {})
+    let modifiers = ModifierContext {}
+    let declaration = PanelDeclaration {
+        panel: "Inspector",
+        title: "Inspector",
+        systemImage: .SliderHorizontal3
+    }
+    let selected = workspaceTabFace(declaration, true, context, modifiers)
+    expect!(selected.layout.guide == guideTag(TabBarSelection()))
+    expect!(selected.layout.fixedHeight == windowChromeMetrics().itemHeight)
+    let ghost = workspaceDragGhost(declaration, Point { x: 60.0, y: 90.0 }, context, modifiers)
+    expect!(ghost.sublayers.count == 1)
+    expect!(ghost.layout.fixedHeight == windowChromeMetrics().itemHeight)
+    expect!(containsUnselectedTab(ghost))
+    expect!(!containsSelectedTab(ghost))
+    expect!(!ghost.hittable)
+}
+
+@Test
+function workspacePanelStripUsesToolbarHeight() {
+    let context = buildContext(FoundationUiContext {})
+    let modifiers = ModifierContext {}
+    let strip = workspaceStrip(WorkspaceArrangement {}, .Bottom, [], [], "", context, modifiers)
+    expect!(strip.layout.fixedHeight < 0.0)
+    expect!(strip.sublayers[0].layout.fixedHeight < 0.0)
+    expect!(strip.sublayers[0].sublayers[0].layout.fixedHeight == windowChromeMetrics().itemHeight)
+}
+
+@Test
+function workspacePanelControlsUseDefaultToolbarSizes() {
+    let context = buildContext(FoundationUiContext {})
+    let modifiers = ModifierContext {}
+    let metrics = windowChromeMetrics()
+    let close = workspaceCloseButton("Inspector", workspaceCloseKey(0), false, context, modifiers)
+    expect!(close.layout.fixedWidth < 0.0)
+    expect!(close.layout.fixedHeight == metrics.itemHeight)
+    expect!(close.layout.minWidth == metrics.itemWidth)
+
+    let menu = workspaceAddMenu(
+        [PanelDeclaration { panel: "Inspector", title: "Inspector", systemImage: .SliderHorizontal3 }],
+        .Trailing,
+        context,
+        modifiers
+    )
+    expect!(menu.layout.fixedWidth < 0.0)
+    expect!(menu.layout.fixedHeight == metrics.itemHeight)
+    expect!(menu.sublayers.count == 1)
+    expect!(menu.sublayers[0].layout.axis == CAAxis.Row)
+}
+
+@Test
+function panelToolbarSharesWindowToolbarSizing() {
+    let described = describedLayer(PanelToolbar {
+        Button(action = { in return }) { Icon(symbol: .Plus) }
+    })
+    let metrics = windowChromeMetrics()
+    expect!(described.sublayers.count == 1)
+    expect!(described.sublayers[0].layout.fixedHeight == metrics.itemHeight)
+    expect!(described.sublayers[0].sublayers.count == 1)
+    expect!(described.sublayers[0].sublayers[0].sublayers[0].layout.fixedHeight == metrics.itemHeight)
+}
+
+// Panel body artwork must retain its rounded clip, but the TabBar glass and
+// its lifted lens must escape above that rounded panel and nearby cards.
+@Test
+function workspacePanelLensIsNotClippedByPanel() {
+    var state = WorkspaceArrangement { edges: workspaceOpenEdges(), presentation: .Viewport }
+    state.edges[panelEdgeIndex(.Trailing)].selected = "Inspector"
+    let declaration = PanelDeclaration {
+        panel: "Inspector",
+        title: "Inspector",
+        systemImage: .SliderHorizontal3,
+        content: CALayerDescription {}
+    }
+    let context = buildContext(FoundationUiContext {})
+    let modifiers = ModifierContext {}
+    let card = workspaceCard(state, .Trailing, ["Inspector"], [declaration], context, modifiers)
+    expect!(!card.clipsChildren)
+    expect!(card.sublayers.count == 2)
+    expect!(!card.sublayers[0].clipsChildren)
+    expect!(card.sublayers[1].clipsChildren)
+    expect!(card.cornerRadius == workspacePanelRadius())
+}

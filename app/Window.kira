@@ -32,7 +32,9 @@ public function windowFrame(
     overlayCollect()
     commandsCollect(move application)
     toolbarCollect()
+    inspectorCollect()
     let content = root.describe(windowContext, ModifierContext {})
+    inspectorStopCollecting()
     windowBarSettle()
     windowContext.safeArea.top = systemTop + windowBarTop(windowContext.viewportWidth)
     toolbarStopCollecting()
@@ -57,6 +59,7 @@ public function windowDescription(
     if !chromeSafeAreaWasHandled() {
         body = safeAreaInset(move body, context.safeArea)
     }
+    body = inspectorWindowContent(move body, context, modifiers)
     if windowBar() != .Toolbar {
         return windowSurface(move body, windowTitleBar(context, modifiers), modifiers)
     }
@@ -96,9 +99,17 @@ function windowSurface(
     modifiers: borrow ModifierContext
 ) -> CALayerDescription {
     if !windowDecorated() {
+        // Fullscreen and borderless windows still have a navigation material
+        // and its lifted rail/sidebar content. A missing window frame must not
+        // cause those columns to disappear when the decoration is removed.
+        var layers: [CALayerDescription] = [placedIn(move body, WindowLayerPlace.body)]
+        for layer in windowBackdropLayers(modifiers) {
+            layers.append(placedIn(copy layer, WindowLayerPlace.backdrop))
+        }
+        layers.append(placedIn(move chrome, WindowLayerPlace.chrome))
         return CALayerDescription {
             content: .Solid(CASolid { fill: colorFromFoundation(windowCanvas(modifiers)) }),
-            sublayers: [body, chrome]
+            sublayers: move layers
         }
     }
     // A window that draws its own frame rounds every corner alike, holds what
@@ -128,7 +139,7 @@ function windowSurface(
         cornerRadius: radius,
         clipsChildren: true,
         shadow: windowShadowHosted() ? CAShadow {} : windowShadow(),
-        sublayers: windowLayers(move body, move chrome, move edge)
+        sublayers: windowLayers(move body, move chrome, move edge, modifiers)
     }
 }
 
@@ -525,10 +536,11 @@ public function consumeWindowCommand(frame: borrow mut Ember.RenderFrame) {
 function windowLayers(
     body: CALayerDescription,
     chrome: CALayerDescription,
-    edge: CALayerDescription
+    edge: CALayerDescription,
+    modifiers: borrow ModifierContext
 ) -> [CALayerDescription] {
     var layers: [CALayerDescription] = [placedIn(move body, WindowLayerPlace.body)]
-    for layer in windowBackdropLayers() {
+    for layer in windowBackdropLayers(modifiers) {
         layers.append(placedIn(copy layer, WindowLayerPlace.backdrop))
     }
     layers.append(placedIn(move chrome, WindowLayerPlace.chrome))

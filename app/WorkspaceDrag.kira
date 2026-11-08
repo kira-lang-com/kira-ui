@@ -8,13 +8,21 @@ import KCoreAnimation
 // Both are read off the press the window is holding, as a scroll view's bar is
 // scrubbed: while a tab or a divider is held, every build sees the pointer
 // where it is now and the workspace follows it; the first build after it is let
-// go settles what the drag did. A tab moves only once the pointer has gone
-// further than a press does by accident; a divider moves at once.
+// go settles what the drag did. A tab is detached only by a vertical pull;
+// horizontal movement belongs to its lifted tab-bar selection lens. Once
+// either gesture wins the press, it keeps the press until release. A divider
+// follows the pointer as before.
 
 public enum WorkspaceDragKind {
     None
     Tab
     Divider
+}
+
+public enum WorkspaceTabGesture {
+    Pending
+    Lens
+    Detach
 }
 
 // The drag under way: what is held and under which key, the panel a tab
@@ -25,6 +33,7 @@ public enum WorkspaceDragKind {
 public struct WorkspaceDrag {
     var kind: WorkspaceDragKind = .None
     var key: Number = 0
+    var press: Number = 0
     var panel: String = ""
     var edge: PanelEdge = .Leading
     var origin: Point = Point {}
@@ -32,6 +41,7 @@ public struct WorkspaceDrag {
     var startExtent: Number = 0.0
     var moving: Bool = false
     var target: Number = -1
+    var tabGesture: WorkspaceTabGesture = .Pending
 }
 
 // --- Keys --------------------------------------------------------------------
@@ -50,6 +60,46 @@ public function workspaceTabKey(index: Number) -> Number {
 
 public function workspaceCloseKey(index: Number) -> Number {
     return 510001 + index * 2
+}
+
+// Workspace tabs are each a label plus a full-sized X. While a press is
+// sliding, the X belongs to that tab's *selection* region, never to its close
+// action. An X closes only when the physical pointer-down began on that same
+// X. Keep this mapping specific to an actual Workspace tab on the same edge:
+// ordinary menu buttons and independently clicked X controls are unchanged.
+public function workspaceSliderLandingKey(original: Number, hit: Number) -> Number {
+    if original < workspaceTabKey(0) || original >= workspaceStripGlassKey(.Leading) {
+        return hit
+    }
+    let originalIndex = trunc((original - workspaceTabKey(0)) / 2)
+    if original != workspaceTabKey(originalIndex) { return hit }
+    let state = workspaceState()
+    // Once the press has become a vertical dock drag, releasing it must not
+    // also select a tab, even if it happens to cross back over the strip.
+    if state.drag.kind == .Tab && state.drag.tabGesture == .Detach { return 0 }
+    if hit < workspaceCloseKey(0) || hit >= workspaceStripGlassKey(.Leading) {
+        return hit
+    }
+    let targetIndex = trunc((hit - workspaceCloseKey(0)) / 2)
+    if hit != workspaceCloseKey(targetIndex) { return hit }
+    if originalIndex >= state.declared.count || targetIndex >= state.declared.count {
+        return hit
+    }
+    let from = workspacePlacementIndex(state, state.declared[originalIndex])
+    let to = workspacePlacementIndex(state, state.declared[targetIndex])
+    if from < 0 || to < 0 { return hit }
+    if !state.placements[from].shown || !state.placements[to].shown {
+        return hit
+    }
+    if state.placements[from].edge != state.placements[to].edge { return hit }
+    return workspaceTabKey(targetIndex)
+}
+
+// Every edge keeps the same glass/lens identity across builds and selection.
+// A dynamically minted tap key would reuse an unrelated lens's spring state
+// when panel contents changed the build traversal order.
+public function workspaceStripGlassKey(edge: borrow PanelEdge) -> Number {
+    return 510500 + panelEdgeIndex(edge)
 }
 
 public function panelEdgeAt(index: Number) -> PanelEdge {
@@ -75,7 +125,7 @@ public function workspaceDragAdvance(
         var state = nativeRecover<WorkspaceArrangement>(ambientStateGet(StateSlot.workspaceArrangement))
         let held = context.heldControl
         let pointer = Point { x: context.pointerX - origin.x, y: context.pointerY - origin.y }
-        if state.drag.key != 0 && held != state.drag.key {
+        if state.drag.key != 0 && !workspaceDragPressHeld(state.drag, context.heldStartedControl) {
             // Let go: a tab carried over another edge docks its panel there.
             let carried = copy state.drag.panel
             let target = state.drag.kind == .Tab && state.drag.moving ? state.drag.target : -1
@@ -87,22 +137,55 @@ public function workspaceDragAdvance(
         }
         if state.drag.key == 0 {
             workspaceDragBegin(state, held, pointer)
+            if state.drag.key != 0 {
+                state.drag.press = context.heldPress
+            }
             return
         }
         state.drag.pointer = copy pointer
-        let travel = max(abs(pointer.x - state.drag.origin.x), abs(pointer.y - state.drag.origin.y))
-        if travel > MotionPreset.dragSlop {
-            state.drag.moving = true
-        }
-        if !state.drag.moving {
-            return
-        }
         if state.drag.kind == .Divider {
+            let travel = max(abs(pointer.x - state.drag.origin.x), abs(pointer.y - state.drag.origin.y))
+            if travel > MotionPreset.dragSlop { state.drag.moving = true }
+            if !state.drag.moving { return }
             workspaceDividerFollow(state, pointer, size)
             return
         }
+        state.drag.tabGesture = workspaceTabGestureAdvance(
+            state.drag.tabGesture, state.drag.origin, pointer
+        )
+        // The same press cannot scrub the lens and carry a panel. In
+        // particular, a horizontal swipe must not become a dock drag if
+        // the pointer later drifts outside the toolbar vertically.
+        if state.drag.tabGesture != .Detach { return }
+        state.drag.moving = true
         state.drag.target = workspaceDropTarget(state, size, pointer)
     }
+}
+
+// A press's physical down target stays fixed until release. The surface press
+// serial DOES NOT: moving between another glass card rehomes its interactive
+// press and increments the serial, which used to settle/drop the panel before
+// the target dock was reached. Keep dragging until the physical mouse-up.
+public function workspaceDragPressHeld(
+    drag: borrow WorkspaceDrag,
+    physicalDown: Number
+) -> Bool {
+    return physicalDown != 0 && drag.key == physicalDown
+}
+
+// A lifted tab lens slides along the strip. Detaching its panel is a separate
+// up/down pull that starts before the pointer has scrubbed horizontally more
+// than the normal drag slop. If both distances cross the threshold in one
+// frame, the horizontal lens wins; the gesture is locked for this press.
+public function workspaceTabGestureAdvance(
+    gesture: WorkspaceTabGesture,
+    origin: borrow Point,
+    pointer: borrow Point
+) -> WorkspaceTabGesture {
+    if gesture != .Pending { return gesture }
+    if abs(pointer.x - origin.x) > MotionPreset.dragSlop { return .Lens }
+    if abs(pointer.y - origin.y) > MotionPreset.dragSlop { return .Detach }
+    return .Pending
 }
 
 // A press just landed on a divider or a tab: the drag starts from here. A tab
@@ -305,17 +388,21 @@ public function workspaceDropZone(
     return zone
 }
 
-// The tab under the pointer while it is carried: its face lifted out of the
-// strip in a capsule of glass of its own, centered on the pointer and
-// following it exactly.
+// The tab under the pointer while it is carried: a regular pill, no longer
+// the strip's selected Liquid Glass lens. It follows the pointer until it is
+// docked, and selection belongs only to the strip it has left.
 public function workspaceDragGhost(
     declaration: borrow PanelDeclaration,
     pointer: borrow Point,
     context: borrow BuildContext,
     modifiers: borrow ModifierContext,
 ) -> CALayerDescription {
-    var ghost = tabBarCapsule(
-        [workspaceTabFace(declaration, true, context, modifiers)],
+    // A detached panel is a plain glass pill. A TabBar capsule would also
+    // create an independent selection lens, even though no tab in it is
+    // selected. Give it the window toolbar's ordinary glass group instead.
+    var ghost = toolbarGlassGroup(
+        [workspaceTabFace(declaration, false, context, modifiers)],
+        windowChromeMetrics(),
         context,
         modifiers
     )
@@ -327,5 +414,7 @@ public function workspaceDragGhost(
         y: pointer.y - measured.height / 2.0
     }
     ghost.removal = CARemoval { opacity: 0.0, duration: 0.15 }
+    // The carried surface is a preview, not a second toolbar taking input.
+    ghost.makeInert()
     return ghost
 }

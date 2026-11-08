@@ -1,0 +1,75 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's FormStyle and the two scroll/list background modifiers. These are
+// environmental settings of a form and its sections, not background rectangles
+// layered *over* a scroll view. In particular `.scrollContentBackground(.Hidden)`
+// stops both the Form and its InsetGroupedList from painting the grouped canvas,
+// so the caller's warm page color can show all the way through the scrolling
+// content without changing the rows or their hit testing.
+public enum FormStyle {
+    Automatic
+    Grouped
+    Columns
+}
+
+public construct FormStyleLayer(style: FormStyle) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        return content.describe(context, modifierContextApply(modifiers, modifierDeltaFormStyle(style)))
+    }
+}
+
+public construct ScrollContentBackgroundLayer(visibility: Visibility) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        return content.describe(
+            context, modifierContextApply(modifiers, modifierDeltaScrollContentBackground(visibility))
+        )
+    }
+}
+
+public construct ListRowBackgroundLayer(color: RGBAColor) extends Widget {
+    let content: some Widget
+
+    // A SwiftUI `Section(...).listRowBackground(...)` remains one Section.
+    // Hiding its identity makes Form wrap it in an *additional* grouped card:
+    // the original section header then looks like a tinted empty card above
+    // its rows, especially noticeable in a light Appearance form.
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        return content.describe(context, modifierContextApply(modifiers, modifierDeltaListRowBackground(color)))
+    }
+}
+
+extend Widget {
+    function formStyle(style: FormStyle) -> Any Widget {
+        return FormStyleLayer(style: style) { self }
+    }
+
+    function scrollContentBackground(visibility: Visibility) -> Any Widget {
+        return ScrollContentBackgroundLayer(visibility: visibility) { self }
+    }
+
+    // A SwiftUI Color is a View; this concrete RGBAColor form is the KiraUI
+    // color-view family used by app themes and native adaptive color palettes.
+    function listRowBackground(color: RGBAColor) -> Any Widget {
+        return ListRowBackgroundLayer(color: color) { self }
+    }
+}

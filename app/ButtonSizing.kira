@@ -1,0 +1,81 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's inherited ButtonSizing policy. Fitted sizes to the button's label;
+// Flexible takes available horizontal space while centering its label. The
+// Automatic policy follows the current platform/button style's own contract.
+public enum ButtonSizing {
+    Automatic
+    Fitted
+    Flexible
+}
+
+// The enclosing menu, tab bar and toolbar own their own widths and layout
+// proposals. Changing an action cell's `flex` inside those controls would
+// break the menu's measured hit region and the toolbar's placement identity.
+public function buttonSizingOwnedByContainer(
+    presentation: borrow ControlPresentation
+) -> Bool {
+    match presentation {
+        MenuRow, MenuAction, Toolbar, TabBar, PhoneTabBar -> return true
+        Standalone, InsetGrouped, Sidebar, SidebarCell -> return false
+    }
+}
+
+// Bordered buttons already have a root with their actual painted capsule and
+// centered child, so that SAME layer should expand. A text-only button has no
+// border: an outer layout region must center its natural label and own the
+// wider press target instead of distorting its Text layout.
+public function buttonSizingHasPaintedSurface(modifiers: borrow ModifierContext) -> Bool {
+    match modifiers.buttonStyle {
+        Bordered, BorderedProminent -> return true
+        Plain, Borderless -> return false
+        Automatic -> return interfaceMode() == .AdaptiveDesktop
+            && buttonPushes(modifiers.controlPresentation)
+    }
+}
+
+public function buttonSizedDescription(
+    original: CALayerDescription,
+    modifiers: borrow ModifierContext
+) -> CALayerDescription {
+    if modifiers.buttonSizing == .Automatic
+        || buttonSizingOwnedByContainer(modifiers.controlPresentation) {
+        return original
+    }
+    var described = original
+    if modifiers.buttonSizing == .Fitted {
+        described.layout.widthFill = false
+        described.layout.expandsWidth = false
+        described.layout.flex = 0.0
+        return described
+    }
+    if buttonSizingHasPaintedSurface(modifiers) {
+        described.layout.widthFill = true
+        described.layout.expandsWidth = true
+        described.layout.fixedWidth = -1.0
+        return described
+    }
+    // The full-width hit region and its intrinsic label share the same
+    // action key. Accessibility is combined onto the outer region by Button,
+    // so screen readers find one activation target instead of two.
+    let key = described.hitKey
+    return CALayerDescription {
+        hittable: described.hittable,
+        hitKey: key,
+        layout: CALayoutIntent {
+            widthFill: true,
+            expandsWidth: true,
+            alignment: Point { x: 0.5, y: 0.5 },
+            minHeight: described.layout.minHeight
+        },
+        sublayers: [move described]
+    }
+}
+
+extend Widget {
+    // SwiftUI: `.buttonSizing(_ sizing: ButtonSizing)`.
+    function buttonSizing(sizing: ButtonSizing) -> Any Widget {
+        return ModifierDeltaLayer(delta: modifierDeltaButtonSizing(sizing)) { self }
+    }
+}

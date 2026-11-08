@@ -1,0 +1,42 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's tracking and kerning have distinct end-of-run behavior. Kerning
+// changes distances *between* shaped clusters, while tracking also reserves
+// an advance after the last cluster. Either value is expressed in points, not
+// as a fraction of the font size; it is inherited by descendant Text views.
+//
+// Apple's tracking wins when both modifiers are present, regardless of which
+// one was declared first. Keeping both in the context also lets an inner
+// `.tracking(0)` intentionally suppress an ancestor's nonzero kerning.
+public function textCharacterSpacing(modifiers: borrow ModifierContext) -> Number {
+    if modifiers.hasTracking { return modifiers.tracking }
+    if modifiers.hasKerning { return modifiers.kerning }
+    if modifiers.hasFont { return 0.0 }
+    let style = modifiers.hasTypography ? modifiers.typography : TypographyStyle.body
+    return typographyImplementation(style, modifiers).tracking
+}
+
+public function textUsesTracking(modifiers: borrow ModifierContext) -> Bool {
+    return modifiers.hasTracking || (!modifiers.hasKerning && !modifiers.hasFont)
+}
+
+public function modifierDeltaTracking(value: Number) -> ModifierDelta {
+    return ModifierDelta { hasTracking: true, tracking: value }
+}
+
+public function modifierDeltaKerning(value: Number) -> ModifierDelta {
+    return ModifierDelta { hasKerning: true, kerning: value }
+}
+
+extend Widget {
+    // SwiftUI: `.tracking(_ tracking: CGFloat)`.
+    function tracking(value: Number) -> Any Widget {
+        return ModifierDeltaLayer(delta: modifierDeltaTracking(value)) { self }
+    }
+
+    // SwiftUI: `.kerning(_ kerning: CGFloat)`.
+    function kerning(value: Number) -> Any Widget {
+        return ModifierDeltaLayer(delta: modifierDeltaKerning(value)) { self }
+    }
+}

@@ -5,12 +5,13 @@ import KCoreAnimation
 // A workspace's cards: the panels at one edge on one raised surface, a strip
 // of their tabs across its top and the selected one's content under it.
 //
-// The strip is a tab view's bar: its tabs in one capsule of glass, the
+// The strip follows the window toolbar's sizing: its tabs in one capsule of glass, the
 // selected one on the selection capsule in the primary ink, and the add menu in
 // glass of its own at the far end. A tab is its panel's label, so a
-// `.labelStyle(...)` on the workspace says whether its strips show titles,
-// symbols or both. A tab is pressed to select its panel, closed from the
-// cross that shows while it is selected or the pointer is on it, and dragged
+// Workspace tabs always retain both icon and title, even when the containing
+// toolbar uses icon-only labels. A tab selects its panel on click; its close X
+// is always visible and responds only to an explicit press on the X, never
+// to a sliding selection gesture. A tab can also be dragged vertically
 // to dock its panel at another edge. The add menu holds every panel that has
 // been closed, and brings one back here.
 
@@ -22,7 +23,7 @@ public function workspaceStripInset() -> Number {
 // A card's corner, concentric with the strip it holds as SwiftUI's concentric
 // shapes are: the bar's own, out by the inset the card holds it in.
 public function workspacePanelRadius() -> Number {
-    return tabBarMetrics().height / 2.0 + workspaceStripInset()
+    return windowChromeMetrics().itemHeight / 2.0 + workspaceStripInset()
 }
 
 // One edge's card: its strip over the selected panel's content, which takes
@@ -55,12 +56,14 @@ public function workspaceCard(
     let strip = workspaceStrip(state, edge, shown, panels, selected, context, modifiers)
     var layers: [CALayerDescription] = [strip]
     if index >= 0 {
-        // The enclosing card already clips the content to its rounded shape.
-        // Clipping this inner row again would replace that rounded clip with
-        // a square one, leaving texture viewports with sharp bottom corners.
+        // The strip's lifted Liquid Glass lens must be free to extend above
+        // and past the panel. Clip only the panel's contents, never the strip
+        // (nor its lens), to the card's rounded surface.
         layers.append(
             CALayerDescription {
                 key: index + 1,
+                cornerRadius: workspacePanelRadius(),
+                clipsChildren: true,
                 layout: CALayoutIntent { flex: 1 },
                 sublayers: [copy panels[index].content]
             }
@@ -69,7 +72,9 @@ public function workspaceCard(
     let radius = workspacePanelRadius()
     return CALayerDescription {
         cornerRadius: radius,
-        clipsChildren: true,
+        // The body is clipped above, but the lens is a top-layer effect and
+        // must escape the card's bounds while it lifts and moves.
+        clipsChildren: false,
         content: .Solid(CASolid { fill: workspacePanelFill(modifiers), cornerRadius: radius }),
         layout: CALayoutIntent { axis: .Column },
         sublayers: move layers
@@ -108,7 +113,29 @@ public function workspaceStrip(
             )
         }
     }
-    var parts: [CALayerDescription] = [tabBarCapsule(move tabs, context, modifiers)]
+    let metrics = windowChromeMetrics()
+    let groupInset = metrics.groupInset
+    let lensAllowed = state.drag.kind == .Tab
+        // Lift on physical press, as KiraUI's tab bar originally did. Gesture
+        // direction only determines whether that press subsequently scrubs
+        // or pulls a panel out; a dwell timer must never delay the lens.
+        && state.drag.tabGesture != .Detach
+        && state.drag.press == context.heldPress
+        && context.heldStartedControl == state.drag.key
+    var parts: [CALayerDescription] = [
+        tabBarCapsuleSized(
+            move tabs,
+            context,
+            modifiers,
+            metrics.itemHeight,
+            metrics.itemHeight,
+            0.0,
+            groupInset,
+            workspaceStripGlassKey(edge),
+            lensAllowed,
+            true
+        )
+    ]
     parts.append(Spacer().describe(context, modifiers))
     let closed = workspaceClosedPanels(state, panels)
     if closed.count > 0 && (edge != .Center || state.center == .AcceptsPanels) {
@@ -118,7 +145,6 @@ public function workspaceStrip(
         layout: CALayoutIntent {
             axis: .Row,
             heightFill: false,
-            fixedHeight: tabBarMetrics().height + inset,
             paddingLeading: inset,
             paddingTop: inset,
             paddingTrailing: inset,
@@ -150,18 +176,22 @@ public function workspaceTab(
     tab.hittable = !modifiers.disabled
     tab.hitKey = key
     tab.hoverColor = hoverHighlight(modifiers)
-    let hovered = context.hoveredKey == key || context.hoveredKey == close
-    if closable && (selected || hovered) {
-        // The cross's box is wider than its ink. The tab is held off so the
-        // ink stands as far from the title as the symbol does on the other
-        // side, and as far in from the end as the symbol is from the start.
-        let slack = (workspaceCloseSide() - workspaceCloseInkWidth(context, modifiers)) / 2.0
-        tab.layout.spacing = max(tabBarLabelGap() - slack, 0.0)
-        tab.layout.paddingTrailing = max(tabBarMetrics().labelInset - slack, 0.0)
+    if closable {
+        // The standard 36pt toolbar close button centers a small X in its
+        // full hit target. That already leaves a 13pt visual inset before
+        // the glyph. Extra face padding (11pt) AND row spacing (9pt) made
+        // the visible title-to-X gap 33pt. Keep the default button size and
+        // its hit target, but do not add spacing outside it.
+        tab.sublayers[0].layout.paddingTrailing = 0.0
+        tab.layout.spacing = 0.0
+        tab.layout.paddingTrailing = 0.0
         tab.sublayers.append(
             workspaceCloseButton(copy declaration.panel, close, selected, context, modifiers)
         )
     }
+    // Panel labels and their close buttons must never ride CA's default
+    // implicit 0.25s animation; only the selection lens has explicit springs.
+    tab.makeImmediate()
     return tab
 }
 
@@ -173,11 +203,39 @@ public function workspaceTabFace(
     context: borrow BuildContext,
     modifiers: borrow ModifierContext,
 ) -> CALayerDescription {
-    return tabBarItemFace(
-        tabBarItemLabel(declaration.title, declaration.systemImage, selected, context, modifiers),
-        selected,
-        modifiers
+    let metrics = windowChromeMetrics()
+    let ink = modifierContextPresenting(modifiers, .Toolbar)
+    // Unlike Label's platform-dependent icon-only toolbar presentation,
+    // tabBarItemLabel ALWAYS describes the symbol AND the title. Keep the
+    // whole label as one subtree through every selection/punch animation.
+    var label = tabBarItemLabel(
+        declaration.title, declaration.systemImage, selected, context, ink
     )
+    // The selected face ordinarily has two color passes while an unselected
+    // face has one. Keep TWO passes in either state: otherwise KCA removes
+    // and remounts the title on selection and animates its old copy away.
+    if label.sublayers.count == 1 {
+        var unused = copy label.sublayers[0]
+        unused.opacity = 0.0
+        label.sublayers.append(move unused)
+    }
+    var face = CALayerDescription {
+        layout: CALayoutIntent {
+            axis: .Row,
+            widthFill: false,
+            heightFill: false,
+            fixedHeight: metrics.itemHeight,
+            minWidth: metrics.itemWidth,
+            paddingLeading: metrics.labelInset,
+            paddingTrailing: metrics.labelInset,
+            spacing: metrics.groupSpacing,
+            alignment: Point { x: 0.5, y: 0.5 },
+            guide: selected ? guideTag(TabBarSelection()) : guideTag(TabBarTab())
+        },
+        sublayers: [move label]
+    }
+    face.makeImmediate()
+    return face
 }
 
 // The cross that takes a panel out of the workspace, in its tab's ink.
@@ -188,49 +246,35 @@ public function workspaceCloseButton(
     context: borrow BuildContext,
     modifiers: borrow ModifierContext,
 ) -> CALayerDescription {
-    layerActionRegister(key, workspaceHideAction(move panel))
-    let side = workspaceCloseSide()
+    layerActionRegisterDirectPress(key, workspaceHideAction(move panel))
     let icon = Icon(symbol: .Xmark).imageScale(.Small)
-    var glyph = icon.describe(context, tabBarItemInk(false, modifiers))
+    var inks: [CALayerDescription] = []
     if selected {
-        var layers: [CALayerDescription] = []
         for ink in tabBarSelectedInks(modifiers) {
-            layers.append(icon.describe(context, ink))
+            inks.append(icon.describe(context, ink))
         }
-        glyph = tabBarInked(move layers)
+    } else {
+        inks.append(icon.describe(context, tabBarItemInk(false, modifiers)))
     }
-    return CALayerDescription {
-        hittable: !modifiers.disabled,
-        hitKey: key,
-        hoverColor: hoverHighlight(modifiers),
-        cornerRadius: side / 2.0,
-        content: .Solid(CASolid { fill: CAColor { a: 0.0 }, cornerRadius: side / 2.0 }),
-        layout: CALayoutIntent {
-            widthFill: false,
-            heightFill: false,
-            fixedWidth: side,
-            fixedHeight: side,
-            alignment: Point { x: 0.5, y: 0.5 }
-        },
-        sublayers: [glyph]
+    if inks.count == 1 {
+        var unused = copy inks[0]
+        unused.opacity = 0.0
+        inks.append(move unused)
     }
-}
-
-// The square a tab's cross is pressed in.
-public function workspaceCloseSide() -> Number {
-    return tabBarMetrics().tabHeight - workspaceMetrics().tabSpacing * 4.0
-}
-
-// How wide the cross's ink is.
-public function workspaceCloseInkWidth(
-    context: borrow BuildContext,
-    modifiers: borrow ModifierContext,
-) -> Number {
-    let glyph = Icon(symbol: .Xmark).imageScale(.Small).describe(
-        context,
-        tabBarItemInk(false, modifiers)
-    )
-    return glyph.layout.intrinsicWidth
+    let glyph = tabBarInked(move inks)
+    // The close button uses the same item frame and hit area as a toolbar
+    // button, without an independent workspace size.
+    var button = toolbarButtonDescription(context, modifiers, key, icon)
+    button.sublayers[0] = move glyph
+    // The glyph and the title share the same visual inset. The standard
+    // toolbar button's centered symbolic layout uses its *outer* hit target
+    // to center a compound two-pass glyph, which pushes the visible X farther
+    // away from the preceding label than the label's leading inset. Keep the
+    // 36pt native press target but align the glyph at one catalog inset.
+    button.layout.alignment = Point { x: 0.0, y: 0.5 }
+    button.layout.paddingLeading = windowChromeMetrics().labelInset
+    button.makeImmediate()
+    return button
 }
 
 // The panels that have been closed, in the order they were declared.
@@ -255,7 +299,7 @@ public function workspaceClosedPanels(
 }
 
 // The strip's add menu: every closed panel, each brought back to this edge.
-// It is a bar's menu in a circle of glass the strip's height.
+// It is an ordinary toolbar menu on one item of glass.
 public function workspaceAddMenu(
     closed: borrow [PanelDeclaration],
     edge: borrow PanelEdge,
@@ -269,26 +313,8 @@ public function workspaceAddMenu(
             }
         }
     }
-    let metrics = tabBarMetrics()
-    var button = menu.describe(context, modifierContextPresenting(modifiers, .Toolbar))
-    button.layout.fixedWidth = metrics.tabHeight
-    button.layout.fixedHeight = metrics.tabHeight
-    button.layout.minWidth = metrics.tabHeight
-    return interactiveGlassDescription(
-        context,
-        tapSeqKey(),
-        CALayoutIntent {
-            widthFill: false,
-            heightFill: false,
-            fixedWidth: metrics.height,
-            fixedHeight: metrics.height,
-            alignment: Point { x: 0.5, y: 0.5 }
-        },
-        metrics.height / 2.0,
-        .Circle,
-        modifiers,
-        [button]
-    )
+    let button = menu.describe(context, modifierContextPresenting(modifiers, .Toolbar))
+    return toolbarGlassGroup([button], windowChromeMetrics(), context, modifiers)
 }
 
 public function workspaceSelectAction(panel: String) -> () -> Void {

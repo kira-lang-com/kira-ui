@@ -15,6 +15,10 @@ public struct ScrollScope {
     var page: Bool = false
     var pageTaken: Bool = false
     var barInset: Number = 0.0
+    // The page body draws its own large heading (for example, an editable
+    // document title). The scroll view still drives the inline toolbar title,
+    // but must not insert a second large title above that custom heading.
+    var contentTitleHeader: Bool = false
     // The search field the page sets under its title, as a phone's does.
     var search: WindowSearch? = .None
 }
@@ -25,6 +29,7 @@ public struct ScrollScope {
 public struct ScrollPage {
     var title: String = ""
     var barInset: Number = 0.0
+    var contentTitleHeader: Bool = false
     var search: WindowSearch? = .None
 }
 
@@ -44,6 +49,7 @@ public function scrollScopeReset() {
         current.page = false
         current.pageTaken = false
         current.barInset = 0.0
+        current.contentTitleHeader = false
         current.search = .None
     }
 }
@@ -60,6 +66,7 @@ public function scrollScopeEnter(scope: Number, barInset: Number) -> ScrollScope
             page: current.page,
             pageTaken: current.pageTaken,
             barInset: current.barInset,
+            contentTitleHeader: current.contentTitleHeader,
             search: copy current.search
         }
         current.scope = scope
@@ -67,6 +74,7 @@ public function scrollScopeEnter(scope: Number, barInset: Number) -> ScrollScope
         current.page = true
         current.pageTaken = false
         current.barInset = barInset
+        current.contentTitleHeader = false
         current.search = .None
         return previous
     }
@@ -96,6 +104,7 @@ public function scrollScopeLeave(previous: ScrollScope) -> Bool {
         current.page = previous.page
         current.pageTaken = previous.pageTaken
         current.barInset = previous.barInset
+        current.contentTitleHeader = previous.contentTitleHeader
         current.search = copy previous.search
         return taken
     }
@@ -124,7 +133,21 @@ public function scrollClaimPage() -> ScrollPage {
         return ScrollPage {
             title: toolbarColumnTitle(),
             barInset: current.barInset,
+            contentTitleHeader: current.contentTitleHeader,
             search: copy current.search
+        }
+    }
+}
+
+// A custom large heading must be declared before the first ScrollView claims
+// its navigation page. A later nested scroll view never changes its page's
+// title ownership, and this preference is restored when the scope leaves.
+public function scrollPageUsesContentTitleHeader() {
+    unsafe {
+        scrollScopeEnsure()
+        var current = nativeRecover<ScrollScope>(ambientStateGet(StateSlot.scrollScope))
+        if current.page && !current.pageTaken {
+            current.contentTitleHeader = true
         }
     }
 }
@@ -186,6 +209,7 @@ public function scrollInputEnsure() {
 // Fingers come down over the scroll view under `target`, resisted past an end
 // by `resistance`.
 public function scrollDragBegin(target: Number, resistance: Number, time: Number = -1.0) {
+    presentationScrollDragBegin(target)
     unsafe {
         scrollInputEnsure()
         var input = nativeRecover<ScrollInput>(ambientStateGet(StateSlot.scrollInput))
@@ -205,6 +229,21 @@ public function scrollDragBegin(target: Number, resistance: Number, time: Number
 // The fingers carried the content this far down, at `time` on the input's
 // clock where it says.
 public function scrollDragMove(distance: Number, time: Number = -1.0) {
+    if presentationScrollDragMove(distance) {
+        unsafe {
+            scrollInputEnsure()
+            var input = nativeRecover<ScrollInput>(ambientStateGet(StateSlot.scrollInput))
+            if input.target != 0 {
+                input.began = false
+                input.moved = false
+                input.reports = []
+                // If the content had started dragging before it reached an
+                // end, cancel its motion once and let the sheet finish.
+                input.cancelled = true
+            }
+        }
+        return
+    }
     unsafe {
         scrollInputEnsure()
         var input = nativeRecover<ScrollInput>(ambientStateGet(StateSlot.scrollInput))
@@ -217,8 +256,20 @@ public function scrollDragMove(distance: Number, time: Number = -1.0) {
     }
 }
 
+public function scrollDragTarget() -> Number {
+    unsafe {
+        scrollInputEnsure()
+        let input = nativeRecover<ScrollInput>(ambientStateGet(StateSlot.scrollInput))
+        return input.target
+    }
+}
+
 // The fingers lifted.
 public function scrollDragEnd() {
+    if presentationScrollDragEnd() {
+        scrollDragCancel()
+        return
+    }
     unsafe {
         scrollInputEnsure()
         var input = nativeRecover<ScrollInput>(ambientStateGet(StateSlot.scrollInput))
@@ -231,6 +282,7 @@ public function scrollDragEnd() {
 // Something else took the fingers: the surface stops where it is, or goes
 // back inside an end it was pulled past, and throws nothing.
 public function scrollDragCancel() {
+    presentationScrollDragCancel()
     unsafe {
         scrollInputEnsure()
         var input = nativeRecover<ScrollInput>(ambientStateGet(StateSlot.scrollInput))

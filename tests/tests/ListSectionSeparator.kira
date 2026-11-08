@@ -1,0 +1,110 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function sectionSeparatorPreferencesMergeIndependentEdgesAndDefaultRestoration() {
+    let plain = ModifierContext {}
+    let upper = modifierContextApply(plain, modifierDeltaListSectionSeparator(
+        .Visible, .Top
+    ))
+    let both = modifierContextApply(upper, modifierDeltaListSectionSeparator(
+        .Hidden, .Bottom
+    ))
+    expect!(both.listSectionSeparator.hasTop)
+    expect!(both.listSectionSeparator.hasBottom)
+    expect!(listRowSeparatorShows(both.listSectionSeparator.top, false))
+    expect!(!listRowSeparatorShows(both.listSectionSeparator.bottom, true))
+    let reset = modifierContextApply(both, modifierDeltaListSectionSeparator(
+        .Automatic, .Bottom
+    ))
+    expect!(listRowSeparatorShows(reset.listSectionSeparator.top, false))
+    expect!(listRowSeparatorShows(reset.listSectionSeparator.bottom, true))
+    expect!(!listRowSeparatorShows(reset.listSectionSeparator.bottom, false))
+    expect!(modifierContextForChildren(reset).listSectionSeparator.hasTop)
+}
+
+@Test
+function plainListSectionVisibilityDrawsHairlinesAtTheActualSectionBounds() {
+    let context = buildContext(FoundationUiContext {})
+    let inside = modifierContextApply(ModifierContext {}, ModifierDelta {
+        entersPlainList: true
+    })
+    let shown = modifierContextApply(inside, modifierDeltaListSectionSeparator(
+        .Visible, .All
+    ))
+    let section = Section {
+        Text("Only row")
+    } header: {
+        Text("Group")
+    } footer: {
+        Text("Footer")
+    }
+    let described = section.describe(context, shown)
+    expect!(described.layout.axis == CAAxis.Column)
+    expect!(described.sublayers.count == 3)
+    expect!(described.sublayers[0].layout.fixedHeight == listMetrics().separatorThickness)
+    expect!(described.sublayers[2].layout.fixedHeight == listMetrics().separatorThickness)
+    expect!(describedContainsText(described.sublayers[1], "Only row"))
+    expect!(describedContainsText(described.sublayers[1], "Group"))
+    expect!(describedContainsText(described.sublayers[1], "Footer"))
+    expect!(!described.sublayers[0].hittable)
+
+    let outside = section.describe(context, ModifierContext {})
+    expect!(outside.sublayers.count != 3 || outside.sublayers[0].layout.fixedHeight < 0.0)
+}
+
+@Test
+function sectionSeparatorTintAppliesToOnlyTheChosenHairline() {
+    let context = buildContext(FoundationUiContext {})
+    let inList = modifierContextApply(ModifierContext {}, ModifierDelta {
+        entersPlainList: true
+    })
+    let visible = modifierContextApply(inList, modifierDeltaListSectionSeparator(
+        .Visible, .All
+    ))
+    let tinted = modifierContextApply(visible, modifierDeltaListSectionSeparatorTint(
+        .Some(CAColor { r: 0.9, g: 0.2, b: 0.3, a: 1.0 }), .Top
+    ))
+    let described = Section {
+        Text("Item")
+    }.describe(context, tinted)
+    match described.sublayers[0].content {
+        Solid(solid) -> expect!(solid.fill.r == 0.9)
+        else -> expect!(false)
+    }
+    match described.sublayers[2].content {
+        Solid(solid) -> expect!(solid.fill.r != 0.9)
+        else -> expect!(false)
+    }
+    let restored = modifierContextApply(tinted, modifierDeltaListSectionSeparatorTint(
+        .None, .Top
+    ))
+    expect!(restored.listSectionSeparator.hasTopTint)
+    match restored.listSectionSeparator.topTint {
+        Some(color) -> expect!(false)
+        None -> {}
+    }
+}
+
+@Test
+function sectionSeparatorOnlyAppearsInsideAPlainListAndPreservesGrouping() {
+    let plain = describedLayer(List {
+        Section {
+            Text("Content")
+        }
+        .listSectionSeparator(visibility: .Visible, edges: .Top)
+        .listSectionSeparatorTint(color: PrimaryColor.Danger, edges: .Top)
+    }.listStyle(style: .Plain))
+    expect!(describedContainsText(plain, "Content"))
+    let directSection = Section {
+        Text("Content")
+    }.listSectionSeparator(visibility: .Visible)
+    expect!(directSection.isSection())
+    let described = describedLayer(move directSection)
+    expect!(describedContainsText(described, "Content"))
+    let reset = Section {
+        Text("Content")
+    }.listSectionSeparatorTint(color: .None)
+    expect!(reset.isSection())
+}

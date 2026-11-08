@@ -16,11 +16,17 @@ public function layerNoop() {}
 public struct LayerActionEntry {
     var key: Number = 0
     var action: () -> Void = layerNoop
+    // A destructive control on a sliding glass surface (e.g. a panel X)
+    // must be clicked directly. Gliding from a neighboring control is not
+    // a new press and must never invoke it.
+    var requiresDirectPress: Bool = false
 }
 
 public function layerNoopCode(code: Number) {}
 
 public function layerNoopKey(key: Key) {}
+
+public function layerNoopModifiedKey(key: Key, modifiers: ModifierState) {}
 
 public function layerNoopFlag(flag: Bool) {}
 
@@ -38,6 +44,10 @@ public struct LayerTextInputEntry {
     var key: Number = 0
     var text: (Number) -> Void = layerNoopCode
     var command: (Key) -> Void = layerNoopKey
+    // Text editors need modifier state for Shift-Return without changing
+    // command handling for ordinary single-line fields.
+    var commandWithModifiers: (Key, ModifierState) -> Void = layerNoopModifiedKey
+    var handlesModifiers: Bool = false
     // What Select All, Copy, Cut and Paste do to it.
     var edit: (TextEditCommand) -> Void = layerNoopEdit
 }
@@ -46,6 +56,92 @@ public struct LayerTextInputEntry {
 // keyboard.
 public struct LayerFocusEntry {
     var key: Number = 0
+    var changed: (Bool) -> Void = layerNoopFlag
+}
+
+// Keyboard navigation and pointer focus are separate from click hit keys.
+// A focusable button can be activated by Space, while editing-focus views
+// collect keyboard events and can focus on pointer down.
+public struct LayerFocusableEntry {
+    var key: Number = 0
+    var activates: Bool = false
+    var edits: Bool = true
+    var actionKey: Number = 0
+}
+
+public enum MoveCommandDirection {
+    Up
+    Down
+    Left
+    Right
+}
+
+public function layerNoopMoveCommand(direction: MoveCommandDirection) {}
+
+public enum LayerKeyboardCommandKind {
+    Move
+    Delete
+    Exit
+    PlayPause
+}
+
+public struct LayerKeyboardCommandEntry {
+    var key: Number = 0
+    var kind: LayerKeyboardCommandKind = .Move
+    var focusKeys: [Number] = []
+    var action: () -> Void = layerNoop
+    var moveAction: (MoveCommandDirection) -> Void = layerNoopMoveCommand
+}
+
+// Hover actions have their own non-intercepting regions, not press keys. The
+// retained input stage diffs ALL matching hover keys on pointer transitions
+// so an inner/outer hover modifier both receive their own enter/exit events.
+public struct LayerHoverEntry {
+    var key: Number = 0
+    var changed: (Bool) -> Void = layerNoopFlag
+}
+
+// These preferences select the actual system cursor, independently of click
+// actions and ordinary onHover callbacks. The hit tester returns every
+// containing region, innermost first, so a nested override can restore a
+// hidden ancestor's pointer without changing layout or event dispatch.
+public struct LayerPointerVisibilityEntry {
+    var key: Number = 0
+    var visibility: Visibility = .Automatic
+}
+
+// Continuous hovering is not a stream of synthetic mouse clicks. It carries
+// location in the observer's own transformed layer or in global input space,
+// and an explicit Ended phase when that observer leaves the hit hierarchy.
+public struct LayerContinuousHoverEntry {
+    var key: Number = 0
+    var coordinateSpace: HoverCoordinateSpace = .Local
+    var changed: (HoverPhase) -> Void = layerNoopHoverPhase
+}
+
+public function layerNoopViewport(event: AppEvent, point: Point, extent: Size) {}
+
+// Event surfaces receive the actual pointer button, scroll and key event,
+// with coordinates relative to their rendered bounds. One registration per
+// frame, just like click actions, avoids retaining a stale widget closure.
+public struct LayerViewportEntry {
+    var key: Number = 0
+    var event: (AppEvent, Point, Size) -> Void = layerNoopViewport
+}
+
+public function layerNoopGeometry(proxy: GeometryProxy) {}
+
+// A geometry observer runs after layout and never receives pointer clicks.
+// The callback table is rebuilt each frame so closures capture the current
+// state/bindings while the observed identity's last value persists separately.
+public struct LayerGeometryEntry {
+    var key: Number = 0.0
+    var changed: (GeometryProxy) -> Void = layerNoopGeometry
+}
+
+public struct LayerScrollVisibilityEntry {
+    var key: Number = 0.0
+    var threshold: Number = 0.5
     var changed: (Bool) -> Void = layerNoopFlag
 }
 
@@ -58,6 +154,14 @@ public struct LayerActionSink {
     // The keyboard shortcuts this frame's buttons answer to.
     var shortcuts: [ShortcutEntry] = []
     var focusEntries: [LayerFocusEntry] = []
+    var focusables: [LayerFocusableEntry] = []
+    var keyboardCommands: [LayerKeyboardCommandEntry] = []
+    var hoverEntries: [LayerHoverEntry] = []
+    var pointerVisibilityEntries: [LayerPointerVisibilityEntry] = []
+    var continuousHoverEntries: [LayerContinuousHoverEntry] = []
+    var viewportEntries: [LayerViewportEntry] = []
+    var geometryEntries: [LayerGeometryEntry] = []
+    var scrollVisibilityEntries: [LayerScrollVisibilityEntry] = []
     // The field this frame's focus state moved the keyboard to, or zero.
     var focusClaim: Number = 0
     // The field this frame's focus state took the keyboard from, or zero.
@@ -85,8 +189,197 @@ public function layerActionsReset() {
         sink.shortcuts = move noShortcuts
         var noFocus: [LayerFocusEntry] = []
         sink.focusEntries = move noFocus
+        sink.focusables = []
+        sink.keyboardCommands = []
+        sink.hoverEntries = []
+        sink.pointerVisibilityEntries = []
+        sink.continuousHoverEntries = []
+        sink.viewportEntries = []
+        sink.geometryEntries = []
+        sink.scrollVisibilityEntries = []
         sink.focusClaim = 0
         sink.focusRelease = 0
+    }
+}
+
+public function layerGeometryRegister(
+    key: Number,
+    action: (GeometryProxy) -> Void
+) {
+    unsafe {
+        if key == 0.0 { return }
+        layerActionSinkEnsure()
+        var sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+        sink.geometryEntries.append(LayerGeometryEntry { key: key, changed: action })
+    }
+}
+
+public function layerGeometryObserversExist() -> Bool {
+    unsafe {
+        layerActionSinkEnsure()
+        let sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+        return sink.geometryEntries.count > 0
+    }
+}
+
+public function layerGeometryChanged(key: Number, proxy: GeometryProxy) {
+    unsafe {
+        if key == 0.0 { return }
+        layerActionSinkEnsure()
+        let sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+        for entry in sink.geometryEntries {
+            if entry.key == key {
+                entry.changed(copy proxy)
+                return
+            }
+        }
+    }
+}
+
+public function layerScrollVisibilityRegister(
+    key: Number,
+    threshold: Number,
+    changed: (Bool) -> Void
+) {
+    unsafe {
+        if key == 0.0 { return }
+        layerActionSinkEnsure()
+        var sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+        sink.scrollVisibilityEntries.append(LayerScrollVisibilityEntry {
+            key: key,
+            threshold: clamp(threshold, 0.0, 1.0),
+            changed: changed
+        })
+    }
+}
+
+public function layerScrollVisibilityObserversExist() -> Bool {
+    unsafe {
+        layerActionSinkEnsure()
+        let sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+        return sink.scrollVisibilityEntries.count > 0
+    }
+}
+
+public function layerScrollVisibilityChanged(key: Number, visibleFraction: Number) {
+    unsafe {
+        if key == 0.0 { return }
+        layerActionSinkEnsure()
+        let sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+        for observer in sink.scrollVisibilityEntries {
+            if observer.key == key {
+                let visible = visibleFraction > 0.0 && visibleFraction >= observer.threshold
+                scrollVisibilityObserve(key, visible, observer.changed)
+                return
+            }
+        }
+    }
+}
+
+public function layerHoverRegister(key: Number, changed: (Bool) -> Void) {
+    unsafe {
+        if key == 0 { return }
+        layerActionSinkEnsure()
+        var sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+        sink.hoverEntries.append(LayerHoverEntry { key: key, changed: changed })
+    }
+}
+
+public function layerHoverChanged(key: Number, entered: Bool) {
+    unsafe {
+        if key == 0 { return }
+        layerActionSinkEnsure()
+        let sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+        for entry in sink.hoverEntries {
+            if entry.key == key {
+                entry.changed(entered)
+                return
+            }
+        }
+    }
+}
+
+public function layerContinuousHoverRegister(
+    key: Number,
+    space: HoverCoordinateSpace,
+    changed: (HoverPhase) -> Void
+) {
+    unsafe {
+        if key == 0 { return }
+        layerActionSinkEnsure()
+        var sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+        sink.continuousHoverEntries.append(LayerContinuousHoverEntry {
+            key: key, coordinateSpace: space, changed: changed
+        })
+    }
+}
+
+public function layerContinuousHoverChanged(
+    key: Number,
+    active: Bool,
+    position: borrow CAHoverRegion
+) {
+    unsafe {
+        if key == 0 { return }
+        layerActionSinkEnsure()
+        let sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+        for entry in sink.continuousHoverEntries {
+            if entry.key == key {
+                if !active {
+                    entry.changed(.Ended)
+                } else {
+                    let point = entry.coordinateSpace == .Global
+                        ? Point { x: position.globalX, y: position.globalY }
+                        : Point { x: position.localX, y: position.localY }
+                    entry.changed(.Active(point))
+                }
+                return
+            }
+        }
+    }
+}
+
+public function layerViewportRegister(
+    key: Number,
+    action: (AppEvent, Point, Size) -> Void
+) {
+    unsafe {
+        if key == 0 { return }
+        layerActionSinkEnsure()
+        var sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+        sink.viewportEntries.append(LayerViewportEntry { key: key, event: action })
+    }
+}
+
+public function layerViewportHas(key: Number) -> Bool {
+    unsafe {
+        if key == 0 { return false }
+        layerActionSinkEnsure()
+        let sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+        for entry in sink.viewportEntries {
+            if entry.key == key { return true }
+        }
+        return false
+    }
+}
+
+public function layerViewportDispatch(
+    key: Number,
+    event: AppEvent,
+    point: Point,
+    extent: Size
+) -> Bool {
+    unsafe {
+        if key == 0 { return false }
+        layerActionSinkEnsure()
+        let sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+        for entry in sink.viewportEntries {
+            if entry.key == key {
+                entry.event(move event, move point, move extent)
+                return true
+            }
+        }
+        return false
     }
 }
 
@@ -169,6 +462,183 @@ public function layerFocusChanged(key: Number, gained: Bool) {
     }
 }
 
+public function layerFocusableRegister(
+    key: Number,
+    activates: Bool,
+    edits: Bool,
+    actionKey: Number
+) {
+    unsafe {
+        if key == 0 { return }
+        layerActionSinkEnsure()
+        var sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+        for entry in sink.focusables {
+            if entry.key == key { return }
+        }
+        sink.focusables.append(LayerFocusableEntry {
+            key: key, activates: activates, edits: edits, actionKey: actionKey
+        })
+    }
+}
+
+public function layerFocusableContains(key: Number) -> Bool {
+    unsafe {
+        if key == 0 { return false }
+        layerActionSinkEnsure()
+        let sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+        for entry in sink.focusables {
+            if entry.key == key { return true }
+        }
+        return false
+    }
+}
+
+// Move in the order the view tree was described; Shift-Tab reverses that
+// order, and the ends wrap. A key that has disappeared is not a valid focus
+// target and causes the search to start at the nearest end.
+public function layerFocusableNextKey(current: Number, backwards: Bool) -> Number {
+    unsafe {
+        layerActionSinkEnsure()
+        let sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+        let count = sink.focusables.count
+        if count == 0 { return 0 }
+        var index = -1
+        for i in 0..count {
+            if sink.focusables[i].key == current {
+                index = i
+                break
+            }
+        }
+        if backwards {
+            return sink.focusables[index <= 0 ? count - 1 : index - 1].key
+        }
+        return sink.focusables[index < 0 || index >= count - 1 ? 0 : index + 1].key
+    }
+}
+
+// Only activation-capable views have a primary action that Space can invoke.
+// Editing-only focusable content must never impersonate a button.
+public function layerFocusableActivate(key: Number) -> Bool {
+    unsafe {
+        if key == 0 { return false }
+        layerActionSinkEnsure()
+        let sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+        for entry in sink.focusables {
+            if entry.key == key {
+                if !entry.activates || entry.actionKey == 0 { return false }
+                layerActionInvoke(entry.actionKey)
+                return true
+            }
+        }
+        return false
+    }
+}
+
+public function layerKeyboardCommandRegister(
+    key: Number,
+    kind: LayerKeyboardCommandKind,
+    action: () -> Void = layerNoop,
+    moveAction: (MoveCommandDirection) -> Void = layerNoopMoveCommand
+) {
+    unsafe {
+        if key == 0 { return }
+        layerActionSinkEnsure()
+        var sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+        sink.keyboardCommands.append(LayerKeyboardCommandEntry {
+            key: key, kind: kind, action: action, moveAction: moveAction
+        })
+    }
+}
+
+public function layerKeyboardCommandAttach(commandKey: Number, focusKey: Number) {
+    unsafe {
+        if commandKey == 0 || focusKey == 0 { return }
+        layerActionSinkEnsure()
+        var sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+        for i in 0..sink.keyboardCommands.count {
+            if sink.keyboardCommands[i].key == commandKey {
+                for attached in sink.keyboardCommands[i].focusKeys {
+                    if attached == focusKey { return }
+                }
+                sink.keyboardCommands[i].focusKeys.append(focusKey)
+                return
+            }
+        }
+    }
+}
+
+// The search works over a described subtree, not over visual hit keys or
+// painted rectangles: a command may be attached outside or inside the
+// `.focusable` that owns it, and both modifier orders must resolve to the
+// same focused view. Text input keys are included for editing command scopes.
+public function layerKeyboardCommandAttachToDescendants(
+    commandKey: Number,
+    described: borrow CALayerDescription
+) {
+    if described.focusKey != 0 {
+        layerKeyboardCommandAttach(commandKey, described.focusKey)
+    }
+    if layerTextInputAccepts(described.hitKey) {
+        layerKeyboardCommandAttach(commandKey, described.hitKey)
+    }
+    for child in described.sublayers {
+        layerKeyboardCommandAttachToDescendants(commandKey, child)
+    }
+}
+
+// A focusable wrapper may be *outside* a command modifier. After its content
+// is described it binds any inner command scopes to this new focus owner.
+public function layerKeyboardCommandAttachFocusAncestor(
+    focusKey: Number,
+    described: borrow CALayerDescription
+) {
+    if described.commandKey != 0 {
+        layerKeyboardCommandAttach(described.commandKey, focusKey)
+    }
+    for child in described.sublayers {
+        layerKeyboardCommandAttachFocusAncestor(focusKey, child)
+    }
+}
+
+public function layerKeyboardCommandMoveForKey(key: Key) -> MoveCommandDirection? {
+    return match key {
+        Up -> .Some(.Up)
+        Down -> .Some(.Down)
+        Left -> .Some(.Left)
+        Right -> .Some(.Right)
+        else -> .None
+    }
+}
+
+// Dispatch the most specific registered command inside the focused subtree.
+// Inner modifiers register before outer ones and therefore win when two
+// handlers of the same kind are attached to the same focus owner.
+public function layerKeyboardCommandDispatch(
+    focusKey: Number,
+    kind: LayerKeyboardCommandKind,
+    direction: MoveCommandDirection = .Up
+) -> Bool {
+    unsafe {
+        if focusKey == 0 { return false }
+        layerActionSinkEnsure()
+        let sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+        for entry in sink.keyboardCommands {
+            if entry.kind != kind { continue }
+            for owned in entry.focusKeys {
+                if owned == focusKey {
+                    if kind == .Move {
+                        entry.moveAction(direction)
+                    } else {
+                        entry.action()
+                    }
+                    return true
+                }
+            }
+        }
+        return false
+    }
+}
+
 // Bind a press action to the hit key a `describe()` put on its layer.
 public function layerActionRegister(key: Number, action: () -> Void) {
     unsafe {
@@ -179,6 +649,40 @@ public function layerActionRegister(key: Number, action: () -> Void) {
         var sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
         sink.entries.append(LayerActionEntry { key: key, action: action })
     }
+}
+
+// Unlike a tab in a slider, this control cannot be activated by sliding a
+// press that began somewhere else over its hit region.
+public function layerActionRegisterDirectPress(key: Number, action: () -> Void) {
+    unsafe {
+        if key == 0 { return }
+        layerActionSinkEnsure()
+        var sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+        sink.entries.append(LayerActionEntry {
+            key: key,
+            action: action,
+            requiresDirectPress: true
+        })
+    }
+}
+
+public function layerActionRequiresDirectPress(key: Number) -> Bool {
+    unsafe {
+        if key == 0 { return false }
+        layerActionSinkEnsure()
+        let sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+        for entry in sink.entries {
+            if entry.key == key { return entry.requiresDirectPress }
+        }
+        return false
+    }
+}
+
+// The runner supplies the key from the original pointer-down, not the
+// potentially different key the interactive glass is sliding over now.
+public function layerActionInvokeFromPress(key: Number, original: Number) {
+    if layerActionRequiresDirectPress(key) && original != key { return }
+    layerActionInvoke(key)
 }
 
 // Run the action bound to a key, if any. The runner calls this with the key a
@@ -251,6 +755,27 @@ public function layerTextInputRegister(
     }
 }
 
+// Variant for editors whose key commands distinguish Shift/Option/Command.
+public function layerTextInputRegister(
+    key: Number,
+    text: (Number) -> Void,
+    command: (Key, ModifierState) -> Void,
+    edit: (TextEditCommand) -> Void = layerNoopEdit
+) {
+    unsafe {
+        if key == 0 { return }
+        layerActionSinkEnsure()
+        var sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+        sink.textInputs.append(LayerTextInputEntry {
+            key: key,
+            text: text,
+            commandWithModifiers: command,
+            handlesModifiers: true,
+            edit: edit
+        })
+    }
+}
+
 // Whether a press on this layer focuses it.
 public function layerTextInputAccepts(key: Number) -> Bool {
     unsafe {
@@ -292,9 +817,19 @@ public function layerTextInputType(key: Number, codepoint: Number) {
 }
 
 // Hand a key that types nothing to the focused layer.
-public function layerTextInputCommand(key: Number, pressed: borrow Key) {
+public function layerTextInputCommand(
+    key: Number,
+    pressed: borrow Key,
+    modifiers: ModifierState = ModifierState {}
+) {
     match layerTextInputAt(key) {
-        Some(entry) -> entry.command(copy pressed)
+        Some(entry) -> {
+            if entry.handlesModifiers {
+                entry.commandWithModifiers(copy pressed, move modifiers)
+            } else {
+                entry.command(copy pressed)
+            }
+        }
         None -> {}
     }
 }

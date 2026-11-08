@@ -1,0 +1,73 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function selectionDisabledHasDefaultTrueAndExplicitFalse() {
+    let context = modifierContextApply(
+        ModifierContext {}, modifierDeltaSelectionDisabled(true)
+    )
+    expect!(context.selectionDisabled)
+    expect!(modifierContextForChildren(context).selectionDisabled)
+    let reset = modifierContextApply(context, modifierDeltaSelectionDisabled(false))
+    expect!(!reset.selectionDisabled)
+    expect!(!modifierContextForChildren(reset).selectionDisabled)
+    let normalButton = describedLayer(
+        Button(title: "Independent action", action: { in }).selectionDisabled()
+    )
+    expect!(normalButton.hittable)
+}
+
+@Test
+function selectionDisabledStopsSidebarRowActivationWithoutRemovingItsSelection() {
+    let blocked = describedLayer(
+        SidebarRow(selected: true, action: { in }) {
+            Text("Selected")
+        }.selectionDisabled()
+    )
+    expect!(describedContainsText(blocked, "Selected"))
+    expect!(!blocked.hittable)
+    expect!(!blocked.sublayers[0].hittable)
+    let enabled = describedLayer(
+        SidebarRow(selected: false, action: { in }) {
+            Text("Selectable")
+        }.selectionDisabled(isDisabled: false)
+    )
+    expect!(describedContainsText(enabled, "Selectable"))
+    expect!(enabled.hittable || enabled.sublayers[0].hittable)
+}
+
+@Test
+function selectionDisabledStopsPickerChoiceInMenuAndInlinePresentation() {
+    let context = buildContext(FoundationUiContext {})
+    let unavailable = modifierContextApply(
+        ModifierContext {}, modifierDeltaSelectionDisabled(true)
+    )
+    let entry = TagEntry { selected: false, select: { in } }
+    let menu = pickerOption(
+        copy entry,
+        false,
+        Text("Unavailable"),
+        context,
+        modifierContextPresenting(unavailable, .MenuRow)
+    )
+    expect!(!menu.hittable)
+    let inline = pickerOption(
+        move entry, false, Text("Unavailable"), context, unavailable
+    )
+    expect!(!inline.hittable)
+    expect!(describedContainsText(inline, "Unavailable"))
+}
+
+@Test
+function selectionDisabledStopsSegmentedPickerWithoutDisablingNeighborButtons() {
+    let context = buildContext(FoundationUiContext {})
+    let blocked = modifierContextApply(
+        ModifierContext {}, modifierDeltaSelectionDisabled(true)
+    )
+    let entry = TagEntry { selected: false, select: { in } }
+    let unavailable = pickerSegment(move entry, Text("No"), context, blocked)
+    expect!(!unavailable.hittable)
+    let ordinary = describedLayer(Button(title: "Go", action: { in }))
+    expect!(ordinary.hittable)
+}

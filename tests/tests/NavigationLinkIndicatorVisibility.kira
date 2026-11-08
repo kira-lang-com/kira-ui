@@ -1,0 +1,105 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+function navigationIndicatorTestLink() -> Any Widget {
+    return NavigationLink(title: "Open details", destination: Text("Destination"))
+}
+
+function navigationIndicatorLayerCount(described: borrow CALayerDescription) -> Number {
+    var result = 1.0
+    for child in described.sublayers {
+        result += navigationIndicatorLayerCount(child)
+    }
+    return result
+}
+
+@Test
+function navigationLinkIndicatorStyleDefaultsMatchActualListPresentation() {
+    expect!(navigationLinkIndicatorShows(.Automatic, .InsetGrouped))
+    expect!(!navigationLinkIndicatorShows(.Automatic, .Sidebar))
+    expect!(!navigationLinkIndicatorShows(.Automatic, .Standalone))
+    expect!(navigationLinkIndicatorShows(.Visible, .Sidebar))
+    expect!(navigationLinkIndicatorShows(.Visible, .Standalone))
+    expect!(!navigationLinkIndicatorShows(.Hidden, .InsetGrouped))
+}
+
+@Test
+function groupedNavigationLinkPhysicallyRemovesDisclosureAccessoryWhenHidden() {
+    layerActionsReset()
+    tapSeqReset()
+    let context = buildContext(FoundationUiContext {})
+    let list = modifierContextPresenting(ModifierContext {}, .InsetGrouped)
+    let shown = navigationIndicatorTestLink().describe(context, list)
+    let hidden = navigationIndicatorTestLink().describe(
+        context,
+        modifierContextApply(
+            list, modifierDeltaNavigationLinkIndicatorVisibility(.Hidden)
+        )
+    )
+    expect!(shown.sublayers.count == hidden.sublayers.count + 1)
+    expect!(shown.hittable)
+    expect!(hidden.hittable)
+    expect!(describedContainsText(shown, "Open details"))
+    expect!(describedContainsText(hidden, "Open details"))
+}
+
+@Test
+function sidebarNavigationLinkCanExplicitlyShowItsDisclosureChevron() {
+    layerActionsReset()
+    tapSeqReset()
+    let context = buildContext(FoundationUiContext {})
+    let sidebar = modifierContextPresenting(ModifierContext {}, .SidebarCell)
+    let defaultLink = navigationIndicatorTestLink().describe(context, sidebar)
+    let shown = navigationIndicatorTestLink().describe(
+        context,
+        modifierContextApply(
+            sidebar, modifierDeltaNavigationLinkIndicatorVisibility(.Visible)
+        )
+    )
+    expect!(navigationIndicatorLayerCount(shown) > navigationIndicatorLayerCount(defaultLink))
+    expect!(describedContainsText(shown, "Open details"))
+    expect!(describedContainsText(defaultLink, "Open details"))
+}
+
+@Test
+function standaloneNavigationLinkVisibleIndicatorDoesNotReplaceNavigationAction() {
+    layerActionsReset()
+    tapSeqReset()
+    let defaultLink = describedLayer(navigationIndicatorTestLink())
+    let withAccessory = describedLayer(
+        navigationIndicatorTestLink()
+            .navigationLinkIndicatorVisibility(visibility: .Visible)
+    )
+    expect!(navigationIndicatorLayerCount(withAccessory)
+        > navigationIndicatorLayerCount(defaultLink))
+    expect!(describedContainsText(withAccessory, "Open details"))
+    expect!(layerActionCount() > 0)
+}
+
+@Test
+function navigationLinkIndicatorVisibilityIsInheritedAndAutomaticRestoresItsStyle() {
+    let root = ModifierContext {}
+    let invisible = modifierContextApply(
+        root, modifierDeltaNavigationLinkIndicatorVisibility(.Hidden)
+    )
+    expect!(modifierContextForChildren(invisible).navigationLinkIndicatorVisibility
+        == Visibility.Hidden)
+    let visible = modifierContextApply(
+        invisible, modifierDeltaNavigationLinkIndicatorVisibility(.Visible)
+    )
+    expect!(visible.navigationLinkIndicatorVisibility == Visibility.Visible)
+    let reset = modifierContextApply(
+        visible, modifierDeltaNavigationLinkIndicatorVisibility(.Automatic)
+    )
+    expect!(reset.navigationLinkIndicatorVisibility == Visibility.Automatic)
+}
+
+@Test
+function indicatorVisibilityPreservesSectionGrouping() {
+    let section = Section {
+        navigationIndicatorTestLink()
+    }.navigationLinkIndicatorVisibility(visibility: .Hidden)
+    expect!(section.isSection())
+    expect!(describedContainsText(describedLayer(move section), "Open details"))
+}

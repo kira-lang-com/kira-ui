@@ -1,0 +1,38 @@
+import Foundation
+
+// SwiftUI's list-section spacing has three semantic variants. The default
+// follows the platform's list catalog, compact uses its smaller grouped
+// header/section separation, and custom receives a point measurement.
+public enum ListSectionSpacing {
+    Default
+    Compact
+    Custom(Number)
+}
+
+public function resolvedListSectionSpacing(
+    spacing: ListSectionSpacing
+) -> Number {
+    let metrics = listMetrics()
+    return match spacing {
+        Default -> metrics.sectionSpacing
+        Compact -> min(metrics.sectionSpacing, metrics.labeledSectionSpacing)
+        Custom(value) -> max(value, 0.0)
+    }
+}
+
+extend Widget {
+    // SwiftUI's `listSectionSpacing(_:)` with its typed default/compact/custom
+    // family, applied to the List/Form environment and consumed during layout.
+    function listSectionSpacing(spacing: ListSectionSpacing) -> Any Widget {
+        return ModifierDeltaLayer(
+            delta: modifierDeltaListSectionSpacing(move spacing)
+        ) { self }
+    }
+
+    // The CGFloat convenience overload.
+    function listSectionSpacing(spacing: Number) -> Any Widget {
+        return ModifierDeltaLayer(
+            delta: modifierDeltaListSectionSpacing(.Custom(spacing))
+        ) { self }
+    }
+}

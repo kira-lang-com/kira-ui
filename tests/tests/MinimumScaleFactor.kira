@@ -1,0 +1,111 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function minimumScaleFactorUsesLargestSizeThatFitsUntruncatedText() {
+    let phrase = "An exceptionally long toolbar label"
+    let original = foundationTextRunWidth(
+        content: phrase, size: 20.0, weight: 400.0
+    )
+    let offered = original * 0.74
+    let fitted = foundationTextFittedSize(
+        phrase, 20.0, 400.0, offered, .Default, 1.0, 0.5
+    )
+    expect!(fitted < 20.0)
+    expect!(fitted > 10.0)
+    expect!(foundationTextRunWidth(
+        content: phrase, size: fitted, weight: 400.0
+    ) <= offered + 1.0)
+    let stillWhole = foundationTextLines(phrase, fitted, 400.0, offered, .Default)
+    expect!(stillWhole.count == 1)
+    expect!(stillWhole[0] == phrase)
+    expect!(foundationTextFittedSize(
+        phrase, 20.0, 400.0, offered, .Default, 1.0, 1.0
+    ) == 20.0)
+}
+
+@Test
+function minimumScaleFactorRespectsItsFloorAndStillTruncatesAtThatFloor() {
+    let word = "Supercalifragilisticexpialidocious"
+    let tiny = foundationTextFittedSize(
+        word, 22.0, 400.0, 38.0, .Default, 1.0, 0.65
+    )
+    expect!(abs(tiny - 14.3) < 0.01)
+    let visible = foundationTextLines(word, tiny, 400.0, 38.0, .Default, 1)
+    expect!(visible.count == 1)
+    expect!(visible[0] != word)
+    let scalars = foundationStringToCodepoints(visible[0])
+    expect!(scalars[scalars.count - 1] == 8230)
+}
+
+@Test
+function minimumScaleFactorHandlesMultilineAndExplicitLineBreaks() {
+    let paragraph = "First line of a paragraph\nSecond line of a paragraph"
+    let fitted = foundationTextFittedSize(
+        paragraph, 18.0, 400.0, 160.0, .Default, 2.0, 0.55
+    )
+    expect!(fitted <= 18.0)
+    expect!(fitted >= 18.0 * 0.55)
+    let lines = foundationTextLines(paragraph, fitted, 400.0, 160.0, .Default)
+    expect!(lines.count <= 2)
+
+    let impossible = foundationTextFittedSize(
+        paragraph, 18.0, 400.0, 160.0, .Default, 1.0, 0.55
+    )
+    // A mandatory paragraph break cannot be eliminated by scaling alone.
+    expect!(abs(impossible - 9.9) < 0.01)
+}
+
+@Test
+function minimumScaleFactorIsAnInheritedTextEnvironmentValue() {
+    let normal = ModifierContext {}
+    expect!(normal.minimumScaleFactor == 1.0)
+    let reduced = modifierContextApply(
+        normal, modifierDeltaMinimumScaleFactor(0.65)
+    )
+    expect!(reduced.minimumScaleFactor == 0.65)
+    expect!(modifierContextForChildren(reduced).minimumScaleFactor == 0.65)
+    let reset = modifierContextApply(reduced, modifierDeltaMinimumScaleFactor(1.0))
+    expect!(reset.minimumScaleFactor == 1.0)
+    expect!(modifierContextApply(normal, modifierDeltaMinimumScaleFactor(5.0))
+        .minimumScaleFactor == 1.0)
+}
+
+@Test
+function minimumScaleFactorTravelsIntoActualTextLayerAndMeasurement() {
+    let described = describedLayer(
+        Text("An unusually long but accessible label")
+            .font(size: resolvedLength(21.0))
+            .lineLimit(1)
+            .minimumScaleFactor(factor: 0.48)
+    )
+    match innermostLayer(described).content {
+        Text(run) -> {
+            expect!(run.minimumScaleFactor == 0.48)
+            expect!(run.lineLimit == 1.0)
+            expect!(run.content == "An unusually long but accessible label")
+        }
+        else -> expect!(false)
+    }
+    let natural = described.measure(300.0)
+    let compressed = described.measure(125.0)
+    expect!(compressed.width < natural.width)
+    expect!(compressed.height <= natural.height + 1.0)
+}
+
+@Test
+function minimumScaleFactorComposesWithDynamicTypeCategory() {
+    let context = modifierContextApply(
+        modifierContextApply(
+            ModifierContext {}, modifierDeltaDynamicTypeSize(.Accessibility1)
+        ),
+        modifierDeltaMinimumScaleFactor(0.5)
+    )
+    expect!(modifierTextSize(context) > modifierTextSize(ModifierContext {}))
+    expect!(context.minimumScaleFactor == 0.5)
+    let grouped = Section {
+        Text("Accessible text").minimumScaleFactor(factor: 0.65)
+    }
+    expect!(grouped.isSection())
+}

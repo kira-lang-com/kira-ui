@@ -1,0 +1,79 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI presentation backgrounds decorate the PRESENTATION surface, not the
+// sheet's content. The native card is described exactly once, and its chosen
+// background is drawn behind the whole surface at the card's actual width and
+// selected detent height. A background never participates in the content's
+// intrinsic measurement, so changing a theme cannot resize a sheet.
+public construct PresentationBackgroundLayer(
+    fill: Any Widget,
+    alignment: StackAlignment = .Center
+) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let background = fill.describe(context, modifiers)
+        var described = content.describe(context, modifiers)
+        described.hasPresentationBackground = true
+        described.presentationBackgroundLayers = [move background]
+        described.presentationBackgroundAlignment = stackAlignmentUnitPoint(alignment)
+        return described
+    }
+}
+
+// Rendered once into a decorator while the sheet host collects the presented
+// view's preferences. Other presentations can reuse the same preference model
+// when their native card hosts support backgrounds.
+public function presentationBackgroundLayer(
+    options: borrow PresentationPreferences
+) -> CALayerDescription? {
+    if !options.hasBackground || options.backgroundLayers.count == 0 { return .None }
+    var background = copy options.backgroundLayers[0]
+    background.layout.decorates = true
+    background.layout.alignment = options.backgroundAlignment
+    return .Some(move background)
+}
+
+extend Widget {
+    // SwiftUI's ShapeStyle overload. KiraUI currently represents native
+    // styles as concrete theme color, RGBA, themed elevation and Material
+    // values; there is no first-class generic ShapeStyle protocol to accept.
+    function presentationBackground(style: PrimaryColor) -> Any Widget {
+        return PresentationBackgroundLayer(fill: Color(palette: style)) { self }
+    }
+
+    function presentationBackground(style: RGBAColor) -> Any Widget {
+        return PresentationBackgroundLayer(fill: Color(
+            palette: .Clear, channels: .Some(move style)
+        )) { self }
+    }
+
+    function presentationBackground(style: BackgroundStyle) -> Any Widget {
+        return PresentationBackgroundLayer(fill: BackgroundFill(style: style)) { self }
+    }
+
+    function presentationBackground(style: Material) -> Any Widget {
+        // SurfaceLayer implements the native material's compositor recipe;
+        // EmptyView contributes no visible ink over captured glass.
+        return PresentationBackgroundLayer(fill: SurfaceLayer(
+            style: style, shape: .Rect
+        ) { EmptyView() }) { self }
+    }
+
+    // SwiftUI's @ViewBuilder background overload. The filler is described
+    // into a retained layer, not measured as another sheet child.
+    function presentationBackground(
+        alignment: StackAlignment = .Center,
+        content: some Widget
+    ) -> Any Widget {
+        return PresentationBackgroundLayer(
+            fill: content, alignment: alignment
+        ) { self }
+    }
+}

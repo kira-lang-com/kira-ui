@@ -1,0 +1,136 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+import Ember
+
+@Test
+function helpAddsAnIndependentHoverRegionWithoutChangingTheButtonPress() {
+    layerActionsReset()
+    tapSeqReset()
+    let described = describedLayer(
+        Button(title: "Save", action: { in })
+            .frame(width: 165.0, height: 52.0)
+            .help(text: "Save the document")
+    )
+    expect!(described.hoverKey != 0)
+    expect!(!described.hittable)
+    expect!(describedContainsText(described, "Save"))
+    var placed = described
+    placed.layoutTree(300.0, 150.0)
+    var runner = KiraLayerAppState {}
+    runner.compositor.tree.reconcileImmediate(placed)
+    // `.frame` centers the button's native hit area; tooltip observation is
+    // allowed across the whole frame but does not make its margins clickable.
+    let hit = runner.compositor.tree.hitTestTree(82.0, 26.0)
+    expect!(hit.hitKey != 0)
+    expect!(hoverRegionsContain(hit.hoverKeys, placed.hoverKey))
+}
+
+@Test
+function helpPublishesAccessibleHintWithoutOverridingAnExplicitOne() {
+    layerActionsReset()
+    tapSeqReset()
+    let button = describedLayer(
+        Button(title: "Export", action: { in })
+            .help(text: "Export to a file")
+    )
+    let keys = button.accessibilityElements()
+    expect!(keys.count > 0)
+    expect!(accessibilityNode(keys[0]).hint == "Export to a file")
+
+    let specific = describedLayer(
+        Button(title: "Export", action: { in })
+            .accessibilityHint("Opens the export dialog")
+            .help(text: "Export to a file")
+    )
+    let specificKeys = specific.accessibilityElements()
+    expect!(specificKeys.count > 0)
+    expect!(accessibilityNode(specificKeys[0]).hint == "Opens the export dialog")
+}
+
+@Test
+function helpPresentsAfterTheHoverDelayNotBeforeAndDismissesOnExit() {
+    unsafe {
+        layerActionsReset()
+        tapSeqReset()
+        overlayCollect()
+        let original = describedLayer(
+            Text("Target").help(text: "A useful explanation")
+        )
+        let key = original.hoverKey
+        expect!(key != 0)
+        expect!(overlaysThisFrame().count == 0)
+        overlayStopCollecting()
+
+        helpHoverChanged(key, true)
+        expect!(!helpShouldPresent(key, unixMillis()))
+        let slot = helpStateSlot(key)
+        var state = nativeRecover<HelpHoverState>(ambientStateGetView(slot))
+        state.enteredMillis = unixMillis() - HelpTiming.delayMillis - 10.0
+        expect!(helpShouldPresent(key, unixMillis()))
+
+        tapSeqReset()
+        overlayCollect()
+        let afterDelay = describedLayer(
+            Text("Target").help(text: "A useful explanation")
+        )
+        let floating = overlaysThisFrame()
+        expect!(floating.count == 1)
+        expect!(floating[0].dismissKey == 0)
+        expect!(describedContainsText(floating[0].content, "A useful explanation"))
+        expect!(afterDelay.hoverKey == key)
+        overlayStopCollecting()
+
+        helpHoverChanged(key, false)
+        expect!(!helpShouldPresent(key, unixMillis() + 5000.0))
+        tapSeqReset()
+        overlayCollect()
+        describedLayer(Text("Target").help(text: "A useful explanation"))
+        expect!(overlaysThisFrame().count == 0)
+        overlayStopCollecting()
+    }
+}
+
+@Test
+function helpTooltipKeepsItsPositionInsideTheWindowNearEdges() {
+    let context = buildContext(FoundationUiContext {
+        viewport: Size { width: 360.0, height: 240.0 },
+        pointerX: 344.0,
+        pointerY: 226.0
+    })
+    overlayCollect()
+    helpPresentTooltip("A short explanation", context, ModifierContext {})
+    let floating = overlaysThisFrame()
+    expect!(floating.count == 1)
+    expect!(floating[0].anchorX >= 0.0)
+    expect!(floating[0].anchorX < 360.0)
+    expect!(floating[0].anchorY >= 0.0)
+    expect!(floating[0].anchorY < 226.0)
+    expect!(floating[0].content.layout.fixedWidth > 0.0)
+    expect!(floating[0].content.layout.fixedHeight > 0.0)
+    expect!(!floating[0].content.hittable)
+    overlayStopCollecting()
+}
+
+@Test
+function helpTextOverloadAndEmptyHelpPreserveTheOriginalView() {
+    layerActionsReset()
+    tapSeqReset()
+    let described = describedLayer(Text("Content").help(text: Text("Help Text")))
+    expect!(described.hoverKey != 0)
+    expect!(describedContainsText(described, "Content"))
+    let empty = describedLayer(Text("Content").help(text: ""))
+    expect!(empty.hoverKey == 0)
+    expect!(describedContainsText(empty, "Content"))
+}
+
+@Test
+function helpPreservesSectionGrouping() {
+    let section = Section {
+        Text("Item")
+    }.help(text: "Section instructions")
+    expect!(section.isSection())
+    let described = describedLayer(move section)
+    expect!(described.groupedSection)
+    expect!(described.hoverKey != 0)
+}

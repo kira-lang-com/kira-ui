@@ -43,7 +43,21 @@ public construct Form() extends Widget {
         context: borrow BuildContext,
         modifiers: borrow ModifierContext
     ) -> CALayerDescription {
-        let list = ScrollView() {
+        // The columns style lays out ungrouped sections. Grouped and automatic
+        // use the platform's inset-grouped section cards.
+        if modifiers.formStyle == .Columns {
+            return ScrollView(listLike: true) {
+                VStack(alignment = .Leading, spacing = .Length(
+                    resolvedListSectionSpacing(modifiers.listSectionSpacing)
+                )) {
+                    For(section in children) { section }
+                }
+                .edgePadding(EdgeSet.horizontal, resolvedLength(listMetrics().topInset))
+                .edgePadding(EdgeSet.vertical, resolvedLength(listMetrics().topInset))
+            }
+            .describe(context, modifiers)
+        }
+        let list = ScrollView(listLike: true) {
             InsetGroupedList() {
                 For(section in children) {
                     section
@@ -53,10 +67,12 @@ public construct Form() extends Widget {
         // The grouped canvas runs to the bottom of the form's frame, below
         // the last section too, as a Settings page's does.
         var layer = list.describe(context, modifiers)
-        let canvas = themeAdaptiveColor(groupedBackground(), modifierAppearance(modifiers))
+        let canvas = modifiers.scrollContentBackground == .Hidden
+            ? transparentFoundationColor()
+            : foundationColor(themeAdaptiveColor(groupedBackground(), modifierAppearance(modifiers)))
         layer.content = .Solid(
             CASolid {
-                fill: colorFromFoundation(modifierColor(foundationColor(move canvas), modifiers))
+                fill: colorFromFoundation(modifierColor(move canvas, modifiers))
             }
         )
         return layer

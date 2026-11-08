@@ -1,0 +1,119 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's onScrollGeometryChange observes a projection of real scroll
+// geometry, NOT the whole description tree on every frame. The projection
+// determines whether an update matters: callers observing `contentOffset.y`
+// are not notified by an unrelated width resize, and a caller observing
+// `containerSize` does not get scroll-motion callbacks.
+//
+// Each observing modifier's identity is paired with the receiving ScrollView
+// key. A modifier wrapped around two scrollers therefore remembers two
+// independent old values instead of comparing measurements across siblings.
+public struct ScrollGeometryChangeHandler {
+    let changed: (Number, ScrollGeometry) -> Void
+}
+
+public struct ObservedScrollGeometry<Value> {
+    var value: Value
+}
+
+public function scrollGeometryObservationSlot(
+    observerKey: Number, scrollKey: Number
+) -> ViewStateKey {
+    return slotKey("kiraui.scroll.geometry.\(observerKey).", scrollKey)
+}
+
+public function scrollGeometryObserve<Value>(
+    observerKey: Number,
+    scrollKey: Number,
+    geometry: ScrollGeometry,
+    transform: (ScrollGeometry) -> Value,
+    action: (Value, Value) -> Void
+) -> Bool {
+    unsafe {
+        let current = transform(move geometry)
+        let slot = scrollGeometryObservationSlot(observerKey, scrollKey)
+        if !ambientStateHasView(slot) {
+            ambientStatePutView(copy slot, nativeUserData(nativeState(
+                ObservedScrollGeometry<Value> { value: move current }
+            )))
+            return false
+        }
+        var previous = nativeRecover<ObservedScrollGeometry<Value>>(
+            ambientStateGetView(slot)
+        )
+        if previous.value == current { return false }
+        let old = copy previous.value
+        previous.value = copy current
+        action(move old, move current)
+        return true
+    }
+}
+
+public function scrollGeometryObserversAppending(
+    previous: borrow [ScrollGeometryChangeHandler],
+    appended: ScrollGeometryChangeHandler?
+) -> [ScrollGeometryChangeHandler] {
+    var observers = copy previous
+    match appended {
+        Some(value) -> observers.append(value)
+        None -> {}
+    }
+    return observers
+}
+
+public function scrollGeometryDidChange(
+    key: Number,
+    scroll: borrow ScrollViewState,
+    observers: borrow [ScrollGeometryChangeHandler]
+) {
+    if observers.count == 0 { return }
+    let geometry = scrollPhaseGeometry(scroll)
+    for observer in observers {
+        observer.changed(key, copy geometry)
+    }
+}
+
+public construct ScrollGeometryChangeLayer<Value>(
+    transform: (ScrollGeometry) -> Value,
+    action: (Value, Value) -> Void
+) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let identity = tapSeqKey()
+        let projection = transform
+        let callback = action
+        return content.describe(context, modifierContextApply(modifiers, ModifierDelta {
+            onScrollGeometryChange: .Some(ScrollGeometryChangeHandler {
+                changed: { scrollKey, geometry in
+                    let didChange = scrollGeometryObserve(
+                        identity, scrollKey, geometry,
+                        projection, callback
+                    )
+                }
+            })
+        }))
+    }
+}
+
+extend Widget {
+    // SwiftUI's public generic overload takes `for: T.Type` to aid type
+    // inference. Kira can infer the output type directly from `of` and its
+    // callback, so this equivalent API uses the explicit `transform:` projection.
+    // Swift's runtime metatype argument is not representable in Kira 26.11.
+    function onScrollGeometryChange<Value>(
+        transform: (ScrollGeometry) -> Value,
+        action: (Value, Value) -> Void
+    ) -> Any Widget {
+        return ScrollGeometryChangeLayer<Value>(
+            transform: transform, action: action
+        ) { self }
+    }
+}

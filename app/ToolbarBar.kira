@@ -55,7 +55,13 @@ public construct WindowBottomBar() extends Widget {
             var bars = chromeTabBars(sink, context, modifierContextPresenting(modifiers, .Toolbar))
             if bars.count == 0 {
                 match sink.search {
-                    Some(search) -> bars.append(bottomSearchField(search, context, modifiers))
+                    Some(search) -> {
+                        // A principal search belongs in the document toolbar,
+                        // not in the phone's floating search bar at the foot.
+                        if search.placement != .ToolbarPrincipal {
+                            bars.append(bottomSearchField(search, context, modifiers))
+                        }
+                    }
                     None -> {}
                 }
             }
@@ -151,11 +157,15 @@ public construct WindowChrome() extends Widget {
             let band = CALayerDescription {
                 layout: CALayoutIntent {
                     axis: .Row,
+                    widthFill: true,
                     heightFill: false,
                     fixedHeight: metrics.toolbarHeight
                 },
                 sublayers: move sections
             }
+            // The unified bar is one continuous layout plane, not a solid
+            // painted strip. Its groups retain their own interactive glass;
+            // the window/backdrop always remains visible between them.
             // A phone's tabs float at the foot of the window instead (`WindowBottomBar`).
             if tabBarAtFoot(context) || sink.tabs.count == 0 && sink.covered.tabs.count == 0 {
                 return band
@@ -191,17 +201,65 @@ public construct WindowChrome() extends Widget {
         if windowControlsInToolbar() {
             parts.append(windowControlsArea(metrics, context, modifiers))
         }
+        // A rail shifts the sidebar's title and search to its own horizontal
+        // section, not into the rail. Where desktop window controls already
+        // occupy some of that space, reserve only the remainder.
+        var railGap = sink.navigationRailWidth
+        if railGap > 0.0 && windowControlsInToolbar() {
+            railGap = max(railGap + metrics.edgeInset - metrics.controlsEnd(), 0.0)
+        }
+        if railGap > 0.0 {
+            parts.append(CALayerDescription {
+                layout: CALayoutIntent { widthFill: false, fixedWidth: railGap }
+            })
+        }
         // The sidebar's items and its toggle stand at its trailing edge, on a
         // computer as on a tablet, the window's buttons alone at its leading
         // one -- while the sidebar is out wider than what the section holds.
         // Narrower, sliding away, they follow the buttons, and the section
         // grows to them.
         let room = sink.navigationWidth * sink.navigationShown
-        let held = metrics.controlsEnd() + metrics.itemWidth + metrics.groupInset * 2.0
+        // A sidebar's navigationTitle belongs to this column's window band,
+        // just as the detail's title belongs to documentSection. Previously
+        // the sink recorded sidebarTitle but nothing ever drew it; apps had to
+        // place a second, fixed-height heading inside their ScrollView. That
+        // bypassed the system's large-title-to-inline behavior entirely.
+        var sidebarTitle = windowTitleWithSubtitle(
+            sink.sidebarTitle, sink.sidebarSubtitle, context, modifiers
+        )
+        sidebarTitle.key = ToolbarPieceKey.title
+        sidebarTitle.layout.fixedHeight = metrics.itemHeight
+        sidebarTitle.layout.alignment = Point { x: 0.0, y: 0.5 }
+        let titleWidth = sidebarTitle.measure(context.viewportWidth).width
+        let held = metrics.controlsEnd() + railGap + metrics.itemWidth + metrics.groupInset * 2.0
             + metrics.itemSpacing * 2.0 + metrics.edgeInset
-        let trails = room > held
+        // Title text is allowed to compress to the room remaining between the
+        // window controls and sidebar toggle. Requiring its *full* measured
+        // width hid ordinary sidebar titles at Apple's normal column width.
+        let titleRoom = max(room - held, 0.0)
+        let showTitle = sink.sidebarTitle.count > 0 && titleRoom > metrics.itemSpacing
+        if showTitle {
+            sidebarTitle.layout.maxWidth = titleRoom
+            // The text lives in the scrolled sidebar until it meets the bar.
+            // As it slides under, this copy fades inline; it isn't a second
+            // permanently visible title, and the toggle does not jump when
+            // the title crosses the toolbar boundary.
+            sidebarTitle.opacity = toolbarInlineTitleShown(
+                sink.sidebarLargeTitle, sink.sidebarTitleCollapse
+            )
+            parts.append(move sidebarTitle)
+        }
+        let trails = room > held + (showTitle ? min(titleWidth, titleRoom) : 0.0)
         if trails {
             parts.append(toolbarFlexibleSpace())
+        }
+        match sink.search {
+            Some(search) -> {
+                if search.placement == .Sidebar && !tabBarAtFoot(context) {
+                    parts.append(toolbarSearchField(search, metrics, context, modifiers))
+                }
+            }
+            None -> {}
         }
         for group in toolbarGroups(sink.navigation, metrics, context, modifiers) {
             parts.append(group)
@@ -278,7 +336,11 @@ public construct WindowChrome() extends Widget {
         // On a Mac the title leads the section, centered on the items' row,
         // as the macOS kit's toolbar sets it: 18 into the column, or after
         // whatever leads it.
+        // In rail windows the compact title belongs at the center of the
+        // document's toolbar section. Without a rail retain the established
+        // desktop leading-title geometry for existing applications.
         let titleLeads = interfaceMode() == .AdaptiveDesktop
+            && sink.navigationRailWidth == 0.0
         if titleLeads && toolbarTitleWanted(sink) {
             var title = toolbarTitle(sink, context, modifiers)
             title.key = ToolbarPieceKey.title
@@ -294,6 +356,17 @@ public construct WindowChrome() extends Widget {
         // room the title has elsewhere: it is centered on the section, and
         // slides off center rather than under an item, as a navigation bar's
         // does.
+        match sink.search {
+            Some(search) -> {
+                if search.placement == .ToolbarPrincipal {
+                    parts.append(toolbarFlexibleSpace())
+                    var field = toolbarSearchField(search, metrics, context, modifiers)
+                    field.key = ToolbarPieceKey.search
+                    parts.append(move field)
+                }
+            }
+            None -> {}
+        }
         var space = toolbarFlexibleSpace()
         space.key = ToolbarPieceKey.space
         space.layout.guide = guideTag(ToolbarTitleRoom())
@@ -332,7 +405,7 @@ public construct WindowChrome() extends Widget {
         // A phone's bar holds no search field: it floats at the foot.
         match sink.search {
             Some(search) -> {
-                if !tabBarAtFoot(context) {
+                if !tabBarAtFoot(context) && search.placement != .Sidebar && search.placement != .ToolbarPrincipal {
                     var field = toolbarSearchField(search, metrics, context, modifiers)
                     field.key = ToolbarPieceKey.search
                     parts.append(move field)

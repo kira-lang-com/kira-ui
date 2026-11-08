@@ -1,0 +1,130 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+struct LifecycleTestEvents {
+    var appeared: Number = 0.0
+    var disappeared: Number = 0.0
+}
+
+let lifecycleTestSlot: PersistentStateKey = PersistentStateKey {
+    name: "kiraui.tests.lifecycle.events"
+}
+
+function lifecycleTestEvents() -> LifecycleTestEvents {
+    unsafe {
+        if !ambientStateHas(lifecycleTestSlot) {
+            ambientStatePut(
+                lifecycleTestSlot,
+                nativeUserData(nativeState(LifecycleTestEvents {}))
+            )
+        }
+        return copy nativeRecover<LifecycleTestEvents>(ambientStateGet(lifecycleTestSlot))
+    }
+}
+
+function lifecycleTestReset() {
+    unsafe {
+        lifecycleTestEvents()
+        var events = nativeRecover<LifecycleTestEvents>(ambientStateGet(lifecycleTestSlot))
+        events.appeared = 0.0
+        events.disappeared = 0.0
+    }
+}
+
+function lifecycleTestAppeared() {
+    unsafe {
+        lifecycleTestEvents()
+        var events = nativeRecover<LifecycleTestEvents>(ambientStateGet(lifecycleTestSlot))
+        events.appeared += 1.0
+    }
+}
+
+function lifecycleTestDisappeared() {
+    unsafe {
+        lifecycleTestEvents()
+        var events = nativeRecover<LifecycleTestEvents>(ambientStateGet(lifecycleTestSlot))
+        events.disappeared += 1.0
+    }
+}
+
+function observedLifecycleView() -> Any Widget {
+    return Text("Present")
+        .onAppear(action: { in lifecycleTestAppeared() })
+        .onDisappear(action: { in lifecycleTestDisappeared() })
+}
+
+function lifecycleTestIdleBuild() {
+    var build = stateBuildBegin()
+    build.finish()
+}
+
+@Test
+function onAppearAndDisappearFollowViewIdentityNotBodyReevaluation() {
+    lifecycleTestIdleBuild()
+    lifecycleTestReset()
+    tapSeqReset()
+    var first = stateBuildBegin()
+    let drawn = describedLayer(observedLifecycleView())
+    first.finish()
+    expect!(describedContainsText(drawn, "Present"))
+    expect!(lifecycleTestEvents().appeared == 1.0)
+    expect!(lifecycleTestEvents().disappeared == 0.0)
+
+    // The same declaration rebuilt with the same key does not reappear.
+    tapSeqReset()
+    var second = stateBuildBegin()
+    describedLayer(observedLifecycleView())
+    second.finish()
+    expect!(lifecycleTestEvents().appeared == 1.0)
+    expect!(lifecycleTestEvents().disappeared == 0.0)
+
+    // Only removal from a completed build is a disappearance.
+    lifecycleTestIdleBuild()
+    expect!(lifecycleTestEvents().appeared == 1.0)
+    expect!(lifecycleTestEvents().disappeared == 1.0)
+    lifecycleTestIdleBuild()
+    expect!(lifecycleTestEvents().disappeared == 1.0)
+
+    tapSeqReset()
+    var inserted = stateBuildBegin()
+    describedLayer(observedLifecycleView())
+    inserted.finish()
+    expect!(lifecycleTestEvents().appeared == 2.0)
+    lifecycleTestIdleBuild()
+    expect!(lifecycleTestEvents().disappeared == 2.0)
+}
+
+@Test
+function onDisappearIsDeferredForAViewRetainedByItsContainer() {
+    lifecycleTestIdleBuild()
+    lifecycleTestReset()
+    tapSeqReset()
+
+    var shown = stateBuildBegin()
+    stateScopeRecord("kui.lifecycle.kept")
+    describedLayer(observedLifecycleView())
+    stateScopeRecorded()
+    shown.finish()
+    expect!(lifecycleTestEvents().appeared == 1.0)
+
+    var hiddenButKept = stateBuildBegin()
+    stateScopeRetain("kui.lifecycle.kept")
+    hiddenButKept.finish()
+    expect!(lifecycleTestEvents().disappeared == 0.0)
+
+    // Once the container stops keeping its scope, it really disappears.
+    lifecycleTestIdleBuild()
+    expect!(lifecycleTestEvents().disappeared == 1.0)
+}
+
+@Test
+function lifecycleModifiersPreserveSectionAndSupportNoActionOverloads() {
+    let section = Section {
+        Text("Row")
+    }.onAppear().onDisappear()
+    expect!(section.isSection())
+    let described = describedLayer(move section)
+    expect!(describedContainsText(described, "Row"))
+    lifecycleTestIdleBuild()
+}

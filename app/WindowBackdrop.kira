@@ -3,7 +3,7 @@ import Ember
 import KiraLayout
 import KCoreAnimation
 
-// What is behind the window, shown through it: a Mac's sidebar.
+// What is behind the window, shown through its navigation chrome.
 //
 // A Mac's sidebar is not the window's own pixels blurred. It is the desktop
 // and the windows under this one, blurred and tinted by the window server,
@@ -19,11 +19,26 @@ import KCoreAnimation
 struct WindowBackdrop {
     // Whether the host draws what is behind the window under its holes.
     var available: Bool = false
+    // AppKit supplies native material behind the *entire* window, including
+    // the toolbar. A compositor host such as MosaicDisplay may supply only
+    // the leading strip: its toolbar must continue using KiraUI's material.
+    var nativeToolbar: Bool = false
+    // A one-shot optional diagnostic proves the runtime really issued the
+    // toolbar and leading-column cuts, not just created an AppKit blur view.
+    var nativeProbeReported: Bool = false
     // This frame's sidebar, handed over by the split view, and how wide and
     // tall the strip it stands in is, in the window's points.
     var sidebar: [CALayerDescription] = []
     var width: Number = 0.0
     var height: Number = 0.0
+    var railWidth: Number = 0.0
+    // The radius applies to the ONE content/background corner at the
+    // toolbar/sidebar junction. It is never applied to the sidebar or rail.
+    var paneCornerRadius: Number = 0.0
+    // Rail windows share one material across the toolbar, rail and sidebar.
+    // The two rectangular pieces tile the L-shaped chrome without overlap.
+    var unified: Bool = false
+    var viewportWidth: Number = 0.0
     // Whether the sidebar is drawn dark, which the backdrop is tinted for.
     var dark: Bool = false
     // The glass this frame's chrome lays over the strip, taken out of the
@@ -54,22 +69,23 @@ function windowBackdropEnsure() {
 }
 
 // The host says whether it draws what is behind the window under its holes.
-public function windowBackdropAvailableSet(available: Bool) {
+public function windowBackdropAvailableSet(available: Bool, toolbar: Bool = false) {
     unsafe {
         windowBackdropEnsure()
         var state = nativeRecover<WindowBackdrop>(ambientStateGet(StateSlot.windowBackdrop))
         state.available = available
+        state.nativeToolbar = available && toolbar
     }
 }
 
 // Whether a sidebar shows what is behind the window this frame: on a
-// computer, in a window that draws its own frame, on a host that draws the
-// backdrop.
+// computer, on a host that draws the backdrop. Both MosaicDisplay (which draws
+// the app's frame) and AppKit (which supplies the native window frame) qualify.
 public function windowBackdropShown() -> Bool {
     unsafe {
         windowBackdropEnsure()
         let state = nativeRecover<WindowBackdrop>(ambientStateGet(StateSlot.windowBackdrop))
-        return state.available && interfaceMode() == .AdaptiveDesktop && windowDecorated()
+        return state.available && interfaceMode() == .AdaptiveDesktop
     }
 }
 
@@ -82,6 +98,10 @@ function windowBackdropCollect() {
         state.sidebar = move none
         state.width = 0.0
         state.height = 0.0
+        state.railWidth = 0.0
+        state.paneCornerRadius = 0.0
+        state.unified = false
+        state.viewportWidth = 0.0
     }
 }
 
@@ -92,7 +112,11 @@ public function windowBackdropSidebar(
     sidebar: CALayerDescription,
     width: Number,
     height: Number,
-    scheme: FoundationScheme
+    scheme: FoundationScheme,
+    unified: Bool = false,
+    viewportWidth: Number = 0.0,
+    railWidth: Number = 0.0,
+    cornerRadius: Number = 0.0
 ) {
     unsafe {
         windowBackdropEnsure()
@@ -101,13 +125,20 @@ public function windowBackdropSidebar(
         state.sidebar = move held
         state.width = width
         state.height = height
+        state.railWidth = railWidth
+        state.paneCornerRadius = cornerRadius
         state.dark = scheme == .Dark
+        state.unified = unified
+        state.viewportWidth = viewportWidth
     }
 }
 
 // The strip the backdrop shows through this frame, in the window's points:
 // its width, zero when there is none, and its height.
 public function windowBackdropStrip() -> Size {
+    // The host receives a cut only when it really supplies a native backdrop.
+    // A standalone KiraUI window paints the same material in its own frame.
+    if !windowBackdropShown() { return Size {} }
     unsafe {
         windowBackdropEnsure()
         let state = nativeRecover<WindowBackdrop>(ambientStateGet(StateSlot.windowBackdrop))
@@ -124,34 +155,244 @@ public function windowBackdropDark() -> Bool {
     }
 }
 
-// The cut and the sidebar over it, for the window to draw over its content.
-function windowBackdropLayers() -> [CALayerDescription] {
+// The same measured toolbar boundary drives both Metal's cutout and its
+// native backdrop displacement field. It cannot be guessed from titlebar
+// constants: toolbars can grow when their content or safe area changes.
+function windowBackdropUnifiedTop(state: borrow WindowBackdrop) -> Number {
+    let measured = windowBarTop(state.viewportWidth)
+    return min(
+        measured > 0.0 ? measured : TitleBarMetrics.height,
+        state.height
+    )
+}
+
+// The native compositor's L-shaped transparent substrate, expressed in
+// window points: its full-height leading width and its full-width top height.
+// Other split configurations do not contain this union and return no geometry.
+function windowBackdropChromeField() -> Size {
+    if !windowBackdropShown() { return Size {} }
     unsafe {
         windowBackdropEnsure()
         let state = nativeRecover<WindowBackdrop>(ambientStateGet(StateSlot.windowBackdrop))
+        if !state.unified || !state.nativeToolbar || state.width <= 0.0 { return Size {} }
+        return Size {
+            width: state.width,
+            height: windowBackdropUnifiedTop(state)
+        }
+    }
+}
+
+// The cut and the sidebar over it, for the window to draw over its content.
+function windowBackdropLayers(modifiers: borrow ModifierContext) -> [CALayerDescription] {
+    unsafe {
+        windowBackdropEnsure()
+        var state = nativeRecover<WindowBackdrop>(ambientStateGet(StateSlot.windowBackdrop))
         var layers: [CALayerDescription] = []
         if state.width <= 0.0 { return layers }
-        layers.append(
-            CALayerDescription {
-                disablesActions: true,
-                layout: CALayoutIntent {
-                    widthFill: false,
-                    heightFill: false,
-                    fixedWidth: state.width,
-                    fixedHeight: state.height
-                },
-                // The cut's color is the sidebar material the host lays in it,
-                // which the toolbar's glass over the hole takes for what is
-                // behind it.
-                content: .Solid(
-                    CASolid { fill: windowBackdropTone(state.dark), blend: .DestinationOut }
-                )
+        let native = windowBackdropShown()
+        var toolbarBottom = 0.0
+        if state.unified {
+            let scheme: FoundationScheme = state.dark ? .Dark : .Light
+            let top = windowBackdropUnifiedTop(state)
+            toolbarBottom = top
+            // The toolbar spans the window. The leading rail+sidebar below it
+            // uses the SAME edgeless material recipe and starts precisely at
+            // the toolbar's bottom. The two glass regions never tint twice.
+            if native && state.nativeToolbar {
+                if !state.nativeProbeReported && environmentValue("KIRA_METAL_BACKDROP_PROBE") == "1" {
+                    log info(
+                        "macOS native material chrome cutouts",
+                        toolbarWidth: state.viewportWidth,
+                        toolbarHeight: top,
+                        railAndSidebarWidth: state.width,
+                        railAndSidebarHeight: state.height
+                    )
+                    state.nativeProbeReported = true
+                }
+                // The NSVisualEffectView is already behind the Metal surface,
+                // across the full titlebar. Cut this part of the otherwise
+                // opaque document as well as the leading rail/sidebar: one
+                // continuous real desktop blur, with toolbar controls drawn
+                // on top in WindowChrome.
+                layers.append(windowBackdropCut(state.viewportWidth, top, 0.0))
+            } else {
+                layers.append(windowNavigationMaterial(
+                    state.viewportWidth, top, 0.0, scheme
+                ))
             }
-        )
+            if !native && state.height > top {
+                layers.append(windowNavigationMaterial(
+                    state.width, state.height - top, top, scheme
+                ))
+            }
+        }
+        if native {
+            layers.append(windowBackdropCut(state.width, state.height, 0.0))
+        }
+        if state.width > state.railWidth && state.height > toolbarBottom {
+            // Tint ONLY the sidebar below the unified toolbar. The toolbar is
+            // a single clear macOS titlebar material, even above the sidebar;
+            // the rail remains clear below it as well.
+            layers.append(windowSidebarShade(
+                state.railWidth,
+                state.width - state.railWidth,
+                toolbarBottom,
+                state.height - toolbarBottom,
+                state.dark ? .Dark : .Light
+            ))
+        }
+        if native && state.nativeToolbar && state.unified
+            && state.paneCornerRadius > 0.0 && state.width < state.viewportWidth {
+            // The old rounded wrappers had no visible effect at the corner:
+            // the full-window opaque canvas was still painted underneath.
+            // Cut ONLY the radius-sized square at the actual content junction
+            // (sidebar trailing edge, toolbar bottom), refill it with the
+            // sidebar's translucent material, then paint the content canvas
+            // inside a top-leading-only rounded mask. This gives a real
+            // visible corner without clipping every edge or altering hit areas.
+            let radius = min(
+                state.paneCornerRadius,
+                min(state.viewportWidth - state.width, state.height - toolbarBottom)
+            )
+            if radius > 0.0 {
+                layers.append(windowBackdropCutAt(state.width, toolbarBottom, radius, radius))
+                layers.append(windowSidebarShade(
+                    state.width, radius, toolbarBottom, radius,
+                    state.dark ? .Dark : .Light
+                ))
+                layers.append(windowContentCornerCanvas(
+                    state.width, toolbarBottom, radius,
+                    colorFromFoundation(windowCanvas(modifiers))
+                ))
+            }
+        }
         for layer in state.sidebar {
             layers.append(copy layer)
         }
         return layers
+    }
+}
+
+function windowSidebarShade(
+    leading: Number,
+    width: Number,
+    top: Number,
+    height: Number,
+    scheme: FoundationScheme
+) -> CALayerDescription {
+    let activity: FoundationWindowActivity = windowActive() ? .Active : .Inactive
+    let tone = foundationSidebarTint(scheme, activity).lower.color
+    // A darkened system-material tint, not a painted opaque panel. The native
+    // NSVisualEffectView remains visible through the remaining alpha.
+    let opacity = scheme == .Dark ? 0.30 : 0.34
+    return CALayerDescription {
+        disablesActions: true,
+        layout: CALayoutIntent {
+            widthFill: false, heightFill: false,
+            fixedWidth: width, fixedHeight: height,
+            offset: Point { x: leading, y: top }
+        },
+        content: .Solid(CASolid {
+            fill: CAColor {
+                r: tone.r * 0.62, g: tone.g * 0.62,
+                b: tone.b * 0.62, a: opacity
+            }
+        })
+    }
+}
+
+// Paint a single, top-leading continuous corner of the content canvas after
+// removing the underlying opaque frame pixels. The cutout is radius-sized,
+// but the signed-distance renderer clamps a rounded rectangle's radius to
+// half its dimensions. Paint a 2*radius continuous shape and clip it to the
+// radius-sized top-left quadrant: this preserves the full native radius and
+// doesn't paint over document controls in the rest of the content pane.
+function windowContentCornerCanvas(
+    x: Number, y: Number, radius: Number, color: CAColor
+) -> CALayerDescription {
+    return CALayerDescription {
+        disablesActions: true,
+        clipsChildren: true,
+        layout: CALayoutIntent {
+            widthFill: false, heightFill: false,
+            fixedWidth: radius, fixedHeight: radius,
+            offset: Point { x: x, y: y }
+        },
+        sublayers: [CALayerDescription {
+            disablesActions: true,
+            layout: CALayoutIntent {
+                widthFill: false, heightFill: false,
+                fixedWidth: radius * 2.0, fixedHeight: radius * 2.0
+            },
+            content: .Solid(CASolid {
+                fill: color,
+                cornerRadius: radius,
+                shapeKind: WindowShape.continuous + ClipCorner.squareStride * (
+                    ClipCorner.topTrailing + ClipCorner.bottomLeading + ClipCorner.bottomTrailing
+                )
+            })
+        }]
+    }
+}
+
+function windowBackdropCutAt(
+    x: Number, y: Number, width: Number, height: Number
+) -> CALayerDescription {
+    return CALayerDescription {
+        disablesActions: true,
+        layout: CALayoutIntent {
+            widthFill: false, heightFill: false,
+            fixedWidth: width, fixedHeight: height,
+            offset: Point { x: x, y: y }
+        },
+        content: .Solid(CASolid {
+            fill: CAColor { r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
+            blend: .DestinationOut
+        })
+    }
+}
+
+// A source-over native material is not painted as an opaque tint in our Metal
+// window. This blend opens the actual alpha hole through the canvas and any
+// content already drawn; NSVisualEffectView supplies the material behind it.
+function windowBackdropCut(width: Number, height: Number, y: Number) -> CALayerDescription {
+    return CALayerDescription {
+        disablesActions: true,
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedWidth: width,
+            fixedHeight: height,
+            offset: Point { y: y }
+        },
+        content: .Solid(CASolid {
+            fill: CAColor { r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
+            blend: .DestinationOut
+        })
+    }
+}
+
+// One edge-free macOS navigation material for both chrome regions. This is a
+// backdrop-sampling glass, not an opaque color or Liquid Glass control lens.
+// Keeping all instances on the same recipe ensures a continuous tint and blur
+// where the toolbar meets the rail and sidebar.
+function windowNavigationMaterial(
+    width: Number,
+    height: Number,
+    y: Number,
+    scheme: FoundationScheme
+) -> CALayerDescription {
+    return CALayerDescription {
+        disablesActions: true,
+        capturesBackdrop: true,
+        layout: CALayoutIntent {
+            widthFill: false,
+            heightFill: false,
+            fixedWidth: width,
+            fixedHeight: height,
+            offset: Point { x: 0.0, y: y }
+        },
+        content: .Glass(windowBackdropGlass(scheme, windowActive()))
     }
 }
 

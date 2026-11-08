@@ -1,0 +1,34 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function tapGestureRecognizesAllCountsAndTimeouts() {
+    var taps = TapGestureTrack {}
+    expect!(!tapGestureNext(taps, 1000.0, 2))
+    expect!(tapGestureNext(taps, 1250.0, 2))
+    expect!(!tapGestureNext(taps, 2000.0, 2))
+    expect!(!tapGestureNext(taps, 2400.0, 2))
+    expect!(tapGestureNext(taps, 2500.0, 2))
+    expect!(!tapGestureNext(taps, 3000.0, 3))
+    expect!(!tapGestureNext(taps, 3080.0, 3))
+    expect!(tapGestureNext(taps, 3180.0, 3))
+    expect!(tapGestureNext(taps, 3500.0, 1))
+    expect!(!tapGestureNext(taps, 3600.0, 0))
+}
+
+@Test
+function tapGestureCreatesARealHitAreaWithAccessibleActivation() {
+    let one = describedLayer(Text("Single").onTapGesture(action: { in }))
+    let many = describedLayer(Text("Double").onTapGesture(
+        count: 2, action: { in }
+    ))
+    expect!(one.hittable)
+    expect!(many.hittable)
+    expect!(one.hitKey != 0)
+    expect!(many.hitKey != 0)
+    expect!(describedContainsText(many, "Double"))
+    expect!(accessibilityElementsForTest(
+        Text("Double").onTapGesture(count: 2, action: { in }), 300.0, 80.0
+    ).count > 0)
+}

@@ -1,0 +1,79 @@
+import Foundation
+import Ember
+import KCoreAnimation
+
+// SwiftUI `pointerVisibility(_:)` changes the system cursor while the pointer
+// lies in a view's actual transformed hit region. This does not turn the view
+// into a click target and doesn't prevent scroll, hover or child gestures.
+public function layerPointerVisibilityRegister(key: Number, visibility: Visibility) {
+    unsafe {
+        if key == 0 { return }
+        layerActionSinkEnsure()
+        var sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+        sink.pointerVisibilityEntries.append(LayerPointerVisibilityEntry {
+            key: key, visibility: visibility
+        })
+    }
+}
+
+// Hover keys are returned frontmost first. An inner `.Automatic` is an
+// intentional reset and outranks an ancestor's `.Hidden`, while unrelated
+// `.onHover` subscriptions don't change the pointer preference at all.
+public function layerPointerVisibilityForHover(keys: borrow [Number]) -> Visibility {
+    unsafe {
+        layerActionSinkEnsure()
+        let sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+        for key in keys {
+            for region in sink.pointerVisibilityEntries {
+                if region.key == key { return region.visibility }
+            }
+        }
+        return .Automatic
+    }
+}
+
+// Change the actual Ember backend cursor only when the region preference
+// changes. Restoring an automatic region after hiding shows the default
+// cursor again; leaving untouched automatic regions alone respects camera
+// locks and other platform cursor owners.
+public function kiraLayerUpdatePointerVisibility(
+    state: borrow mut KiraLayerAppState,
+    keys: borrow [Number]
+) -> Bool {
+    let wanted = layerPointerVisibilityForHover(keys)
+    let previous = state.pointerVisibility
+    if wanted == previous { return false }
+    state.pointerVisibility = wanted
+    if wanted != .Automatic || previous == .Hidden {
+        graphicsShowMouse(wanted != .Hidden)
+    }
+    return true
+}
+
+public construct PointerVisibilityLayer(visibility: Visibility) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let described = content.describe(context, modifiers)
+        let key = tapSeqKey()
+        layerPointerVisibilityRegister(key, visibility)
+        return CALayerDescription {
+            hoverKey: key,
+            groupedSection: described.groupedSection,
+            layout: surfaceFootprint(described.layout),
+            sublayers: [move described]
+        }
+    }
+}
+
+extend Widget {
+    // SwiftUI: `.pointerVisibility(_ visibility: Visibility)`.
+    function pointerVisibility(visibility: Visibility) -> Any Widget {
+        return PointerVisibilityLayer(visibility: visibility) { self }
+    }
+}

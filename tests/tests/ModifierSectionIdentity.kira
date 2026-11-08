@@ -1,0 +1,38 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// Layout/interaction wrappers must preserve the Section's structural marker.
+// Otherwise a grouped Form mistakes it for a loose row and creates two cards.
+function describedSectionForModifier(root: Any Widget) -> CALayerDescription {
+    return root.describe(
+        buildContext(FoundationUiContext {}),
+        modifierContextPresenting(ModifierContext {}, .InsetGrouped)
+    )
+}
+
+@Test
+function layoutAndRenderingModifiersPreserveSectionIdentity() {
+    expect!(describedSectionForModifier(Section() {
+        Text("Row")
+    }.clipped()).groupedSection)
+    expect!(describedSectionForModifier(Section() {
+        Text("Row")
+    }.position(x: 50.0, y: 30.0)).groupedSection)
+    expect!(describedSectionForModifier(Section() {
+        Text("Row")
+    }.safeAreaPadding(length: 8.0)).groupedSection)
+    expect!(describedSectionForModifier(Section() {
+        Text("Row")
+    }.compositingGroup()).groupedSection)
+}
+
+@Test
+function hitTestingAndTapWrappersPreserveSectionIdentity() {
+    expect!(describedSectionForModifier(Section() {
+        Text("Row")
+    }.allowsHitTesting(enabled: false)).groupedSection)
+    expect!(describedSectionForModifier(Section() {
+        Text("Row")
+    }.onTapGesture(action: { in })).groupedSection)
+}

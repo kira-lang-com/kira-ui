@@ -382,7 +382,7 @@ public function tabBarInked(layers: [CALayerDescription]) -> CALayerDescription 
 // the accent: then every item on it, selected or not, is set plainly in that
 // ink, and the selection is the capsule behind it and the heavier title.
 public function tabBarTinted(modifiers: borrow ModifierContext) -> Bool {
-    return modifiers.hasTint && modifiers.tint != .Accent
+    return modifiers.tintColor != .None || (modifiers.hasTint && modifiers.tint != .Accent)
 }
 
 // The ink everything on a tab is set in: the accent when it is selected, the
@@ -393,7 +393,10 @@ public function tabBarItemInk(
     modifiers: borrow ModifierContext
 ) -> ModifierContext {
     if tabBarTinted(modifiers) {
-        let tint = primaryColorAsColor(modifiers.tint, modifierTokens(modifiers))
+        let tint = match modifiers.tintColor {
+            Some(color) -> color
+            None -> primaryColorAsColor(modifiers.tint, modifierTokens(modifiers))
+        }
         return modifierContextApply(modifiers, modifierDeltaTextInk(move tint, .Normal))
     }
     if selected {
@@ -446,6 +449,32 @@ function tabBarCapsule(
     modifiers: borrow ModifierContext,
 ) -> CALayerDescription {
     let metrics = tabBarMetrics()
+    return tabBarCapsuleSized(
+        move tabs,
+        context,
+        modifiers,
+        metrics.height,
+        metrics.tabHeight,
+        metrics.inset,
+        metrics.inset
+    )
+}
+
+// The same selection lens in a bar whose geometry comes from its host. A
+// workspace uses the window toolbar's item height and group inset rather
+// than introducing a second, tab-bar-sized set of workspace controls.
+function tabBarCapsuleSized(
+    tabs: [CALayerDescription],
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+    height: Number,
+    itemHeight: Number,
+    verticalInset: Number,
+    horizontalInset: Number,
+    stableKey: Number = 0,
+    allowLensLift: Bool = true,
+    stableHitRow: Bool = false,
+) -> CALayerDescription {
     let row = CALayerDescription {
         key: 2,
         layout: CALayoutIntent {
@@ -453,18 +482,23 @@ function tabBarCapsule(
             guide: guideTag(TabBarRow()),
             widthFill: false,
             heightFill: false,
-            paddingLeading: metrics.inset,
-            paddingTop: metrics.inset,
-            paddingTrailing: metrics.inset,
-            paddingBottom: metrics.inset,
+            paddingLeading: horizontalInset,
+            paddingTop: verticalInset,
+            paddingTrailing: horizontalInset,
+            paddingBottom: verticalInset,
             alignment: Point { x: 0.0, y: 0.5 }
         },
         sublayers: move tabs
     }
     // The selection capsule shares the row's box, under its tabs; the lens
     // lifted off it stands over the whole bar, past its edge.
-    let key = tapSeqKey()
-    let hold = tabBarSelectionHold(key, context, metrics.tabHeight, metrics.height, false)
+    let key = stableKey != 0 ? stableKey : tapSeqKey()
+    var lensContext = copy context
+    // A normal click changes the selected tab without lifting the sliding
+    // lens. Only an intentional horizontal scrub lifts it in a Workspace.
+    // A press on Close must never lift it, either.
+    if !allowLensLift { lensContext.heldKey = 0 }
+    let hold = tabBarSelectionHold(key, lensContext, itemHeight, height, false)
     let selection = CALayerDescription {
         layout: CALayoutIntent {
             widthFill: false,
@@ -479,7 +513,7 @@ function tabBarCapsule(
         CALayoutIntent {
             widthFill: false,
             heightFill: false,
-            fixedHeight: metrics.height,
+            fixedHeight: height,
             alignment: Point { x: 0.0, y: 0.5 }
         },
         containerShapeRadius(.Capsule, modifiers),
@@ -490,13 +524,23 @@ function tabBarCapsule(
     // A press slides from tab to tab, and the one let go on is selected.
     bar.slidesPress = true
     let lens = tabBarSelectionLens(hold, row, modifiers)
+    var layers: [CALayerDescription] = [move bar, move lens]
+    if stableHitRow {
+        // Workspace tabs use fixed hit geometry even when their contents are
+        // copied and warped through the moving Liquid Glass lens. No new
+        // visible styling is added: the hit row paints nothing.
+        var hitRow = copy row
+        tabBarHitOnly(hitRow)
+        hitRow.key = 850100 + key
+        layers.append(move hitRow)
+    }
     return CALayerDescription {
         layout: CALayoutIntent {
             widthFill: false,
             heightFill: false,
             alignment: Point { x: 0.0, y: 0.5 }
         },
-        sublayers: [move bar, move lens]
+        sublayers: move layers
     }
 }
 

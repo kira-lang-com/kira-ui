@@ -35,6 +35,10 @@ public function controlClamp01(value: Number) -> Number {
 // the two are different decisions and were the same value for as long as this
 // read `foregroundColor`.
 public function controlActiveColor(modifiers: borrow ModifierContext) -> FoundationColor {
+    match modifiers.tintColor {
+        Some(color) -> return foundationColor(copy color)
+        None -> {}
+    }
     if modifiers.hasTint {
         return modifierPrimaryColor(modifiers.tint, modifiers)
     }
@@ -398,7 +402,7 @@ public function toggleTrackColor(isOn: Bool, modifiers: borrow ModifierContext) 
     if !isOn {
         return foundationColor(themeAdaptiveColor(switchOff, appearance))
     }
-    if modifiers.hasTint || interfaceMode() == .AdaptiveDesktop {
+    if modifiers.hasTint || modifiers.tintColor != .None || interfaceMode() == .AdaptiveDesktop {
         return controlActiveColor(modifiers)
     }
     return foundationColor(themeAdaptiveColor(switchOn, appearance))
@@ -493,7 +497,8 @@ public construct Slider(
                     fixedHeight: 0.0,
                     alignment: Point { x: 0.5, y: 0.5 }
                 },
-                sublayers: sliderKnobLayers(context, k, held, modifiers)
+                sublayers: modifiers.sliderThumbVisibility == .Hidden
+                    ? [] : sliderKnobLayers(context, k, held, modifiers)
             }]
         }
         var described = CALayerDescription {

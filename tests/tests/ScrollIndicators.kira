@@ -1,0 +1,52 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// `.scrollIndicators` is inherited into the scrolling region, but hides only
+// the indicator and its draggable hit target, never the scrolling content.
+@Test
+function hiddenVerticalIndicatorsAreNotDrawnOrHitTested() {
+    let normal = describedLayer(ScrollView {
+        VStack { Text("top") Text("bottom") }
+    })
+    let hidden = describedLayer(ScrollView {
+        VStack { Text("top") Text("bottom") }
+    }.scrollIndicators(visibility: .Hidden))
+    expect!(normal.sublayers.count == 2)
+    expect!(hidden.sublayers.count == 1)
+    expect!(hidden.sublayers[0].scrollAxis == CAAxis.Column)
+    expect!(hidden.sublayers[0].sublayers.count == 1)
+}
+
+@Test
+function scrollIndicatorsRespectVisibilityAndAxisOverloads() {
+    let shown = describedLayer(ScrollView {
+        Text("scrolling")
+    }.scrollIndicators(visibility: .Visible))
+    expect!(shown.sublayers.count == 2)
+    let horizontalOnly = describedLayer(ScrollView {
+        Text("scrolling")
+    }.scrollIndicators(visibility: .Hidden, axes: .Horizontal))
+    // Hide horizontal indicators only: the vertical one remains eligible.
+    expect!(horizontalOnly.sublayers.count == 2)
+    let vertical = describedLayer(ScrollView {
+        Text("scrolling")
+    }.scrollIndicators(visibility: .Hidden, axes: .Vertical))
+    expect!(vertical.sublayers.count == 1)
+    let automatic = describedLayer(ScrollView {
+        Text("scrolling")
+    }.scrollIndicators(visibility: .Automatic, axes: .All))
+    expect!(automatic.sublayers.count == 2)
+}
+
+@Test
+function scrollIndicatorVisibilityIsInheritedOnlyWithinItsSubtree() {
+    let context = modifierContextApply(
+        ModifierContext {},
+        modifierDeltaScrollIndicators(.Hidden, .Vertical)
+    )
+    let content = modifierContextForChildren(context)
+    expect!(content.scrollIndicatorVisibility == Visibility.Hidden)
+    expect!(content.scrollIndicatorAxes == ScrollIndicatorAxes.Vertical)
+    expect!(modifierContextForChildren(ModifierContext {}).scrollIndicatorVisibility == Visibility.Automatic)
+}

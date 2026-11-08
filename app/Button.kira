@@ -56,11 +56,11 @@ public construct Button(role: ButtonRole = .Normal, action: () -> Void,) extends
         context: borrow BuildContext,
         modifiers: borrow ModifierContext
     ) -> CALayerDescription {
-        var described = self.styledDescription(context, modifiers)
+        var described = buttonSizedDescription(self.styledDescription(context, modifiers), modifiers)
         described.accessibilityCombined(
             accessibilityPressable(
                 .Button,
-                buttonPress(action, modifiers.controlPresentation),
+                buttonPress(action, modifiers.controlPresentation, modifiers.menuActionDismissBehavior),
                 modifiers
             )
         )
@@ -74,8 +74,19 @@ public construct Button(role: ButtonRole = .Normal, action: () -> Void,) extends
         let k = tapSeqKey()
         // Taken before the label lowers, so a button in the label does not.
         let shortcut = shortcutTake()
+        let dismiss = menuActionDismisses(modifiers.menuActionDismissBehavior)
+        if !modifiers.disabled && modifiers.buttonRepeatBehavior == .Enabled
+            && modifiers.controlPresentation != .MenuRow
+            && modifiers.controlPresentation != .MenuAction {
+            buttonRepeatFollow(k, context, action)
+        }
         if !modifiers.disabled {
-            shortcutRegister(shortcut, menuChooseFn(action))
+            // Keyboard shortcuts must honor the same dismissal policy as a
+            // pointer/assistive-technology activation of the corresponding
+            // menu row, while ordinary buttons keep their normal actions.
+            shortcutRegister(shortcut, buttonPress(
+                action, modifiers.controlPresentation, modifiers.menuActionDismissBehavior
+            ), allowsRepeat: modifiers.buttonRepeatBehavior != .Disabled)
         }
         if modifiers.buttonStyle == .Automatic {
             // In a menu a button is the menu's row or action: no fill of its
@@ -83,12 +94,12 @@ public construct Button(role: ButtonRole = .Normal, action: () -> Void,) extends
             // menu.
             match modifiers.controlPresentation {
                 MenuRow -> {
-                    layerActionRegister(k, menuChooseFn(action))
+                    layerActionRegister(k, menuChooseFn(action, dismiss: dismiss))
                     menuExportRow(
                         label.menuTitle(),
                         shortcut,
                         !modifiers.disabled,
-                        menuChooseFn(action)
+                        menuChooseFn(action, dismiss: dismiss)
                     )
                     if menuExportRecording() { return CALayerDescription {} }
                     match role {
@@ -110,7 +121,7 @@ public construct Button(role: ButtonRole = .Normal, action: () -> Void,) extends
                     return menuRowDescription(context, modifiers, k, shortcut, label)
                 }
                 MenuAction -> {
-                    layerActionRegister(k, menuChooseFn(action))
+                    layerActionRegister(k, menuChooseFn(action, dismiss: dismiss))
                     return menuActionDescription(context, modifiers, k, label)
                 }
                 Toolbar -> {
@@ -127,7 +138,9 @@ public construct Button(role: ButtonRole = .Normal, action: () -> Void,) extends
                 Standalone -> {}
             }
         }
-        layerActionRegister(k, action)
+        layerActionRegister(k, buttonPress(
+            action, modifiers.controlPresentation, modifiers.menuActionDismissBehavior
+        ))
         let labelModifiers = modifierContextForPresentation(modifiers)
         match modifiers.buttonStyle {
             Bordered -> return borderedButtonDescription(
@@ -173,9 +186,15 @@ public construct Button(role: ButtonRole = .Normal, action: () -> Void,) extends
 
 // What pressing a button here does: its action, and in a menu the menu's
 // dismissal after it.
-function buttonPress(action: () -> Void, presentation: borrow ControlPresentation) -> () -> Void {
+function buttonPress(
+    action: () -> Void,
+    presentation: borrow ControlPresentation,
+    behavior: MenuActionDismissBehavior
+) -> () -> Void {
     match presentation {
-        MenuRow, MenuAction -> return menuChooseFn(move action)
+        MenuRow, MenuAction -> return menuChooseFn(
+            move action, dismiss: menuActionDismisses(behavior)
+        )
         Standalone, InsetGrouped, Sidebar, SidebarCell, Toolbar, TabBar, PhoneTabBar -> return action
     }
 }
@@ -261,7 +280,7 @@ function borderedButtonDescription(
     }
     if prominent {
         fill = copy ink
-        words = .White
+        words = prominentButtonInk(fill)
     }
     // A value's ink is not the button's: a push button in a row's value
     // keeps its own words, as it does anywhere else.
@@ -324,6 +343,15 @@ function borderedButtonDescription(
     }
     buttonPressTiming(button, key, context)
     return button
+}
+
+// Prominent controls must use a contrasting ink for *the active fill*, not
+// always white. In dark appearance a warm accent can be light enough that
+// white labels become illegible. The contrast choice follows the filled
+// control's sRGB brightness and works for app-specified `.tint(Color)` too.
+public function prominentButtonInk(fill: borrow FoundationColor) -> PrimaryColor {
+    let brightness = fill.r * 0.299 + fill.g * 0.587 + fill.b * 0.114
+    return brightness > 0.5 ? .Black : .White
 }
 
 // Whether the button under `key` is held down with the pointer still on it.

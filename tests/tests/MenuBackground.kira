@@ -1,0 +1,44 @@
+import Foundation
+import Ember
+import KiraUI
+import KCoreAnimation
+
+// The platform's Menu owns its background recipe. Opening the menu must not
+// swap that recipe's blur sizing for a manually forced larger blur.
+@Test
+function menuMorphUsesTheUnstyledCatalogGlassBackground() {
+    let context = buildContext(FoundationUiContext {})
+    let modifiers = ModifierContext {}
+    let reveal = MenuReveal {
+        opening: true,
+        anchorW: 36,
+        anchorH: 36,
+        amount: 1,
+        widthAmount: 1,
+        heightAmount: 1,
+        acrossAmount: 1,
+        fallen: 1,
+        cornered: 1
+    }
+    let items = CALayerDescription {
+        layout: CALayoutIntent { fixedWidth: 230, fixedHeight: 160 }
+    }
+    let described = menuMorphDescription(
+        context, 725800, move items, CALayerDescription {}, reveal, modifiers
+    )
+    expect!(described.sublayers.count >= 2)
+    let glass = match described.sublayers[1].content {
+        Glass(glass) -> glass
+        else -> {
+            expect!(false)
+            return
+        }
+    }
+    let expected = liquidGlassContent(
+        .Squircle(menuCardRadius(modifiers)), modifiers, modifiers.containerGlass
+    )
+    expect!(glass.sizing.blurRadius.base == expected.sizing.blurRadius.base)
+    expect!(glass.sizing.blurRadius.minimum == expected.sizing.blurRadius.minimum)
+    expect!(glass.sizing.blurRadius.maximum == expected.sizing.blurRadius.maximum)
+    expect!(glass.sizing.blurRadius.slope == expected.sizing.blurRadius.slope)
+}

@@ -1,0 +1,97 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+function titleInsidePage(view: borrow CALayerDescription, title: borrow String) -> Bool {
+    match view.content {
+        Text(run) -> {
+            if run.content == title { return true }
+        }
+        else -> {}
+    }
+    for child in view.sublayers {
+        if titleInsidePage(child, title) { return true }
+    }
+    return false
+}
+
+@Test
+function navigationTitleDisplayModeOffersAllThreeCasesAndInheritedOverrides() {
+    let normal = ModifierContext {}
+    expect!(navigationBarUsesLargeTitle(normal.navigationBarTitleDisplayMode))
+    expect!(navigationBarUsesLargeTitle(.Automatic))
+    expect!(navigationBarUsesLargeTitle(.Large))
+    expect!(!navigationBarUsesLargeTitle(.Inline))
+    let inline = modifierContextApply(
+        normal, modifierDeltaNavigationBarTitleDisplayMode(.Inline)
+    )
+    expect!(modifierContextForChildren(inline).navigationBarTitleDisplayMode == NavigationBarTitleDisplayMode.Inline)
+    let large = modifierContextApply(inline, modifierDeltaNavigationBarTitleDisplayMode(.Large))
+    expect!(large.navigationBarTitleDisplayMode == NavigationBarTitleDisplayMode.Large)
+}
+
+@Test
+function navigationStackInlineTitleStaysInToolbarWithoutLargePageHeading() {
+    toolbarCollect()
+    let stack = NavigationStack {
+        Text("Content")
+            .navigationTitle("Page Title")
+            .navigationBarTitleDisplayMode(mode: .Inline)
+    }
+    let described = describedLayer(move stack)
+    expect!(titleInsidePage(described, "Content"))
+    expect!(!titleInsidePage(described, "Page Title"))
+    unsafe {
+        let sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+        expect!(sink.detailTitle == "Page Title")
+        expect!(!sink.largeTitle)
+    }
+    toolbarStopCollecting()
+}
+
+@Test
+function navigationStackLargeTitleUsesTheExistingLargeTitleLayout() {
+    toolbarCollect()
+    let stack = NavigationStack {
+        Text("Content")
+            .navigationTitle("Large Title")
+            .navigationBarTitleDisplayMode(mode: .Large)
+    }
+    let described = describedLayer(move stack)
+    expect!(titleInsidePage(described, "Large Title"))
+    unsafe {
+        let sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+        expect!(sink.largeTitle)
+    }
+    toolbarStopCollecting()
+}
+
+@Test
+function inlineTitleRemovesTheScrollableLargeTitleNotTheDocumentContent() {
+    toolbarCollect()
+    let stack = NavigationStack {
+        ScrollView {
+            Text("Article")
+        }
+        .navigationTitle("Inline")
+        .navigationBarTitleDisplayMode(mode: .Inline)
+    }
+    let described = describedLayer(move stack)
+    expect!(titleInsidePage(described, "Article"))
+    expect!(!titleInsidePage(described, "Inline"))
+    toolbarStopCollecting()
+}
+
+@Test
+function titleModePreferencesAreScopedToTheirNavigationPage() {
+    toolbarCollect()
+    let outer = toolbarBeginPageTitleDisplayMode()
+    toolbarPageTitleDisplayModePreference(.Large)
+    let nested = toolbarBeginPageTitleDisplayMode()
+    toolbarPageTitleDisplayModePreference(.Inline)
+    let innerChoice = toolbarEndPageTitleDisplayMode(move nested, .Automatic)
+    let outerChoice = toolbarEndPageTitleDisplayMode(move outer, .Automatic)
+    expect!(innerChoice == NavigationBarTitleDisplayMode.Inline)
+    expect!(outerChoice == NavigationBarTitleDisplayMode.Large)
+    toolbarStopCollecting()
+}

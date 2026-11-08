@@ -279,6 +279,26 @@ public function workspaceReset() {
     }
 }
 
+// Restore an explicitly authored workspace arrangement before the first
+// panel-collection pass of a window. Keep live window geometry/declarations,
+// and never revive an in-progress drag from a previous process. Applications
+// own the on-disk format; KiraUI remains the single layout authority.
+public function workspaceRestore(saved: borrow WorkspaceArrangement) {
+    unsafe {
+        workspaceArrangementEnsure()
+        var state = nativeRecover<WorkspaceArrangement>(ambientStateGet(StateSlot.workspaceArrangement))
+        state.placements = copy saved.placements
+        state.edges = saved.edges.count == 4 ? copy saved.edges : workspaceOpenEdges()
+        // A missing/renamed panel in an older session cannot leave an edge
+        // visually empty despite other shown tabs being present there.
+        for edge in [PanelEdge.Leading, PanelEdge.Trailing, PanelEdge.Bottom, PanelEdge.Center] {
+            workspaceReselect(state, edge)
+        }
+        state.awaited = ""
+        state.drag = WorkspaceDrag {}
+    }
+}
+
 // The application's handle on its workspace's arrangement, held beside the
 // workspace as a navigation path is held beside a stack:
 //

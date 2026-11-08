@@ -1,0 +1,109 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function rowSeparatorDefaultsFollowTheActualGroupedListEdges() {
+    let ctx = buildContext(FoundationUiContext {})
+    let modifiers = modifierContextPresenting(ModifierContext {}, .InsetGrouped)
+    let middle = insetGroupedRow(describedLayer(Text("Middle")), true, ctx, modifiers)
+    let last = insetGroupedRow(describedLayer(Text("Last")), false, ctx, modifiers)
+    expect!(middle.sublayers.count == 2)
+    expect!(last.sublayers.count == 1)
+    expect!(middle.sublayers[1].layout.fixedHeight == listMetrics().separatorThickness)
+}
+
+@Test
+function rowSeparatorTopAndBottomEdgesHaveSeparateVisibility() {
+    let ctx = buildContext(FoundationUiContext {})
+    let modifiers = modifierContextPresenting(ModifierContext {}, .InsetGrouped)
+    let row = describedLayer(
+        Text("Row")
+            .listRowSeparator(visibility: .Visible, edges: .Top)
+            .listRowSeparator(visibility: .Hidden, edges: .Bottom)
+    )
+    let preferences = listRowSeparatorPreferences(row)
+    expect!(listRowSeparatorShows(preferences.top, false))
+    expect!(!listRowSeparatorShows(preferences.bottom, true))
+    let grouped = insetGroupedRow(move row, true, ctx, modifiers)
+    // Only the explicitly visible TOP line is emitted, even in a followed row.
+    expect!(grouped.sublayers.count == 2)
+    expect!(grouped.sublayers[0].layout.fixedHeight == listMetrics().separatorThickness)
+    expect!(describedContainsText(grouped, "Row"))
+}
+
+@Test
+function rowSeparatorVisibilityExplicitAutomaticResetsAnInnerPreference() {
+    let row = describedLayer(
+        Text("Reset")
+            .listRowSeparator(visibility: .Hidden, edges: .Bottom)
+            .listRowSeparator(visibility: .Automatic, edges: .Bottom)
+    )
+    let preferences = listRowSeparatorPreferences(row)
+    expect!(preferences.hasBottom)
+    expect!(listRowSeparatorShows(preferences.bottom, true))
+    expect!(!listRowSeparatorShows(preferences.bottom, false))
+    expect!(verticalEdgesContainTop(.All))
+    expect!(verticalEdgesContainBottom(.All))
+    expect!(!verticalEdgesContainTop(.Bottom))
+    expect!(!verticalEdgesContainBottom(.None))
+}
+
+@Test
+function rowSeparatorTintOverridesSelectedEdgesAndNilRestoresTheme() {
+    let red = RGBAColor { r: 1.0, g: 0.1, b: 0.2, a: 1.0 }
+    let blue = RGBAColor { r: 0.2, g: 0.1, b: 1.0, a: 1.0 }
+    let row = describedLayer(
+        Text("Colored")
+            .listRowSeparatorTint(color: .Some(red))
+            .listRowSeparatorTint(color: .Some(blue), edges: .Top)
+    )
+    let preference = listRowSeparatorPreferences(row)
+    match preference.topTint {
+        Some(color) -> expect!(color.b == 1.0)
+        None -> expect!(false)
+    }
+    match preference.bottomTint {
+        Some(color) -> expect!(color.r == 1.0)
+        None -> expect!(false)
+    }
+    let reset = describedLayer(
+        Text("Reset")
+            .listRowSeparatorTint(color: .Some(red))
+            .listRowSeparatorTint(color: .None, edges: .Bottom)
+    )
+    let rest = listRowSeparatorPreferences(reset)
+    expect!(rest.hasBottomTint)
+    match rest.bottomTint {
+        Some(value) -> expect!(false)
+        None -> {}
+    }
+    match rest.topTint {
+        Some(value) -> expect!(value.r == 1.0)
+        None -> expect!(false)
+    }
+}
+
+@Test
+function rowSeparatorTintAffectsTheDrawnHairlineNotTheRowContent() {
+    let ctx = buildContext(FoundationUiContext {})
+    let modifiers = modifierContextPresenting(ModifierContext {}, .InsetGrouped)
+    let tinted = describedLayer(
+        Text("Tinted")
+            .listRowSeparatorTint(color: .Some(RGBAColor { r: 0.2, g: 0.6, b: 0.8, a: 1.0 }))
+    )
+    let grouped = insetGroupedRow(move tinted, true, ctx, modifiers)
+    match grouped.sublayers[1].content {
+        Solid(solid) -> {
+            expect!(solid.fill.r == 0.2)
+            expect!(solid.fill.g == 0.6)
+            expect!(solid.fill.b == 0.8)
+        }
+        else -> expect!(false)
+    }
+    expect!(describedContainsText(grouped, "Tinted"))
+    let semantic = describedLayer(
+        Text("Semantic").listRowSeparatorTint(color: PrimaryColor.Danger)
+    )
+    expect!(listRowSeparatorPreferences(semantic).hasBottomTint)
+}

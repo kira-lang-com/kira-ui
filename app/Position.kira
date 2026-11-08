@@ -1,0 +1,40 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's `position` is a layout modifier: the outer view keeps the space
+// the parent proposed while the inner view is placed about a chosen point.
+// An offset instead moves a view after layout without changing its proposal.
+public construct PositionLayer(center: Point) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let described = content.describe(context, modifierContextForChildren(modifiers))
+        return CALayerDescription {
+            groupedSection: described.groupedSection,
+            layout: CALayoutIntent {
+                widthFill: true,
+                heightFill: true,
+                centersChildAtPosition: true,
+                childCenter: center
+            },
+            sublayers: [described]
+        }
+    }
+}
+
+extend Widget {
+    // SwiftUI: `.position(_ position: CGPoint)`.
+    function position(point: Point) -> Any Widget {
+        return PositionLayer(center: move point) { self }
+    }
+
+    // SwiftUI: `.position(x: CGFloat = 0, y: CGFloat = 0)`.
+    function position(x: Number = 0.0, y: Number = 0.0) -> Any Widget {
+        return PositionLayer(center: Point { x: x, y: y }) { self }
+    }
+}

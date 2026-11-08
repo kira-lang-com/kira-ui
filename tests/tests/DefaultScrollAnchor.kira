@@ -1,0 +1,219 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function defaultScrollAnchorSupportsAllThreeRolesAndOptionalReset() {
+    let base = ScrollAnchorPreferences {}
+    let bottom = scrollAnchorPreferencesApply(base, .Some(ScrollAnchorChange {
+        anchor: .Some(UnitPoints.bottom)
+    }))
+    match bottom.initialOffset {
+        Some(point) -> expect!(point.y == 1.0)
+        None -> expect!(false)
+    }
+    match bottom.sizeChanges {
+        Some(point) -> expect!(point.y == 1.0)
+        None -> expect!(false)
+    }
+    match bottom.alignment {
+        Some(point) -> expect!(point.y == 1.0)
+        None -> expect!(false)
+    }
+
+    let reset = scrollAnchorPreferencesApply(bottom, .Some(ScrollAnchorChange {
+        anchor: .None, role: .Some(.SizeChanges)
+    }))
+    match reset.sizeChanges {
+        None -> {}
+        Some(point) -> expect!(false)
+    }
+    match reset.initialOffset {
+        Some(point) -> expect!(point.y == 1.0)
+        None -> expect!(false)
+    }
+    match reset.alignment {
+        Some(point) -> expect!(point.y == 1.0)
+        None -> expect!(false)
+    }
+}
+
+@Test
+function roleSpecificAlignmentBeatsInnerGeneralAnchor() {
+    // A role-specific outer modifier runs before the inner general modifier.
+    let outer = scrollAnchorPreferencesApply(
+        ScrollAnchorPreferences {}, .Some(ScrollAnchorChange {
+            anchor: .Some(UnitPoints.top), role: .Some(.Alignment)
+        })
+    )
+    let effective = scrollAnchorPreferencesApply(outer, .Some(ScrollAnchorChange {
+        anchor: .Some(UnitPoints.bottom)
+    }))
+    match effective.alignment {
+        Some(point) -> expect!(point.y == 0.0)
+        None -> expect!(false)
+    }
+    match effective.initialOffset {
+        Some(point) -> expect!(point.y == 1.0)
+        None -> expect!(false)
+    }
+    match effective.sizeChanges {
+        Some(point) -> expect!(point.y == 1.0)
+        None -> expect!(false)
+    }
+
+    // An inner role-specific declaration can also override the outer general.
+    let overridden = scrollAnchorPreferencesApply(
+        scrollAnchorPreferencesApply(
+            ScrollAnchorPreferences {}, .Some(ScrollAnchorChange {
+                anchor: .Some(UnitPoints.bottom)
+            })
+        ),
+        .Some(ScrollAnchorChange {
+            anchor: .Some(UnitPoints.center), role: .Some(.InitialOffset)
+        })
+    )
+    match overridden.initialOffset {
+        Some(point) -> expect!(point.y == 0.5)
+        None -> expect!(false)
+    }
+}
+
+@Test
+function scrollAnchorsAreInheritedAndDoNotResetIndependentRoles() {
+    let base = ModifierContext {}
+    let inherited = modifierContextApply(
+        base, modifierDeltaDefaultScrollAnchor(.Some(UnitPoints.bottom))
+    )
+    let alignment = modifierContextApply(
+        inherited, modifierDeltaDefaultScrollAnchor(
+            .Some(UnitPoints.top), .Some(.Alignment)
+        )
+    )
+    let children = modifierContextForChildren(alignment)
+    match children.scrollAnchors.initialOffset {
+        Some(point) -> expect!(point.y == 1.0)
+        None -> expect!(false)
+    }
+    match children.scrollAnchors.alignment {
+        Some(point) -> expect!(point.y == 0.0)
+        None -> expect!(false)
+    }
+    let cleared = modifierContextApply(
+        alignment, modifierDeltaDefaultScrollAnchor(.None, .Some(.SizeChanges))
+    )
+    match cleared.scrollAnchors.sizeChanges {
+        None -> {}
+        Some(point) -> expect!(false)
+    }
+}
+
+@Test
+function initialOffsetUsesScrollRangeNotWholeContent() {
+    expect!(scrollAnchoredOffset(1200.0, 400.0, .Some(UnitPoints.bottom)) == 800.0)
+    expect!(scrollAnchoredOffset(1200.0, 400.0, .Some(UnitPoints.center)) == 400.0)
+    expect!(scrollAnchoredOffset(1200.0, 400.0, .Some(UnitPoints.top)) == 0.0)
+    expect!(scrollAnchoredOffset(160.0, 400.0, .Some(UnitPoints.bottom)) == 0.0)
+    expect!(scrollAnchoredOffset(1200.0, 400.0, .None) == 0.0)
+}
+
+@Test
+function resizingPreservesChosenContentAnchorWithoutReanchoringEveryFrame() {
+    let bottom = scrollAnchorPreferencesApply(
+        ScrollAnchorPreferences {}, .Some(ScrollAnchorChange {
+            anchor: .Some(UnitPoints.bottom)
+        })
+    )
+    var scroll = ScrollViewState {
+        contentLength: 1000.0,
+        viewportLength: 300.0
+    }
+    scrollApplyDefaultAnchors(scroll, bottom)
+    expect!(scroll.defaultAnchorInitialized)
+    expect!(scroll.motion.offset == 700.0)
+
+    // A person can scroll up; an unchanged layout does not snap back down.
+    scroll.motion.offset = 210.0
+    scrollApplyDefaultAnchors(scroll, bottom)
+    expect!(scroll.motion.offset == 210.0)
+
+    // Appending 70 points maintains the same bottom-relative content point.
+    scroll.contentLength = 1070.0
+    scrollApplyDefaultAnchors(scroll, bottom)
+    expect!(scroll.motion.offset == 280.0)
+
+    // Increasing the viewport by 50 points moves the offset toward the top.
+    scroll.viewportLength = 350.0
+    scrollApplyDefaultAnchors(scroll, bottom)
+    expect!(scroll.motion.offset == 230.0)
+}
+
+@Test
+function sizeChangesRoleAndInitializationRoleAreIndependent() {
+    let initialBottom = scrollAnchorPreferencesApply(
+        ScrollAnchorPreferences {}, .Some(ScrollAnchorChange {
+            anchor: .Some(UnitPoints.bottom), role: .Some(.InitialOffset)
+        })
+    )
+    var scroll = ScrollViewState {}
+    // No speculative movement before first viewport measurement.
+    scrollApplyDefaultAnchors(scroll, initialBottom)
+    expect!(!scroll.defaultAnchorInitialized)
+    scroll.contentLength = 900.0
+    scroll.viewportLength = 300.0
+    scrollApplyDefaultAnchors(scroll, initialBottom)
+    expect!(scroll.motion.offset == 600.0)
+
+    // Without a size-change anchor, the user's position remains, then clamps
+    // only if the new scroll range no longer reaches it.
+    scroll.contentLength = 970.0
+    scrollApplyDefaultAnchors(scroll, initialBottom)
+    expect!(scroll.motion.offset == 600.0)
+    scroll.contentLength = 470.0
+    scrollApplyDefaultAnchors(scroll, initialBottom)
+    expect!(scroll.motion.offset == 170.0)
+}
+
+@Test
+function alignmentCentersOnlyContentSmallerThanTheViewport() {
+    expect!(scrollSmallContentAlignment(100.0, 300.0, .Some(UnitPoints.center)) == 100.0)
+    expect!(scrollSmallContentAlignment(100.0, 300.0, .Some(UnitPoints.bottom)) == 200.0)
+    expect!(scrollSmallContentAlignment(100.0, 300.0, .Some(UnitPoints.top)) == 0.0)
+    expect!(scrollSmallContentAlignment(400.0, 300.0, .Some(UnitPoints.center)) == 0.0)
+    expect!(scrollSmallContentAlignment(100.0, 300.0, .None) == 0.0)
+}
+
+@Test
+function defaultScrollAnchorOverloadsLowerIntoActualScrollableWidget() {
+    let body = ScrollView {
+        VStack {
+            Text("First")
+            Text("Last")
+        }
+    }
+    .defaultScrollAnchor(anchor: UnitPoints.bottom)
+    .defaultScrollAnchor(anchor: UnitPoints.top, forRole: .Alignment)
+    var lowered = describedLayer(move body)
+    expect!(lowered.sublayers[0].scrollAxis == CAAxis.Column)
+    layOutLayerTree(lowered, 180.0, 75.0)
+    let key = lowered.sublayers[0].hitKey
+    unsafe {
+        var scroll = nativeRecover<ScrollViewState>(
+            ambientStateGetView(scrollViewSlotKey(key))
+        )
+        expect!(scroll.viewportLength > 0.0)
+        expect!(scroll.contentLength > 0.0)
+        let ctx = modifierContextApply(ModifierContext {},
+            modifierDeltaDefaultScrollAnchor(.Some(UnitPoints.bottom))
+        )
+        scrollApplyDefaultAnchors(scroll, ctx.scrollAnchors)
+        expect!(scroll.defaultAnchorInitialized)
+        expect!(scroll.motion.offset == scrollAnchoredOffset(
+            scroll.contentLength, scroll.viewportLength, .Some(UnitPoints.bottom)
+        ))
+    }
+    let section = Section {
+        Text("Row")
+    }.defaultScrollAnchor(anchor: .None)
+    expect!(section.isSection())
+}

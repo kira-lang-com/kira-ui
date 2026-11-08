@@ -1,0 +1,45 @@
+import Foundation
+import KCoreAnimation
+
+// AttributedString.LineHeight in SwiftUI: a paragraph-level baseline pitch.
+// Its named styles are semantic; exact, leading, and multiple specify actual
+// point-based values. An optional nil restores system-selected font metrics.
+public enum TextLineHeight {
+    Variable
+    Tight
+    Normal
+    Loose
+    Exact(Number)
+    Leading(Number)
+    Multiple(Number)
+}
+
+public function coreTextLineHeight(height: TextLineHeight?) -> CATextLineHeight {
+    return match height {
+        None -> .Variable
+        Some(value) -> match value {
+            Variable -> .Variable
+            Tight -> .Tight
+            Normal -> .Normal
+            Loose -> .Loose
+            Exact(points) -> .Exact(points)
+            Leading(increase) -> .Leading(increase)
+            Multiple(factor) -> .Multiple(factor)
+        }
+    }
+}
+
+public function modifierDeltaLineHeight(height: TextLineHeight?) -> ModifierDelta {
+    return ModifierDelta { hasLineHeight: true, lineHeight: move height }
+}
+
+extend Widget {
+    // SwiftUI's `lineHeight(_ lineHeight: AttributedString.LineHeight?)`.
+    function lineHeight(height: TextLineHeight?) -> Any Widget {
+        return ModifierDeltaLayer(delta: modifierDeltaLineHeight(move height)) { self }
+    }
+
+    function lineHeight(height: TextLineHeight) -> Any Widget {
+        return ModifierDeltaLayer(delta: modifierDeltaLineHeight(.Some(move height))) { self }
+    }
+}

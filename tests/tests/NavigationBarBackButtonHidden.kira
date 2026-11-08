@@ -1,0 +1,61 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+function backEntriesCollected() -> Number {
+    unsafe {
+        let sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+        return sink.back.count
+    }
+}
+
+@Test
+function navigationBarBackButtonHiddenDefaultAndExplicitFalse() {
+    let defaultHidden = describedLayer(
+        Text("Destination").navigationBarBackButtonHidden()
+    )
+    let explicitlyShown = describedLayer(
+        Text("Destination").navigationBarBackButtonHidden(hidden: false)
+    )
+    expect!(describedContainsText(defaultHidden, "Destination"))
+    expect!(describedContainsText(explicitlyShown, "Destination"))
+    let outer = modifierContextApply(
+        ModifierContext {}, modifierDeltaNavigationBackButtonHidden(true)
+    )
+    expect!(modifierContextForChildren(outer).navigationBackButtonHidden)
+    let inner = modifierContextApply(
+        outer, modifierDeltaNavigationBackButtonHidden(false)
+    )
+    expect!(!inner.navigationBackButtonHidden)
+}
+
+@Test
+function pageDestinationOverridesTheSystemBackChromeWithoutRemovingOtherItems() {
+    toolbarCollect()
+    let previous = toolbarBeginPageBackButton()
+    let context = buildContext(FoundationUiContext {})
+    let systemGroup = navigationDeclareBack(context, ModifierContext {})
+    // User-authored chrome survives hiding the system back button.
+    chromeAppend(.Back, ToolbarEntry { group: 1001.0 })
+    expect!(backEntriesCollected() == 2.0)
+    let destination = Text("Destination").navigationBarBackButtonHidden()
+    let drawn = destination.describe(context, ModifierContext {})
+    expect!(describedContainsText(drawn, "Destination"))
+    let hidden = toolbarEndPageBackButton(move previous, false)
+    expect!(hidden)
+    if hidden { toolbarRemoveBackGroup(systemGroup) }
+    expect!(backEntriesCollected() == 1.0)
+    toolbarStopCollecting()
+}
+
+@Test
+function nestedNavigationPageBackPreferenceCanRestoreThePriorPage() {
+    toolbarCollect()
+    let outer = toolbarBeginPageBackButton()
+    toolbarPageBackButtonPreference(true)
+    let nested = toolbarBeginPageBackButton()
+    toolbarPageBackButtonPreference(false)
+    expect!(!toolbarEndPageBackButton(move nested, true))
+    expect!(toolbarEndPageBackButton(move outer, false))
+    toolbarStopCollecting()
+}

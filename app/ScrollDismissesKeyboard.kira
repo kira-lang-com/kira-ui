@@ -1,0 +1,59 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's ScrollDismissesKeyboardMode. Automatic is resolved by the owning
+// scroll container: List/Form dismiss as soon as a scroll begins, while a
+// standalone ScrollView waits until the drag actually moves. Never preserves
+// text focus throughout the gesture, not for an unrelated background click.
+public enum ScrollDismissesKeyboardMode {
+    Automatic
+    Immediately
+    Interactively
+    Never
+}
+
+public function resolvedScrollDismissesKeyboard(
+    mode: ScrollDismissesKeyboardMode,
+    isListOrForm: Bool
+) -> ScrollDismissesKeyboardMode {
+    if mode != .Automatic { return mode }
+    return isListOrForm ? .Immediately : .Interactively
+}
+
+public function modifierDeltaScrollDismissesKeyboard(
+    mode: ScrollDismissesKeyboardMode
+) -> ModifierDelta {
+    return ModifierDelta {
+        hasScrollDismissesKeyboard: true,
+        scrollDismissesKeyboard: mode
+    }
+}
+
+// The input dispatcher uses the mode recorded on the EXACT scroll viewport
+// the last rendered tree hit-tested, not the mode of an unrelated ancestor.
+// A disabled scroll surface is not a scrolling gesture and may not blur a field.
+public function scrollShouldDismissKeyboard(
+    key: Number,
+    moved: Bool
+) -> Bool {
+    unsafe {
+        if key == 0 || !ambientStateHasView(scrollViewSlotKey(key)) { return false }
+        let surface = nativeRecover<ScrollViewState>(ambientStateGetView(scrollViewSlotKey(key)))
+        if !surface.keyboardDismissEnabled { return false }
+        match surface.keyboardDismissMode {
+            Immediately -> return true
+            Interactively -> return moved
+            Automatic -> return moved
+            Never -> return false
+        }
+    }
+}
+
+extend Widget {
+    // SwiftUI: `.scrollDismissesKeyboard(_ mode: ScrollDismissesKeyboardMode)`.
+    function scrollDismissesKeyboard(mode: ScrollDismissesKeyboardMode) -> Any Widget {
+        return ModifierDeltaLayer(
+            delta: modifierDeltaScrollDismissesKeyboard(mode)
+        ) { self }
+    }
+}

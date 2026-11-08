@@ -226,6 +226,7 @@ public function shortcutKeyText(key: borrow String) -> String {
 public struct ShortcutEntry {
     var shortcut: KeyboardShortcut = KeyboardShortcut {}
     var action: () -> Void = layerNoop
+    var allowsRepeat: Bool = true
 }
 
 // The shortcut written on the content lowering now, until a button takes it.
@@ -250,14 +251,20 @@ public function shortcutTake() -> KeyboardShortcut {
     }
 }
 
-public function shortcutRegister(shortcut: borrow KeyboardShortcut, action: () -> Void) {
+public function shortcutRegister(
+    shortcut: borrow KeyboardShortcut,
+    action: () -> Void,
+    allowsRepeat: Bool = true
+) {
     unsafe {
         if shortcut.isEmpty() {
             return
         }
         layerActionSinkEnsure()
         var sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
-        sink.shortcuts.append(ShortcutEntry { shortcut: copy shortcut, action: action })
+        sink.shortcuts.append(ShortcutEntry {
+            shortcut: copy shortcut, action: action, allowsRepeat: allowsRepeat
+        })
     }
 }
 
@@ -268,7 +275,8 @@ public function shortcutRegister(shortcut: borrow KeyboardShortcut, action: () -
 public function shortcutPerform(
     pressed: borrow Key,
     held: borrow ModifierState,
-    typing: Bool
+    typing: Bool,
+    keyRepeat: Bool = false
 ) -> Bool {
     unsafe {
         layerActionSinkEnsure()
@@ -277,7 +285,12 @@ public function shortcutPerform(
             let shortcut = sink.shortcuts[index].shortcut
             let typed = typing && shortcut.modifiers.count == 0 && !passesTyping(shortcut.key)
             if shortcut.matches(pressed, held) && !typed {
-                sink.shortcuts[index].action()
+                // A disabled-repeat shortcut still CONSUMES key-repeat events
+                // so the field or focused viewport behind it does not also
+                // receive a held key intended only for this button.
+                if !keyRepeat || sink.shortcuts[index].allowsRepeat {
+                    sink.shortcuts[index].action()
+                }
                 return true
             }
         }

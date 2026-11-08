@@ -1,0 +1,102 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function gridCellUnsizedHorizontalDoesNotWidenColumn() {
+    var grid = describedLayer(Grid(horizontalSpacing: .None, verticalSpacing: .None) {
+        GridRow {
+            Rectangle().frame(width: 30.0, height: 10.0)
+        }
+        GridRow {
+            Rectangle().fillWidth().frame(height: 10.0)
+                .gridCellUnsizedAxes(axes: .Horizontal)
+        }
+    })
+    layOutLayerTree(grid, 200.0, 100.0)
+    expect!(grid.size.width == 30.0)
+    expect!(grid.sublayers[1].sublayers[0].layout.gridUnsizedHorizontal)
+}
+
+@Test
+function gridCellUnsizedVerticalStillPreservesFixedIntrinsicSize() {
+    var grid = describedLayer(Grid(horizontalSpacing: .None, verticalSpacing: .None) {
+        GridRow {
+            Rectangle().frame(width: 20.0, height: 10.0)
+            Rectangle().frame(width: 20.0, height: 80.0)
+                .gridCellUnsizedAxes(axes: .Vertical)
+        }
+    })
+    layOutLayerTree(grid, 120.0, 100.0)
+    // The flag suppresses flexible extra space, not an explicitly fixed
+    // 80-point minimum height authored by the caller.
+    expect!(grid.size.height == 80.0)
+    expect!(grid.sublayers[0].sublayers[1].layout.gridUnsizedVertical)
+}
+
+@Test
+function gridCellUnsizedHorizontalDoesNotHideFixedIntrinsicWidth() {
+    var grid = describedLayer(Grid(horizontalSpacing: .None, verticalSpacing: .None) {
+        GridRow {
+            Rectangle().frame(width: 30.0, height: 10.0)
+        }
+        GridRow {
+            Rectangle().frame(width: 180.0, height: 10.0)
+                .gridCellUnsizedAxes(axes: .Horizontal)
+        }
+    })
+    layOutLayerTree(grid, 200.0, 100.0)
+    expect!(grid.size.width == 180.0)
+}
+
+@Test
+function freeStandingDividerExpandsGridUnlessItsHorizontalAxisIsUnsized() {
+    var expanding = describedLayer(Grid(horizontalSpacing: .None, verticalSpacing: .None) {
+        GridRow {
+            Rectangle().frame(width: 30.0, height: 10.0)
+        }
+        Divider()
+    })
+    var compact = describedLayer(Grid(horizontalSpacing: .None, verticalSpacing: .None) {
+        GridRow {
+            Rectangle().frame(width: 30.0, height: 10.0)
+        }
+        Divider().gridCellUnsizedAxes(axes: .Horizontal)
+    })
+    layOutLayerTree(expanding, 200.0, 100.0)
+    layOutLayerTree(compact, 200.0, 100.0)
+    expect!(expanding.size.width == 200.0)
+    expect!(compact.size.width == 30.0)
+}
+
+@Test
+function gridCellAnchorOverridesRowAlignment() {
+    var grid = describedLayer(Grid(horizontalSpacing: .None, verticalSpacing: .None) {
+        GridRow {
+            Rectangle().frame(width: 20.0, height: 40.0)
+            Rectangle().frame(width: 10.0, height: 10.0)
+                .gridCellAnchor(anchor: Point { x: 0.0, y: 0.0 })
+        }
+    })
+    layOutLayerTree(grid, 100.0, 80.0)
+    let cell = grid.sublayers[0].sublayers[1]
+    expect!(cell.position.y == 0.0)
+    expect!(cell.layout.hasGridCellAnchor)
+}
+
+@Test
+function gridColumnAlignmentAppliesToEveryCellInTheColumn() {
+    var grid = describedLayer(Grid(horizontalSpacing: .None, verticalSpacing: .None) {
+        GridRow {
+            Rectangle().frame(width: 60.0, height: 10.0)
+                .gridColumnAlignment(alignment: .Trailing)
+        }
+        GridRow {
+            Rectangle().frame(width: 20.0, height: 10.0)
+        }
+    })
+    layOutLayerTree(grid, 180.0, 100.0)
+    let narrow = grid.sublayers[1].sublayers[0]
+    expect!(narrow.position.x == 40.0)
+    expect!(grid.sublayers[0].sublayers[0].layout.hasGridColumnAlignment)
+}

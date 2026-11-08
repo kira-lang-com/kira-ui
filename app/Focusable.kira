@@ -1,0 +1,90 @@
+import Foundation
+import KCoreAnimation
+
+// The two roles that SwiftUI FocusInteractions supports, plus its automatic
+// host policy. Automatic includes editing and activation for a custom view;
+// `.Activate` only participates in keyboard navigation, never pointer focus.
+public enum FocusInteractions {
+    Automatic
+    Activate
+    Edit
+}
+
+// When an activation-only view wraps a Button, it can run that Button's
+// existing action on Space. This searches the described children rather than
+// giving the focus wrapper an independent synthetic click target.
+public function focusableActivationKey(layer: borrow CALayerDescription) -> Number {
+    if layer.hittable && layer.hitKey != 0 { return layer.hitKey }
+    for child in layer.sublayers {
+        let found = focusableActivationKey(child)
+        if found != 0 { return found }
+    }
+    return 0
+}
+
+public construct FocusableLayer(
+    enabled: Bool = true,
+    interactions: FocusInteractions = .Automatic
+) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let described = content.describe(context, modifiers)
+        if !enabled || modifiers.disabled { return described }
+
+        let key = tapSeqKey()
+        let edits = interactions != .Activate
+        let activates = interactions != .Edit
+        let actionKey = focusableActivationKey(described)
+        layerFocusableRegister(key, activates, edits, actionKey)
+        layerKeyboardCommandAttachFocusAncestor(key, described)
+        focusSync(key, context.focusedKey == key, modifiers.focus)
+
+        // A focusable label remains a single, measured accessibility region.
+        // Its focus state follows Kira's keyboard focus, not hover state.
+        let existing = described.accessibilityElements()
+        for aKey in existing {
+            var node = accessibilityNode(aKey)
+            node.hasKeyboardFocus = context.focusedKey == key
+            accessibilityStore(aKey, move node)
+        }
+        return CALayerDescription {
+            focusKey: key,
+            focusesOnPointer: edits,
+            // A native focus indication is drawn around the same measured
+            // region as the focus hit area. The border changes without adding
+            // layout padding or replacing child click targets. Accessibility
+            // and keyboard focus remain even when effects are suppressed.
+            borderWidth: context.focusedKey == key && !modifiers.focusEffectDisabled
+                ? 2.0 : 0.0,
+            borderColor: colorFromFoundation(modifierPrimaryColor(.Accent, modifiers)),
+            cornerRadius: 7.0,
+            layout: surfaceFootprint(described.layout),
+            groupedSection: described.groupedSection,
+            sublayers: [move described]
+        }
+    }
+}
+
+extend Widget {
+    // SwiftUI: `.focusable(_ isFocusable: Bool = true)`.
+    function focusable(isFocusable: Bool = true) -> Any Widget {
+        return FocusableLayer(enabled: isFocusable) { self }
+    }
+
+    // SwiftUI: `.focusable(_ isFocusable: Bool = true,
+    //                      interactions: FocusInteractions)`.
+    function focusable(
+        isFocusable: Bool = true,
+        interactions: FocusInteractions
+    ) -> Any Widget {
+        return FocusableLayer(
+            enabled: isFocusable, interactions: interactions
+        ) { self }
+    }
+}

@@ -1,0 +1,45 @@
+import Foundation
+import KCoreAnimation
+
+// A custom two-column window may be an HStack rather than NavigationSplitView,
+// as SwiftUI's sidebar shells often are. The window toolbar still needs to know
+// which column lives below its leading section. This semantic wrapper derives
+// that width from the ACTUAL framed sidebar; it neither adds a new bar nor
+// draws one inside the sidebar.
+//
+//     HStack(spacing: .None) {
+//         Sidebar().frame(width: 320).navigationSidebarColumn()
+//         Detail()
+//     }
+//
+// A detail NavigationStack owns its own title, search and actions, and the
+// window's document toolbar starts where this sidebar ends. Unlike a split
+// view, this wrapper does not add a sidebar toggle or change the route graph.
+public construct NavigationSidebarColumn() extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let previous = toolbarCurrentColumn()
+        toolbarEnterColumn(ToolbarColumn.sidebar)
+        var sidebar = content.describe(context, modifiers)
+        toolbarEnterColumn(previous)
+
+        let width = sidebar.measure(context.viewportWidth).width
+        chromeSetNavigationLayout(width, true, 1.0, ToolbarColumn.detail)
+        // A custom window's two columns run from the window's top edge. Its
+        // detail NavigationStack (when present) applies its own safe area;
+        // the window must not inset the entire HStack and move the sidebar
+        // background below the traffic lights.
+        chromeSafeAreaHandled()
+        return move sidebar
+    }
+}
+
+extend Widget {
+    function navigationSidebarColumn() -> Any Widget {
+        return NavigationSidebarColumn() { self }
+    }
+}

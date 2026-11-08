@@ -1,0 +1,110 @@
+import Foundation
+import KiraLayout
+import KCoreAnimation
+
+// Section margins are an environment preference, because a caller can place
+// the modifier either on a whole List or on a particular Section. Every edge
+// has its own presence bit so a deeper modifier may reset just one edge to
+// its platform default with `nil` without erasing other inherited edges.
+public struct ListSectionMargins {
+    var hasTop: Bool = false
+    var top: Number? = .None
+    var hasLeading: Bool = false
+    var leading: Number? = .None
+    var hasBottom: Bool = false
+    var bottom: Number? = .None
+    var hasTrailing: Bool = false
+    var trailing: Number? = .None
+}
+
+public function listSectionMarginsForEdges(edges: EdgeSet, length: Number?) -> ListSectionMargins {
+    return ListSectionMargins {
+        hasTop: edges.has(EdgeSet.top),
+        top: length,
+        hasLeading: edges.has(EdgeSet.leading),
+        leading: length,
+        hasBottom: edges.has(EdgeSet.bottom),
+        bottom: length,
+        hasTrailing: edges.has(EdgeSet.trailing),
+        trailing: length
+    }
+}
+
+public function mergedListSectionMargins(
+    current: borrow ListSectionMargins,
+    change: borrow ListSectionMargins
+) -> ListSectionMargins {
+    return ListSectionMargins {
+        hasTop: current.hasTop || change.hasTop,
+        top: change.hasTop ? change.top : current.top,
+        hasLeading: current.hasLeading || change.hasLeading,
+        leading: change.hasLeading ? change.leading : current.leading,
+        hasBottom: current.hasBottom || change.hasBottom,
+        bottom: change.hasBottom ? change.bottom : current.bottom,
+        hasTrailing: current.hasTrailing || change.hasTrailing,
+        trailing: change.hasTrailing ? change.trailing : current.trailing
+    }
+}
+
+public function modifierDeltaListSectionMargins(
+    edges: EdgeSet,
+    length: Number?
+) -> ModifierDelta {
+    return ModifierDelta {
+        listSectionMargins: listSectionMarginsForEdges(edges, move length)
+    }
+}
+
+// Mark a described Section for its owning List to resolve. A margin is not
+// a post-placement offset: the owning list changes the Section's measurement
+// proposal and the geometry of its header, card and footer as one unit.
+public function markListSectionMargins(
+    section: CALayerDescription,
+    margins: borrow ListSectionMargins
+) -> CALayerDescription {
+    var described = section
+    described.layout.hasListSectionMarginTop = margins.hasTop
+    described.layout.listSectionMarginTop = margins.top
+    described.layout.hasListSectionMarginLeading = margins.hasLeading
+    described.layout.listSectionMarginLeading = margins.leading
+    described.layout.hasListSectionMarginBottom = margins.hasBottom
+    described.layout.listSectionMarginBottom = margins.bottom
+    described.layout.hasListSectionMarginTrailing = margins.hasTrailing
+    described.layout.listSectionMarginTrailing = margins.trailing
+    return described
+}
+
+// The actual extra space required beyond the list's established default
+// content margin. May be negative, e.g. zero margins intentionally let a
+// full-bleed card extend into the otherwise reserved default inset.
+public function listSectionMarginDifference(
+    specified: borrow Number?,
+    defaultMargin: Number
+) -> Number {
+    return match specified {
+        Some(value) -> max(value, 0.0) - defaultMargin
+        None -> 0.0
+    }
+}
+
+// A specified vertical margin has precedence over the style's shared space;
+// `nil` has no explicit value and returns to the list's spacing policy.
+public function listSectionSpecifiedMargin(specified: borrow Number?) -> Number? {
+    return match specified {
+        Some(value) -> .Some(max(value, 0.0))
+        None -> .None
+    }
+}
+
+extend Widget {
+    // SwiftUI: `.listSectionMargins(_ edges: Edge.Set = .all,
+    //                                   _ length: CGFloat?)`.
+    function listSectionMargins(
+        edges: EdgeSet = EdgeSet.all,
+        length: Number?
+    ) -> Any Widget {
+        return ModifierDeltaLayer(
+            delta: modifierDeltaListSectionMargins(edges, move length)
+        ) { self }
+    }
+}

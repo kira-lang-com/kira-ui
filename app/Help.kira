@@ -1,0 +1,145 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI help tags: a short explanation that appears only after the pointer
+// has remained over the real transformed view for a deliberate interval. The
+// same text becomes an accessibility hint so keyboard and assistive users do
+// not need a pointer. A tooltip has no press target, focus claim or layout.
+public struct HelpHoverState {
+    var hovered: Bool = false
+    var enteredMillis: Number = 0.0
+}
+
+public namespace HelpTiming {
+    let delayMillis: Number = 650.0
+    let pointerGapX: Number = 12.0
+    let pointerGapY: Number = 18.0
+    let maxWidth: Number = 300.0
+}
+
+public function helpStateSlot(key: Number) -> ViewStateKey {
+    return slotKey("kiraui.help-hover.", key)
+}
+
+public function helpStateEnsure(key: Number) {
+    unsafe {
+        let slot = helpStateSlot(key)
+        if !ambientStateHasView(slot) {
+            ambientStatePutView(copy slot, nativeUserData(nativeState(HelpHoverState {})))
+        }
+    }
+}
+
+public function helpHoverChanged(key: Number, inside: Bool) {
+    unsafe {
+        if key == 0 { return }
+        helpStateEnsure(key)
+        var state = nativeRecover<HelpHoverState>(ambientStateGetView(helpStateSlot(key)))
+        if state.hovered == inside { return }
+        state.hovered = inside
+        if inside {
+            state.enteredMillis = unixMillis()
+            redrawAfter(HelpTiming.delayMillis / 1000.0)
+        } else {
+            state.enteredMillis = 0.0
+            redrawAfter(0.0)
+        }
+    }
+}
+
+public function helpShouldPresent(key: Number, nowMillis: Number) -> Bool {
+    unsafe {
+        if key == 0 || !ambientStateHasView(helpStateSlot(key)) { return false }
+        let state = nativeRecover<HelpHoverState>(ambientStateGetView(helpStateSlot(key)))
+        return state.hovered && nowMillis - state.enteredMillis >= HelpTiming.delayMillis
+    }
+}
+
+// Build-time hover presentation: the pointer moves the tip without requiring
+// a layout frame readback, and its edge constraints keep the card visible even
+// over a control near the window's bottom or trailing edge.
+public function helpPresentTooltip(
+    message: borrow String,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext
+) {
+    if message.count == 0 { return }
+    let maximum = max(64.0, min(HelpTiming.maxWidth, context.viewportWidth - 24.0))
+    var card = Text(copy message)
+        .typography(.footnote)
+        .padding(resolvedLength(8.0))
+        .background(RoundedRectangle(cornerRadius: 7.0, style: .Continuous))
+        .backgroundStyle(.Raised)
+        .themeBorder(.Subtle)
+        .describe(context, modifierContextForOverlay(modifiers))
+    let size = card.measure(maximum)
+    card.layout.fixedWidth = size.width
+    card.layout.fixedHeight = size.height
+    // A tooltip never intercepts a click on the content beneath it; its own
+    // nested text and background are noninteractive.
+    card.hittable = false
+    card.hitKey = 0
+    let x = min(max(0.0, context.pointerX + HelpTiming.pointerGapX),
+        max(0.0, context.viewportWidth - size.width))
+    let preferredY = context.pointerY + HelpTiming.pointerGapY
+    let y = preferredY + size.height <= context.viewportHeight
+        ? preferredY
+        : max(0.0, context.pointerY - size.height - 6.0)
+    overlayPresent(Overlay {
+        anchorX: x,
+        anchorY: y,
+        z: OverlayLevel.submenu,
+        content: move card
+    })
+}
+
+public construct HelpLayer(message: String) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var described = content.describe(context, modifiers)
+        if message.count == 0 { return described }
+
+        // Existing accessibility hints (possibly more specific than this
+        // explanation) take priority. An outer explicit accessibilityHint
+        // modifier may still override the help text normally.
+        for key in described.accessibilityElements() {
+            var node = accessibilityNode(key)
+            if node.hint.count == 0 {
+                node.hint = copy message
+                accessibilityStore(key, move node)
+            }
+        }
+
+        let key = tapSeqKey()
+        helpStateEnsure(key)
+        layerHoverRegister(key, { inside in helpHoverChanged(key, inside) })
+        if helpShouldPresent(key, unixMillis()) {
+            helpPresentTooltip(message, context, modifiers)
+        }
+        return CALayerDescription {
+            hoverKey: key,
+            groupedSection: described.groupedSection,
+            layout: surfaceFootprint(described.layout),
+            sublayers: [move described]
+        }
+    }
+}
+
+extend Widget {
+    // SwiftUI StringProtocol spelling, represented by Kira's native String.
+    function help(text: String) -> Any Widget {
+        return HelpLayer(message: move text) { self }
+    }
+
+    // SwiftUI Text overload. The user's original Text view remains the help
+    // source; the host tooltip applies its small adaptive font and background.
+    function help(text: Text) -> Any Widget {
+        return HelpLayer(message: copy text.content) { self }
+    }
+}

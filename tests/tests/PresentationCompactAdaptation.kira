@@ -1,0 +1,129 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function presentationAdaptationHasAllFivePublicPolicies() {
+    expect!(presentationAdaptationCode(.Automatic) == 0.0)
+    expect!(presentationAdaptationCode(.None) == 1.0)
+    expect!(presentationAdaptationCode(.FullScreenCover) == 2.0)
+    expect!(presentationAdaptationCode(.Popover) == 3.0)
+    expect!(presentationAdaptationCode(.Sheet) == 4.0)
+}
+
+@Test
+function mobileCompactAxesAndDesktopWindowBehaviorAreDistinct() {
+    expect!(presentationCompactSizeClass(390.0, 844.0, false)
+        == PresentationCompactAxis.Horizontal)
+    expect!(presentationCompactSizeClass(844.0, 390.0, false)
+        == PresentationCompactAxis.Vertical)
+    // A narrow landscape window has the vertical preference when both
+    // dimensions are mobile-compact, matching SwiftUI's documented order.
+    expect!(presentationCompactSizeClass(500.0, 350.0, false)
+        == PresentationCompactAxis.Vertical)
+    expect!(presentationCompactSizeClass(1100.0, 720.0, false)
+        == PresentationCompactAxis.Regular)
+    expect!(presentationCompactSizeClass(390.0, 844.0, true)
+        == PresentationCompactAxis.Regular)
+}
+
+@Test
+function defaultCompactPopoverBecomesSheetOrCoverWhileSheetUsesCoverInLandscape() {
+    let automatic = PresentationPreferences {}
+    expect!(presentationResolvedKind(
+        .Popover, .Regular, automatic
+    ) == PresentationKind.Popover)
+    expect!(presentationResolvedKind(
+        .Popover, .Horizontal, automatic
+    ) == PresentationKind.Sheet)
+    expect!(presentationResolvedKind(
+        .Popover, .Vertical, automatic
+    ) == PresentationKind.FullScreenCover)
+    expect!(presentationResolvedKind(
+        .Sheet, .Horizontal, automatic
+    ) == PresentationKind.Sheet)
+    expect!(presentationResolvedKind(
+        .Sheet, .Vertical, automatic
+    ) == PresentationKind.FullScreenCover)
+    expect!(presentationResolvedKind(
+        .FullScreenCover, .Horizontal, automatic
+    ) == PresentationKind.FullScreenCover)
+}
+
+@Test
+function explicitNoneKeepsOriginalPresentationInsteadOfAdapting() {
+    let options = presentationPreferences(describedLayer(
+        Text("Sheet details").presentationCompactAdaptation(adaptation: .None)
+    ))
+    expect!(options.hasCompactAdaptation)
+    expect!(options.horizontalAdaptation == 1.0)
+    expect!(options.verticalAdaptation == 1.0)
+    expect!(presentationResolvedKind(
+        .Popover, .Horizontal, options
+    ) == PresentationKind.Popover)
+    expect!(presentationResolvedKind(
+        .Sheet, .Vertical, options
+    ) == PresentationKind.Sheet)
+}
+
+@Test
+function separateHorizontalAndVerticalPreferencesUseVerticalWhenBothCompact() {
+    let options = presentationPreferences(describedLayer(
+        Text("Adaptive content").presentationCompactAdaptation(
+            horizontal: .Popover, vertical: .Sheet
+        )
+    ))
+    expect!(options.hasCompactAdaptation)
+    expect!(options.horizontalAdaptation == 3.0)
+    expect!(options.verticalAdaptation == 4.0)
+    expect!(presentationResolvedKind(
+        .Popover, .Horizontal, options
+    ) == PresentationKind.Popover)
+    expect!(presentationResolvedKind(
+        .Popover, .Vertical, options
+    ) == PresentationKind.Sheet)
+    expect!(presentationResolvedKind(
+        .Sheet, .Vertical, options
+    ) == PresentationKind.Sheet)
+}
+
+@Test
+function compactAdaptationSupportsCrossKindConversionAndOverridingNestedPreferences() {
+    let opts = presentationPreferences(describedLayer(
+        Text("Adaptive")
+            .presentationCompactAdaptation(adaptation: .Sheet)
+            .frame(width: 200.0, height: 55.0)
+            .presentationCompactAdaptation(
+                horizontal: .FullScreenCover, vertical: .Popover
+            )
+    ))
+    expect!(opts.hasCompactAdaptation)
+    expect!(opts.horizontalAdaptation == 2.0)
+    expect!(opts.verticalAdaptation == 3.0)
+    expect!(presentationResolvedKind(
+        .Sheet, .Horizontal, opts
+    ) == PresentationKind.FullScreenCover)
+    expect!(presentationResolvedKind(
+        .Sheet, .Vertical, opts
+    ) == PresentationKind.Popover)
+    expect!(presentationResolvedKind(
+        .Popover, .Vertical, opts
+    ) == PresentationKind.Popover)
+}
+
+@Test
+function adaptationDoesNotChangeUnpresentedLayoutOrSectionGrouping() {
+    let ordinary = describedLayer(Text("Presentation details"))
+    let adapt = describedLayer(
+        Text("Presentation details")
+            .presentationCompactAdaptation(adaptation: .Popover)
+    )
+    expect!(adapt.layout.intrinsicWidth == ordinary.layout.intrinsicWidth)
+    expect!(adapt.layout.intrinsicHeight == ordinary.layout.intrinsicHeight)
+    expect!(describedContainsText(adapt, "Presentation details"))
+    let section = Section {
+        Text("Section row")
+    }.presentationCompactAdaptation(adaptation: .FullScreenCover)
+    expect!(section.isSection())
+    expect!(describedLayer(move section).groupedSection)
+}

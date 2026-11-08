@@ -25,7 +25,9 @@ function tabBarSelectionPunch(
     let rest = tabBarRestInk(hold, modifiers)
     tabBarLiftedInk(whole, rest.color, rest.blend)
     whole.accessibilityClear()
-    whole.animation = tabBarSelectionMove(hold)
+    // The anchor owns the explicit spring. Text and icons are carried inside
+    // it with immediate geometry, not with a second inherited CA animation.
+    whole.makeImmediate()
     var parts: [CALayerDescription] = [
         tabBarPunchPart(hold, 1, height, false, move whole),
         CALayerDescription {
@@ -78,7 +80,7 @@ function tabBarSelectionLifted(
             lifted.sublayers[i].disablesActions = true
         }
     }
-    lifted.animation = tabBarSelectionMove(hold)
+    lifted.makeImmediate()
     var part = tabBarPunchPart(hold, 3, height, true, move lifted)
     // UIKit's `liftedContentWarpWrapper`: a `displacementMap` read off its own
     // `warpSDF`, a `CASDFGlassDisplacementEffect` 11.2 high of curvature one
@@ -131,15 +133,34 @@ function tabBarSelectedRow(layer: borrow mut CALayerDescription, passes: borrow 
     let tab = layer.layout.guide == guideTag(TabBarTab()) || layer.layout.guide == guideTag(
         TabBarSelection()
     )
-    if tab && layer.sublayers.count > 0 && layer.sublayers[0].sublayers.count > 0 {
-        let label = copy layer.sublayers[0].sublayers[0]
+    if tab && layer.sublayers.count > 0 {
+        // Stable two-pass workspace labels can simply be re-inked in place.
+        // No replacement subtree and no copy of only the first glyph, so the
+        // title stays mounted throughout the lens animation.
+        if layer.sublayers[0].sublayers.count == 2 && passes.count == 2 {
+            for index in 0..2 {
+                tabBarLiftedInk(
+                    layer.sublayers[0].sublayers[index],
+                    passes[index].color,
+                    passes[index].blend
+                )
+                layer.sublayers[0].sublayers[index].opacity = 1.0
+                layer.sublayers[0].sublayers[index].makeImmediate()
+            }
+            return
+        }
+        // The first child is the COMPLETE label (symbol + title), not its
+        // first glyph. Copying sublayers[0][0] here previously removed the
+        // title whenever the sliding Liquid Glass lens lifted.
+        let label = copy layer.sublayers[0]
         var inked: [CALayerDescription] = []
         for pass in passes {
             var drawn = copy label
             tabBarLiftedInk(drawn, pass.color, pass.blend)
+            drawn.makeImmediate()
             inked.append(move drawn)
         }
-        layer.sublayers[0].sublayers = move inked
+        layer.sublayers[0] = tabBarInked(move inked)
         return
     }
     for i in 0..layer.sublayers.count {
@@ -153,9 +174,31 @@ function tabBarSelectedRow(layer: borrow mut CALayerDescription, passes: borrow 
 // of its own, or publishes a guide the bar's selection would find.
 function tabBarStandIn(layer: borrow mut CALayerDescription) {
     layer.interactive = false
+    // Retain the copied tab hit targets: the original row fades completely
+    // while the lens is lifted, so these are what let the press keep sliding
+    // between panels. A cloned X is safe because direct-press actions may
+    // only run when the physical down began on that same X.
     layer.layout.guide = 0
     for i in 0..layer.sublayers.count {
         tabBarStandIn(layer.sublayers[i])
+    }
+}
+
+// The lifted lens renders several copies of the row for its punchout and
+// refracted ink. Those copies are visual effects, not the authoritative hit
+// layout: a press can otherwise land on the animated copy of the *old* tab
+// after it has visually moved to the next one. Keep a separate, completely
+// unpainted hit row fixed at the original tab positions above the lens.
+// Its tabs and close buttons retain their normal keys and geometry.
+function tabBarHitOnly(layer: borrow mut CALayerDescription) {
+    layer.content = .Empty
+    layer.interactive = false
+    layer.slidesPress = false
+    layer.layout.guide = 0
+    layer.disablesActions = true
+    layer.accessibilityClear()
+    for i in 0..layer.sublayers.count {
+        tabBarHitOnly(layer.sublayers[i])
     }
 }
 

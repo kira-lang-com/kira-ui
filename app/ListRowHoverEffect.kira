@@ -1,0 +1,145 @@
+import Foundation
+import KCoreAnimation
+
+// The optional policy on a List row is distinct from `.hoverEffect` on an
+// arbitrary view: its visual footprint belongs to the List cell, including
+// its row insets and selection band, not just the label inside the cell.
+public function listRowHoverMode(effect: HoverEffect?) -> Number {
+    return match effect {
+        None -> 0.0
+        Some(value) -> match value {
+            Automatic -> 1.0
+            Highlight -> 2.0
+            Lift -> 3.0
+        }
+    }
+}
+
+public function listRowHoverEffectForMode(mode: Number) -> HoverEffect? {
+    if mode == 1.0 { return .Some(.Automatic) }
+    if mode == 2.0 { return .Some(.Highlight) }
+    if mode == 3.0 { return .Some(.Lift) }
+    return .None
+}
+
+public function modifierDeltaListRowHoverEffect(effect: HoverEffect?) -> ModifierDelta {
+    return ModifierDelta {
+        hasListRowHoverEffect: true,
+        listRowHoverEffect: move effect
+    }
+}
+
+public function modifierDeltaListRowHoverEffectDisabled(disabled: Bool) -> ModifierDelta {
+    return ModifierDelta {
+        hasListRowHoverEffectDisabled: true,
+        listRowHoverEffectDisabled: disabled
+    }
+}
+
+public construct ListRowHoverEffectLayer(effect: HoverEffect?) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let environment = modifierContextApply(
+            modifiers, modifierDeltaListRowHoverEffect(copy effect)
+        )
+        var described = content.describe(context, environment)
+        described.layout.hasListRowHoverEffect = true
+        described.layout.listRowHoverEffectMode = listRowHoverMode(environment.listRowHoverEffect)
+        return described
+    }
+}
+
+public construct ListRowHoverEffectDisabledLayer(disabled: Bool) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let environment = modifierContextApply(
+            modifiers, modifierDeltaListRowHoverEffectDisabled(disabled)
+        )
+        var described = content.describe(context, environment)
+        described.layout.hasListRowHoverEffectDisabled = true
+        described.layout.listRowHoverEffectDisabled = environment.listRowHoverEffectDisabled
+        return described
+    }
+}
+
+public struct ListRowHoverPreferences {
+    var hasEffect: Bool = false
+    var effect: HoverEffect? = .None
+    var hasDisabled: Bool = false
+    var disabled: Bool = false
+}
+
+// A row can be wrapped in `.frame`, `.onTapGesture`, `.listRowInsets` and
+// other single-child layers. The outermost explicit row preference wins for
+// that field; the untouched field still comes from the inner row or List.
+public function listRowHoverPreferences(
+    described: borrow CALayerDescription,
+    modifiers: borrow ModifierContext
+) -> ListRowHoverPreferences {
+    let intent = described.layout
+    var choice = ListRowHoverPreferences {
+        hasEffect: intent.hasListRowHoverEffect,
+        effect: listRowHoverEffectForMode(intent.listRowHoverEffectMode),
+        hasDisabled: intent.hasListRowHoverEffectDisabled,
+        disabled: intent.listRowHoverEffectDisabled
+    }
+    if described.sublayers.count == 1 {
+        let child = listRowHoverPreferences(described.sublayers[0], ModifierContext {})
+        if !choice.hasEffect {
+            choice.hasEffect = child.hasEffect
+            choice.effect = child.effect
+        }
+        if !choice.hasDisabled {
+            choice.hasDisabled = child.hasDisabled
+            choice.disabled = child.disabled
+        }
+    }
+    if !choice.hasEffect {
+        choice.hasEffect = modifiers.hasListRowHoverEffect
+        choice.effect = copy modifiers.listRowHoverEffect
+    }
+    if !choice.hasDisabled {
+        choice.hasDisabled = modifiers.hasListRowHoverEffectDisabled
+        choice.disabled = modifiers.listRowHoverEffectDisabled
+    }
+    return choice
+}
+
+// Invoked by the List only AFTER the cell owns the full row footprint.
+// An explicit nil restores the list style's normal non-hovering cell, and
+// disabling keeps click, context menu and independent `.onHover` observers.
+public function listRowHoverDecorated(
+    cell: CALayerDescription,
+    preferences: borrow ListRowHoverPreferences,
+    modifiers: borrow ModifierContext
+) -> CALayerDescription {
+    if preferences.disabled || !preferences.hasEffect { return cell }
+    return match preferences.effect {
+        Some(effect) -> hoverEffectDescription(move cell, effect, true, modifiers)
+        None -> move cell
+    }
+}
+
+extend Widget {
+    // SwiftUI: `.listRowHoverEffect(_ effect: HoverEffect?)`.
+    function listRowHoverEffect(effect: HoverEffect?) -> Any Widget {
+        return ListRowHoverEffectLayer(effect: move effect) { self }
+    }
+
+    // SwiftUI: `.listRowHoverEffectDisabled(_ disabled: Bool = true)`.
+    function listRowHoverEffectDisabled(disabled: Bool = true) -> Any Widget {
+        return ListRowHoverEffectDisabledLayer(disabled: disabled) { self }
+    }
+}

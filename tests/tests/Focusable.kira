@@ -1,0 +1,160 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+import Ember
+
+struct FocusableActionCounts {
+    var presses: Number = 0.0
+}
+
+@Test
+function focusableRegistersIndependentGeometryWithoutCapturingClick() {
+    layerActionsReset()
+    tapSeqReset()
+    let editor = describedLayer(
+        Text("Edit label").frame(width: 180.0, height: 44.0)
+            .focusable(interactions: .Edit)
+    )
+    expect!(editor.focusKey != 0)
+    expect!(editor.focusesOnPointer)
+    expect!(!editor.hittable)
+    expect!(editor.hitKey == 0)
+    expect!(layerFocusableContains(editor.focusKey))
+
+    var description = editor
+    description.layoutTree(320.0, 180.0)
+    var runner = KiraLayerAppState {}
+    runner.compositor.tree.reconcileImmediate(description)
+    let hit = runner.compositor.tree.hitTestTree(30.0, 25.0)
+    expect!(!hit.hit)
+    expect!(hit.focusKey == description.focusKey)
+    kiraLayerHandleEvent(runner, AppEvent {
+        kind: .PointerDown, pointerX: 30.0, pointerY: 25.0
+    })
+    expect!(runner.ui.focusedKey == description.focusKey)
+    kiraLayerHandleEvent(runner, AppEvent {
+        kind: .PointerDown, pointerX: 310.0, pointerY: 160.0
+    })
+    expect!(runner.ui.focusedKey == 0)
+}
+
+@Test
+function activationOnlyFocusableDoesNotTakePointerFocus() {
+    layerActionsReset()
+    tapSeqReset()
+    var described = describedLayer(
+        Text("Activate").frame(width: 170.0, height: 45.0)
+            .focusable(interactions: .Activate)
+    )
+    expect!(described.focusKey != 0)
+    expect!(!described.focusesOnPointer)
+    expect!(!described.hittable)
+    described.layoutTree(300.0, 145.0)
+    var runner = KiraLayerAppState {}
+    runner.compositor.tree.reconcileImmediate(described)
+    let hit = runner.compositor.tree.hitTestTree(25.0, 20.0)
+    expect!(hit.focusKey == 0)
+    kiraLayerHandleEvent(runner, AppEvent {
+        kind: .PointerDown, pointerX: 25.0, pointerY: 20.0
+    })
+    expect!(runner.ui.focusedKey == 0)
+
+    kiraLayerHandleEvent(runner, AppEvent { kind: .KeyDown, key: .Tab })
+    expect!(runner.ui.focusedKey == described.focusKey)
+}
+
+@Test
+function tabAndShiftTabCycleThroughFocusableViews() {
+    layerActionsReset()
+    tapSeqReset()
+    let described = describedLayer(VStack {
+        Text("First").focusable()
+        Text("Second").focusable()
+        Text("Third").focusable(isFocusable: false)
+    })
+    expect!(described.sublayers.count == 3)
+    let firstKey = described.sublayers[0].focusKey
+    let secondKey = described.sublayers[1].focusKey
+    expect!(firstKey != 0)
+    expect!(secondKey != 0)
+    expect!(described.sublayers[2].focusKey == 0)
+
+    var state = KiraLayerAppState {}
+    kiraLayerHandleEvent(state, AppEvent { kind: .KeyDown, key: .Tab })
+    expect!(state.ui.focusedKey == firstKey)
+    kiraLayerHandleEvent(state, AppEvent { kind: .KeyDown, key: .Tab })
+    expect!(state.ui.focusedKey == secondKey)
+    kiraLayerHandleEvent(state, AppEvent { kind: .KeyDown, key: .Tab })
+    expect!(state.ui.focusedKey == firstKey)
+    kiraLayerHandleEvent(state, AppEvent {
+        kind: .KeyDown, key: .Tab,
+        modifiers: ModifierState { shift: true }
+    })
+    expect!(state.ui.focusedKey == secondKey)
+}
+
+@Test
+function focusedActivationButtonRunsItsExistingActionOnSpace() {
+    unsafe {
+        let record = nativeUserData(nativeState(FocusableActionCounts {}))
+        layerActionsReset()
+        tapSeqReset()
+        let described = describedLayer(
+            Button(title: "Apply", action: { in
+                unsafe {
+                    var count = nativeRecover<FocusableActionCounts>(record)
+                    count.presses++
+                }
+            }).focusable(interactions: .Activate)
+        )
+        expect!(described.focusKey != 0)
+        expect!(!described.hittable)
+        expect!(describedContainsText(described, "Apply"))
+        expect!(layerFocusableActivate(described.focusKey))
+        expect!(nativeRecover<FocusableActionCounts>(record).presses == 1.0)
+
+        var runner = KiraLayerAppState {}
+        runner.ui.focusedKey = described.focusKey
+        kiraLayerHandleEvent(runner, AppEvent {
+            kind: .KeyDown, key: .Space
+        })
+        expect!(nativeRecover<FocusableActionCounts>(record).presses == 2.0)
+        kiraLayerHandleEvent(runner, AppEvent {
+            kind: .KeyDown, key: .Space, keyRepeat: true
+        })
+        expect!(nativeRecover<FocusableActionCounts>(record).presses == 2.0)
+    }
+}
+
+@Test
+function disabledFocusableIsNotRegisteredAndCannotAcquireFocus() {
+    layerActionsReset()
+    tapSeqReset()
+    let disabled = describedLayer(
+        Text("Disabled").focusable(isFocusable: false)
+    )
+    expect!(disabled.focusKey == 0)
+    let disabledEnvironment = describedLayer(
+        Text("Disabled parent")
+            .focusable(interactions: .Edit)
+            .disabled(true)
+    )
+    expect!(disabledEnvironment.focusKey == 0)
+    expect!(layerFocusableNextKey(0, false) == 0)
+}
+
+@Test
+function focusablePreservesSectionIdentityAndAccessibilityState() {
+    let section = Section {
+        Text("Content")
+    }.focusable()
+    expect!(section.isSection())
+    layerActionsReset()
+    tapSeqReset()
+    let described = describedLayer(move section)
+    expect!(described.groupedSection)
+    expect!(described.focusKey != 0)
+
+    let ordinary = describedLayer(Text("Focusable title").focusable())
+    expect!(describedContainsText(ordinary, "Focusable title"))
+}

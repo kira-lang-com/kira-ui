@@ -1,0 +1,167 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+struct ScrollVisibilityEvents {
+    var calls: Number = 0.0
+    var visible: Bool = false
+    var enters: Number = 0.0
+    var exits: Number = 0.0
+}
+
+@Test
+function scrollVisibilityFractionUsesActualRectangleIntersection() {
+    let frame = Rect { x: 20.0, y: 70.0, width: 80.0, height: 60.0 }
+    let viewport = Rect { x: 0.0, y: 0.0, width: 120.0, height: 100.0 }
+    let overlap = scrollVisibilityIntersection(frame, viewport)
+    expect!(overlap.x == 20.0)
+    expect!(overlap.y == 70.0)
+    expect!(overlap.width == 80.0)
+    expect!(overlap.height == 30.0)
+    expect!(scrollVisibilityFraction(frame, viewport) == 0.5)
+    expect!(scrollVisibilityFraction(
+        Rect { x: 20.0, y: 150.0, width: 80.0, height: 60.0 }, viewport
+    ) == 0.0)
+    expect!(scrollVisibilityFraction(
+        Rect { x: 20.0, y: 20.0, width: 0.0, height: 60.0 }, viewport
+    ) == 0.0)
+}
+
+@Test
+function scrollVisibilityNotifiesOnlyWhenVisibleStateCrossesThreshold() {
+    unsafe {
+        let record = nativeUserData(nativeState(ScrollVisibilityEvents {}))
+        let callback: (Bool) -> Void = { visible in
+            unsafe {
+                var state = nativeRecover<ScrollVisibilityEvents>(record)
+                state.calls++
+                state.visible = visible
+                if visible { state.enters++ } else { state.exits++ }
+            }
+        }
+        expect!(scrollVisibilityObserve(983101.0, true, copy callback))
+        expect!(!scrollVisibilityObserve(983101.0, true, copy callback))
+        expect!(scrollVisibilityObserve(983101.0, false, copy callback))
+        expect!(!scrollVisibilityObserve(983101.0, false, copy callback))
+        expect!(scrollVisibilityObserve(983101.0, true, move callback))
+        expect!(nativeRecover<ScrollVisibilityEvents>(record).calls == 3.0)
+        expect!(nativeRecover<ScrollVisibilityEvents>(record).enters == 2.0)
+        expect!(nativeRecover<ScrollVisibilityEvents>(record).exits == 1.0)
+    }
+}
+
+@Test
+function visibilityThresholdIsClampedToDocumentedFractionRange() {
+    layerActionsReset()
+    layerScrollVisibilityRegister(983201.0, -10.0, { visible in })
+    layerScrollVisibilityRegister(983202.0, 15.0, { visible in })
+    unsafe {
+        let sink = nativeRecover<LayerActionSink>(ambientStateGet(StateSlot.layerActions))
+        expect!(sink.scrollVisibilityEntries.count == 2)
+        expect!(sink.scrollVisibilityEntries[0].threshold == 0.0)
+        expect!(sink.scrollVisibilityEntries[1].threshold == 1.0)
+    }
+}
+
+@Test
+function visibleRowsActuallyFollowTheirNearestScrollClipAsTheyMove() {
+    unsafe {
+        let record = nativeUserData(nativeState(ScrollVisibilityEvents {}))
+        layerActionsReset()
+        tapSeqReset()
+        scrollScopeReset()
+        let build: () -> Any Widget = { in
+            return ScrollView {
+                VStack(spacing: .Length(0.0)) {
+                    Text("First row")
+                        .frame(width: 155.0, height: 100.0)
+                        .onScrollVisibilityChange(action: { visible in
+                            unsafe {
+                                var state = nativeRecover<ScrollVisibilityEvents>(record)
+                                state.calls++
+                                state.visible = visible
+                            }
+                        })
+                    Text("Second row").frame(width: 155.0, height: 140.0)
+                }
+            }
+        }
+        var initial = describedLayer(build())
+        layOutLayerTree(initial, 155.0, 100.0)
+        expect!(nativeRecover<ScrollVisibilityEvents>(record).calls == 1.0)
+        expect!(nativeRecover<ScrollVisibilityEvents>(record).visible)
+        let scrollKey = initial.sublayers[0].hitKey
+        expect!(scrollKey != 0.0)
+        var scroll = nativeRecover<ScrollViewState>(
+            ambientStateGetView(scrollViewSlotKey(scrollKey))
+        )
+        expect!(scroll.contentLength >= 240.0)
+        scroll.motion.offset = 140.0
+
+        layerActionsReset()
+        tapSeqReset()
+        scrollScopeReset()
+        var scrolled = describedLayer(build())
+        layOutLayerTree(scrolled, 155.0, 100.0)
+        expect!(nativeRecover<ScrollVisibilityEvents>(record).calls == 2.0)
+        expect!(!nativeRecover<ScrollVisibilityEvents>(record).visible)
+    }
+}
+
+@Test
+function scrollVisibilityDoesNotInstallAPressTarget() {
+    layerActionsReset()
+    tapSeqReset()
+    var description = describedLayer(
+        Text("Read-only row")
+            .frame(width: 120.0, height: 55.0)
+            .onScrollVisibilityChange(threshold: 0.8, action: { visible in })
+    )
+    expect!(description.scrollVisibilityKey != 0.0)
+    expect!(description.hitKey == 0.0)
+    expect!(!description.hittable)
+    layOutLayerTree(description, 210.0, 85.0)
+    expect!(description.size.width == description.sublayers[0].size.width)
+}
+
+@Test
+function scrollVisibilityNestedObserversHaveSeparateIdentities() {
+    unsafe {
+        let outer = nativeUserData(nativeState(ScrollVisibilityEvents {}))
+        let inner = nativeUserData(nativeState(ScrollVisibilityEvents {}))
+        layerActionsReset()
+        tapSeqReset()
+        var observed = describedLayer(
+            Text("Nested")
+                .onScrollVisibilityChange(action: { visible in
+                    unsafe {
+                        var state = nativeRecover<ScrollVisibilityEvents>(inner)
+                        state.calls++
+                    }
+                })
+                .onScrollVisibilityChange(action: { visible in
+                    unsafe {
+                        var state = nativeRecover<ScrollVisibilityEvents>(outer)
+                        state.calls++
+                    }
+                })
+        )
+        expect!(observed.scrollVisibilityKey != 0.0)
+        expect!(observed.sublayers[0].scrollVisibilityKey != 0.0)
+        expect!(observed.scrollVisibilityKey != observed.sublayers[0].scrollVisibilityKey)
+        layOutLayerTree(observed, 200.0, 80.0)
+        expect!(nativeRecover<ScrollVisibilityEvents>(outer).calls == 1.0)
+        expect!(nativeRecover<ScrollVisibilityEvents>(inner).calls == 1.0)
+    }
+}
+
+@Test
+function scrollVisibilityModifierPreservesSectionIdentity() {
+    let section = Section {
+        Text("Row")
+    }.onScrollVisibilityChange(action: { visible in })
+    expect!(section.isSection())
+    let described = describedLayer(move section)
+    expect!(described.groupedSection)
+    expect!(describedContainsText(described, "Row"))
+}

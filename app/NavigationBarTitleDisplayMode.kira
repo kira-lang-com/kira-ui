@@ -1,0 +1,90 @@
+import Foundation
+import KCoreAnimation
+
+// Apple's NavigationBarItem.TitleDisplayMode cases, adapted into KiraUI's
+// platform-independent navigation environment. An explicit inline title
+// belongs in the toolbar from the first frame and does not claim a large
+// heading's height or the scroll/toolbar collapse animation.
+public enum NavigationBarTitleDisplayMode {
+    Automatic
+    Inline
+    Large
+}
+
+public function navigationBarUsesLargeTitle(mode: NavigationBarTitleDisplayMode) -> Bool {
+    return mode != .Inline
+}
+
+public function modifierDeltaNavigationBarTitleDisplayMode(
+    mode: NavigationBarTitleDisplayMode
+) -> ModifierDelta {
+    return ModifierDelta {
+        hasNavigationBarTitleDisplayMode: true,
+        navigationBarTitleDisplayMode: mode
+    }
+}
+
+// The page's own modifier is a child of NavigationStack, which declares its
+// bar before the destination is lowered. Hoist a page-local preference into
+// that same toolbar collector and restore it before lowering another page.
+public function toolbarBeginPageTitleDisplayMode() -> NavigationBarTitleDisplayMode? {
+    unsafe {
+        toolbarSinkEnsure()
+        var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+        let previous = sink.pageTitleDisplayMode
+        sink.pageTitleDisplayMode = .None
+        return previous
+    }
+}
+
+public function toolbarPageTitleDisplayModePreference(mode: NavigationBarTitleDisplayMode) {
+    unsafe {
+        toolbarSinkEnsure()
+        var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+        sink.pageTitleDisplayMode = .Some(mode)
+    }
+}
+
+public function toolbarEndPageTitleDisplayMode(
+    previous: NavigationBarTitleDisplayMode?,
+    inherited: NavigationBarTitleDisplayMode
+) -> NavigationBarTitleDisplayMode {
+    unsafe {
+        toolbarSinkEnsure()
+        var sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+        let resolved = match sink.pageTitleDisplayMode {
+            Some(mode) -> mode
+            None -> inherited
+        }
+        sink.pageTitleDisplayMode = previous
+        return resolved
+    }
+}
+
+public construct NavigationBarTitleDisplayModeLayer(
+    mode: NavigationBarTitleDisplayMode
+) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        toolbarPageTitleDisplayModePreference(mode)
+        return content.describe(
+            context,
+            modifierContextApply(modifiers, modifierDeltaNavigationBarTitleDisplayMode(mode))
+        )
+    }
+}
+
+extend Widget {
+    // SwiftUI's `.navigationBarTitleDisplayMode(_:)` overload.
+    function navigationBarTitleDisplayMode(
+        mode: NavigationBarTitleDisplayMode
+    ) -> Any Widget {
+        return NavigationBarTitleDisplayModeLayer(mode: mode) { self }
+    }
+}

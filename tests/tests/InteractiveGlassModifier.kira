@@ -1,0 +1,38 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// SwiftUI's `.glassEffect(.regular.interactive(), in:
+// RoundedRectangle(cornerRadius: 24, style: .continuous))` is real interactive
+// glass, not an opaque rounded card. `.Squircle(24)` is KiraUI's continuous
+// rounded rectangle shape. Its corner and hit behavior must survive layout.
+function hasInteractiveContinuousGlass(layer: borrow CALayerDescription) -> Bool {
+    match layer.content {
+        Glass(_) -> {
+            if abs(layer.cornerRadius - 24.0) < 0.01 && layer.hittable {
+                return true
+            }
+        }
+        else -> {}
+    }
+    for child in layer.sublayers {
+        if hasInteractiveContinuousGlass(child) { return true }
+    }
+    return false
+}
+
+@Test
+function composerStyleRemainsRealInteractiveContinuousGlass() {
+    let view = VStack(spacing = .None) {
+        Text("Ask HarmonyAI")
+        HStack {
+            Text("Model")
+            Spacer()
+            Icon(symbol = .PaperplaneFill)
+        }
+    }
+    .padding(resolvedLength(8.0))
+    .glassEffect(.Regular, shape = .Squircle(24.0), interactive = true)
+    let description = describedLayerInWideWindow(move view)
+    expect!(hasInteractiveContinuousGlass(description))
+}

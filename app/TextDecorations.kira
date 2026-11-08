@@ -1,0 +1,127 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI Text.LineStyle.Pattern. These cases affect actual line drawing,
+// not the glyphs' contents or the paragraph's measured typographic width.
+public enum TextLinePattern {
+    Solid
+    Dot
+    Dash
+    DashDot
+    DashDotDot
+}
+
+public function coreTextLinePattern(pattern: TextLinePattern) -> CATextDecorationPattern {
+    return match pattern {
+        Solid -> .Solid
+        Dot -> .Dot
+        Dash -> .Dash
+        DashDot -> .DashDot
+        DashDotDot -> .DashDotDot
+    }
+}
+
+// Absence of a decoration color inherits the glyph's own foreground ink.
+// A semantic color resolves at the Text leaf so it follows an enclosing
+// theme/tint; a concrete color remains explicit across appearance changes.
+public enum TextDecorationInk {
+    Inherit
+    Concrete(RGBAColor)
+    Semantic(PrimaryColor)
+}
+
+public function textDecorationColor(
+    color: TextDecorationInk,
+    modifiers: borrow ModifierContext
+) -> CAColor? {
+    return match color {
+        Inherit -> .None
+        Concrete(value) -> .Some(colorFromFoundation(
+            modifierColor(foundationColor(copy value), modifiers)
+        ))
+        Semantic(value) -> .Some(colorFromFoundation(
+            modifierColor(modifierPrimaryColor(value, modifiers), modifiers)
+        ))
+    }
+}
+
+public function modifierDeltaUnderline(
+    active: Bool,
+    pattern: TextLinePattern,
+    ink: TextDecorationInk
+) -> ModifierDelta {
+    return ModifierDelta {
+        hasUnderline: true,
+        underline: active,
+        underlinePattern: pattern,
+        underlineInk: ink
+    }
+}
+
+public function modifierDeltaStrikethrough(
+    active: Bool,
+    pattern: TextLinePattern,
+    ink: TextDecorationInk
+) -> ModifierDelta {
+    return ModifierDelta {
+        hasStrikethrough: true,
+        strikethrough: active,
+        strikethroughPattern: pattern,
+        strikethroughInk: ink
+    }
+}
+
+public function optionalTextDecorationInk(color: RGBAColor?) -> TextDecorationInk {
+    return match color {
+        Some(value) -> .Concrete(value)
+        None -> .Inherit
+    }
+}
+
+extend Widget {
+    // SwiftUI View: `.underline(_ isActive: Bool = true,
+    //                             pattern: Text.LineStyle.Pattern = .solid,
+    //                             color: Color? = nil)`.
+    function underline(
+        isActive: Bool = true,
+        pattern: TextLinePattern = .Solid,
+        color: RGBAColor? = .None
+    ) -> Any Widget {
+        return ModifierDeltaLayer(delta: modifierDeltaUnderline(
+            isActive, pattern, optionalTextDecorationInk(move color)
+        )) { self }
+    }
+
+    function underline(
+        isActive: Bool = true,
+        pattern: TextLinePattern = .Solid,
+        color: PrimaryColor
+    ) -> Any Widget {
+        return ModifierDeltaLayer(delta: modifierDeltaUnderline(
+            isActive, pattern, .Semantic(color)
+        )) { self }
+    }
+
+    // SwiftUI View: `.strikethrough(_ isActive: Bool = true,
+    //                                 pattern: Text.LineStyle.Pattern = .solid,
+    //                                 color: Color? = nil)`.
+    function strikethrough(
+        isActive: Bool = true,
+        pattern: TextLinePattern = .Solid,
+        color: RGBAColor? = .None
+    ) -> Any Widget {
+        return ModifierDeltaLayer(delta: modifierDeltaStrikethrough(
+            isActive, pattern, optionalTextDecorationInk(move color)
+        )) { self }
+    }
+
+    function strikethrough(
+        isActive: Bool = true,
+        pattern: TextLinePattern = .Solid,
+        color: PrimaryColor
+    ) -> Any Widget {
+        return ModifierDeltaLayer(delta: modifierDeltaStrikethrough(
+            isActive, pattern, .Semantic(color)
+        )) { self }
+    }
+}

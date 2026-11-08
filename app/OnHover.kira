@@ -1,0 +1,34 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI `onHover(perform:)`: a pointer lifecycle observer over the view's
+// *actual laid-out region*. This layer never registers a click action and never
+// intercepts children. KCoreAnimation's hit tester reports all nested hover
+// regions, while KiraUI's pointer router diffs entry/exit in declaration keys.
+public construct HoverObservationLayer(action: (Bool) -> Void) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let key = tapSeqKey()
+        layerHoverRegister(key, action)
+        var described = content.describe(context, modifiers)
+        let section = described.groupedSection
+        return CALayerDescription {
+            hoverKey: key,
+            layout: surfaceFootprint(described.layout),
+            groupedSection: section,
+            sublayers: [move described]
+        }
+    }
+}
+
+extend Widget {
+    function onHover(action: (Bool) -> Void) -> Any Widget {
+        return HoverObservationLayer(action: action) { self }
+    }
+}

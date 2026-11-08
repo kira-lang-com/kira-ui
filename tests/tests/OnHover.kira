@@ -1,0 +1,129 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+import Ember
+
+struct HoverEventCounts {
+    var entered: Number = 0.0
+    var exited: Number = 0.0
+    var pressed: Number = 0.0
+}
+
+@Test
+function hoverHitRegionsDoNotInterceptAnUnderlyingButtonPress() {
+    unsafe {
+        let record = nativeUserData(nativeState(HoverEventCounts {}))
+        layerActionsReset()
+        tapSeqReset()
+        let observed = Button(title: "Press", action: { in
+            unsafe {
+                var counts = nativeRecover<HoverEventCounts>(record)
+                counts.pressed++
+            }
+        })
+        .frame(width: 200.0, height: 70.0)
+        .onHover(action: { entered in
+            unsafe {
+                var counts = nativeRecover<HoverEventCounts>(record)
+                if entered { counts.entered++ } else { counts.exited++ }
+            }
+        })
+        var description = describedLayer(move observed)
+        expect!(description.hoverKey != 0)
+        expect!(!description.hittable)
+        description.layoutTree(360.0, 240.0)
+        var runner = KiraLayerAppState {}
+        runner.compositor.tree.reconcileImmediate(description)
+        kiraLayerHandleEvent(runner, AppEvent {
+            kind: .PointerMoved, pointerX: 40.0, pointerY: 35.0
+        })
+        expect!(nativeRecover<HoverEventCounts>(record).entered == 1.0)
+        kiraLayerHandleEvent(runner, AppEvent {
+            kind: .PointerMoved, pointerX: 45.0, pointerY: 36.0
+        })
+        expect!(nativeRecover<HoverEventCounts>(record).entered == 1.0)
+        kiraLayerHandleEvent(runner, AppEvent {
+            kind: .PointerDown, pointerX: 100.0, pointerY: 35.0
+        })
+        kiraLayerHandleEvent(runner, AppEvent {
+            kind: .PointerUp, pointerX: 100.0, pointerY: 35.0
+        })
+        expect!(nativeRecover<HoverEventCounts>(record).pressed == 1.0)
+        expect!(nativeRecover<HoverEventCounts>(record).entered == 1.0)
+        kiraLayerHandleEvent(runner, AppEvent {
+            kind: .PointerMoved, pointerX: 310.0, pointerY: 195.0
+        })
+        expect!(nativeRecover<HoverEventCounts>(record).exited == 1.0)
+    }
+}
+
+@Test
+function nestedHoverObserversReceiveEntryAndExitIndependently() {
+    unsafe {
+        let innerRecord = nativeUserData(nativeState(HoverEventCounts {}))
+        let outerRecord = nativeUserData(nativeState(HoverEventCounts {}))
+        layerActionsReset()
+        tapSeqReset()
+        let inner = Text("Nested")
+            .frame(width: 160.0, height: 55.0)
+            .onHover(action: { entered in
+                unsafe {
+                    var count = nativeRecover<HoverEventCounts>(innerRecord)
+                    if entered { count.entered++ } else { count.exited++ }
+                }
+            })
+            .onHover(action: { entered in
+                unsafe {
+                    var count = nativeRecover<HoverEventCounts>(outerRecord)
+                    if entered { count.entered++ } else { count.exited++ }
+                }
+            })
+        var description = describedLayer(move inner)
+        description.layoutTree(310.0, 180.0)
+        var runner = KiraLayerAppState {}
+        runner.compositor.tree.reconcileImmediate(description)
+        let hit = runner.compositor.tree.hitTestTree(32.0, 25.0)
+        expect!(hit.hoverKeys.count == 2)
+        kiraLayerHandleEvent(runner, AppEvent {
+            kind: .PointerMoved, pointerX: 32.0, pointerY: 25.0
+        })
+        expect!(nativeRecover<HoverEventCounts>(innerRecord).entered == 1.0)
+        expect!(nativeRecover<HoverEventCounts>(outerRecord).entered == 1.0)
+        kiraLayerHandleEvent(runner, AppEvent { kind: .PointerExited })
+        expect!(nativeRecover<HoverEventCounts>(innerRecord).exited == 1.0)
+        expect!(nativeRecover<HoverEventCounts>(outerRecord).exited == 1.0)
+        expect!(runner.hoverRegionKeys.count == 0)
+    }
+}
+
+@Test
+function independentHoverGeometryDoesNotClaimClickOrScrollHitKeys() {
+    let back = CADrawItem {
+        hoverKey: 21.0,
+        localWidth: 100.0,
+        localHeight: 90.0
+    }
+    let front = CADrawItem {
+        hit: true,
+        hitKey: 99.0,
+        hoverKey: 22.0,
+        localWidth: 100.0,
+        localHeight: 90.0
+    }
+    let test = hitTest([move back, move front], 20.0, 18.0)
+    expect!(test.hitKey == 99.0)
+    expect!(test.hoverKeys.count == 2)
+    expect!(test.hoverKeys[0] == 22.0)
+    expect!(test.hoverKeys[1] == 21.0)
+    expect!(hoverRegionsContain(test.hoverKeys, 21.0))
+    expect!(!hoverRegionsContain(test.hoverKeys, 17.0))
+}
+
+@Test
+function onHoverPreservesSectionIdentity() {
+    let section = Section {
+        Text("Section row")
+    }.onHover(action: { entered in })
+    expect!(section.isSection())
+    expect!(describedContainsText(describedLayer(move section), "Section row"))
+}

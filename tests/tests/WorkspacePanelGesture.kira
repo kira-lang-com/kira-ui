@@ -1,0 +1,168 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function horizontalLensMovementDoesNotDetachWorkspacePanel() {
+    let origin = Point { x: 120.0, y: 40.0 }
+    let threshold = MotionPreset.dragSlop
+    let pending = workspaceTabGestureAdvance(
+        .Pending, origin, Point { x: origin.x + threshold, y: origin.y }
+    )
+    expect!(pending == WorkspaceTabGesture.Pending)
+
+    let lens = workspaceTabGestureAdvance(
+        pending, origin, Point { x: origin.x + threshold + 1.0, y: origin.y + 1.0 }
+    )
+    expect!(lens == WorkspaceTabGesture.Lens)
+
+    // A scrub that later goes well outside the toolbar is still a scrub.
+    let movedDown = workspaceTabGestureAdvance(
+        lens, origin, Point { x: origin.x + 60.0, y: origin.y + 100.0 }
+    )
+    expect!(movedDown == WorkspaceTabGesture.Lens)
+    let movedUp = workspaceTabGestureAdvance(
+        movedDown, origin, Point { x: origin.x - 70.0, y: origin.y - 100.0 }
+    )
+    expect!(movedUp == WorkspaceTabGesture.Lens)
+}
+
+@Test
+function verticalPullDetachesWorkspacePanelWithoutHorizontalScrubbing() {
+    let origin = Point { x: 120.0, y: 40.0 }
+    let threshold = MotionPreset.dragSlop
+
+    // Minor sideways movement does not prevent a deliberate upward pull.
+    let pulledUp = workspaceTabGestureAdvance(
+        .Pending, origin,
+        Point { x: origin.x + threshold - 1.0, y: origin.y - threshold - 1.0 }
+    )
+    expect!(pulledUp == WorkspaceTabGesture.Detach)
+    let pulledDown = workspaceTabGestureAdvance(
+        .Pending, origin,
+        Point { x: origin.x - threshold, y: origin.y + threshold + 1.0 }
+    )
+    expect!(pulledDown == WorkspaceTabGesture.Detach)
+
+    // After detaching, the tab may move sideways toward another dock.
+    let carried = workspaceTabGestureAdvance(
+        pulledDown, origin, Point { x: origin.x + 100.0, y: origin.y + 120.0 }
+    )
+    expect!(carried == WorkspaceTabGesture.Detach)
+}
+
+@Test
+function diagonalLensMovementCannotAccidentallyDetachPanel() {
+    let origin = Point { x: 0.0, y: 0.0 }
+    let threshold = MotionPreset.dragSlop
+
+    // If both axes cross the threshold in the same frame, prefer the lens.
+    let diagonal = workspaceTabGestureAdvance(
+        .Pending, origin, Point { x: threshold + 1.0, y: threshold + 20.0 }
+    )
+    expect!(diagonal == WorkspaceTabGesture.Lens)
+
+    // Below threshold on both axes is still a press, not a panel move.
+    let gentle = workspaceTabGestureAdvance(
+        .Pending, origin, Point { x: threshold - 1.0, y: threshold - 1.0 }
+    )
+    expect!(gentle == WorkspaceTabGesture.Pending)
+}
+
+@Test
+function lensScrubbingAcrossTabsKeepsTheSamePhysicalPress() {
+    let firstTab = workspaceTabKey(0)
+    let secondTab = workspaceTabKey(1)
+    let drag = WorkspaceDrag {
+        kind: .Tab,
+        key: firstTab,
+        press: 42,
+        tabGesture: .Lens
+    }
+
+    // The lens changes which tab is pressed, not which gesture owns it.
+    expect!(workspaceDragPressHeld(drag, firstTab))
+    expect!(!workspaceDragPressHeld(drag, secondTab))
+    expect!(!workspaceDragPressHeld(drag, 0))
+}
+
+@Test
+function stationaryPressRetainsGestureForImmediateLensLift() {
+    // The lens itself activates on the tab's physical pointer-down;
+    // gesture direction only resolves the eventual drag. No dwell is needed.
+    let point = Point { x: 120, y: 40 }
+    let held = workspaceTabGestureAdvance(.Pending, point, point)
+    expect!(held == WorkspaceTabGesture.Pending)
+    let scrub = workspaceTabGestureAdvance(
+        held, point, Point { x: 120 + MotionPreset.dragSlop + 1, y: 40 }
+    )
+    expect!(scrub == WorkspaceTabGesture.Lens)
+    // Once it is scrubbing, an errant vertical shift cannot dock the panel.
+    let moved = workspaceTabGestureAdvance(scrub, point, Point { x: 165, y: 140 })
+    expect!(moved == WorkspaceTabGesture.Lens)
+}
+
+@Test
+function pendingPressAllowsVerticalPullToDetach() {
+    let start = Point { x: 45, y: 25 }
+    expect!(workspaceTabGestureAdvance(.Pending, start, start) == WorkspaceTabGesture.Pending)
+    let drift = Point { x: 46, y: 27 }
+    expect!(workspaceTabGestureAdvance(.Pending, start, drift) == WorkspaceTabGesture.Pending)
+    let dock = workspaceTabGestureAdvance(
+        .Pending, start,
+        Point { x: 46, y: 25 + MotionPreset.dragSlop + 1 }
+    )
+    expect!(dock == WorkspaceTabGesture.Detach)
+}
+
+@Test
+function workspaceDockCrossingGlassAreasKeepsThePhysicalDragUntilRelease() {
+    unsafe {
+        workspaceArrangementEnsure()
+        var state = nativeRecover<WorkspaceArrangement>(ambientStateGet(StateSlot.workspaceArrangement))
+        state.drag = WorkspaceDrag {}
+        state.edges = workspaceOpenEdges()
+        state.declared = ["Inspector"]
+        state.placements = [PanelPlacement { panel: "Inspector", edge: .Trailing }]
+        state.edges[panelEdgeIndex(.Trailing)].selected = "Inspector"
+        let first = workspaceTabKey(0)
+        let size = Size { width: 900, height: 600 }
+        let started = BuildContext {
+            frameCount: 0, viewportWidth: 900, viewportHeight: 600,
+            pointerX: 800, pointerY: 40, focusedKey: 0,
+            heldControl: first, heldStartedControl: first, heldPress: 1
+        }
+        workspaceDragAdvance(started, Point {}, size)
+        expect!(state.drag.key == first)
+
+        // A vertical pull chooses docking, not the horizontal selection lens.
+        let pulled = BuildContext {
+            frameCount: 1, viewportWidth: 900, viewportHeight: 600,
+            pointerX: 800, pointerY: 100, focusedKey: 0,
+            heldControl: first, heldStartedControl: first, heldPress: 1
+        }
+        workspaceDragAdvance(pulled, Point {}, size)
+        expect!(state.drag.tabGesture == WorkspaceTabGesture.Detach)
+
+        // Crossing onto another interactive glass area increments the
+        // surface's serial, but it is STILL the same physical pointer-down.
+        let crossed = BuildContext {
+            frameCount: 2, viewportWidth: 900, viewportHeight: 600,
+            pointerX: 30, pointerY: 220, focusedKey: 0,
+            heldControl: first, heldStartedControl: first, heldPress: 2
+        }
+        workspaceDragAdvance(crossed, Point {}, size)
+        expect!(state.drag.key == first)
+        expect!(state.drag.target == panelEdgeIndex(.Leading))
+
+        let released = BuildContext {
+            frameCount: 3, viewportWidth: 900, viewportHeight: 600,
+            pointerX: 30, pointerY: 220, focusedKey: 0,
+            heldControl: 0, heldStartedControl: 0, heldPress: 2
+        }
+        workspaceDragAdvance(released, Point {}, size)
+        expect!(state.drag.key == 0)
+        expect!(workspaceState().placements[0].edge == PanelEdge.Leading)
+        expect!(workspaceIsSelected("Inspector"))
+    }
+}

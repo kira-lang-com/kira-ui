@@ -1,0 +1,141 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function scrollEdgeEffectStyleSupportsAllCasesAndIndependentEdges() {
+    let normal = ModifierContext {}
+    expect!(resolvedScrollEdgeEffectStyle(normal.scrollEdgeEffects.top)
+        == ScrollEdgeEffectStyle.Automatic)
+    let top = modifierContextApply(
+        normal, modifierDeltaScrollEdgeEffectStyle(.Some(.Soft), EdgeSet.top)
+    )
+    expect!(resolvedScrollEdgeEffectStyle(top.scrollEdgeEffects.top)
+        == ScrollEdgeEffectStyle.Soft)
+    expect!(resolvedScrollEdgeEffectStyle(top.scrollEdgeEffects.bottom)
+        == ScrollEdgeEffectStyle.Automatic)
+    let lower = modifierContextApply(
+        top, modifierDeltaScrollEdgeEffectStyle(.Some(.Hard), EdgeSet.bottom)
+    )
+    expect!(resolvedScrollEdgeEffectStyle(lower.scrollEdgeEffects.top)
+        == ScrollEdgeEffectStyle.Soft)
+    expect!(resolvedScrollEdgeEffectStyle(lower.scrollEdgeEffects.bottom)
+        == ScrollEdgeEffectStyle.Hard)
+    let reset = modifierContextApply(
+        lower, modifierDeltaScrollEdgeEffectStyle(.None, EdgeSet.top)
+    )
+    expect!(resolvedScrollEdgeEffectStyle(reset.scrollEdgeEffects.top)
+        == ScrollEdgeEffectStyle.Automatic)
+    expect!(resolvedScrollEdgeEffectStyle(reset.scrollEdgeEffects.bottom)
+        == ScrollEdgeEffectStyle.Hard)
+}
+
+@Test
+function scrollEdgeEffectHiddenHasCorrectDefaultAndExplicitFalse() {
+    let root = ModifierContext {}
+    expect!(scrollTopEdgeEffectShows(root))
+    let hidden = modifierContextApply(root, modifierDeltaScrollEdgeEffectHidden())
+    expect!(!scrollTopEdgeEffectShows(hidden))
+    expect!(hidden.scrollEdgeEffects.bottom.hidden)
+    expect!(modifierContextForChildren(hidden).scrollEdgeEffects.top.hidden)
+    let restored = modifierContextApply(
+        hidden, modifierDeltaScrollEdgeEffectHidden(false, EdgeSet.top)
+    )
+    expect!(scrollTopEdgeEffectShows(restored))
+    expect!(restored.scrollEdgeEffects.bottom.hidden)
+    let leading = modifierContextApply(
+        root, modifierDeltaScrollEdgeEffectHidden(true, EdgeSet.leading)
+    )
+    expect!(scrollTopEdgeEffectShows(leading))
+    expect!(leading.scrollEdgeEffects.leading.hidden)
+    expect!(!leading.scrollEdgeEffects.top.hidden)
+}
+
+@Test
+function hardScrollEdgeUsesRealBlurAndDividingHairline() {
+    let hard = scrollEdgeEffect(62.0, 0.85, ModifierContext {})
+    expect!(hard.opacity == 0.85)
+    expect!(hard.layout.fixedHeight == 62.0)
+    expect!(hard.disablesActions)
+    expect!(hard.capturesBackdrop)
+    expect!(hard.sublayers.count == 1)
+    match hard.content {
+        Glass(glass) -> {}
+        else -> expect!(false)
+    }
+    match hard.sublayers[0].content {
+        Solid(solid) -> expect!(solid.fill.a > 0.0)
+        else -> expect!(false)
+    }
+}
+
+@Test
+function softScrollEdgeUsesGradientOfRealNativeBackdropBlur() {
+    let modifiers = modifierContextApply(
+        ModifierContext {},
+        modifierDeltaScrollEdgeEffectStyle(.Some(.Soft), EdgeSet.top)
+    )
+    let soft = scrollEdgeEffect(64.0, 1.0, modifiers)
+    expect!(soft.layout.fixedHeight == 64.0)
+    expect!(soft.opacity == 1.0)
+    expect!(soft.sublayers.count == 8)
+    expect!(soft.sublayers[0].opacity > soft.sublayers[7].opacity)
+    expect!(soft.sublayers[0].layout.offset.y == 0.0)
+    expect!(soft.sublayers[7].layout.offset.y == 56.0)
+    for band in soft.sublayers {
+        expect!(band.capturesBackdrop)
+        expect!(band.layout.fixedHeight == 8.0)
+        expect!(!band.hittable)
+        match band.content {
+            Glass(glass) -> {}
+            else -> expect!(false)
+        }
+    }
+}
+
+@Test
+function scrollEdgeEffectStyleAndVisibilityAreIndependentInheritedPolicies() {
+    let root = modifierContextApply(
+        ModifierContext {}, modifierDeltaScrollEdgeEffectStyle(.Some(.Soft), EdgeSet.top)
+    )
+    let hidden = modifierContextApply(
+        root, modifierDeltaScrollEdgeEffectHidden(true, EdgeSet.top)
+    )
+    expect!(!scrollTopEdgeEffectShows(hidden))
+    expect!(resolvedScrollEdgeEffectStyle(hidden.scrollEdgeEffects.top)
+        == ScrollEdgeEffectStyle.Soft)
+    let visible = modifierContextApply(
+        hidden, modifierDeltaScrollEdgeEffectHidden(false, EdgeSet.top)
+    )
+    expect!(scrollTopEdgeEffectShows(visible))
+    expect!(resolvedScrollEdgeEffectStyle(visible.scrollEdgeEffects.top)
+        == ScrollEdgeEffectStyle.Soft)
+    expect!(modifierContextForChildren(visible).scrollEdgeEffects.top.hidden == false)
+}
+
+@Test
+function scrollEdgeEffectOverloadsAttachToActualScrollAndPreserveSections() {
+    let scroll = describedLayer(
+        ScrollView {
+            VStack {
+                Text("A")
+                Text("B")
+            }
+        }
+        .scrollEdgeEffectStyle(style: .Soft, forEdges: EdgeSet.top)
+        .scrollEdgeEffectHidden(forEdges: EdgeSet.bottom)
+    )
+    expect!(scroll.sublayers[0].scrollAxis == CAAxis.Column)
+    expect!(scroll.sublayers[0].acceptsScrollInput)
+    let allHidden = describedLayer(
+        ScrollView { Text("Hello") }
+            .scrollEdgeEffectHidden()
+            .scrollEdgeEffectHidden(hidden: false)
+            .scrollEdgeEffectStyle(style: .None, forEdges: EdgeSet.top)
+    )
+    expect!(allHidden.sublayers[0].scrollAxis == CAAxis.Column)
+    let section = Section {
+        Text("Row")
+    }.scrollEdgeEffectHidden()
+    expect!(section.isSection())
+}

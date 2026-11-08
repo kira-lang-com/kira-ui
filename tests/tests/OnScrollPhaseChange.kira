@@ -1,0 +1,193 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+struct ScrollPhaseEvents {
+    var count: Number = 0.0
+    var old: ScrollPhase = .Idle
+    var current: ScrollPhase = .Idle
+    var lastOffset: Number = 0.0
+    var lastVelocity: Number = 0.0
+}
+
+@Test
+function scrollPhaseHasAllFiveDocumentedStatesAndScrollingSemantics() {
+    expect!(!ScrollPhase.Idle.isScrolling())
+    expect!(!ScrollPhase.Tracking.isScrolling())
+    expect!(ScrollPhase.Interacting.isScrolling())
+    expect!(ScrollPhase.Decelerating.isScrolling())
+    expect!(ScrollPhase.Animating.isScrolling())
+
+    expect!(scrollPhaseFromMotion(.Idle, false) == ScrollPhase.Idle)
+    expect!(scrollPhaseFromMotion(.Dragging, false) == ScrollPhase.Tracking)
+    expect!(scrollPhaseFromMotion(.Dragging, true) == ScrollPhase.Interacting)
+    expect!(scrollPhaseFromMotion(.Decelerating, false) == ScrollPhase.Decelerating)
+    expect!(scrollPhaseFromMotion(.Settling, false) == ScrollPhase.Animating)
+    expect!(scrollPhaseFromMotion(.Stepping, false) == ScrollPhase.Animating)
+}
+
+@Test
+function actualMeasuredScrollGeometryComesFromItsOwnViewport() {
+    let scroll = ScrollViewState {
+        contentLength: 1070.0,
+        viewportLength: 290.0,
+        contentCrossLength: 236.0,
+        viewportCrossLength: 236.0,
+        motion: MotionScrollState {
+            offset: 145.0,
+            phase: .Decelerating,
+            velocity: 420.0
+        }
+    }
+    let geometry = scrollPhaseGeometry(scroll)
+    expect!(geometry.contentOffset.x == 0.0)
+    expect!(geometry.contentOffset.y == 145.0)
+    expect!(geometry.contentSize.height == 1070.0)
+    expect!(geometry.contentSize.width == 236.0)
+    expect!(geometry.containerSize.height == 290.0)
+    expect!(geometry.containerSize.width == 236.0)
+    expect!(geometry.visibleRect.y == 145.0)
+    expect!(geometry.visibleRect.height == 290.0)
+    expect!(geometry.visibleRect.width == 236.0)
+    expect!(geometry.bounds.y == 0.0)
+
+    let context = scrollPhaseChangeContext(scroll)
+    match context.velocity {
+        Some(value) -> expect!(value.y == 420.0)
+        None -> expect!(false)
+    }
+}
+
+@Test
+function transitionNotificationFiresOnlyWhenMotionPhaseActuallyChanges() {
+    unsafe {
+        let record = nativeUserData(nativeState(ScrollPhaseEvents {}))
+        let handler = ScrollPhaseChangeHandler {
+            action: { old, current, context in
+                unsafe {
+                    var calls = nativeRecover<ScrollPhaseEvents>(record)
+                    calls.count++
+                    calls.old = old
+                    calls.current = current
+                    calls.lastOffset = context.geometry.contentOffset.y
+                    match context.velocity {
+                        Some(value) -> calls.lastVelocity = value.y
+                        None -> {}
+                    }
+                }
+            }
+        }
+        var scroll = ScrollViewState {
+            contentLength: 900.0,
+            viewportLength: 300.0
+        }
+        expect!(!scrollPhaseDidChange(scroll, [handler]))
+        scroll.motion.phase = .Dragging
+        expect!(scrollPhaseDidChange(scroll, [handler]))
+        expect!(nativeRecover<ScrollPhaseEvents>(record).count == 1.0)
+        expect!(nativeRecover<ScrollPhaseEvents>(record).old == ScrollPhase.Idle)
+        expect!(nativeRecover<ScrollPhaseEvents>(record).current == ScrollPhase.Tracking)
+        expect!(!scrollPhaseDidChange(scroll, [handler]))
+
+        scroll.dragHasMoved = true
+        scroll.motion.offset = 64.0
+        expect!(scrollPhaseDidChange(scroll, [handler]))
+        expect!(nativeRecover<ScrollPhaseEvents>(record).current == ScrollPhase.Interacting)
+        expect!(nativeRecover<ScrollPhaseEvents>(record).lastOffset == 64.0)
+
+        scroll.motion.phase = .Decelerating
+        scroll.motion.velocity = 600.0
+        expect!(scrollPhaseDidChange(scroll, [handler]))
+        expect!(nativeRecover<ScrollPhaseEvents>(record).current == ScrollPhase.Decelerating)
+        expect!(nativeRecover<ScrollPhaseEvents>(record).lastVelocity == 600.0)
+
+        scroll.motion.phase = .Idle
+        expect!(scrollPhaseDidChange(scroll, [handler]))
+        expect!(nativeRecover<ScrollPhaseEvents>(record).old == ScrollPhase.Decelerating)
+        expect!(nativeRecover<ScrollPhaseEvents>(record).current == ScrollPhase.Idle)
+        expect!(nativeRecover<ScrollPhaseEvents>(record).count == 4.0)
+    }
+}
+
+@Test
+function individualScrollSurfacesHaveIndependentReportedPhaseState() {
+    var a = ScrollViewState {}
+    var b = ScrollViewState {}
+    a.motion.phase = .Dragging
+    b.motion.phase = .Decelerating
+    a.dragHasMoved = true
+    expect!(scrollPhaseDidChange(a, []))
+    expect!(scrollPhaseDidChange(b, []))
+    expect!(a.lastReportedPhase == ScrollPhase.Interacting)
+    expect!(b.lastReportedPhase == ScrollPhase.Decelerating)
+    b.motion.phase = .Idle
+    expect!(scrollPhaseDidChange(b, []))
+    expect!(a.lastReportedPhase == ScrollPhase.Interacting)
+    expect!(b.lastReportedPhase == ScrollPhase.Idle)
+}
+
+@Test
+function phaseObserversAreInheritedAndMultipleHandlersBothReceiveChanges() {
+    unsafe {
+        let first = nativeUserData(nativeState(ScrollPhaseEvents {}))
+        let second = nativeUserData(nativeState(ScrollPhaseEvents {}))
+        let outer = modifierContextApply(ModifierContext {},
+            modifierDeltaScrollPhaseChange(ScrollPhaseChangeHandler {
+                action: { old, current, context in
+                    unsafe {
+                        var events = nativeRecover<ScrollPhaseEvents>(first)
+                        events.count++
+                    }
+                }
+            })
+        )
+        let inner = modifierContextApply(outer,
+            modifierDeltaScrollPhaseChange(ScrollPhaseChangeHandler {
+                action: { old, current, context in
+                    unsafe {
+                        var events = nativeRecover<ScrollPhaseEvents>(second)
+                        events.count++
+                    }
+                }
+            })
+        )
+        expect!(modifierContextForChildren(inner).scrollPhaseHandlers.count == 2)
+        var scroll = ScrollViewState {}
+        scroll.motion.phase = .Stepping
+        expect!(scrollPhaseDidChange(scroll, inner.scrollPhaseHandlers))
+        expect!(nativeRecover<ScrollPhaseEvents>(first).count == 1.0)
+        expect!(nativeRecover<ScrollPhaseEvents>(second).count == 1.0)
+        expect!(!scrollPhaseDidChange(scroll, inner.scrollPhaseHandlers))
+        expect!(nativeRecover<ScrollPhaseEvents>(first).count == 1.0)
+    }
+}
+
+@Test
+function bothSwiftUIActionOverloadsAttachToRealScrollView() {
+    let shorter = describedLayer(
+        ScrollView {
+            Text("Scroll content")
+        }.onScrollPhaseChange(action: { old, new in })
+    )
+    expect!(shorter.sublayers[0].scrollAxis == CAAxis.Column)
+
+    var contextForm = describedLayer(
+        ScrollView {
+            Text("Scroll content")
+        }.onScrollPhaseChange(actionWithContext: { old, new, context in })
+    )
+    layOutLayerTree(contextForm, 250.0, 110.0)
+    expect!(contextForm.sublayers[0].scrollAxis == CAAxis.Column)
+    let key = contextForm.sublayers[0].hitKey
+    unsafe {
+        let scroll = nativeRecover<ScrollViewState>(
+            ambientStateGetView(scrollViewSlotKey(key))
+        )
+        expect!(scroll.viewportCrossLength > 0.0)
+        expect!(scroll.viewportLength > 0.0)
+    }
+    let section = Section {
+        Text("A row")
+    }.onScrollPhaseChange(action: { old, new in })
+    expect!(section.isSection())
+}

@@ -1,0 +1,125 @@
+import Foundation
+import Ember
+import KiraUI
+import KCoreAnimation
+
+struct RepeatEventCount {
+    var calls: Number = 0.0
+}
+
+@Test
+function repeatPolicyHasAllThreeCasesAndInheritsToButtons() {
+    let normal = ModifierContext {}
+    expect!(normal.buttonRepeatBehavior == ButtonRepeatBehavior.Automatic)
+    let enabled = modifierContextApply(
+        normal, modifierDeltaButtonRepeatBehavior(.Enabled)
+    )
+    expect!(enabled.buttonRepeatBehavior == ButtonRepeatBehavior.Enabled)
+    expect!(modifierContextForChildren(enabled).buttonRepeatBehavior
+        == ButtonRepeatBehavior.Enabled)
+    let disabled = modifierContextApply(
+        enabled, modifierDeltaButtonRepeatBehavior(.Disabled)
+    )
+    expect!(disabled.buttonRepeatBehavior == ButtonRepeatBehavior.Disabled)
+}
+
+@Test
+function repeatStateMachineStartsOnHoldAndAcceleratesItsActualCadence() {
+    var state = ButtonRepeatTrack {}
+    expect!(!buttonRepeatAdvance(state, 11.0, 1000.0))
+    expect!(state.press == 11.0)
+    expect!(state.nextMillis == 1450.0)
+    expect!(!buttonRepeatAdvance(state, 11.0, 1300.0))
+    expect!(buttonRepeatAdvance(state, 11.0, 1450.0))
+    expect!(state.fired == 1.0)
+    let firstDue = state.nextMillis
+    expect!(firstDue > 1450.0)
+    expect!(!buttonRepeatAdvance(state, 11.0, firstDue - 1.0))
+    expect!(buttonRepeatAdvance(state, 11.0, firstDue))
+    expect!(state.fired == 2.0)
+    expect!(buttonRepeatIntervalMillis(10.0) < buttonRepeatIntervalMillis(1.0))
+    expect!(buttonRepeatIntervalMillis(30.0) == 50.0)
+}
+
+@Test
+function repeatStartsANewTimelineOnAnotherPressAndStopsOnRelease() {
+    var state = ButtonRepeatTrack {}
+    buttonRepeatAdvance(state, 16.0, 1200.0)
+    expect!(buttonRepeatAdvance(state, 16.0, 1700.0))
+    expect!(state.fired == 1.0)
+    expect!(!buttonRepeatAdvance(state, 17.0, 1710.0))
+    expect!(state.fired == 0.0)
+    expect!(state.nextMillis == 2160.0)
+    expect!(!buttonRepeatAdvance(state, 0.0, 1800.0))
+    expect!(state.press == 0.0)
+    expect!(state.fired == 0.0)
+}
+
+@Test
+function repeatedPressSuppressesReleaseButShortTapStillActivatesOnce() {
+    unsafe {
+        let key = 2027.0
+        let slot = buttonRepeatSlot(key)
+        ambientStatePutView(copy slot, nativeUserData(nativeState(
+            ButtonRepeatTrack {
+                press: 19.0, nextMillis: 2000.0, fired: 3.0
+            }
+        )))
+        expect!(buttonRepeatConsumed(key, 19.0))
+        expect!(!buttonRepeatConsumed(key, 18.0))
+        expect!(!buttonRepeatConsumed(0.0, 19.0))
+        var track = nativeRecover<ButtonRepeatTrack>(ambientStateGetView(slot))
+        buttonRepeatAdvance(track, 20.0, 2300.0)
+        expect!(!buttonRepeatConsumed(key, 20.0))
+    }
+}
+
+@Test
+function disabledKeyboardShortcutDoesNotRepeatButConsumesTheRepeatedKey() {
+    unsafe {
+        let record = nativeUserData(nativeState(RepeatEventCount {}))
+        layerActionsReset()
+        shortcutRegister(
+            KeyboardShortcut { key: "K", modifiers: [] },
+            { in
+                unsafe {
+                    var calls = nativeRecover<RepeatEventCount>(record)
+                    calls.calls++
+                }
+            },
+            allowsRepeat: false
+        )
+        expect!(shortcutPerform(.K, ModifierState {}, false, false))
+        expect!(nativeRecover<RepeatEventCount>(record).calls == 1.0)
+        expect!(shortcutPerform(.K, ModifierState {}, false, true))
+        expect!(nativeRecover<RepeatEventCount>(record).calls == 1.0)
+
+        layerActionsReset()
+        shortcutRegister(
+            KeyboardShortcut { key: "K", modifiers: [] },
+            { in
+                unsafe {
+                    var calls = nativeRecover<RepeatEventCount>(record)
+                    calls.calls++
+                }
+            },
+            allowsRepeat: true
+        )
+        expect!(shortcutPerform(.K, ModifierState {}, false, true))
+        expect!(nativeRecover<RepeatEventCount>(record).calls == 2.0)
+    }
+}
+
+@Test
+function repeatModifierPreservesRealButtonAndSectionIdentity() {
+    let described = describedLayer(
+        Button(title: "Add", action: { in })
+            .buttonRepeatBehavior(behavior: .Enabled)
+    )
+    expect!(describedContainsText(described, "Add"))
+    expect!(described.hittable)
+    let section = Section {
+        Text("Row")
+    }.buttonRepeatBehavior(behavior: .Disabled)
+    expect!(section.isSection())
+}

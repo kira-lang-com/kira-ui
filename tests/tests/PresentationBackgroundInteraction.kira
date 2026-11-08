@@ -1,0 +1,188 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+struct BackgroundInteractionTestState {
+    var selection: PresentationDetent = .Medium
+    var taps: Number = 0.0
+    var shown: Bool = true
+}
+
+@Test
+function presentationBackgroundInteractionHasAllPublicPolicies() {
+    expect!(presentationBackgroundInteractionKind(.Automatic) == 0.0)
+    expect!(presentationBackgroundInteractionKind(.Enabled) == 1.0)
+    expect!(presentationBackgroundInteractionKind(.Disabled) == 2.0)
+    expect!(presentationBackgroundInteractionKind(
+        .EnabledUpThrough(.Medium)
+    ) == 3.0)
+    let enabled = PresentationPreferences { backgroundInteraction: 1.0 }
+    expect!(presentationBackgroundReceivesInput(enabled, 900.0))
+    expect!(!presentationBackgroundReceivesInput(
+        PresentationPreferences {}, 400.0
+    ))
+    let through = PresentationPreferences {
+        backgroundInteraction: 3.0,
+        backgroundInteractiveThroughHeight: 350.0
+    }
+    expect!(presentationBackgroundReceivesInput(through, 349.0))
+    expect!(presentationBackgroundReceivesInput(through, 350.0))
+    expect!(!presentationBackgroundReceivesInput(through, 500.0))
+}
+
+@Test
+function enabledBackgroundReallyRemovesTheModalScrimsHitTarget() {
+    unsafe {
+        let record = nativeUserData(nativeState(BackgroundInteractionTestState {}))
+        let shown = Binding<Bool> {
+            get: { in
+                unsafe { return nativeRecover<BackgroundInteractionTestState>(record).shown }
+            },
+            set: { value in
+                unsafe {
+                    var state = nativeRecover<BackgroundInteractionTestState>(record)
+                    state.shown = value
+                }
+            }
+        }
+        layerActionsReset()
+        overlayCollect()
+        tapSeqReset()
+        let page = Button(title: "Under the sheet", action: { in
+            unsafe {
+                var state = nativeRecover<BackgroundInteractionTestState>(record)
+                state.taps++
+            }
+        }).sheet(isPresented: shown) {
+            Text("Open settings")
+                .presentationBackgroundInteraction(interaction: .Enabled)
+        }
+        let underneath = describedLayerInWideWindow(move page)
+        let overlays = overlaysThisFrame()
+        expect!(overlays.count == 2)
+        expect!(!overlays[0].content.hittable)
+        expect!(overlays[0].content.hitKey == 0.0)
+        expect!(overlays[0].content.layout.fixedHeight > 0.0)
+        expect!(overlays[1].content.clipsChildren)
+        expect!(underneath.accessibilityElements().count > 0)
+        // The original page's actual Button action still lives in the action
+        // table and can be invoked through the now-permeable backdrop.
+        let buttonKey = underneath.hitKey
+        expect!(buttonKey != 0.0)
+        layerActionInvoke(buttonKey)
+        expect!(nativeRecover<BackgroundInteractionTestState>(record).taps == 1.0)
+        expect!(nativeRecover<BackgroundInteractionTestState>(record).shown)
+        overlayStopCollecting()
+    }
+}
+
+@Test
+function disabledBackgroundInterceptsClicksAndPreservesNormalBackdropDismissal() {
+    unsafe {
+        let record = nativeUserData(nativeState(BackgroundInteractionTestState {}))
+        let shown = Binding<Bool> {
+            get: { in
+                unsafe { return nativeRecover<BackgroundInteractionTestState>(record).shown }
+            },
+            set: { value in
+                unsafe {
+                    var state = nativeRecover<BackgroundInteractionTestState>(record)
+                    state.shown = value
+                }
+            }
+        }
+        layerActionsReset()
+        overlayCollect()
+        tapSeqReset()
+        absorb describedLayerInWideWindow(Text("Main page").sheet(isPresented: shown) {
+            Text("Sheet")
+                .presentationBackgroundInteraction(interaction: .Disabled)
+        })
+        let overlays = overlaysThisFrame()
+        expect!(overlays.count == 2)
+        expect!(overlays[0].content.hittable)
+        expect!(overlays[0].content.hitKey != 0.0)
+        layerActionInvoke(overlays[0].content.hitKey)
+        expect!(!nativeRecover<BackgroundInteractionTestState>(record).shown)
+        overlayStopCollecting()
+    }
+}
+
+@Test
+function backgroundInteractionEnabledUpThroughTracksSelectedActualSheetDetent() {
+    unsafe {
+        let record = nativeUserData(nativeState(BackgroundInteractionTestState {}))
+        let shown = Binding<Bool> {
+            get: { in return true }, set: { value in }
+        }
+        let selection = Binding<PresentationDetent> {
+            get: { in
+                unsafe { return copy nativeRecover<BackgroundInteractionTestState>(record).selection }
+            },
+            set: { value in
+                unsafe {
+                    var state = nativeRecover<BackgroundInteractionTestState>(record)
+                    state.selection = value
+                }
+            }
+        }
+
+        layerActionsReset()
+        overlayCollect()
+        tapSeqReset()
+        absorb describedLayerInWideWindow(Text("Main").sheet(isPresented: shown) {
+            Text("Selectable")
+                .presentationDetents(detents: [.Medium, .Large], selection: selection)
+                .presentationBackgroundInteraction(interaction: .EnabledUpThrough(.Medium))
+        })
+        let halfOverlays = overlaysThisFrame()
+        expect!(halfOverlays.count == 2)
+        expect!(!halfOverlays[0].content.hittable)
+        expect!(halfOverlays[0].content.hitKey == 0.0)
+        let halfHeight = halfOverlays[1].content.layout.fixedHeight
+        expect!(halfHeight > 0.0)
+
+        var saved = nativeRecover<BackgroundInteractionTestState>(record)
+        saved.selection = .Large
+        layerActionsReset()
+        overlayCollect()
+        tapSeqReset()
+        absorb describedLayerInWideWindow(Text("Main").sheet(isPresented: shown) {
+            Text("Selectable")
+                .presentationDetents(detents: [.Medium, .Large], selection: selection)
+                .presentationBackgroundInteraction(interaction: .EnabledUpThrough(.Medium))
+        })
+        let fullOverlays = overlaysThisFrame()
+        expect!(fullOverlays.count == 2)
+        expect!(fullOverlays[0].content.hittable)
+        expect!(fullOverlays[0].content.hitKey != 0.0)
+        expect!(fullOverlays[1].content.layout.fixedHeight > halfHeight)
+        overlayStopCollecting()
+    }
+}
+
+@Test
+function outerPresentationModifierOverridesInnerPolicyWithoutLosingDetents() {
+    let pref = presentationPreferences(describedLayerInWideWindow(
+        Text("Sheet")
+            .presentationDetents(detents: [.Medium, .Large])
+            .presentationBackgroundInteraction(interaction: .Enabled)
+            .frame(width: 280.0, height: 150.0)
+            .presentationBackgroundInteraction(interaction: .Disabled)
+    ))
+    expect!(pref.hasBackgroundInteraction)
+    expect!(pref.backgroundInteraction == 2.0)
+    expect!(pref.hasDetents)
+    expect!(pref.detentHeights.count == 2)
+}
+
+@Test
+function backgroundInteractionModifierPreservesSectionGrouping() {
+    let section = Section {
+        Text("Row")
+    }.presentationBackgroundInteraction(interaction: .Automatic)
+    expect!(section.isSection())
+    let described = describedLayer(move section)
+    expect!(described.groupedSection)
+    expect!(presentationPreferences(described).hasBackgroundInteraction)
+}

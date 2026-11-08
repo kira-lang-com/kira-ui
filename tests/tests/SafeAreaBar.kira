@@ -1,0 +1,59 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+// SwiftUI's vertical safe-area bar reserves its own height and the requested
+// spacing instead of drawing across the content's bottom edge.
+@Test
+function bottomSafeAreaBarRespectsAlignmentAndSpacing() {
+    let layer = describedLayer(
+        Rectangle().width(resolvedLength(80.0)).height(resolvedLength(40.0)).safeAreaBar(
+            edge = .Bottom,
+            alignment = .Leading,
+            spacing = .Some(12.0)
+        ) { Rectangle().width(resolvedLength(64.0)).height(resolvedLength(26.0)) }
+    )
+    expect!(layer.sublayers.count == 2)
+    let bar = layer.sublayers[1]
+    expect!(bar.layout.alignment.x == 0.0)
+    expect!(bar.layout.paddingTop == 12.0)
+    expect!(bar.sublayers[0].layout.fixedWidth == 64.0)
+}
+
+// Horizontal bars reserve width on their leading/trailing edge, with the
+// vertical alignment and gap belonging to that edge rather than to a column.
+@Test
+function trailingSafeAreaBarRespectsAlignmentAndSpacing() {
+    let layer = describedLayer(
+        Rectangle().width(resolvedLength(80.0)).height(resolvedLength(40.0)).safeAreaBar(
+            edge = .Trailing,
+            alignment = .Bottom,
+            spacing = .Some(9.0)
+        ) { Rectangle().width(resolvedLength(32.0)).height(resolvedLength(52.0)) }
+    )
+    expect!(layer.sublayers.count == 2)
+    let bar = layer.sublayers[1]
+    expect!(bar.layout.alignment.y == 1.0)
+    expect!(bar.layout.paddingLeading == 9.0)
+    expect!(bar.sublayers[0].layout.fixedHeight == 52.0)
+}
+
+@Test
+function safeAreaBarOverloadDefaultsPreserveTheSourceSpelling() {
+    let top = describedLayer(Rectangle().safeAreaBar(edge = .Top) {
+        Rectangle().width(resolvedLength(14.0))
+    })
+    let leading = describedLayer(Rectangle().safeAreaBar(edge = .Leading) {
+        Rectangle().height(resolvedLength(15.0))
+    })
+    let aligned = describedLayer(
+        Rectangle().safeAreaBar(edge = .Top, alignment = .Trailing) { Rectangle() }
+    )
+    let spaced = describedLayer(
+        Rectangle().safeAreaBar(edge = .Leading, spacing = .Some(5.0)) { Rectangle() }
+    )
+    expect!(top.sublayers[0].sublayers[0].layout.fixedWidth == 14.0)
+    expect!(leading.sublayers[0].sublayers[0].layout.fixedHeight == 15.0)
+    expect!(aligned.sublayers[0].layout.alignment.x == 1.0)
+    expect!(spaced.sublayers[0].layout.paddingTrailing == 5.0)
+}

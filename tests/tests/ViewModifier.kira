@@ -1,0 +1,35 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+construct HalfOpacity() extends ViewModifier {
+    function body(content: borrow Any Widget) -> Any Widget {
+        return (copy content).opacity(0.5)
+    }
+}
+
+construct QuarterOpacity() extends ViewModifier {
+    function body(content: borrow Any Widget) -> Any Widget {
+        return (copy content).opacity(0.25)
+    }
+}
+
+@Test
+function reusableViewModifierPreservesContentAndComposesWithOtherModifiers() {
+    let half = describedLayer(Text("Original").modifier(value: HalfOpacity {}))
+    expect!(half.opacity == 0.5)
+    expect!(textRunOf(half).content == "Original")
+
+    let compound = describedLayer(
+        Text("Original").modifier(value: HalfOpacity {}).opacity(0.5)
+    )
+    expect!(compound.opacity == 0.25)
+}
+
+@Test
+function viewModifierTypeParticipatesInStructuralIdentity() {
+    let half = describedLayer(Text("Content").modifier(value: HalfOpacity {}))
+    let quarter = describedLayer(Text("Content").modifier(value: QuarterOpacity {}))
+    expect!(half.kind != quarter.kind)
+    expect!(quarter.opacity == 0.25)
+}

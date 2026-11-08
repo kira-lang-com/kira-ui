@@ -1,0 +1,90 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's keyboard command modifiers attach to a focus scope rather than
+// making global shortcuts. The wrapper's commandKey is build-time metadata:
+// parent focusable containers discover inner commands, and outer commands
+// discover the focusable descendants they enclose. The input router checks
+// the actual focused key before executing a closure.
+public construct KeyboardCommandLayer(
+    kind: LayerKeyboardCommandKind,
+    action: () -> Void = layerNoop,
+    moveAction: (MoveCommandDirection) -> Void = layerNoopMoveCommand
+) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let described = content.describe(context, modifiers)
+        let key = tapSeqKey()
+        layerKeyboardCommandRegister(key, kind, action, moveAction)
+        layerKeyboardCommandAttachToDescendants(key, described)
+        return CALayerDescription {
+            commandKey: key,
+            groupedSection: described.groupedSection,
+            layout: surfaceFootprint(described.layout),
+            sublayers: [move described]
+        }
+    }
+}
+
+extend Widget {
+    // SwiftUI: `.onMoveCommand(perform: ((MoveCommandDirection) -> Void)?)`.
+    function onMoveCommand(
+        action: ((MoveCommandDirection) -> Void)?
+    ) -> Any Widget {
+        return match action {
+            Some(callback) -> KeyboardCommandLayer(
+                kind: .Move, moveAction: callback
+            ) { self }
+            None -> self
+        }
+    }
+
+    function onMoveCommand(action: (MoveCommandDirection) -> Void) -> Any Widget {
+        return KeyboardCommandLayer(kind: .Move, moveAction: action) { self }
+    }
+
+    // SwiftUI: `.onDeleteCommand(perform: (() -> Void)?)`.
+    function onDeleteCommand(action: (() -> Void)?) -> Any Widget {
+        return match action {
+            Some(callback) -> KeyboardCommandLayer(kind: .Delete, action: callback) { self }
+            None -> self
+        }
+    }
+
+    function onDeleteCommand(action: () -> Void) -> Any Widget {
+        return KeyboardCommandLayer(kind: .Delete, action: action) { self }
+    }
+
+    // SwiftUI: `.onExitCommand(perform: (() -> Void)?)`.
+    function onExitCommand(action: (() -> Void)?) -> Any Widget {
+        return match action {
+            Some(callback) -> KeyboardCommandLayer(kind: .Exit, action: callback) { self }
+            None -> self
+        }
+    }
+
+    function onExitCommand(action: () -> Void) -> Any Widget {
+        return KeyboardCommandLayer(kind: .Exit, action: action) { self }
+    }
+
+    // An Ember Space-key event is the host's keyboard equivalent of a
+    // play/pause button; a native media-key event remains a host input gap.
+    function onPlayPauseCommand(action: (() -> Void)?) -> Any Widget {
+        return match action {
+            Some(callback) -> KeyboardCommandLayer(
+                kind: .PlayPause, action: callback
+            ) { self }
+            None -> self
+        }
+    }
+
+    function onPlayPauseCommand(action: () -> Void) -> Any Widget {
+        return KeyboardCommandLayer(kind: .PlayPause, action: action) { self }
+    }
+}

@@ -1,0 +1,93 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function pointerVisibilityResolvesOnlyRegionsActuallyUnderThePointer() {
+    layerActionsReset()
+    layerPointerVisibilityRegister(101.0, .Hidden)
+    layerPointerVisibilityRegister(102.0, .Visible)
+    expect!(layerPointerVisibilityForHover([101.0]) == Visibility.Hidden)
+    expect!(layerPointerVisibilityForHover([102.0]) == Visibility.Visible)
+    expect!(layerPointerVisibilityForHover([555.0]) == Visibility.Automatic)
+    expect!(layerPointerVisibilityForHover([]) == Visibility.Automatic)
+}
+
+@Test
+function innermostPointerOverrideWinsAndAutomaticRestoresPlatformDefault() {
+    layerActionsReset()
+    layerPointerVisibilityRegister(201.0, .Hidden)
+    layerPointerVisibilityRegister(202.0, .Automatic)
+    expect!(layerPointerVisibilityForHover([202.0, 201.0]) == Visibility.Automatic)
+    expect!(layerPointerVisibilityForHover([201.0]) == Visibility.Hidden)
+    layerPointerVisibilityRegister(203.0, .Visible)
+    expect!(layerPointerVisibilityForHover([203.0, 201.0]) == Visibility.Visible)
+}
+
+@Test
+function nativePointerVisibilityRegionDoesNotInterceptAnUnderlyingButton() {
+    layerActionsReset()
+    tapSeqReset()
+    var described = describedLayer(
+        Button(title: "Press", action: { in })
+            .frame(width: 180.0, height: 50.0)
+            .pointerVisibility(visibility: .Hidden)
+    )
+    expect!(described.hoverKey != 0)
+    expect!(!described.hittable)
+    expect!(described.hitKey == 0)
+    expect!(describedContainsText(described, "Press"))
+
+    described.layoutTree(300.0, 180.0)
+    var tree = layerTree()
+    tree.reconcileImmediate(described)
+    let hit = tree.hitTestTree(90.0, 25.0)
+    expect!(hit.hitKey != 0)
+    expect!(hoverRegionsContain(hit.hoverKeys, described.hoverKey))
+    expect!(layerPointerVisibilityForHover(hit.hoverKeys) == Visibility.Hidden)
+}
+
+@Test
+function nestedPointerVisibilityUsesRealHitTestOrdering() {
+    layerActionsReset()
+    tapSeqReset()
+    var described = describedLayer(
+        Text("Nested")
+            .frame(width: 180.0, height: 60.0)
+            .pointerVisibility(visibility: .Visible)
+            .pointerVisibility(visibility: .Hidden)
+    )
+    described.layoutTree(300.0, 160.0)
+    var tree = layerTree()
+    tree.reconcileImmediate(described)
+    let hit = tree.hitTestTree(35.0, 25.0)
+    expect!(hit.hoverKeys.count == 2)
+    expect!(layerPointerVisibilityForHover(hit.hoverKeys) == Visibility.Visible)
+}
+
+@Test
+function pointerVisibilityIgnoresUnrelatedHoverListeners() {
+    layerActionsReset()
+    tapSeqReset()
+    let described = describedLayer(
+        Text("Observe")
+            .onHover(action: { inside in })
+            .pointerVisibility(visibility: .Hidden)
+    )
+    expect!(described.hoverKey != 0)
+    let innerKey = described.sublayers[0].hoverKey
+    expect!(innerKey != 0)
+    expect!(layerPointerVisibilityForHover([innerKey, described.hoverKey])
+        == Visibility.Hidden)
+}
+
+@Test
+function pointerVisibilityPreservesSectionIdentityAndDoesNotAlterTextLayout() {
+    let section = Section {
+        Text("Section row")
+    }.pointerVisibility(visibility: .Hidden)
+    expect!(section.isSection())
+    let described = describedLayer(move section)
+    expect!(described.groupedSection)
+    expect!(describedContainsText(described, "Section row"))
+}

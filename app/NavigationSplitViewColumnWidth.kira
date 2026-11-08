@@ -1,0 +1,67 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's navigationSplitViewColumnWidth(_:) and
+// navigationSplitViewColumnWidth(min:ideal:max:). These describe the width of a
+// split view column, not the intrinsic width of its List or content. The split
+// container uses the resolved proposal for its overlay, toolbar boundary and
+// safe area together, so a navigation transition can continue beneath the
+// sidebar without being clipped at that boundary.
+public construct NavigationSplitViewColumnWidthLayer(
+    min: Number? = .None,
+    ideal: Number,
+    max: Number? = .None
+) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        // On a compact device the split view becomes a navigation stack. Its
+        // sidebar is the full-width root page, not a narrow floating column.
+        if navigationMetrics(context.viewportWidth).presentation == .Stack {
+            return content.describe(context, modifiers)
+        }
+        var lower = 0.0
+        var upper = unboundedLength
+        match min { Some(value) -> lower = max(value, 0.0) None -> {} }
+        match max { Some(value) -> upper = max(value, lower) None -> {} }
+        let width = min(max(ideal, lower), upper)
+        return CALayerDescription {
+            layout: CALayoutIntent {
+                fixedWidth: width,
+                heightFill: true,
+                alignment: Point { x: 0.0, y: 0.0 }
+            },
+            sublayers: [content.describe(context, modifiers)]
+        }
+    }
+}
+
+extend Widget {
+    function navigationSplitViewColumnWidth(width: Number) -> Any Widget {
+        return NavigationSplitViewColumnWidthLayer(ideal: width) { self }
+    }
+
+    function navigationSplitViewColumnWidth(
+        min: Number? = .None,
+        ideal: Number,
+        max: Number? = .None
+    ) -> Any Widget {
+        return NavigationSplitViewColumnWidthLayer(
+            min: min, ideal: ideal, max: max
+        ) { self }
+    }
+}
+
+// Without an explicit column-width preference, the themed platform width is
+// authoritative. A stated preference is read from the outermost column view,
+// not guessed from its scroll view's full-width measurement.
+public function navigationSplitColumnWidth(
+    sidebar: borrow CALayerDescription,
+    standard: Number
+) -> Number {
+    if sidebar.layout.fixedWidth > 0.0 { return sidebar.layout.fixedWidth }
+    return standard
+}

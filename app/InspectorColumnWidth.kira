@@ -1,0 +1,95 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's inspectorColumnWidth is a preference on the INSPECTOR's content,
+// not a width-bearing `frame` on the document. Its host resolves the requested
+// width against the available window size, then reserves that exact room for
+// the trailing inspector in its own window-level column.
+public struct InspectorColumnWidthPreference {
+    var exists: Bool = false
+    var min: Number? = .None
+    var ideal: Number = 0.0
+    var max: Number? = .None
+}
+
+public function inspectorColumnWidthPreferences(
+    described: borrow CALayerDescription
+) -> InspectorColumnWidthPreference {
+    if described.hasInspectorColumnWidth {
+        return InspectorColumnWidthPreference {
+            exists: true,
+            min: copy described.inspectorColumnMinWidth,
+            ideal: described.inspectorColumnIdealWidth,
+            max: copy described.inspectorColumnMaxWidth
+        }
+    }
+    // Modifier wrappers preserve the child preferences even if they add a
+    // frame, background, or accessibility layer between the original view
+    // and InspectorLayer's registration point. Never mine the inspector's
+    // arbitrary content rows for a competing column width.
+    if described.sublayers.count == 1 {
+        return inspectorColumnWidthPreferences(described.sublayers[0])
+    }
+    return InspectorColumnWidthPreference {}
+}
+
+public function inspectorColumnWidthResolved(
+    preference: borrow InspectorColumnWidthPreference,
+    standard: Number,
+    available: Number
+) -> Number {
+    let maximumAvailable = max(1.0, available)
+    if !preference.exists {
+        return min(max(standard, 1.0), maximumAvailable)
+    }
+    let lower = match preference.min {
+        Some(value) -> max(value, 1.0)
+        None -> 1.0
+    }
+    let upper = match preference.max {
+        Some(value) -> max(value, lower)
+        None -> maximumAvailable
+    }
+    return clamp(preference.ideal, lower, min(max(upper, 1.0), maximumAvailable))
+}
+
+public construct InspectorColumnWidthLayer(
+    min: Number? = .None,
+    ideal: Number,
+    max: Number? = .None
+) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var lowered = content.describe(context, modifiers)
+        lowered.hasInspectorColumnWidth = true
+        lowered.inspectorColumnMinWidth = copy min
+        lowered.inspectorColumnIdealWidth = ideal
+        lowered.inspectorColumnMaxWidth = copy max
+        return lowered
+    }
+}
+
+extend Widget {
+    // SwiftUI: `.inspectorColumnWidth(_ width: CGFloat)`.
+    function inspectorColumnWidth(width: Number) -> Any Widget {
+        return InspectorColumnWidthLayer(
+            min: .Some(width), ideal: width, max: .Some(width)
+        ) { self }
+    }
+
+    // SwiftUI: `.inspectorColumnWidth(min: CGFloat? = nil,
+    //                                 ideal: CGFloat, max: CGFloat? = nil)`.
+    function inspectorColumnWidth(
+        min: Number? = .None,
+        ideal: Number,
+        max: Number? = .None
+    ) -> Any Widget {
+        return InspectorColumnWidthLayer(min: min, ideal: ideal, max: max) { self }
+    }
+}

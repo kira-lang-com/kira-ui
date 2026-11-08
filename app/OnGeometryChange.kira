@@ -1,0 +1,138 @@
+import Foundation
+import KiraLayout
+import KCoreAnimation
+
+// SwiftUI's onGeometryChange is not a GeometryReader. Its wrapper retains the
+// content's intrinsic layout rather than requesting the whole offered size.
+// A layout-only observer key is resolved after place/snap/offset completes,
+// so stack alignment, changes in sibling size, and scrolling are observable.
+public struct ObservedGeometry<Value> {
+    var value: Value
+}
+
+public function geometryObservationSlot(key: Number) -> ViewStateKey {
+    return slotKey("kiraui.geometry.observer.", key)
+}
+
+public function geometryObserve<Value>(
+    key: Number,
+    geometry: GeometryProxy,
+    transform: (GeometryProxy) -> Value,
+    action: (Value, Value) -> Void
+) -> Bool {
+    unsafe {
+        let next = transform(move geometry)
+        let slot = geometryObservationSlot(key)
+        if !ambientStateHasView(slot) {
+            ambientStatePutView(copy slot, nativeUserData(nativeState(
+                ObservedGeometry<Value> { value: copy next }
+            )))
+            // The first placed geometry is significant. In particular a
+            // measured view can have a nonzero size before any parent changes,
+            // and SwiftUI's geometry callback publishes that initial value.
+            action(copy next, move next)
+            return true
+        }
+        var observed = nativeRecover<ObservedGeometry<Value>>(
+            ambientStateGetView(slot)
+        )
+        if observed.value == next { return false }
+        let old = copy observed.value
+        observed.value = copy next
+        action(move old, move next)
+        return true
+    }
+}
+
+// Recursively accumulate the *already laid-out* position. The offset pass
+// has already applied scrolling, keyboard-sensitive positioning and explicit
+// `.offset()`, and coordinates are snapped to their window pixel grid.
+public function layerGeometryNotify(
+    layer: borrow CALayerDescription,
+    parentOrigin: Point,
+    inheritedViewport: Rect
+) {
+    let origin = Point {
+        x: parentOrigin.x + layer.position.x,
+        y: parentOrigin.y + layer.position.y
+    }
+    let frame = Rect {
+        x: origin.x, y: origin.y,
+        width: layer.size.width, height: layer.size.height
+    }
+    // A scrolling viewport is always a visibility boundary even when its
+    // children may temporarily paint past its edge. Other clipped ancestors
+    // further constrain the portion actually visible to the user.
+    let viewport = (layer.scrollAxis != .None || layer.clipsChildren)
+        ? scrollVisibilityIntersection(inheritedViewport, frame)
+        : inheritedViewport
+    if layer.geometryObserverKey != 0.0 {
+        layerGeometryChanged(layer.geometryObserverKey, GeometryProxy {
+            size: copy layer.size,
+            frame: frame
+        })
+    }
+    if layer.scrollVisibilityKey != 0.0 {
+        layerScrollVisibilityChanged(layer.scrollVisibilityKey,
+            scrollVisibilityFraction(frame, viewport)
+        )
+    }
+    for child in layer.sublayers {
+        layerGeometryNotify(child, copy origin, copy viewport)
+    }
+}
+
+public construct GeometryChangeLayer<Value>(
+    transform: (GeometryProxy) -> Value,
+    action: (Value, Value) -> Void
+) extends Widget {
+    let content: some Widget
+
+    function isSection() -> Bool { return content.isSection() }
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        let key = tapSeqKey()
+        let projection = transform
+        let callback = action
+        layerGeometryRegister(key, { geometry in
+            let changed = geometryObserve(key, geometry, projection, callback)
+        })
+        let described = content.describe(context, modifiers)
+        let section = described.groupedSection
+        return CALayerDescription {
+            geometryObserverKey: key,
+            groupedSection: section,
+            layout: surfaceFootprint(described.layout),
+            sublayers: [move described]
+        }
+    }
+}
+
+extend Widget {
+    // Equivalent to SwiftUI's generic `(oldValue, newValue)` overload. Kira
+    // infers Value from the transform, rather than accepting a Swift metatype.
+    function onGeometryChange<Value>(
+        transform: (GeometryProxy) -> Value,
+        action: (Value, Value) -> Void
+    ) -> Any Widget {
+        return GeometryChangeLayer<Value>(
+            transform: transform, action: action
+        ) { self }
+    }
+
+    // Equivalent to SwiftUI's `(newValue)` overload. Kira's generic overload
+    // resolver selects the first same-name method before examining closure
+    // arity, so this form has a distinct `onGeometryChangeNew` spelling.
+    function onGeometryChangeNew<Value>(
+        transform: (GeometryProxy) -> Value,
+        action: (Value) -> Void
+    ) -> Any Widget {
+        return GeometryChangeLayer<Value>(
+            transform: transform,
+            action: { old, new in action(new) }
+        ) { self }
+    }
+}

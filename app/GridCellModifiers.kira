@@ -1,0 +1,72 @@
+import Foundation
+import KCoreAnimation
+
+// KiraUI's 2D axis set for Grid size contribution. A cell that is unsized on
+// an axis still receives the resolved row/column proposal for its drawing.
+public enum GridAxisSet {
+    None
+    Horizontal
+    Vertical
+    All
+}
+
+public construct GridCellAnchorLayer(anchor: Point) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var described = content.describe(context, modifiers)
+        described.layout.hasGridCellAnchor = true
+        described.layout.gridCellAnchor = anchor
+        return described
+    }
+}
+
+public construct GridCellUnsizedLayer(axes: GridAxisSet) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var described = content.describe(context, modifiers)
+        described.layout.gridUnsizedHorizontal = axes == .Horizontal || axes == .All
+        described.layout.gridUnsizedVertical = axes == .Vertical || axes == .All
+        return described
+    }
+}
+
+public construct GridColumnAlignmentLayer(value: HorizontalAlignment) extends Widget {
+    let content: some Widget
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var described = content.describe(context, modifiers)
+        described.layout.hasGridColumnAlignment = true
+        described.layout.gridColumnAlignment = horizontalAlignmentUnit(value)
+        return described
+    }
+}
+
+extend Widget {
+    // SwiftUI's `gridCellAnchor(_:)`: override alignment within this cell.
+    function gridCellAnchor(anchor: Point) -> Any Widget {
+        return GridCellAnchorLayer(anchor: move anchor) { self }
+    }
+
+    // SwiftUI's `gridCellUnsizedAxes(_:)`: omit specified contributions to
+    // track measurement, never omit the cell itself from placement.
+    function gridCellUnsizedAxes(axes: GridAxisSet) -> Any Widget {
+        return GridCellUnsizedLayer(axes: axes) { self }
+    }
+
+    // SwiftUI's `gridColumnAlignment(_:)`. One cell publishes the alignment
+    // for its entire column; a local gridCellAnchor still overrides it.
+    function gridColumnAlignment(alignment: HorizontalAlignment) -> Any Widget {
+        return GridColumnAlignmentLayer(value: alignment) { self }
+    }
+}

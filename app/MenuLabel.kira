@@ -4,20 +4,22 @@ import KCoreAnimation
 // How a menu written with a label draws it: SwiftUI's `.menuStyle(_:)` and
 // `.menuIndicator(_:)`.
 
-// SwiftUI's `MenuStyle`. On a Mac a `.Button` menu is a pull-down button, its
-// label on a control's bezel unless the button style in effect has none; a
-// borderless one, and every menu elsewhere, is its label alone.
+// SwiftUI's `MenuStyle`. KiraUI keeps its iPadOS-style menu interaction and
+// morphing glass at every window size. The style controls only whether the
+// trigger has a bezel; it does not select an AppKit/macOS menu presentation.
 public enum MenuStyle {
     Automatic
     Button
     BorderlessButton
 }
 
-// Whether a menu's label shows the indicator: when asked to, and left to the
-// platform, on a Mac, whose pull-down buttons carry a chevron.
+// The default indicator belongs to a bezeled trigger, not to a custom plain
+// label. This is independent of window size: a plain menu's authored
+// `HStack { title; chevron.down }` must never gain a second chevron. The
+// iPadOS-style morphing glass menu remains the presentation in every case.
 function menuShowsIndicator(modifiers: borrow ModifierContext) -> Bool {
     match modifiers.menuIndicator {
-        Automatic -> return interfaceMode() == .AdaptiveDesktop
+        Automatic -> return menuLabelBezeled(modifiers)
         Visible -> return true
         Hidden -> return false
     }

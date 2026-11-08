@@ -1,0 +1,259 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+import Ember
+
+// A sidebar's title is part of the split window's chrome, not a custom
+// heading padded into its scroll content. The same List is a large-titled
+// root page when NavigationSplitView adapts to a compact navigation stack.
+function navigationContainsTitle(
+    layer: borrow CALayerDescription,
+    title: borrow String
+) -> Bool {
+    match layer.content {
+        Text(run) -> {
+            if run.content == title { return true }
+        }
+        else -> {}
+    }
+    for child in layer.sublayers {
+        if navigationContainsTitle(child, title) { return true }
+    }
+    return false
+}
+
+function navigationTitleOpacity(
+    layer: borrow CALayerDescription,
+    title: borrow String
+) -> Number? {
+    match layer.content {
+        Text(run) -> {
+            if run.content == title { return .Some(layer.opacity) }
+        }
+        else -> {}
+    }
+    for child in layer.sublayers {
+        match navigationTitleOpacity(child, title) {
+            Some(opacity) -> return .Some(opacity)
+            None -> {}
+        }
+    }
+    return .None
+}
+
+// On desktop, the same List must own the large title as on the compact root.
+// A copy in the inline toolbar exists for the handoff but begins transparent.
+@Test
+function desktopSidebarTitleStartsLargeAndMovesIntoItsInlineToolbar() {
+    toolbarCollect()
+    let window = NavigationSplitView {
+        List {
+            Section {
+                SidebarRow(selected: true, action: noAction) {
+                    Label(title: "Chats", systemImage: .BubbleLeft)
+                }
+            }
+        }
+        .navigationTitle("Workspace")
+    } detail: {
+        NavigationStack { Text("Home") }
+    }
+    let drawn = describedLayerInWideWindow(move window)
+    // This is the large title INSIDE the scrolling sidebar, not the chrome.
+    expect!(navigationContainsTitle(drawn.sublayers[1], "Workspace"))
+
+    let bar = describedLayerInWideWindow(WindowChrome())
+    match navigationTitleOpacity(bar.sublayers[0], "Workspace") {
+        Some(opacity) -> expect!(opacity == 0.0)
+        None -> expect!(false)
+    }
+
+    // Scrolling the sidebar does not change the detail's independent title.
+    toolbarEnterColumn(ToolbarColumn.sidebar)
+    toolbarCollapseLargeTitle(1.0)
+    let collapsed = describedLayerInWideWindow(WindowChrome())
+    match navigationTitleOpacity(collapsed.sublayers[0], "Workspace") {
+        Some(opacity) -> expect!(opacity == 1.0)
+        None -> expect!(false)
+    }
+    unsafe {
+        let sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+        expect!(sink.sidebarLargeTitle)
+        expect!(sink.sidebarTitleCollapse == 1.0)
+        expect!(sink.titleCollapse == 0.0)
+    }
+    toolbarStopCollecting()
+}
+
+@Test
+function sidebarListTitleAppearsInItsOwnDesktopToolbarSection() {
+    toolbarCollect()
+    let window = NavigationSplitView {
+        List {
+            Section {
+                SidebarRow(selected: true, action: noAction) {
+                    Label(title: "Chats", systemImage: .BubbleLeft)
+                }
+            }
+        }
+        .navigationTitle("Workspace")
+    } detail: {
+        NavigationStack { Text("Home") }
+    }
+    describedLayerInWideWindow(move window)
+    let chrome = describedLayerInWideWindow(WindowChrome())
+    expect!(chrome.sublayers.count == 2)
+    expect!(navigationContainsTitle(chrome.sublayers[0], "Workspace"))
+    expect!(!navigationContainsTitle(chrome.sublayers[1], "Workspace"))
+    toolbarStopCollecting()
+}
+
+@Test
+function compactSidebarListTitleLivesInScrollablePageContent() {
+    toolbarCollect()
+    let context = buildContext(FoundationUiContext {
+        viewport: Size { width: 390.0, height: 844.0 }
+    })
+    let window = NavigationSplitView {
+        List {
+            Section {
+                SidebarRow(selected: false, action: noAction) {
+                    Label(title: "Chats", systemImage: .BubbleLeft)
+                }
+            }
+        }
+        .navigationTitle("Workspace")
+    } detail: {
+        NavigationStack { Text("Home") }
+    }
+    let drawn = window.describe(context, ModifierContext {})
+    // The first page's ScrollView carries the navigation title. It can
+    // collapse into the toolbar because it is not a static sidebar header.
+    expect!(navigationContainsTitle(drawn, "Workspace"))
+    expect!(toolbarInlineTitleShown(true, 0.0) == 0.0)
+    expect!(toolbarInlineTitleShown(true, 1.0) == 1.0)
+    toolbarStopCollecting()
+}
+
+@Test
+function compactSidebarTransfersItsScrollCollapseToDocumentTitle() {
+    toolbarCollect()
+    toolbarEnterColumn(ToolbarColumn.sidebar)
+    toolbarSetTitle("Workspace")
+    toolbarShowLargeTitle()
+    toolbarCollapseLargeTitle(0.75)
+    let root = toolbarTakeColumnTitle()
+    expect!(root.title == "Workspace")
+    expect!(root.largeTitle)
+    expect!(root.titleCollapse == 0.75)
+    toolbarShowPageTitle(root)
+    unsafe {
+        let sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+        expect!(sink.detailTitle == "Workspace")
+        expect!(sink.largeTitle)
+        expect!(sink.titleCollapse == 0.75)
+        expect!(!sink.sidebarLargeTitle)
+    }
+    toolbarStopCollecting()
+}
+
+@Test
+function largeNavigationTitleCollapseFollowsScrollDistance() {
+    let start = 8.0
+    let travel = 42.0
+    let before = scrollLargeTitleProgress(0.0, start, travel)
+    let entering = scrollLargeTitleProgress(18.0, start, travel)
+    let middle = scrollLargeTitleProgress(29.0, start, travel)
+    let leaving = scrollLargeTitleProgress(40.0, start, travel)
+    let after = scrollLargeTitleProgress(70.0, start, travel)
+    expect!(before == 0.0)
+    expect!(entering <= middle && middle <= leaving)
+    expect!(after == 1.0)
+    expect!(toolbarInlineTitleShown(true, before) == 0.0)
+    expect!(toolbarInlineTitleShown(true, after) == 1.0)
+}
+
+@Test
+function railDesktopUsesCenteredInlineTitleInUnifiedToolbar() {
+    setInterfaceMode(.AdaptiveDesktop)
+    toolbarCollect()
+    let window = NavigationSplitView {
+        List { Text("Pages").font(size: resolvedLength(14.0)) }
+        .navigationTitle("Alight")
+    } rail: {
+        NavigationRail {
+            NavigationRailItem(title: "Pages", systemImage: .DocText, action: { in })
+        }
+    } detail: {
+        NavigationStack {
+            ScrollView { Text("Body").font(size: resolvedLength(14.0)) }
+            .navigationTitle("Design notes")
+        }
+    }
+    describedLayerInWideWindow(move window)
+    toolbarEnterColumn(ToolbarColumn.detail)
+    toolbarCollapseLargeTitle(0.75)
+    let chrome = describedLayerInWideWindow(WindowChrome())
+    // Sidebar plus document share the same bar. In a rail window the title
+    // is a centered overlay on the document section, not an extra leading
+    // row item that displaces toolbar actions.
+    expect!(chrome.sublayers.count == 2)
+    expect!(chrome.sublayers[1].sublayers.count == 2)
+    expect!(navigationContainsTitle(chrome.sublayers[1], "Design notes"))
+    toolbarStopCollecting()
+    setInterfaceMode(hostInterfaceMode())
+}
+
+function navigationTitleOccurrences(
+    layer: borrow CALayerDescription,
+    title: borrow String
+) -> Number {
+    var found = 0
+    match layer.content {
+        Text(run) -> { if run.content == title { found++ } }
+        else -> {}
+    }
+    for child in layer.sublayers {
+        found += navigationTitleOccurrences(child, title)
+    }
+    return found
+}
+
+@Test
+function editableDocumentTitleCollapsesWithoutInjectingAnotherHeading() {
+    setInterfaceMode(.AdaptiveDesktop)
+    toolbarCollect()
+    let stack = NavigationStack {
+        ScrollView {
+            Text("Editable document title").font(size: resolvedLength(28.0))
+        }
+        .navigationTitleUsesContentHeader()
+        .navigationTitle("Editable document title")
+    }
+    let described = describedLayerInWideWindow(move stack)
+    expect!(navigationTitleOccurrences(described, "Editable document title") == 1)
+    unsafe {
+        let sink = nativeRecover<ToolbarSink>(ambientStateGet(StateSlot.toolbarSink))
+        expect!(sink.largeTitle)
+        expect!(sink.titleCollapse == 0.0)
+        expect!(sink.detailTitle == "Editable document title")
+    }
+    toolbarCollapseLargeTitle(1.0)
+    let chrome = describedLayerInWideWindow(WindowChrome())
+    expect!(navigationContainsTitle(chrome, "Editable document title"))
+    toolbarStopCollecting()
+    setInterfaceMode(hostInterfaceMode())
+}
+
+@Test
+function customLargeHeadingPreferenceStaysInsideItsScrollPageScope() {
+    let outer = scrollScopeEnter(700, 44.0)
+    scrollPageUsesContentTitleHeader()
+    let first = scrollClaimPage()
+    expect!(first.contentTitleHeader)
+    scrollScopeLeave(move outer)
+    let secondScope = scrollScopeEnter(701, 44.0)
+    let second = scrollClaimPage()
+    expect!(!second.contentTitleHeader)
+    scrollScopeLeave(move secondScope)
+}

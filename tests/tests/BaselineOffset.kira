@@ -1,0 +1,99 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function baselineOffsetChangesActualTextHeightAndNativeGlyphPlacement() {
+    let ordinary = describedLayer(Text("Reference"))
+    let raised = describedLayer(Text("Reference").baselineOffset(value: 12.0))
+    let lowered = describedLayer(Text("Reference").baselineOffset(value: -7.0))
+    expect!(raised.layout.intrinsicHeight == ordinary.layout.intrinsicHeight + 12.0)
+    expect!(lowered.layout.intrinsicHeight == ordinary.layout.intrinsicHeight + 7.0)
+    expect!(raised.layout.intrinsicWidth == ordinary.layout.intrinsicWidth)
+    expect!(lowered.layout.intrinsicWidth == ordinary.layout.intrinsicWidth)
+    match innermostLayer(raised).content {
+        Text(run) -> {
+            expect!(run.baselineOffset == 12.0)
+            expect!(run.content == "Reference")
+        }
+        else -> expect!(false)
+    }
+    match innermostLayer(lowered).content {
+        Text(run) -> expect!(run.baselineOffset == -7.0)
+        else -> expect!(false)
+    }
+}
+
+@Test
+function baselineOffsetPropagatesThroughNestedTextEnvironment() {
+    let normal = ModifierContext {}
+    let raised = modifierContextApply(normal, modifierDeltaBaselineOffset(14.0))
+    expect!(modifierContextForChildren(raised).baselineOffset == 14.0)
+    let reset = modifierContextApply(raised, modifierDeltaBaselineOffset(0.0))
+    expect!(reset.baselineOffset == 0.0)
+    let nested = describedLayer(
+        VStack {
+            Text("Raised").baselineOffset(value: 9.0)
+            Text("Normal")
+        }
+    )
+    expect!(describedContainsText(nested, "Raised"))
+    expect!(describedContainsText(nested, "Normal"))
+}
+
+@Test
+function baselineOffsetKeepsItsAdditionalHeightDuringTextWrapping() {
+    let normal = describedLayer(Text("Short title with a long continuation"))
+    let elevated = describedLayer(
+        Text("Short title with a long continuation").baselineOffset(value: 11.0)
+    )
+    let normalWrapped = normal.contentSize(94.0)
+    let elevatedWrapped = elevated.contentSize(94.0)
+    expect!(abs(elevatedWrapped.height - normalWrapped.height - 11.0) < 0.01)
+    expect!(elevatedWrapped.width == normalWrapped.width)
+}
+
+@Test
+function negativeBaselineOffsetExpandsAViewDownwardWithoutClipping() {
+    var normal = describedLayer(Text("Down"))
+    var lowered = describedLayer(Text("Down").baselineOffset(value: -15.0))
+    layOutLayerTree(normal, 180.0, 90.0)
+    layOutLayerTree(lowered, 180.0, 90.0)
+    expect!(lowered.size.height == normal.size.height + 15.0)
+    expect!(lowered.size.width == normal.size.width)
+    expect!(lowered.hittable == normal.hittable)
+}
+
+@Test
+function baselineOffsetWorksWithLineLimitsAndLargeDynamicType() {
+    let context = modifierContextApply(
+        modifierContextApply(
+            ModifierContext {}, modifierDeltaDynamicTypeSize(.Accessibility1)
+        ),
+        modifierDeltaBaselineOffset(8.0)
+    )
+    expect!(modifierTextSize(context) > 17.0)
+    expect!(context.baselineOffset == 8.0)
+    let described = describedLayer(
+        Text("Accessible footnote")
+            .lineLimit(1)
+            .dynamicTypeSize(size: .Accessibility1)
+            .baselineOffset(value: 8.0)
+    )
+    match innermostLayer(described).content {
+        Text(run) -> {
+            expect!(run.baselineOffset == 8.0)
+            expect!(run.size > 17.0)
+            expect!(run.lineLimit == 1.0)
+        }
+        else -> expect!(false)
+    }
+}
+
+@Test
+function baselineOffsetPreservesSectionGrouping() {
+    let section = Section {
+        Text("Item")
+    }.baselineOffset(value: 5.0)
+    expect!(section.isSection())
+}

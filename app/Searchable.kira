@@ -2,6 +2,30 @@ import Foundation
 import Ember
 import KCoreAnimation
 
+// SwiftUI's SearchFieldPlacement. NavigationBarDrawerAlways corresponds to
+// `.navigationBarDrawer(displayMode: .always)` on Apple platforms; Kira names
+// the value rather than building an enum case with a property argument.
+public enum SearchFieldPlacement {
+    Automatic
+    Toolbar
+    ToolbarPrincipal
+    Sidebar
+    NavigationBarDrawer
+    NavigationBarDrawerAlways
+}
+
+public enum SearchNavigationBarDrawerDisplayMode {
+    Automatic
+    Always
+}
+
+public function navigationBarDrawer(displayMode: SearchNavigationBarDrawerDisplayMode) -> SearchFieldPlacement {
+    return match displayMode {
+        Automatic -> .NavigationBarDrawer
+        Always -> .NavigationBarDrawerAlways
+    }
+}
+
 public namespace SearchField {
     // The window has one search field, so its key is one constant, clear of the
     // bands minted and hero keys are drawn from (600000 up) and of the band below
@@ -34,7 +58,8 @@ public namespace SearchField {
 public construct SearchableLayer(
     text: Binding<String>,
     isPresented: Binding<Bool>,
-    prompt: String
+    prompt: String,
+    placement: SearchFieldPlacement = .Automatic
 ) extends Widget {
     let content: some Widget
 
@@ -55,9 +80,15 @@ public construct SearchableLayer(
             prompt: copy prompt,
             clearKey: tapSeqKey(),
             cancelKey: tapSeqKey(),
-            presented: presented
+            presented: presented,
+            placement: placement
         }
-        let inPage = searchFieldInPage(context) && scrollPageSearch(copy search)
+        let wantsPage = match placement {
+            Automatic -> searchFieldInPage(context)
+            NavigationBarDrawer, NavigationBarDrawerAlways -> true
+            Toolbar, ToolbarPrincipal, Sidebar -> false
+        }
+        let inPage = wantsPage && scrollPageSearch(copy search)
         if inPage && presented {
             toolbarPresentPageSearch()
         }
@@ -91,6 +122,7 @@ public struct WindowSearch {
     var clearKey: Number = 0
     var cancelKey: Number = 0
     var presented: Bool = false
+    var placement: SearchFieldPlacement = .Automatic
 }
 
 extend Widget {
@@ -99,6 +131,23 @@ extend Widget {
     // window keeps it.
     function searchable(text: Binding<String>, prompt: String = "Search") -> Any Widget {
         return SearchableLayer(text: text, isPresented: searchPresentation(), prompt: prompt) {
+            self
+        }
+    }
+
+    // SwiftUI's `.searchable(text:placement:prompt:)` spelling. `.Toolbar`
+    // holds the live search field in window chrome rather than inside a page.
+    function searchable(
+        text: Binding<String>,
+        placement: SearchFieldPlacement,
+        prompt: String = "Search"
+    ) -> Any Widget {
+        return SearchableLayer(
+            text: text,
+            isPresented: searchPresentation(),
+            prompt: prompt,
+            placement: placement
+        ) {
             self
         }
     }
@@ -114,6 +163,64 @@ extend Widget {
         return SearchableLayer(text: text, isPresented: isPresented, prompt: prompt) {
             self
         }
+    }
+
+    function searchable(
+        text: Binding<String>,
+        isPresented: Binding<Bool>,
+        placement: SearchFieldPlacement,
+        prompt: String = "Search"
+    ) -> Any Widget {
+        return SearchableLayer(
+            text: text,
+            isPresented: isPresented,
+            prompt: prompt,
+            placement: placement
+        ) {
+            self
+        }
+    }
+
+    // SwiftUI accepts Text as a search prompt in addition to a string key.
+    // KiraUI takes its displayed Text content rather than reducing the
+    // overload to a string-only API.
+    function searchable(text: Binding<String>, prompt: Text) -> Any Widget {
+        return SearchableLayer(
+            text: text, isPresented: searchPresentation(), prompt: prompt.content
+        ) { self }
+    }
+
+    function searchable(
+        text: Binding<String>,
+        placement: SearchFieldPlacement,
+        prompt: Text
+    ) -> Any Widget {
+        return SearchableLayer(
+            text: text, isPresented: searchPresentation(), prompt: prompt.content,
+            placement: placement
+        ) { self }
+    }
+
+    function searchable(
+        text: Binding<String>,
+        isPresented: Binding<Bool>,
+        prompt: Text
+    ) -> Any Widget {
+        return SearchableLayer(text: text, isPresented: isPresented, prompt: prompt.content) {
+            self
+        }
+    }
+
+    function searchable(
+        text: Binding<String>,
+        isPresented: Binding<Bool>,
+        placement: SearchFieldPlacement,
+        prompt: Text
+    ) -> Any Widget {
+        return SearchableLayer(
+            text: text, isPresented: isPresented, prompt: prompt.content,
+            placement: placement
+        ) { self }
     }
 }
 

@@ -1,0 +1,370 @@
+import Foundation
+import Ember
+import KiraLayout
+import KCoreAnimation
+
+// SwiftUI's vertical-axis TextField is the same bound editor as TextField,
+// with a width-constrained wrapped text run. Its height grows from the smallest
+// line count up to the largest and the caret remains visible after that cap.
+// The same line breaker computes the measured height and the glyph placement.
+
+public function multilineFieldHeight(
+    text: borrow String,
+    size: Number,
+    weight: Number,
+    width: Number,
+    design: borrow CAFontDesign,
+    minLines: Number,
+    maxLines: Number
+) -> Number {
+    let lineBox = foundationTextLineBox(size, weight, design)
+    let actual = foundationTextWrappedSize(text, size, weight, width, design).height
+    let floor = lineBox * max(minLines, 1)
+    let ceiling = maxLines > 0 ? lineBox * max(maxLines, minLines) : unboundedLength
+    return min(max(actual, floor), ceiling)
+}
+
+// The position of a codepoint in the FULL wrapped document. Wrapping a prefix
+// can put a partially typed word on the previous line even though the full
+// word is drawn on the next one. Carets and text must use the same line breaks.
+public function multilineCaretAt(
+    text: borrow String,
+    index: Number,
+    size: Number,
+    weight: Number,
+    width: Number,
+    design: borrow CAFontDesign
+) -> Point {
+    let lines = foundationTextLines(text, size, weight, width, design)
+    let codes = foundationStringToCodepoints(text)
+    let target = min(max(index, 0), codes.count)
+    var offset = 0
+    var row = 0
+    for line in lines {
+        let count = foundationStringToCodepoints(line).count
+        if target <= offset + count {
+            return Point {
+                x: foundationTextRunWidth(
+                    foundationStringFromCodepoints(codes, offset, target),
+                    size, weight, design
+                ),
+                y: foundationTextLineBox(size, weight, design) * row
+            }
+        }
+        offset += count
+        if offset < codes.count && (codes[offset] == 32 || codes[offset] == 10) {
+            offset++
+        }
+        row++
+    }
+    return Point { x: 0, y: foundationTextLineBox(size, weight, design) * row }
+}
+
+public function multilineCaretPosition(
+    prefix: borrow String,
+    size: Number,
+    weight: Number,
+    width: Number,
+    design: borrow CAFontDesign
+) -> Point {
+    return multilineCaretAt(
+        prefix, foundationStringToCodepoints(prefix).count, size, weight, width, design
+    )
+}
+
+// Click and vertical-arrow targeting must resolve a line in the full string,
+// then compare advances only on that line. Unlike prefix rewrapping this is
+// linear in the number of lines and does not change earlier word breaks.
+public function multilineIndexAt(
+    text: borrow String,
+    x: Number,
+    y: Number,
+    size: Number,
+    weight: Number,
+    width: Number,
+    design: borrow CAFontDesign
+) -> Number {
+    let lines = foundationTextLines(text, size, weight, width, design)
+    let codes = foundationStringToCodepoints(text)
+    let lineBox = foundationTextLineBox(size, weight, design)
+    let selectedRow = min(max(floor(y / max(lineBox, 1)), 0), max(lines.count - 1, 0))
+    var start = 0
+    for row in 0..lines.count {
+        let lineCodes = foundationStringToCodepoints(lines[row])
+        if row == selectedRow {
+            var nearest = 0
+            var distance = unboundedLength
+            for i in 0..(lineCodes.count + 1) {
+                let at = foundationTextRunWidth(
+                    foundationStringFromCodepoints(lineCodes, 0, i), size, weight, design
+                )
+                if abs(at - x) < distance {
+                    distance = abs(at - x)
+                    nearest = i
+                }
+            }
+            return min(start + nearest, codes.count)
+        }
+        start += lineCodes.count
+        if start < codes.count && (codes[start] == 32 || codes[start] == 10) {
+            start++
+        }
+    }
+    return codes.count
+}
+
+// A multiline click takes both coordinates; it cannot use the single-line
+// cursor locator, which only compares x positions. Each candidate caret is
+// compared in the same wrapped coordinate system as the renderer.
+public function multilineTextFieldClickCaret(
+    key: Number,
+    size: Number,
+    weight: Number,
+    design: borrow CAFontDesign
+) {
+    unsafe {
+        textFieldEnsure(key)
+        var state = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
+        let width = max(state.editorWidth, 1)
+        let localX = pointerX() - pressBoundsX()
+        let localY = pointerY() - pressBoundsY() + state.editorScrollY
+        let content = foundationStringFromCodepoints(state.codes, 0, state.codes.count)
+        let index = multilineIndexAt(content, localX, localY, size, weight, width, design)
+        state.caret = index
+        state.anchor = index
+        state.verticalX = -1
+        if clickCount() >= 2 {
+            textFieldSelectWord(key)
+        }
+    }
+}
+
+public function multilineTextFieldPressFn(
+    key: Number,
+    size: Number,
+    weight: Number,
+    design: CAFontDesign
+) -> () -> Void {
+    let k = key
+    let sz = size
+    let wt = weight
+    let face = design
+    return { in
+        multilineTextFieldClickCaret(k, sz, wt, face)
+        return
+    }
+}
+
+// Paint the selected spans behind the glyphs on each actual wrapped row.
+// Selection ranges are codepoint indices, as are the editor caret and anchor.
+function multilineSelectionLayers(
+    text: borrow String,
+    anchor: Number,
+    caret: Number,
+    size: Number,
+    weight: Number,
+    width: Number,
+    design: borrow CAFontDesign,
+    shiftY: Number,
+    modifiers: borrow ModifierContext,
+    layers: borrow mut [CALayerDescription]
+) {
+    let selectedFrom = min(anchor, caret)
+    let selectedTo = max(anchor, caret)
+    let codes = foundationStringToCodepoints(text)
+    let lines = foundationTextLines(text, size, weight, width, design)
+    let lineHeight = foundationTextLineBox(size, weight, design)
+    var start = 0
+    var row = 0
+    for line in lines {
+        let length = foundationStringToCodepoints(line).count
+        let from = max(selectedFrom, start)
+        let to = min(selectedTo, start + length)
+        if from < to {
+            let leading = foundationTextRunWidth(
+                foundationStringFromCodepoints(codes, start, from), size, weight, design
+            )
+            let trailing = foundationTextRunWidth(
+                foundationStringFromCodepoints(codes, start, to), size, weight, design
+            )
+            layers.append(CALayerDescription {
+                layout: CALayoutIntent {
+                    fixedWidth: max(trailing - leading, 0),
+                    fixedHeight: lineHeight,
+                    decorates: true,
+                    offset: Point { x: leading, y: row * lineHeight - shiftY }
+                },
+                disablesActions: true,
+                content: .Solid(CASolid {
+                    fill: colorFromFoundation(textFieldSelectionColor(modifiers))
+                })
+            })
+        }
+        start += length
+        if start < codes.count && (codes[start] == 32 || codes[start] == 10) {
+            start++
+        }
+        row++
+    }
+}
+
+// Rebuild the clipping layer's visual sublayers with the *actual* width given
+// by layout, not the window's width. This avoids the common multiline editor
+// bug where long text enlarges its containing composer horizontally.
+function multilineFieldContent(
+    key: Number,
+    display: String,
+    caretIndex: Number,
+    anchorIndex: Number,
+    empty: Bool,
+    focused: Bool,
+    available: Size,
+    size: Number,
+    weight: Number,
+    design: CAFontDesign,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+    recordsViewport: Bool = false
+) -> CALayerDescription {
+    var line = Text(display)
+        .font(size: resolvedLength(size), weight: .Axis(weight))
+        .describe(context, modifiers)
+    line.key = empty ? TextFieldPart.placeholder : TextFieldPart.lead
+    line.disablesActions = true
+    line.layout.widthFill = true
+    line.layout.heightFill = false
+    // `.lineLimit(min:max:)` reserves the requested number of lines on the
+    // editor viewport, NOT on its painted Text leaf. Text.describe inherits
+    // that minimum from the same modifiers; keeping it here stretches a
+    // one-line run to fourteen lines and the text rasterizer centers the ink
+    // inside that tall box, far below the independently positioned caret.
+    line.layout.minHeight = 0.0
+    line.accessibilityClear()
+    // The line-limit range belongs to the EDITOR'S VIEWPORT. `Text` normally
+    // applies lineLimit to its glyphs and ellipsizes the last line; doing so
+    // here would lose anything after line eight and make caret-follow scroll
+    // impossible. Keep all the glyphs and their full intrinsic measurement;
+    // only the enclosing editor clips to the height cap.
+    let full = foundationTextWrappedSize(display, size, weight, unboundedLength, design)
+    line.layout.intrinsicWidth = full.width
+    line.layout.intrinsicHeight = full.height
+    match line.content {
+        Text(run) -> {
+            var text = copy run
+            text.lineLimit = 0
+            if empty {
+                text.color = colorFromFoundation(textFieldPlaceholderColor(modifiers))
+            }
+            line.content = .Text(move text)
+        }
+        else -> {}
+    }
+
+    var sublayers: [CALayerDescription] = []
+    let width = max(available.width, 1)
+    let cursor = multilineCaretAt(display, caretIndex, size, weight, width, design)
+    let lineHeight = foundationTextLineBox(size, weight, design)
+    let shiftY = max(cursor.y + lineHeight - available.height, 0.0)
+    if recordsViewport { textFieldViewport(key, available.width, shiftY) }
+    line.layout.offset = Point { x: 0, y: -shiftY }
+    if focused && caretIndex != anchorIndex && !empty {
+        multilineSelectionLayers(
+            display, anchorIndex, caretIndex, size, weight,
+            width, design, shiftY, modifiers, sublayers
+        )
+    }
+    sublayers.append(move line)
+    if focused {
+        var caret = textFieldCaret(modifiers)
+        caret.layout.decorates = true
+        caret.layout.offset = Point { x: cursor.x, y: cursor.y - shiftY }
+        sublayers.append(move caret)
+    }
+    return CALayerDescription {
+        layout: CALayoutIntent { widthFill: true, heightFill: false },
+        sublayers: move sublayers
+    }
+}
+
+public function multilineTextFieldDescription(
+    key: Number,
+    placeholder: String,
+    onChange: (String) -> Void,
+    onSubmit: () -> Void,
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext,
+    returnInsertsNewline: Bool = false
+) -> CALayerDescription {
+    unsafe {
+        let size = modifierTextSize(modifiers)
+        let weight = textFieldWeight(modifiers)
+        let design = foundationFontDesign(modifiers.fontDesign)
+        focusSync(key, context.focusedKey == key, modifiers.focus)
+        layerTextInputRegister(
+            key,
+            textFieldTypeFn(key, copy onChange, true),
+            multilineTextFieldCommandFn(
+                key, copy onChange, move onSubmit, size, weight, copy design,
+                returnInsertsNewline
+            ),
+            textFieldEditFn(key, false, move onChange, true)
+        )
+        let state = nativeRecover<TextFieldState>(ambientStateGetView(textFieldSlotKey(key)))
+        let focused = context.focusedKey == key && windowActive()
+        let empty = state.codes.count == 0
+        let display = empty ? copy placeholder : foundationStringFromCodepoints(
+            state.codes, 0, state.codes.count
+        )
+        let lineHeight = foundationTextLineBox(size, weight, design)
+        let minLines = max(modifiers.lineLimitMin, 1)
+        let maxLines = modifiers.lineLimit > 0 ? max(modifiers.lineLimit, minLines) : 0
+        let maxHeight = maxLines > 0 ? lineHeight * maxLines : -1.0
+        let build = copy context
+        let inherited = copy modifiers
+        layerActionRegister(key, multilineTextFieldPressFn(key, size, weight, copy design))
+
+        let bezeled = textFieldBezeled(modifiers)
+        let appearance = modifierAppearance(modifiers)
+        let fill = bezeled ? modifierSurfaceFill(
+            foundationColor(themeAdaptiveColor(fieldBackground, appearance)), modifiers
+        ) : transparentFoundationColor()
+        let border = bezeled ? modifierColor(
+            foundationColor(themeAdaptiveColor(fieldBorder, appearance)), modifiers
+        ) : transparentFoundationColor()
+        let inset = bezeled ? resolvedControlSizeMetrics(modifiers).fieldInset : 0.0
+
+        let prelayout = multilineFieldContent(
+            key, copy display, state.caret, state.anchor, empty, focused,
+            Size { width: unboundedLength, height: unboundedLength },
+            size, weight, copy design, context, modifiers
+        )
+        return CALayerDescription {
+            layout: CALayoutIntent {
+                widthFill: true,
+                heightFill: false,
+                expandsWidth: true,
+                minHeight: lineHeight * minLines,
+                maxHeight: maxHeight,
+                paddingLeading: inset,
+                paddingTrailing: inset,
+                alignment: Point { x: 0, y: 0 }
+            },
+            hittable: !modifiers.disabled,
+            hitKey: key,
+            clipsChildren: true,
+            cornerRadius: textFieldRadius(modifiers),
+            content: .Solid(CASolid {
+                fill: colorFromFoundation(fill),
+                border: colorFromFoundation(border),
+                borderWidth: bezeled ? fieldBorderWidth : 0.0
+            }),
+            sublayers: [move prelayout],
+            sizedContentKey: sizedContentKey({ available in
+                multilineFieldContent(
+                    key, copy display, state.caret, state.anchor, empty, focused,
+                    move available, size, weight, copy design, build, inherited, true
+                )
+            })
+        }
+    }
+}

@@ -151,15 +151,20 @@ public construct Label(title: String = "", systemImage: Symbol = .None) extends 
         // A label with no glyph is its title alone, flush with the rows a
         // plain button titles.
         if modifiers.controlPresentation == .MenuRow {
-            if !hasIcon(context, modifiers) {
+            if !hasIcon(context, modifiers) && !modifiers.hasLabelReservedIconWidth {
                 return titleView().describe(context, modifiers)
             }
-            let row = HStack(spacing: .Length(menu.iconGap), alignment: .Center) {
+            let row = HStack(
+                spacing: .Length(resolvedLabelIconToTitleSpacing(modifiers, menu.iconGap)),
+                alignment: .Center
+            ) {
                 ZStack(alignment: .Center) {
-                    iconView()
-                    .font(size: resolvedLength(menu.labelSize), weight: .SemiBold)
+                    if hasIcon(context, modifiers) {
+                        iconView()
+                        .font(size: resolvedLength(menu.labelSize), weight: .SemiBold)
+                    }
                 }
-                .width(resolvedLength(menu.iconColumn))
+                .width(resolvedLength(resolvedLabelReservedIconWidth(modifiers, menu.iconColumn)))
 
                 titleView()
             }
@@ -168,15 +173,23 @@ public construct Label(title: String = "", systemImage: Symbol = .None) extends 
         }
         // In a sidebar the glyph is the accent, in the sidebar's own column.
         if modifiers.controlPresentation == .Sidebar || modifiers.controlPresentation == .SidebarCell {
-            let row = HStack(spacing: .Length(sidebarMetrics().titleSpacing), alignment: .Center) {
+            let row = HStack(
+                spacing: .Length(resolvedLabelIconToTitleSpacing(
+                    modifiers, sidebarMetrics().titleSpacing
+                )),
+                alignment: .Center
+            ) {
                 ZStack(alignment: .Center) {
                     if hasIcon(context, modifiers) {
-                        iconView()
-                        .font(size: resolvedLength(sidebarMetrics().symbolSize))
-                        .foregroundColor(.Accent)
+                        ListItemIconInk() {
+                            iconView()
+                            .font(size: resolvedLength(sidebarMetrics().symbolSize))
+                        }
                     }
                 }
-                .width(resolvedLength(sidebarMetrics().iconColumn))
+                .width(resolvedLength(resolvedLabelReservedIconWidth(
+                    modifiers, sidebarMetrics().iconColumn
+                )))
 
                 titleView()
             }
@@ -188,14 +201,22 @@ public construct Label(title: String = "", systemImage: Symbol = .None) extends 
         // of its lists. The row's separator starts at the title, as SwiftUI's
         // does under a label.
         if modifiers.controlPresentation == .InsetGrouped {
-            let row = HStack(spacing: .Length(sidebarMetrics().titleSpacing), alignment: .Center) {
-                if hasIcon(context, modifiers) {
+            let row = HStack(
+                spacing: .Length(resolvedLabelIconToTitleSpacing(
+                    modifiers, sidebarMetrics().titleSpacing
+                )),
+                alignment: .Center
+            ) {
+                if hasIcon(context, modifiers) || modifiers.hasLabelReservedIconWidth {
                     ZStack(alignment: .Center) {
-                        iconView()
-                        .font(size: resolvedLength(sidebarMetrics().symbolSize))
-                        .foregroundColor(.Accent)
+                        ListItemIconInk() {
+                            iconView()
+                            .font(size: resolvedLength(sidebarMetrics().symbolSize))
+                        }
                     }
-                    .width(resolvedLength(sidebarMetrics().iconColumn))
+                    .width(resolvedLength(resolvedLabelReservedIconWidth(
+                        modifiers, sidebarMetrics().iconColumn
+                    )))
                 }
 
                 titleView()
@@ -209,13 +230,20 @@ public construct Label(title: String = "", systemImage: Symbol = .None) extends 
         // Anywhere else the glyph is in the title's own ink, centered in the
         // symbol column with the platform's gap before the title, as SwiftUI
         // sets a `Label` on its own.
-        let label = HStack(spacing: .Length(sidebarMetrics().titleSpacing), alignment: .Center) {
-            if hasIcon(context, modifiers) {
+        let label = HStack(
+            spacing: .Length(resolvedLabelIconToTitleSpacing(
+                modifiers, sidebarMetrics().titleSpacing
+            )),
+            alignment: .Center
+        ) {
+            if hasIcon(context, modifiers) || modifiers.hasLabelReservedIconWidth {
                 ZStack(alignment: .Center) {
                     iconView()
                     .font(size: resolvedLength(sidebarMetrics().symbolSize))
                 }
-                .width(resolvedLength(sidebarMetrics().iconColumn))
+                .width(resolvedLength(resolvedLabelReservedIconWidth(
+                    modifiers, sidebarMetrics().iconColumn
+                )))
             }
 
             titleView()
@@ -357,6 +385,7 @@ public function pickerOption(
                 content
             }
             .accessibilityAddTraits(pickerOptionTraits(false))
+            .disabled(modifiers.selectionDisabled)
             return row.describe(context, modifiers)
         }
         let row = Button(action: entry.select) {
@@ -367,6 +396,7 @@ public function pickerOption(
             }
         }
         .accessibilityAddTraits(pickerOptionTraits(entry.selected))
+        .disabled(modifiers.selectionDisabled)
         return row.describe(context, modifiers)
     }
     // The list a picker opens is a menu, as a platform picker's is, so its
@@ -390,6 +420,7 @@ public function pickerOption(
         }
     )
     .accessibilityAddTraits(pickerOptionTraits(entry.selected))
+    .disabled(modifiers.selectionDisabled)
     var described = row.describe(context, modifiers)
     // The row under the pointer lights, as a menu's does on a Mac.
     if described.hitKey != 0 && interfaceHovers() {
@@ -426,6 +457,7 @@ public function pickerSegment(
         .onClickKeyed(key, entry.select, .Capsule)
         .accessibilityElement(children: .Combine)
         .accessibilityAddTraits(pickerOptionTraits(entry.selected))
+        .disabled(modifiers.selectionDisabled)
         return lens.describe(context, modifiers)
     }
     let segment = label
@@ -434,6 +466,7 @@ public function pickerSegment(
     .onClickKeyed(key, entry.select, .Capsule)
     .accessibilityElement(children: .Combine)
     .accessibilityAddTraits(pickerOptionTraits(entry.selected))
+    .disabled(modifiers.selectionDisabled)
     return segment.describe(context, modifiers)
 }
 

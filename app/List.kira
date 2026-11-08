@@ -38,29 +38,32 @@ public construct List() extends Widget {
     ) -> CALayerDescription {
         match modifiers.listStyle {
             Sidebar -> {
-                let rows = ScrollView() {
-                    VStack(spacing: .None, alignment: .Leading) {
+                let rows = ScrollView(listLike: true) {
+                    VStack(spacing: .Length(resolvedListRowSpacing(modifiers)), alignment: .Leading) {
                         For(child in children) {
                             child
                         }
                     }
                 }
-                return rows.describe(context, modifierContextPresenting(modifiers, .Sidebar))
+                return listRowsWithInsets(rows.describe(
+                    context, modifierContextPresenting(modifiers, .Sidebar)
+                ))
             }
             Plain -> {
-                let rows = ScrollView() {
-                    VStack(spacing: .None, alignment: .Leading) {
-                        For(child in children) {
-                            child
-                        }
+                let rows = ScrollView(listLike: true) {
+                    PlainListRows() {
+                        For(child in children) { child }
                     }
                 }
-                return rows.describe(context, modifiers)
+                return rows.describe(
+                    context,
+                    modifierContextApply(modifiers, ModifierDelta { entersPlainList: true })
+                )
             }
             InsetGrouped -> {}
             Automatic -> {}
         }
-        let grouped = ScrollView() {
+        let grouped = ScrollView(listLike: true) {
             InsetGroupedList() {
                 For(child in children) {
                     child
@@ -68,6 +71,41 @@ public construct List() extends Widget {
             }
         }
         return grouped.describe(context, modifiers)
+    }
+}
+
+// Plain List rows are described one at a time so their individual hover and
+// inset preferences are consumed at the ROW, not at the scrolling viewport.
+// A Section remains a grouped subtree with its own header and footer; List
+// never mistakes that section wrapper for one selectable loose row.
+public construct PlainListRows() extends Widget {
+    let children: [some Widget]
+
+    function describe(
+        context: borrow BuildContext,
+        modifiers: borrow ModifierContext
+    ) -> CALayerDescription {
+        var placed: [CALayerDescription] = []
+        for child in children {
+            let described = child.describe(context, modifiers)
+            if describesNothing(described) { continue }
+            let isSection = described.groupedSection
+            let hover = listRowHoverPreferences(described, modifiers)
+            let inset = listRowsWithInsets(move described)
+            if isSection {
+                placed.append(move inset)
+            } else {
+                placed.append(listRowHoverDecorated(move inset, hover, modifiers))
+            }
+        }
+        return CALayerDescription {
+            layout: CALayoutIntent {
+                axis: .Column,
+                spacing: resolvedListRowSpacing(modifiers),
+                heightFill: false
+            },
+            sublayers: move placed
+        }
     }
 }
 
@@ -91,44 +129,85 @@ public construct InsetGroupedList() extends Widget {
         modifiers: borrow ModifierContext
     ) -> CALayerDescription {
         let canvas = themeAdaptiveColor(groupedBackground(), modifierAppearance(modifiers))
-        navigationSetBackground(copy canvas)
+        if modifiers.scrollContentBackground != .Hidden {
+            navigationSetBackground(copy canvas)
+        }
         let sectionModifiers = modifierContextPresenting(modifiers, .InsetGrouped)
-        var grouped: [Any Widget] = []
-        var rows: [Any Widget] = []
+        var sections: [CALayerDescription] = []
+        var rows: [CALayerDescription] = []
+        // A custom SwiftUI View can have a Section as its body. The compiled
+        // View's static `isSection()` is then not necessarily that of its
+        // dynamic body; grouping rendered descriptions preserves a Section's
+        // role through arbitrary view and modifier layers without describing
+        // any child twice or introducing a second grouped card.
         for child in children {
-            if child.isSection() {
+            let described = child.describe(context, sectionModifiers)
+            if describesNothing(described) { continue }
+            if described.groupedSection {
                 if rows.count > 0 {
-                    grouped.append(Section() { For(row in rows) { row } })
+                    sections.append(insetGroupedLooseRows(move rows, context, sectionModifiers))
                     rows = []
                 }
-                grouped.append(copy child)
+                sections.append(move described)
             } else {
-                rows.append(copy child)
+                rows.append(move described)
             }
         }
         if rows.count > 0 {
-            grouped.append(Section() { For(row in rows) { row } })
+            sections.append(insetGroupedLooseRows(move rows, context, sectionModifiers))
         }
-        var sections: [CALayerDescription] = []
-        for child in grouped {
-            var section = child.describe(context, sectionModifiers)
-            if describesNothing(section) {
-                continue
-            }
-            if sections.count == 0 {
-                section.layout.paddingTop = 0.0
-            } else {
-                let previous = sections.count - 1
-                section.layout.paddingTop = max(
-                    listMetrics().sectionSpacing,
-                    max(sections[previous].layout.paddingBottom, section.layout.paddingTop)
+        for index in 0..sections.count {
+            // The list contributes its usual outer column margin once. A
+            // Section override replaces that value, so apply the DIFFERENCE
+            // to the Section's own layout, not the amount as extra padding.
+            let defaultMargin = resolvedContentMargin(modifiers)
+            let layout = sections[index].layout
+            if layout.hasListSectionMarginLeading {
+                sections[index].layout.paddingLeading += listSectionMarginDifference(
+                    layout.listSectionMarginLeading, defaultMargin
                 )
+            }
+            if layout.hasListSectionMarginTrailing {
+                sections[index].layout.paddingTrailing += listSectionMarginDifference(
+                    layout.listSectionMarginTrailing, defaultMargin
+                )
+            }
+            if index == 0 {
+                sections[index].layout.paddingTop = match layout.listSectionMarginTop {
+                    Some(value) -> max(value, 0.0)
+                    None -> 0.0
+                }
+            } else {
+                let previous = index - 1
+                let defaultSpacing = max(
+                    resolvedListSectionSpacing(modifiers.listSectionSpacing),
+                    max(sections[previous].layout.paddingBottom, sections[index].layout.paddingTop)
+                )
+                let earlier = sections[previous].layout.listSectionMarginBottom
+                let next = sections[index].layout.listSectionMarginTop
+                // Explicit point margins replace style-derived spacing. Nil
+                // means restore the style's original shared gap. Neighboring
+                // custom margins share space (max), never double-pad it.
+                let between = match listSectionSpecifiedMargin(earlier) {
+                    Some(value) -> match listSectionSpecifiedMargin(next) {
+                        Some(other) -> max(value, other)
+                        None -> value
+                    }
+                    None -> match listSectionSpecifiedMargin(next) {
+                        Some(value) -> value
+                        None -> defaultSpacing
+                    }
+                }
+                sections[index].layout.paddingTop = between
                 sections[previous].layout.paddingBottom = 0.0
             }
-            sections.append(move section)
         }
         if sections.count > 0 {
-            sections[sections.count - 1].layout.paddingBottom = 0.0
+            let last = sections.count - 1
+            sections[last].layout.paddingBottom = match sections[last].layout.listSectionMarginBottom {
+                Some(value) -> max(value, 0.0)
+                None -> 0.0
+            }
         }
         return CALayerDescription {
             layout: CALayoutIntent {
@@ -142,7 +221,12 @@ public construct InsetGroupedList() extends Widget {
             content: .Solid(
                 CASolid {
                     fill: colorFromFoundation(
-                        modifierColor(foundationColor(move canvas), modifiers)
+                        modifierColor(
+                            modifiers.scrollContentBackground == .Hidden
+                                ? transparentFoundationColor()
+                                : foundationColor(move canvas),
+                            modifiers
+                        )
                     )
                 }
             ),
@@ -158,6 +242,27 @@ public construct InsetGroupedList() extends Widget {
             ]
         }
     }
+}
+
+// Adjacent unsectioned rows still form one untitled grouped card. They have
+// already been described once under the list's control presentation, so keep
+// the same row layout and separator behavior that Section itself uses.
+function insetGroupedLooseRows(
+    described: [CALayerDescription],
+    context: borrow BuildContext,
+    modifiers: borrow ModifierContext
+) -> CALayerDescription {
+    var rows: [CALayerDescription] = []
+    let total = described.count
+    for row in described {
+        let followed = rows.count + 1 < total
+        rows.append(insetGroupedRow(copy row, followed, context, modifiers))
+    }
+    let empty = EmptyView().describe(context, modifiers)
+    return markListSectionMargins(
+        insetGroupedSection(move rows, copy empty, move empty, modifiers),
+        modifiers.listSectionMargins
+    )
 }
 
 // One section of an inset grouped list: its header, then its rows together on
@@ -206,12 +311,11 @@ public function insetGroupedSection(
                 CASolid {
                     fill: colorFromFoundation(
                         modifierColor(
-                            foundationColor(
-                                themeAdaptiveColor(
-                                    groupedCardBackground(),
-                                    modifierAppearance(modifiers)
-                                )
-                            ),
+                            modifiers.hasListRowBackground
+                                ? foundationColor(modifiers.listRowBackground)
+                                : foundationColor(themeAdaptiveColor(
+                                    groupedCardBackground(), modifierAppearance(modifiers)
+                                )),
                             modifiers
                         )
                     ),
@@ -276,22 +380,38 @@ public function insetGroupedRow(
     context: borrow BuildContext,
     modifiers: borrow ModifierContext,
 ) -> CALayerDescription {
-    let separator = followed ? listMetrics().separatorThickness : 0.0
-    var inner = content
-    let key = inner.hitKey
-    let pressable = inner.hittable
+    let separatorPreferences = listRowSeparatorPreferences(content)
+    let rowHoverPreferences = listRowHoverPreferences(content, modifiers)
+    let topSeparator = listRowSeparatorShows(separatorPreferences.top, false)
+    let bottomSeparator = listRowSeparatorShows(separatorPreferences.bottom, followed)
+    let separator = bottomSeparator ? listMetrics().separatorThickness : 0.0
+    let requested = listRowInsetOverrides(content)
+    let top = resolvedListRowInset(requested.top, listMetrics().rowVerticalInset)
+    let bottom = resolvedListRowInset(requested.bottom, listMetrics().rowVerticalInset)
+    let leading = resolvedListRowInset(requested.leading, listRowInset(modifiers))
+    let trailing = resolvedListRowInset(requested.trailing, listRowInset(modifiers))
+    var inner = listRowInsetsConsumed(move content)
+    // Pointer, help and hover observers are passive single-child wrappers.
+    // Their outer layer intentionally has no press key. A Button inside them
+    // must still make the entire inset-grouped row clickable, otherwise
+    // attaching `.onHover` to a row silently disables its action.
+    let key = listRowPrimaryPressKey(inner)
+    let pressable = key != 0
     // A row that carries a band, as a selected `ListRow` does, has it painted
     // across the whole cell rather than around its content.
     let band = inner.takeRowBand()
     inner.hittable = false
     var layers: [CALayerDescription] = []
+    if topSeparator {
+        layers.append(insetGroupedSeparatorLine(separatorPreferences.topTint, modifiers))
+    }
     layers.append(
         CALayerDescription {
             layout: CALayoutIntent {
                 heightFill: false,
                 minHeight: listMetrics().rowHeight - separator,
-                paddingTop: listMetrics().rowVerticalInset,
-                paddingBottom: listMetrics().rowVerticalInset,
+                paddingTop: top,
+                paddingBottom: bottom,
                 alignment: Point { x: 0.0, y: 0.5 }
             },
             sublayers: [move inner]
@@ -299,35 +419,16 @@ public function insetGroupedRow(
     )
     // The hairline starts where the row says its separator does -- a label's
     // title, past its glyph -- and at the row's edge when nothing says.
-    if followed {
-        layers.append(
-            CALayerDescription {
-                layout: CALayoutIntent {
-                    heightFill: false,
-                    fixedHeight: listMetrics().separatorThickness,
-                    followsGuide: guideTag(ListRowSeparatorLeading())
-                },
-                content: .Solid(
-                    CASolid {
-                        fill: colorFromFoundation(
-                            modifierColor(
-                                foundationColor(
-                                    themeAdaptiveColor(listSeparator, modifierAppearance(modifiers))
-                                ),
-                                modifiers
-                            )
-                        )
-                    }
-                )
-            }
-        )
+    if bottomSeparator {
+        layers.append(insetGroupedSeparatorLine(separatorPreferences.bottomTint, modifiers))
     }
-    return CALayerDescription {
+    return listRowHoverDecorated(CALayerDescription {
         layout: CALayoutIntent {
             axis: .Column,
             heightFill: false,
-            paddingLeading: listRowInset(modifiers),
-            paddingTrailing: listRowInset(modifiers)
+            paddingLeading: leading,
+            paddingTrailing: trailing,
+            paddingBottom: followed ? resolvedListRowSpacing(modifiers) : 0.0
         },
         hittable: pressable,
         hitKey: pressable ? key : 0,
@@ -336,6 +437,37 @@ public function insetGroupedRow(
         // never a pointer resting on them.
         pressColor: insetGroupedRowWash(pressable, modifiers),
         sublayers: move layers
+    }, rowHoverPreferences, modifiers)
+}
+
+function listRowPrimaryPressKey(layer: borrow CALayerDescription) -> Number {
+    if layer.hittable && layer.hitKey != 0 { return layer.hitKey }
+    // Only tunnel through wrappers with exactly one child. A row containing
+    // multiple independent buttons must not steal their distinct press keys.
+    if layer.sublayers.count == 1 { return listRowPrimaryPressKey(layer.sublayers[0]) }
+    return 0
+}
+
+// One actual hairline in a grouped row. Keep its original label-column guide
+// so a Label's separator begins at its text, not under its glyph. Tint only
+// changes the fill, never the line's measurement or hit-testing behavior.
+public function insetGroupedSeparatorLine(
+    tint: CAColor?,
+    modifiers: borrow ModifierContext
+) -> CALayerDescription {
+    let normal = colorFromFoundation(
+        modifierColor(
+            foundationColor(themeAdaptiveColor(listSeparator, modifierAppearance(modifiers))),
+            modifiers
+        )
+    )
+    return CALayerDescription {
+        layout: CALayoutIntent {
+            heightFill: false,
+            fixedHeight: listMetrics().separatorThickness,
+            followsGuide: guideTag(ListRowSeparatorLeading())
+        },
+        content: .Solid(CASolid { fill: resolvedRowSeparatorColor(copy tint, move normal) })
     }
 }
 
@@ -378,9 +510,10 @@ public construct SidebarSectionHeader() extends Widget {
         context: borrow BuildContext,
         modifiers: borrow ModifierContext
     ) -> CALayerDescription {
+        let prominent = modifiers.headerProminence == .Increased
         let title = content
-        .typography(.body)
-        .foregroundColor(.Secondary)
+        .typography(prominent ? .headline : .body)
+        .foregroundColor(prominent ? .Primary : .Secondary)
         .describe(context, modifiers)
         if describesNothing(title) {
             return title
@@ -411,7 +544,9 @@ public construct SidebarRow(selected: Bool, action: () -> Void) extends Widget {
     ) -> CALayerDescription {
         sidebarSelectionRow(selected)
         let key = tapSeqKey()
-        layerActionRegister(key, action)
+        if !modifiers.disabled && !modifiers.selectionDisabled {
+            layerActionRegister(key, action)
+        }
         let face = modifierTypography(modifiers, .body)
         let cell = modifiers.controlPresentation == .SidebarCell
         let title = content.font(
@@ -422,12 +557,18 @@ public construct SidebarRow(selected: Bool, action: () -> Void) extends Widget {
             context,
             modifierContextPresenting(modifiers, .Sidebar)
         ) : title.describe(context, modifiers)
-        row.hittable = !modifiers.disabled
-        row.hitKey = key
+        row.hittable = !modifiers.disabled && !modifiers.selectionDisabled
+        row.hitKey = row.hittable ? key : 0
         row.backgroundColor = colorFromFoundation(
             modifierColor(foundationColor(sidebarRowBand(selected, modifiers)), modifiers)
         )
-        var node = accessibilityPressable(.Button, action, modifiers)
+        // A nonselectable row is still announced, but its default selection
+        // action must not survive in the accessibility tree when mouse input
+        // has been disabled for that row.
+        let accessibilityModifiers = modifierContextApply(
+            modifiers, modifierDeltaDisabled(modifiers.disabled || modifiers.selectionDisabled)
+        )
+        var node = accessibilityPressable(.Button, action, accessibilityModifiers)
         if selected {
             node.traits = node.traits.union(AccessibilityTraits.isSelected)
         }
@@ -453,7 +594,9 @@ public function sidebarRowCell(
     content: CALayerDescription,
     modifiers: borrow ModifierContext
 ) -> CALayerDescription {
-    var inner = content
+    let requested = listRowInsetOverrides(content)
+    let hoverPreferences = listRowHoverPreferences(content, modifiers)
+    var inner = listRowInsetsConsumed(move content)
     let key = inner.hitKey
     let pressable = inner.hittable
     let band = inner.takeRowBand()
@@ -461,8 +604,10 @@ public function sidebarRowCell(
     inner.hittable = false
     inner.hitKey = 0
     let gutter = sidebarMetrics().rowInset - sidebarMetrics().selectionInset
+    let leading = resolvedListRowInset(requested.leading, sidebarMetrics().rowInset)
+    let trailing = resolvedListRowInset(requested.trailing, sidebarMetrics().rowInset)
     let radius = sidebarMetrics().selectionRadius
-    return CALayerDescription {
+    return listRowHoverDecorated(CALayerDescription {
         layout: CALayoutIntent {
             heightFill: false,
             minHeight: sidebarMetrics().rowHeight,
@@ -474,8 +619,10 @@ public function sidebarRowCell(
         sublayers: [CALayerDescription {
             layout: CALayoutIntent {
                 axis: .Row,
-                paddingLeading: gutter,
-                paddingTrailing: gutter,
+                paddingLeading: gutter + leading - sidebarMetrics().rowInset,
+                paddingTrailing: gutter + trailing - sidebarMetrics().rowInset,
+                paddingTop: resolvedListRowInset(requested.top, 0.0),
+                paddingBottom: resolvedListRowInset(requested.bottom, 0.0),
                 alignment: Point { x: 0.0, y: 0.5 }
             },
             hittable: pressable && onBand,
@@ -485,7 +632,7 @@ public function sidebarRowCell(
             content: .Solid(CASolid { fill: band, cornerRadius: radius, shapeKind: 1 }),
             sublayers: [move inner]
         }]
-    }
+    }, hoverPreferences, modifiers)
 }
 
 extend CALayerDescription {

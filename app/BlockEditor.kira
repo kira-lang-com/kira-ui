@@ -1,0 +1,244 @@
+import Foundation
+
+// A native, compositional document-block editor. The parent owns the ordered
+// document and its persistence, just as SwiftUI's TextField takes a Binding
+// rather than storing application data. Individual fields have stable .id()
+// keys so reordering one block does not transfer its caret to another block.
+// No web editor, special palette or custom input subsystem is involved.
+public enum DocumentBlockKind {
+    Paragraph
+    Heading1
+    Heading2
+    Heading3
+    Bullet
+    Numbered
+    ToDo
+    Quote
+    Code
+    Divider
+}
+
+public struct DocumentBlock {
+    let id: String
+    let kind: DocumentBlockKind = .Paragraph
+    let text: String = ""
+    let checked: Bool = false
+}
+
+public function documentBlockKinds() -> [DocumentBlockKind] {
+    return [.Paragraph, .Heading1, .Heading2, .Heading3, .Bullet,
+        .Numbered, .ToDo, .Quote, .Code, .Divider]
+}
+
+public function documentBlockTitle(kind: DocumentBlockKind) -> String {
+    return match kind {
+        Paragraph -> "Text"
+        Heading1 -> "Heading 1"
+        Heading2 -> "Heading 2"
+        Heading3 -> "Heading 3"
+        Bullet -> "Bulleted list"
+        Numbered -> "Numbered list"
+        ToDo -> "To-do list"
+        Quote -> "Quote"
+        Code -> "Code"
+        Divider -> "Divider"
+    }
+}
+
+public function documentBlockSymbol(kind: DocumentBlockKind) -> Symbol {
+    return match kind {
+        Paragraph -> .TextAlignleft
+        Heading1, Heading2, Heading3 -> .TextformatSize
+        Bullet -> .ListBullet
+        Numbered -> .ListNumber
+        ToDo -> .CheckmarkSquare
+        Quote -> .TextQuote
+        Code -> .Textformat
+        Divider -> .Minus
+    }
+}
+
+public function documentBlockNumber(blocks: borrow [DocumentBlock], id: borrow String) -> Number {
+    var number: Number = 1
+    for block in blocks {
+        if block.id == id { return number }
+        if block.kind == .Numbered { number++ }
+        else { number = 1 }
+    }
+    return number
+}
+
+// `/heading1 `, `/todo ` and other typed opening commands can be handled
+// by a client's Binding setter; this reusable parser does not couple editing
+// to any app's database or introduce a custom keyboard event router.
+public function documentBlockSlashKind(text: borrow String) -> DocumentBlockKind? {
+    return match text.trim() {
+        "/text", "/paragraph" -> .Some(.Paragraph)
+        "/h1", "/heading1" -> .Some(.Heading1)
+        "/h2", "/heading2" -> .Some(.Heading2)
+        "/h3", "/heading3" -> .Some(.Heading3)
+        "/bullet", "/bulleted" -> .Some(.Bullet)
+        "/number", "/numbered" -> .Some(.Numbered)
+        "/todo", "/checklist" -> .Some(.ToDo)
+        "/quote" -> .Some(.Quote)
+        "/code" -> .Some(.Code)
+        "/divider" -> .Some(.Divider)
+        else -> .None
+    }
+}
+
+// A complete slash command is selected on Return, or from the native type
+// picker. Arbitrary prose beginning with '/' remains ordinary editable text.
+public construct BlockEditor(
+    blocks: [DocumentBlock],
+    text: (String) -> Binding<String>,
+    onInsert: (String?, DocumentBlockKind) -> Void,
+    onConvert: (String, DocumentBlockKind) -> Void,
+    onToggle: (String) -> Void,
+    onMove: (String, Number) -> Void,
+    onDelete: (String) -> Void
+) extends Widget {
+    body {
+        VStack(alignment = .Leading, spacing = .Length(8.0)) {
+            For(block in blocks) {
+                BlockEditorRow(
+                    block: block,
+                    number: documentBlockNumber(blocks, block.id),
+                    text: text(block.id),
+                    onInsert: { kind in onInsert(.Some(block.id), kind) return },
+                    onConvert: { kind in onConvert(block.id, kind) return },
+                    onToggle: { in onToggle(block.id) return },
+                    onMove: { direction in onMove(block.id, direction) return },
+                    onDelete: { in onDelete(block.id) return }
+                )
+                .id(block.id)
+            }
+            Menu {
+                For(kind in documentBlockKinds()) {
+                    Button(action = { in onInsert(.None, kind) return }) {
+                        Label(title = documentBlockTitle(kind), systemImage = documentBlockSymbol(kind))
+                    }
+                }
+            } label: {
+                Label(title = "Add a block", systemImage = .Plus)
+                .foregroundColor(.Secondary)
+            }
+            .buttonStyle(.Plain)
+            .menuIndicator(.Hidden)
+        }
+        .frame(maxWidth = FrameLimit.Infinity, alignment = .Leading)
+    }
+}
+
+public construct BlockEditorRow(
+    block: DocumentBlock,
+    number: Number,
+    text: Binding<String>,
+    onInsert: (DocumentBlockKind) -> Void,
+    onConvert: (DocumentBlockKind) -> Void,
+    onToggle: () -> Void,
+    onMove: (Number) -> Void,
+    onDelete: () -> Void
+) extends Widget {
+    body {
+        HStack(alignment = .Top, spacing = .Length(10.0)) {
+            Menu {
+                Menu(title = "Turn into", systemImage = .Textformat) {
+                    For(kind in documentBlockKinds()) {
+                        Button(action = { in onConvert(kind) return }) {
+                            Label(title = documentBlockTitle(kind), systemImage = documentBlockSymbol(kind))
+                        }
+                    }
+                }
+                Menu(title = "Insert below", systemImage = .Plus) {
+                    For(kind in documentBlockKinds()) {
+                        Button(action = { in onInsert(kind) return }) {
+                            Label(title = documentBlockTitle(kind), systemImage = documentBlockSymbol(kind))
+                        }
+                    }
+                }
+                Button(action = { in onMove(-1) return }) {
+                    Label(title = "Move up", systemImage = .ArrowUp)
+                }
+                Button(action = { in onMove(1) return }) {
+                    Label(title = "Move down", systemImage = .ArrowDown)
+                }
+                Divider()
+                Button(role = .Destructive, action = { in onDelete() return }) {
+                    Label(title = "Delete block", systemImage = .Trash)
+                }
+            } label: {
+                Icon(symbol = .Ellipsis)
+                .foregroundColor(.Secondary)
+            }
+            .buttonStyle(.Plain)
+            .menuIndicator(.Hidden)
+
+            blockEditorInput(block, number, text, onInsert, onConvert, onToggle)
+        }
+        .frame(maxWidth = FrameLimit.Infinity, alignment = .Leading)
+    }
+}
+
+function blockEditorInput(
+    block: DocumentBlock,
+    number: Number,
+    text: Binding<String>,
+    insert: (DocumentBlockKind) -> Void,
+    convert: (DocumentBlockKind) -> Void,
+    toggle: () -> Void
+) -> Any Widget {
+    return match block.kind {
+        Heading1 -> TextField(title = "Heading 1", text = text)
+            .textFieldStyle(.Plain).typography(.title).fontWeight(.Bold)
+            .onSubmit(action = { in insert(.Paragraph) return })
+        Heading2 -> TextField(title = "Heading 2", text = text)
+            .textFieldStyle(.Plain).typography(.title2).fontWeight(.SemiBold)
+            .onSubmit(action = { in insert(.Paragraph) return })
+        Heading3 -> TextField(title = "Heading 3", text = text)
+            .textFieldStyle(.Plain).typography(.title3).fontWeight(.SemiBold)
+            .onSubmit(action = { in insert(.Paragraph) return })
+        Code -> TextEditor(text = text)
+            .textFieldStyle(.Plain).fontDesign(.Monospaced)
+            .lineLimit(min = 3, max = 24)
+        Divider -> Divider()
+        Bullet -> HStack(alignment = .Top, spacing = .Length(10.0)) {
+            Text("•")
+            TextField(title = "List item", text = text, axis = .Vertical)
+                .textFieldStyle(.Plain).lineLimit(min = 1, max = 12)
+                .onSubmit(action = { in insert(.Bullet) return })
+        }
+        Numbered -> HStack(alignment = .Top, spacing = .Length(10.0)) {
+            Text("\(number).")
+            TextField(title = "List item", text = text, axis = .Vertical)
+                .textFieldStyle(.Plain).lineLimit(min = 1, max = 12)
+                .onSubmit(action = { in insert(.Numbered) return })
+        }
+        ToDo -> HStack(alignment = .Top, spacing = .Length(10.0)) {
+            Button(action = toggle) {
+                Icon(symbol = block.checked ? .CheckmarkSquare : .Square)
+            }
+            .buttonStyle(.Plain)
+            TextField(title = "To-do", text = text, axis = .Vertical)
+                .textFieldStyle(.Plain).lineLimit(min = 1, max = 12)
+                .onSubmit(action = { in insert(.ToDo) return })
+        }
+        Quote -> HStack(alignment = .Top, spacing = .Length(10.0)) {
+            Icon(symbol = .TextQuote).foregroundColor(.Secondary)
+            TextField(title = "Quote", text = text, axis = .Vertical)
+                .textFieldStyle(.Plain).typography(.body)
+                .lineLimit(min = 1, max = 12)
+                .onSubmit(action = { in insert(.Paragraph) return })
+        }
+        Paragraph -> TextField(title = "Type '/' for commands", text = text, axis = .Vertical)
+            .textFieldStyle(.Plain).typography(.body)
+            .lineLimit(min = 1, max = 16)
+            .onSubmit(action = { in
+                match documentBlockSlashKind(text.get()) {
+                    Some(kind) -> convert(kind)
+                    None -> insert(.Paragraph)
+                }
+                return
+            })
+    }
+}

@@ -18,6 +18,10 @@ function kiraLayerDraw(
     graphics: borrow Graphics,
     batch: borrow UiBatch
 ) {
+    if state.nativeBackdrop {
+        let chrome = windowBackdropChromeField()
+        metalNativeGlassChromeGeometry(chrome.width, chrome.height)
+    }
     state.compositor.encode(
         frame,
         graphics,
@@ -25,7 +29,8 @@ function kiraLayerDraw(
         viewport.width,
         viewport.height,
         foundationRenderScale(frame.backingScale()),
-        state.transparent
+        state.transparent,
+        state.nativeBackdrop
     )
     // A window is cleared to its own canvas, the color its root paints. The
     // root's edges are antialiased like any layer's, so the pixels along the
@@ -51,13 +56,21 @@ function kiraLayerWindowRun(
 ) {
     unsafe {
         let launch = launchOptions(title, width, height, arguments)
+        let nativeBackdrop = !transparent && kiraMacOSNativeBackdrop!()
+            && graphicsDefaultBackend() == .Metal
+            && match launch.harness {
+                Some(harness) -> !harness.headless
+                None -> true
+            }
         let previousStateScope = ambientScopeCurrent()
         let layerStateScope = ambientScopeCreate()
         ambientScopeEnter(layerStateScope)
+        windowBackdropAvailableSet(nativeBackdrop, toolbar: nativeBackdrop)
         let runtimeStorage = nativeState(
             KiraLayerAppState {
                 stateScope: layerStateScope,
                 transparent: transparent,
+                nativeBackdrop: nativeBackdrop,
                 uiTest: launchingTest()
             }
         )
@@ -69,6 +82,7 @@ function kiraLayerWindowRun(
             height: UN32(launch.height),
             sampleCount: 1,
             transparent: transparent,
+            nativeBackdrop: nativeBackdrop,
             // An opaque window is a document window: its title and toolbar share
             // one band the content runs under, and KiraUI draws what sits on it.
             titlebar: transparent ? .Standard : .Unified,
@@ -251,6 +265,25 @@ function kiraLayerWindowRun(
                 let under = state.compositor.tree.hitTestTree(state.ui.pointerX, state.ui.pointerY)
                 state.ui.hoveredKey = under.hit ? under.hitKey : 0
                 state.compositor.tree.setHovered(under.hit ? under.layer : Layers.none)
+                // A rebuild can move/remove a view while the pointer is
+                // stationary (including tab changes and navigation pushes).
+                // Reconcile the newly described hover observers against the
+                // new presentation tree, not just PointerMoved events. Before
+                // any pointer has entered the window there is NO hover, even
+                // when the default coordinates happen to be (0, 0).
+                var newlyHovered: [Number] = []
+                if state.pointerInsideWindow { newlyHovered = copy under.hoverKeys }
+                if kiraLayerUpdateHoverRegions(state, newlyHovered) {
+                    state.ui.eventCount++
+                }
+                if kiraLayerUpdatePointerVisibility(state, newlyHovered) {
+                    state.ui.eventCount++
+                }
+                var continuous: [CAHoverRegion] = []
+                if state.pointerInsideWindow { continuous = copy under.hoverRegions }
+                if kiraLayerUpdateContinuousHover(state, continuous) {
+                    state.ui.eventCount++
+                }
                 // A press sliding in a menu whose control stopped answering -- a
                 // submenu's row lifted into its card, or set back down -- is the
                 // control's still: it goes on held by whatever control is under the
@@ -278,5 +311,15 @@ function kiraLayerWindowRun(
         app.run(runtimeUser)
         ambientStateReset()
         ambientScopeEnter(previousStateScope)
+    }
+}
+
+// Opt in to the host's real window-server material only on macOS. KiraUI's
+// in-frame glass remains the portable fallback (and the headless test path).
+comptime macro kiraMacOSNativeBackdrop {
+    kind { function }
+    expand(input: Syntax) -> Syntax {
+        if Build.platform() == "macos" { return quote { true } }
+        return quote { false }
     }
 }

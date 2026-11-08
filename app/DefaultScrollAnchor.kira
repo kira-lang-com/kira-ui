@@ -1,0 +1,179 @@
+import Foundation
+import KCoreAnimation
+
+// SwiftUI's three independent default-scroll-anchor roles. A role-specific
+// setting overrides a general anchor, without changing the other two roles.
+public enum ScrollAnchorRole {
+    InitialOffset
+    SizeChanges
+    Alignment
+}
+
+// Each role records whether a later general `.defaultScrollAnchor(_:)` is
+// allowed to replace it. For example:
+//
+//     ScrollView { content }
+//         .defaultScrollAnchor(anchor: .Some(UnitPoints.bottom))
+//         .defaultScrollAnchor(anchor: .Some(UnitPoints.top), forRole: .Alignment)
+//
+// The outer (role-specific) alignment setting stays authoritative, while the
+// inner general modifier supplies initial and resizing anchors. A specific
+// nil also intentionally restores the platform default for *only* that role.
+public struct ScrollAnchorPreferences {
+    let initialOffset: UnitPoint? = .None
+    let sizeChanges: UnitPoint? = .None
+    let alignment: UnitPoint? = .None
+    let initialIsSpecific: Bool = false
+    let resizingIsSpecific: Bool = false
+    let alignmentIsSpecific: Bool = false
+}
+
+public struct ScrollAnchorChange {
+    let anchor: UnitPoint? = .None
+    let role: ScrollAnchorRole? = .None
+}
+
+public function scrollAnchorPreferencesApply(
+    inherited: borrow ScrollAnchorPreferences,
+    change: ScrollAnchorChange?
+) -> ScrollAnchorPreferences {
+    return match change {
+        None -> copy inherited
+        Some(request) -> match request.role {
+            None -> ScrollAnchorPreferences {
+                initialOffset: inherited.initialIsSpecific
+                    ? copy inherited.initialOffset : copy request.anchor,
+                sizeChanges: inherited.resizingIsSpecific
+                    ? copy inherited.sizeChanges : copy request.anchor,
+                alignment: inherited.alignmentIsSpecific
+                    ? copy inherited.alignment : copy request.anchor,
+                initialIsSpecific: inherited.initialIsSpecific,
+                resizingIsSpecific: inherited.resizingIsSpecific,
+                alignmentIsSpecific: inherited.alignmentIsSpecific
+            }
+            Some(role) -> match role {
+                InitialOffset -> ScrollAnchorPreferences {
+                    initialOffset: copy request.anchor,
+                    sizeChanges: copy inherited.sizeChanges,
+                    alignment: copy inherited.alignment,
+                    initialIsSpecific: true,
+                    resizingIsSpecific: inherited.resizingIsSpecific,
+                    alignmentIsSpecific: inherited.alignmentIsSpecific
+                }
+                SizeChanges -> ScrollAnchorPreferences {
+                    initialOffset: copy inherited.initialOffset,
+                    sizeChanges: copy request.anchor,
+                    alignment: copy inherited.alignment,
+                    initialIsSpecific: inherited.initialIsSpecific,
+                    resizingIsSpecific: true,
+                    alignmentIsSpecific: inherited.alignmentIsSpecific
+                }
+                Alignment -> ScrollAnchorPreferences {
+                    initialOffset: copy inherited.initialOffset,
+                    sizeChanges: copy inherited.sizeChanges,
+                    alignment: copy request.anchor,
+                    initialIsSpecific: inherited.initialIsSpecific,
+                    resizingIsSpecific: inherited.resizingIsSpecific,
+                    alignmentIsSpecific: true
+                }
+            }
+        }
+    }
+}
+
+public function modifierDeltaDefaultScrollAnchor(
+    anchor: UnitPoint?,
+    role: ScrollAnchorRole? = .None
+) -> ModifierDelta {
+    return ModifierDelta {
+        scrollAnchorChange: .Some(ScrollAnchorChange {
+            anchor: move anchor, role: move role
+        })
+    }
+}
+
+// Positive offsets reveal later content. Apply the selected point to the
+// scrollable length, not the full content length: `.bottom` in a 400-point
+// viewport over 1000-point content starts at 600, not at the last pixel.
+public function scrollAnchoredOffset(
+    contentLength: Number,
+    viewportLength: Number,
+    anchor: UnitPoint?
+) -> Number {
+    return match anchor {
+        Some(point) -> clamp(
+            (contentLength - viewportLength) * point.y,
+            0.0,
+            max(contentLength - viewportLength, 0.0)
+        )
+        None -> 0.0
+    }
+}
+
+// A size-change anchor preserves the same fractional position in the
+// *changing scroll range*. For `.bottom`, appending 80 points to a conversation
+// adds 80 to its offset, keeping the bottom in view. A user who manually
+// scrolled away retains their current position until a size change occurs.
+public function scrollAnchorResizedOffset(
+    oldOffset: Number,
+    oldContentLength: Number,
+    oldViewportLength: Number,
+    newContentLength: Number,
+    newViewportLength: Number,
+    anchor: UnitPoint?
+) -> Number {
+    let available = max(newContentLength - newViewportLength, 0.0)
+    return match anchor {
+        Some(point) -> clamp(
+            oldOffset + (newContentLength - oldContentLength
+                - newViewportLength + oldViewportLength) * point.y,
+            0.0, available
+        )
+        None -> clamp(oldOffset, 0.0, available)
+    }
+}
+
+// Alignment is independent of scrolling: content shorter than its viewport
+// can stand at the top, middle, or bottom without synthesizing a negative
+// scroll offset (which would otherwise trigger rubber-band overscroll).
+public function scrollSmallContentAlignment(
+    contentLength: Number,
+    viewportLength: Number,
+    anchor: UnitPoint?
+) -> Number {
+    if contentLength >= viewportLength { return 0.0 }
+    return match anchor {
+        Some(point) -> (viewportLength - contentLength) * point.y
+        None -> 0.0
+    }
+}
+
+extend Widget {
+    // SwiftUI: `.defaultScrollAnchor(_ anchor: UnitPoint?)`.
+    function defaultScrollAnchor(anchor: UnitPoint?) -> Any Widget {
+        return ModifierDeltaLayer(delta: modifierDeltaDefaultScrollAnchor(move anchor)) { self }
+    }
+
+    function defaultScrollAnchor(anchor: UnitPoint) -> Any Widget {
+        return self.defaultScrollAnchor(anchor: .Some(move anchor))
+    }
+
+    // SwiftUI: `.defaultScrollAnchor(_ anchor: UnitPoint?, for: ScrollAnchorRole)`.
+    // `forRole` avoids treating Swift's external parameter keyword as Kira
+    // punctuation while keeping the role named explicitly at the call site.
+    function defaultScrollAnchor(
+        anchor: UnitPoint?,
+        forRole: ScrollAnchorRole
+    ) -> Any Widget {
+        return ModifierDeltaLayer(delta: modifierDeltaDefaultScrollAnchor(
+            move anchor, .Some(forRole)
+        )) { self }
+    }
+
+    function defaultScrollAnchor(
+        anchor: UnitPoint,
+        forRole: ScrollAnchorRole
+    ) -> Any Widget {
+        return self.defaultScrollAnchor(anchor: .Some(move anchor), forRole: forRole)
+    }
+}

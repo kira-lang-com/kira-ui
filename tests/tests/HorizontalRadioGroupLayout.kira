@@ -1,0 +1,100 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+function radioTestBinding() -> Binding<Number> {
+    return Binding<Number> {
+        get: { in 2.0 },
+        set: { value in }
+    }
+}
+
+function radioTestPicker() -> Any Widget {
+    return Picker(title: "Color", selection: radioTestBinding()) {
+        Text("Red").tag(value: 1.0)
+        Text("Green").tag(value: 2.0)
+        Text("Blue").tag(value: 3.0)
+    }.pickerStyle(style: .RadioGroup)
+}
+
+function radioHasOptionAxis(
+    view: borrow CALayerDescription,
+    expected: CAAxis
+) -> Bool {
+    if view.layout.axis == expected && view.sublayers.count == 3
+        && describedContainsText(view.sublayers[0], "Red")
+        && describedContainsText(view.sublayers[1], "Green")
+        && describedContainsText(view.sublayers[2], "Blue") {
+        return true
+    }
+    for child in view.sublayers {
+        if radioHasOptionAxis(child, expected) { return true }
+    }
+    return false
+}
+
+@Test
+function radioGroupDefaultsToVerticalWithOneOptionPerRow() {
+    let described = describedLayer(radioTestPicker())
+    expect!(describedContainsText(described, "Color"))
+    expect!(radioHasOptionAxis(described, .Column))
+    expect!(!radioHasOptionAxis(described, .Row))
+}
+
+@Test
+function horizontalRadioGroupLayoutChangesTheActualOptionAxis() {
+    let described = describedLayer(radioTestPicker().horizontalRadioGroupLayout())
+    expect!(radioHasOptionAxis(described, .Row))
+    expect!(!radioHasOptionAxis(described, .Column))
+    expect!(describedContainsText(described, "Green"))
+    expect!(describedContainsText(described, "Color"))
+}
+
+@Test
+function horizontalRadioLayoutIsInheritedButDoesNotChangeSegmentedPickers() {
+    let modified = modifierContextApply(
+        ModifierContext {}, modifierDeltaHorizontalRadioGroupLayout()
+    )
+    expect!(modified.horizontalRadioGroupLayout)
+    expect!(modifierContextForChildren(modified).horizontalRadioGroupLayout)
+    let segmented = describedLayer(
+        Picker(title: "Color", selection: radioTestBinding()) {
+            Text("Red").tag(value: 1.0)
+            Text("Blue").tag(value: 2.0)
+        }
+        .pickerStyle(style: .Segmented)
+        .horizontalRadioGroupLayout()
+    )
+    expect!(describedContainsText(segmented, "Red"))
+    expect!(describedContainsText(segmented, "Blue"))
+}
+
+@Test
+function radioMarkActuallyPaintsItsSelectionDot() {
+    let context = buildContext(FoundationUiContext {})
+    let modifiers = ModifierContext {}
+    let empty = PickerRadioMark(selected: false).describe(context, modifiers)
+    let selected = PickerRadioMark(selected: true).describe(context, modifiers)
+    expect!(empty.sublayers.count == 0)
+    expect!(selected.sublayers.count == 1)
+    expect!(selected.sublayers[0].layout.fixedWidth > 0.0)
+    expect!(selected.sublayers[0].layout.fixedWidth < selected.layout.fixedWidth)
+    expect!(selected.layout.fixedHeight == checkboxMetrics(modifiers.controlSize).size)
+}
+
+@Test
+function radioSelectionDisabledPreventsActivationWithoutRemovingTheLabel() {
+    let context = buildContext(FoundationUiContext {})
+    let modifiers = modifierContextApply(
+        ModifierContext {}, modifierDeltaSelectionDisabled(true)
+    )
+    let entry = TagEntry { selected: true, select: { in } }
+    let disabled = pickerRadio(move entry, Text("Green"), context, modifiers)
+    expect!(describedContainsText(disabled, "Green"))
+    expect!(!disabled.hittable)
+    let allowed = pickerRadio(
+        TagEntry { selected: false, select: { in } },
+        Text("Red"), context, ModifierContext {}
+    )
+    expect!(allowed.hittable)
+}

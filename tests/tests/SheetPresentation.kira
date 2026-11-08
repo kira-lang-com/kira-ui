@@ -1,0 +1,28 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function iPadSizedSheetIsHoistedAndKeepsTheUnderlyingPageSize() {
+    overlayCollect()
+    let shown = Binding<Bool> { get: { in return true }, set: { value in } }
+    let page = Rectangle().frame(width: 120.0, height: 80.0)
+        .sheet(isPresented: shown) { Text("Choose Folder") }
+    let layer = describedLayerInWideWindow(move page)
+    let overlays = overlaysThisFrame()
+    expect!(layer.measure(1200.0).width == 120.0)
+    expect!(overlays.count == 2)
+    expect!(overlays[0].content.hittable)
+    expect!(overlays[1].content.cornerRadius == SheetMetrics.corner)
+    overlayStopCollecting()
+}
+
+@Test
+function DismissedSheetLeavesNoFloatingSurfaces() {
+    overlayCollect()
+    let hidden = Binding<Bool> { get: { in return false }, set: { value in } }
+    let page = Text("Home").sheet(isPresented: hidden) { Text("Not presented") }
+    absorb describedLayerInWideWindow(move page)
+    expect!(overlaysThisFrame().count == 0)
+    overlayStopCollecting()
+}

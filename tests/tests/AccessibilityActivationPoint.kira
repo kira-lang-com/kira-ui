@@ -1,0 +1,95 @@
+import Foundation
+import KiraUI
+import KCoreAnimation
+
+@Test
+function activationPointDefaultsToTheFinalElementFrameCenter() {
+    var described = describedLayer(
+        Text("Tap").frame(width: 120.0, height: 40.0)
+            .accessibilityElement(children: .Ignore)
+    )
+    layOutLayerTree(described, 300.0, 200.0)
+    let elements = accessibilityTree(described)
+    expect!(elements.count == 1)
+    let element = elements[0]
+    expect!(element.activationPoint.x == element.frame.x + element.frame.width / 2.0)
+    expect!(element.activationPoint.y == element.frame.y + element.frame.height / 2.0)
+}
+
+@Test
+function unitActivationPointsFollowMeasuredGeometry() {
+    var described = describedLayer(
+        Text("Tap").frame(width: 120.0, height: 40.0)
+            .accessibilityElement(children: .Ignore)
+            .accessibilityActivationPoint(point: UnitPoint { x: 0.25, y: 0.75 })
+    )
+    layOutLayerTree(described, 300.0, 200.0)
+    let element = accessibilityTree(described)[0]
+    expect!(element.activationPoint.x == element.frame.x + element.frame.width * 0.25)
+    expect!(element.activationPoint.y == element.frame.y + element.frame.height * 0.75)
+    expect!(element.frame.width >= 120.0)
+}
+
+@Test
+function absoluteActivationPointRemainsInWindowCoordinates() {
+    var described = describedLayer(
+        Text("Tap").frame(width: 110.0, height: 45.0)
+            .accessibilityElement(children: .Ignore)
+            .accessibilityActivationPoint(point: Point { x: 230.0, y: 75.0 })
+    )
+    layOutLayerTree(described, 360.0, 190.0)
+    let element = accessibilityTree(described)[0]
+    expect!(element.activationPoint.x == 230.0)
+    expect!(element.activationPoint.y == 75.0)
+}
+
+@Test
+function disabledActivationPointOverridePreservesAnInnerPreference() {
+    var described = describedLayer(
+        Text("Tap").frame(width: 110.0, height: 45.0)
+            .accessibilityElement(children: .Ignore)
+            .accessibilityActivationPoint(point: UnitPoints.top)
+            .accessibilityActivationPoint(
+                point: UnitPoints.bottomTrailing, isEnabled: false
+            )
+    )
+    layOutLayerTree(described, 340.0, 180.0)
+    let element = accessibilityTree(described)[0]
+    expect!(element.activationPoint.x == element.frame.x + element.frame.width / 2.0)
+    expect!(element.activationPoint.y == element.frame.y)
+}
+
+@Test
+function combinedAccessibilityElementInheritsChildPointAndCanOverrideIt() {
+    var combined = describedLayer(
+        VStack {
+            Text("Primary").accessibilityActivationPoint(point: UnitPoints.trailing)
+            Text("Secondary")
+        }.accessibilityElement(children: .Combine)
+    )
+    layOutLayerTree(combined, 250.0, 140.0)
+    let inherited = accessibilityTree(combined)
+    expect!(inherited.count == 1)
+    expect!(inherited[0].activationPoint.x >= inherited[0].frame.x)
+
+    var explicit = describedLayer(
+        VStack {
+            Text("Primary").accessibilityActivationPoint(point: UnitPoints.trailing)
+            Text("Secondary")
+        }
+        .accessibilityElement(children: .Combine)
+        .accessibilityActivationPoint(point: UnitPoints.topLeading)
+    )
+    layOutLayerTree(explicit, 250.0, 140.0)
+    let replaced = accessibilityTree(explicit)[0]
+    expect!(replaced.activationPoint.x == replaced.frame.x)
+    expect!(replaced.activationPoint.y == replaced.frame.y)
+}
+
+@Test
+function activationPointModifierKeepsSectionIdentity() {
+    let section = Section {
+        Text("One item")
+    }.accessibilityActivationPoint(point: UnitPoints.center)
+    expect!(section.isSection())
+}
