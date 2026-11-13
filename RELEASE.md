@@ -33,6 +33,7 @@ Added SwiftUI's nullable Color-valued `.tint` overloads and appearance-resolved 
 
 ## Changed
 
+- Added `redrawsEveryFrame` to the retained window runners so live texture content can be presented every frame without rebuilding and laying out an unchanged widget tree.
 - Added `.presentationBackgroundInteraction` with automatic, enabled, disabled and enabled-up-through-detent policies. The native Sheet's actual backdrop hit region becomes pass-through at allowed detents (including bound height changes) and its underlying page remains accessible to assistive technology while background input is enabled.
 - Added `.presentationBackground` with concrete theme colors, RGBA, elevation styles, materials and custom background views with alignment. Native sheets, popovers and full-screen covers draw these surfaces behind their clipped content without treating them as layout; uniform popover fills continue into the arrow. Generic ShapeStyle composition and arbitrary-view arrow masks remain outstanding.
 - Added both `.presentationCompactAdaptation` overloads with all five strategies. The native popover and sheet hosts switch between popover, sheet and full-screen cover based on compact horizontal/vertical preferences while retaining the same bound presentation state and described content. AppKit windows remain regular; the mobile size-class determination is viewport-based until a UIKit trait bridge is available.

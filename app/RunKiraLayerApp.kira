@@ -26,115 +26,6 @@ public namespace ScrollWheel {
 
 // The state a running retained app carries between frames: the compositor and
 // its retained tree, and the input the window has forwarded.
-public struct KiraLayerAppState {
-    var stateScope: AmbientScope = AmbientScope(0)
-    var compositor: Compositor = Compositor {}
-    var frameCount: Number = 0
-    var ui: FoundationUiContext = FoundationUiContext {}
-    // Hover subscriptions, independent of the ordinary pressed/hovered
-    // control key. A pointer may be inside nested hoverable views at once.
-    var hoverRegionKeys: [Number] = []
-    var continuousHoverRegions: [CAHoverRegion] = []
-    var pointerInsideWindow: Bool = false
-    var pointerVisibility: Visibility = .Automatic
-    var transparent: Bool = false
-    // Mac host owns a true behind-window backdrop below the Metal UI.
-    var nativeBackdrop: Bool = false
-    // The interactive surface the held press landed on -- its layer, and the
-    // key that layer answers under now -- where it landed in the window and in
-    // the surface's own coordinates, and the surface's size. The pointer's
-    // place on the surface is the second moved by however far the pointer has
-    // gone from the first.
-    var pressSurfaceLayer: LayerId = LayerId(0)
-    var pressSurface: Number = 0
-    var pressWindow: Point = Point {}
-    var pressLocal: Point = Point {}
-    var pressSize: Size = Size {}
-    var pressOnControl: Bool = false
-    // Retain the physical down target while sliding changes pressedKey.
-    // Close/dismiss controls accept this original hit only, never a glide.
-    var pressOriginControl: Number = 0
-    var pressSlides: Bool = false
-    // The surface the held control is in, which the press's platter slides
-    // within; the pull may have gone on to another card's bare glass since.
-    var pressedPanelLayer: LayerId = LayerId(0)
-    // Counts the presses held on surfaces, so each is told from the last.
-    var pressSerial: Number = 0
-    // The pressed control's box as the press found it.
-    var pressBounds: Rect = Rect {}
-    // The last viewport clicked owns keyboard navigation. A held viewport
-    // pointer remains captured beyond its bounds until mouse-up.
-    var viewportFocusKey: Number = 0
-    var viewportCapturedKey: Number = 0
-    var viewportRect: Rect = Rect {}
-    // The control the last press went down on and when, in seconds, for
-    // telling a double-click from two clicks.
-    var lastClickKey: Number = 0
-    var lastClickTime: Number = -1
-    var touchOrigin: Point = Point {}
-    var touchPosition: Point = Point {}
-    var touchScrollTarget: Number = 0
-    var touchScrolling: Bool = false
-    var touchNavigating: Bool = false
-    // What the last rebuild was built from: the input it had seen, and the
-    // color scheme, interface mode and accessibility settings it was drawn
-    // in. A frame that finds them all as they were, and nothing moving, has
-    // nothing new to show and is not drawn at all.
-    var builtEventCount: Number = -1
-    var builtScheme: PlatformScheme = .Unstated
-    var builtMode: InterfaceMode = .AdaptiveDesktop
-    var builtAccessibility: AccessibilitySettings = AccessibilitySettings {}
-    // Whether the retained tree was still animating on the last frame drawn,
-    // so the frame it settles on is drawn too.
-    var layersMoving: Bool = false
-    // The UI test driving the app, when one launched it.
-    var uiTest: UITestHost? = .None
-}
-
-// One event from the window, or from a UI test pressing and typing as a
-// person would.
-public function kiraLayerHandleEvent(state: borrow mut KiraLayerAppState, event: borrow AppEvent) {
-    kiraLayerNoteEvent(state, event.kind)
-    if modifierInputSetState(event.modifiers) { state.ui.eventCount++ }
-    if event.kind == .PointerMoved || event.kind == .PointerDown
-        || event.kind == .PointerUp || event.kind == .PointerExited {
-        // The keys held with it, and on a press which button: a right press,
-        // or a Control-press on a Mac, is a secondary click.
-        state.ui.modShift = event.modifiers.shift
-        state.ui.modAlt = event.modifiers.alt
-        state.ui.modCommand = hostUsesCommandKey() ? event.modifiers.superKey : event.modifiers.control
-        if event.kind == .PointerDown {
-            let secondary = event.pointerButton == .Right || (hostUsesCommandKey() && event.modifiers.control)
-            state.ui.pressButton = secondary ? 2 : 1
-            kiraLayerCountClick(state, event.pointerX, event.pointerY, event.timestamp)
-        }
-        kiraLayerDispatch(state, event.pointerX, event.pointerY, event.kind)
-        if event.kind != .PointerExited {
-            kiraLayerViewportPointer(state, event)
-        }
-    }
-    if event.kind == .TextInput || event.kind == .KeyDown || event.kind == .KeyUp {
-        kiraLayerDispatchKeyboard(state, event)
-        if state.ui.focusedKey == 0 && state.viewportFocusKey != 0 {
-            let rect = state.viewportRect
-            let extent = Size {
-                width: rect.width / interfaceScale(),
-                height: rect.height / interfaceScale()
-            }
-            let point = Point { x: 0, y: 0 }
-            layerViewportDispatch(state.viewportFocusKey, copy event, move point, move extent)
-        }
-    }
-    if event.kind == .Scroll {
-        if !kiraLayerViewportScroll(state, event) {
-            kiraLayerDispatchScroll(state, event)
-        }
-    }
-    if event.kind == .TouchesBegan || event.kind == .TouchesMoved || event.kind == .TouchesEnded || event.kind == .TouchesCancelled {
-        kiraLayerDispatchTouch(state, event)
-    }
-}
-
 public function kiraLayerViewportPointer(
     state: borrow mut KiraLayerAppState,
     event: borrow AppEvent
@@ -779,6 +670,9 @@ public function RunKiraLayerApp(
     // LaunchOptions.kira from. An application that parses its own passes what
     // it left over, or none.
     arguments: [String] = commandLineArguments(),
+    // Draw the retained tree every frame when its content can change without
+    // changing the widget description, such as a live viewport texture.
+    redrawsEveryFrame: Bool = false,
 ) {
     appStorageIdentify(move bundleIdentifier)
     // `KIRA_UI_WINDOW_WIDTH` and `KIRA_UI_WINDOW_HEIGHT` size the window for a
@@ -791,6 +685,7 @@ public function RunKiraLayerApp(
         transparent,
         engineFrame,
         rebuildsEveryFrame,
-        arguments
+        arguments,
+        redrawsEveryFrame
     )
 }

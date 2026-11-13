@@ -1,0 +1,101 @@
+import Ember
+import KiraLayout
+import Foundation
+import ArgumentParser
+import Heap
+import KCoreAnimation
+
+// The state a running retained app carries between frames: the compositor and
+// its retained tree, and the input the window has forwarded.
+public struct KiraLayerAppState {
+    var stateScope: AmbientScope = AmbientScope(0)
+    var compositor: Compositor = Compositor {}
+    var frameCount: Number = 0
+    var ui: FoundationUiContext = FoundationUiContext {}
+    // Hover subscriptions, independent of the ordinary pressed/hovered key.
+    var hoverRegionKeys: [Number] = []
+    var continuousHoverRegions: [CAHoverRegion] = []
+    var pointerInsideWindow: Bool = false
+    var pointerVisibility: Visibility = .Automatic
+    var transparent: Bool = false
+    // Mac host owns a true behind-window backdrop below the Metal UI.
+    var nativeBackdrop: Bool = false
+    // The interactive surface the held press landed on, and the place and size
+    // on that surface where the press began.
+    var pressSurfaceLayer: LayerId = LayerId(0)
+    var pressSurface: Number = 0
+    var pressWindow: Point = Point {}
+    var pressLocal: Point = Point {}
+    var pressSize: Size = Size {}
+    var pressOnControl: Bool = false
+    // Preserve the physical down target while the pressed key slides.
+    var pressOriginControl: Number = 0
+    var pressSlides: Bool = false
+    // The surface the held control is in while its press slides.
+    var pressedPanelLayer: LayerId = LayerId(0)
+    // Counts presses held on surfaces, so each is told from the last.
+    var pressSerial: Number = 0
+    var pressBounds: Rect = Rect {}
+    // The last viewport clicked owns keyboard navigation and pointer capture.
+    var viewportFocusKey: Number = 0
+    var viewportCapturedKey: Number = 0
+    var viewportRect: Rect = Rect {}
+    // The control and time of the last press, for double-click detection.
+    var lastClickKey: Number = 0
+    var lastClickTime: Number = -1
+    var touchOrigin: Point = Point {}
+    var touchPosition: Point = Point {}
+    var touchScrollTarget: Number = 0
+    var touchScrolling: Bool = false
+    var touchNavigating: Bool = false
+    // Inputs and settings used to build the last retained tree.
+    var builtEventCount: Number = -1
+    var builtScheme: PlatformScheme = .Unstated
+    var builtMode: InterfaceMode = .AdaptiveDesktop
+    var builtAccessibility: AccessibilitySettings = AccessibilitySettings {}
+    // Whether the retained tree still animates after the last draw.
+    var layersMoving: Bool = false
+    var uiTest: UITestHost? = .None
+}
+
+// One event from the window, or from a UI test pressing and typing as a
+// person would.
+public function kiraLayerHandleEvent(state: borrow mut KiraLayerAppState, event: borrow AppEvent) {
+    kiraLayerNoteEvent(state, event.kind)
+    if modifierInputSetState(event.modifiers) { state.ui.eventCount++ }
+    if event.kind == .PointerMoved || event.kind == .PointerDown
+        || event.kind == .PointerUp || event.kind == .PointerExited {
+        state.ui.modShift = event.modifiers.shift
+        state.ui.modAlt = event.modifiers.alt
+        state.ui.modCommand = hostUsesCommandKey() ? event.modifiers.superKey : event.modifiers.control
+        if event.kind == .PointerDown {
+            let secondary = event.pointerButton == .Right || (hostUsesCommandKey() && event.modifiers.control)
+            state.ui.pressButton = secondary ? 2 : 1
+            kiraLayerCountClick(state, event.pointerX, event.pointerY, event.timestamp)
+        }
+        kiraLayerDispatch(state, event.pointerX, event.pointerY, event.kind)
+        if event.kind != .PointerExited {
+            kiraLayerViewportPointer(state, event)
+        }
+    }
+    if event.kind == .TextInput || event.kind == .KeyDown || event.kind == .KeyUp {
+        kiraLayerDispatchKeyboard(state, event)
+        if state.ui.focusedKey == 0 && state.viewportFocusKey != 0 {
+            let rect = state.viewportRect
+            let extent = Size {
+                width: rect.width / interfaceScale(),
+                height: rect.height / interfaceScale()
+            }
+            let point = Point { x: 0, y: 0 }
+            layerViewportDispatch(state.viewportFocusKey, copy event, move point, move extent)
+        }
+    }
+    if event.kind == .Scroll {
+        if !kiraLayerViewportScroll(state, event) {
+            kiraLayerDispatchScroll(state, event)
+        }
+    }
+    if event.kind == .TouchesBegan || event.kind == .TouchesMoved || event.kind == .TouchesEnded || event.kind == .TouchesCancelled {
+        kiraLayerDispatchTouch(state, event)
+    }
+}

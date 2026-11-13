@@ -241,31 +241,6 @@ function windowBackdropLayers(modifiers: borrow ModifierContext) -> [CALayerDesc
                 state.dark ? .Dark : .Light
             ))
         }
-        if native && state.nativeToolbar && state.unified
-            && state.paneCornerRadius > 0.0 && state.width < state.viewportWidth {
-            // The old rounded wrappers had no visible effect at the corner:
-            // the full-window opaque canvas was still painted underneath.
-            // Cut ONLY the radius-sized square at the actual content junction
-            // (sidebar trailing edge, toolbar bottom), refill it with the
-            // sidebar's translucent material, then paint the content canvas
-            // inside a top-leading-only rounded mask. This gives a real
-            // visible corner without clipping every edge or altering hit areas.
-            let radius = min(
-                state.paneCornerRadius,
-                min(state.viewportWidth - state.width, state.height - toolbarBottom)
-            )
-            if radius > 0.0 {
-                layers.append(windowBackdropCutAt(state.width, toolbarBottom, radius, radius))
-                layers.append(windowSidebarShade(
-                    state.width, radius, toolbarBottom, radius,
-                    state.dark ? .Dark : .Light
-                ))
-                layers.append(windowContentCornerCanvas(
-                    state.width, toolbarBottom, radius,
-                    colorFromFoundation(windowCanvas(modifiers))
-                ))
-            }
-        }
         for layer in state.sidebar {
             layers.append(copy layer)
         }
@@ -284,7 +259,7 @@ function windowSidebarShade(
     let tone = foundationSidebarTint(scheme, activity).lower.color
     // A darkened system-material tint, not a painted opaque panel. The native
     // NSVisualEffectView remains visible through the remaining alpha.
-    let opacity = scheme == .Dark ? 0.30 : 0.34
+    let opacity = scheme == .Dark ? 0.14 : 0.10
     return CALayerDescription {
         disablesActions: true,
         layout: CALayoutIntent {
